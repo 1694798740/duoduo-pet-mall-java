@@ -1,0 +1,78 @@
+server:
+  # 注意：不要用 USER_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_USER_PORT:8081}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 400
+      min-spare: 50
+    accept-count: 1000
+    max-connections: 10000
+
+spring:
+  application:
+    name: duoduo-user
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  # 生产：MySQL + 主从 + 连接池（HikariCP 为 Spring Boot 默认）
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_user?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 20
+      maximum-pool-size: 100
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: duoduo-user-pool
+  # 表结构由 Flyway/Liquibase 或运维 DDL 管理，应用启动不自动建表
+  sql:
+    init:
+      mode: never
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumOrdinalTypeHandler
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+      logic-delete-field: null
+
+duoduo:
+  security:
+    jwt-secret: ${DUODUO_JWT_SECRET:duoduo-local-dev-secret-please-change-in-production-32b}
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+  id:
+    datacenter-id: ${ID_DATACENTER:1}
+    worker-id: ${ID_WORKER:1}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-user","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'

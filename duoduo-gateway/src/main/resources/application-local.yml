@@ -1,0 +1,25 @@
+# 本地无 Nacos 时的最小可运行配置：
+#   mvn -pl duoduo-gateway spring-boot:run -Dspring-boot.run.profiles=local
+# 或   java -jar duoduo-gateway.jar --spring.profiles.active=local
+#
+# 差异：关闭 Nacos 注册，路由从 lb://（服务发现）改为静态 http://127.0.0.1:端口。
+# 这是为了让「真微服务多进程」在没有注册中心时也能本地验证网关链路。
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+    gateway:
+      routes:
+        - id: duoduo-user-local
+          uri: http://127.0.0.1:${DUODUO_USER_PORT:8081}
+          predicates:
+            - Path=/api/auth/**,/api/users/**,/api/pets/**
+        - id: duoduo-product-local
+          uri: http://127.0.0.1:${DUODUO_PRODUCT_PORT:8082}
+          predicates:
+            - Path=/api/categories/**,/api/products/**,/api/listings/**,/api/home/**,/api/meta/**
+
+logging:
+  level:
+    com.duoduo: DEBUG

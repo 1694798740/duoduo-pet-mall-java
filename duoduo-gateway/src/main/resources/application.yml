@@ -1,0 +1,91 @@
+server:
+  # 注意：避免使用 GATEWAY_PORT 这类通用名，防止被宿主环境的同名变量覆盖
+  port: ${DUODUO_GATEWAY_PORT:8080}
+  shutdown: graceful
+  netty:
+    connection-timeout: 5s
+
+spring:
+  application:
+    name: duoduo-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  cloud:
+    nacos:
+      discovery:
+        # 本地未启动 Nacos 时，用 --spring.profiles.active=local 关闭（见 application-local.yml）
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:}
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+            allowed-methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+            allowed-headers: '*'
+            exposed-headers: [X-Request-Id]
+            allow-credentials: true
+            max-age: 600
+      routes:
+        - id: duoduo-user
+          uri: lb://duoduo-user
+          predicates:
+            - Path=/api/auth/**,/api/users/**,/api/pets/**
+        # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
+        - id: duoduo-product
+          uri: lb://duoduo-product
+          predicates:
+            - Path=/api/categories/**,/api/products/**,/api/listings/**,/api/home/**,/api/meta/**
+        - id: duoduo-trade
+          uri: lb://duoduo-trade
+          predicates:
+            - Path=/api/cart/**,/api/orders/**
+        - id: duoduo-fulfilment
+          uri: lb://duoduo-fulfilment
+          predicates:
+            - Path=/api/aftersales/**,/api/reviews/**
+        - id: duoduo-marketing
+          uri: lb://duoduo-marketing
+          predicates:
+            - Path=/api/promotions/**,/api/coupons/**
+        - id: duoduo-ai
+          uri: lb://duoduo-ai
+          predicates:
+            - Path=/api/duoduo/**
+        - id: duoduo-admin
+          uri: lb://duoduo-admin
+          predicates:
+            - Path=/api/admin/**
+
+duoduo:
+  security:
+    # 生产必须由配置中心 / 环境变量注入，禁止使用默认值
+    jwt-secret: ${DUODUO_JWT_SECRET:duoduo-local-dev-secret-please-change-in-production-32b}
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+    org.springframework.cloud.gateway: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-gateway","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'

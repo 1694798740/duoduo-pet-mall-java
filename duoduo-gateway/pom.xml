@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.duoduo</groupId>
+    <artifactId>duoduo-pet-mall</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>duoduo-gateway</artifactId>
+  <name>duoduo-gateway</name>
+  <description>API 网关：统一入口、路由、JWT 前置校验、身份透传（WebFlux 响应式，单机 1w+ QPS）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.duoduo</groupId>
+      <artifactId>duoduo-common</artifactId>
+    </dependency>
+
+    <!-- 响应式网关。注意：不能引入 spring-boot-starter-web，否则会与 WebFlux 冲突启动失败 -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-gateway</artifactId>
+    </dependency>
+
+    <!-- 服务发现（Nacos）；本地无 Nacos 时可通过 spring.cloud.nacos.discovery.enabled=false 关闭 -->
+    <dependency>
+      <groupId>com.alibaba.cloud</groupId>
+      <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
