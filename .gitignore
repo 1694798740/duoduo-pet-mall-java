@@ -1,0 +1,30 @@
+# 构建产物
+target/
+**/target/
+
+# 项目内 Maven 仓库（依赖体积大，不入库）
+.m2repo/
+.mvn/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.class
+
+# 日志与本地数据
+*.log
+logs/
+data/
+*.db
+
+# 环境变量：只提交 .env.example
+.env
+.env.local
+.env.*.local
+
+# 系统
+.DS_Store
+Thumbs.db

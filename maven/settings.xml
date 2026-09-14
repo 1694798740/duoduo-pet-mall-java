@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+  <!--
+    项目专用 Maven 全局配置。
+    背景：本机 %MAVEN_HOME%\conf\settings.xml 中 mirrorOf=* 指向已失效的公司私服
+    （https://100.wunding.com:1443/nexus/...），会导致所有依赖拉取失败。
+    用法：mvn -gs maven/settings.xml ...   （不动本机全局配置）
+  -->
+
+  <localRepository>D:/智能体项目/duoduo-pet-mall-java/.m2repo</localRepository>
+
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <name>Aliyun Public Repository</name>
+      <mirrorOf>*</mirrorOf>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+  </mirrors>
+
+  <profiles>
+    <profile>
+      <id>jdk21</id>
+      <activation>
+        <activeByDefault>true</activeByDefault>
+        <jdk>21</jdk>
+      </activation>
+      <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+      </properties>
+    </profile>
+  </profiles>
+
+  <servers>
+    <!-- 内部私服凭据位（生产请通过 CI 注入，不要提交真实口令） -->
+  </servers>
+</settings>
