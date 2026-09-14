@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.duoduo</groupId>
+    <artifactId>duoduo-pet-mall</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>duoduo-common-web</artifactId>
+  <name>duoduo-common-web</name>
+  <description>Servlet 侧 Web 基础设施：全局异常处理 / 请求 ID / 登录用户上下文透传（仅业务服务依赖，网关不依赖）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.duoduo</groupId>
+      <artifactId>duoduo-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+  </dependencies>
+</project>
