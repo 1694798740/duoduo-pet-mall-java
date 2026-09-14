@@ -19,7 +19,7 @@
 | Nacos | ❌ 未启动 | 服务注册与网关 `lb://` 路由不可用 | `local` profile 关闭 Nacos，网关路由改静态地址 |
 | Redis | ✅ `D:\devsoft\redis`（未启动） | 当前阶段未依赖（刷新令牌走库表） | P3 阶段接入缓存时再启动 |
 
-**结论**：本机可以真编译、真启动、真验证「网关 + 用户服务」双进程链路；完整微服务栈需要你补齐 Docker Desktop 或原生安装 MySQL / Nacos。
+**结论**：本机可以真编译、真启动、真验证「网关 + 用户服务 + 商品服务」三进程链路；完整微服务栈需要你补齐 Docker Desktop 或原生安装 MySQL / Nacos。
 
 需要管理员权限安装 Docker Desktop 时，请以**管理员身份**打开 PowerShell 执行：
 
@@ -31,21 +31,40 @@ choco install docker-desktop -y
 
 ## 二、构建与运行
 
-```powershell
-# 1) 载入本地环境（仅当前会话生效，不改系统变量）
-. .\maven\env.ps1
+### 推荐：一键启动三进程
 
-# 2) 全量构建（首次会拉取 Spring 依赖，约数分钟）
+```powershell
+# 1) 全量构建（首次会拉取 Spring 依赖，约数分钟）
+. .\maven\env.ps1
+mvn -gs maven\settings.xml -B -DskipTests package
+
+# 2) 一键启动（用户服务 8081 + 商品服务 8082 + 网关 8080，全部 local profile）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-local.ps1
+
+# 3) 端到端冒烟（54 项断言，每次用随机手机号，可重复执行）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
+
+# 4) 停止
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-local.ps1
+```
+
+### 手动逐个启动
+
+```powershell
+. .\maven\env.ps1
 mvn -gs maven\settings.xml -B -DskipTests clean install
 
-# 3) 启动用户服务（H2 内存库 + 关闭 Nacos）
-java -jar duoduo-user\target\duoduo-user-1.0.0.jar --spring.profiles.active=local
-
-# 4) 另开一个终端启动网关（静态路由指向 8081）
-java -jar duoduo-gateway\target\duoduo-gateway-1.0.0.jar --spring.profiles.active=local
+# 三个终端分别执行（顺序不敏感，网关可最后起）
+java -jar duoduo-user\target\duoduo-user-1.0.0.jar    --spring.profiles.active=local --server.port=8081
+java -jar duoduo-product\target\duoduo-product-1.0.0.jar --spring.profiles.active=local --server.port=8082
+java -jar duoduo-gateway\target\duoduo-gateway-1.0.0.jar --spring.profiles.active=local --server.port=8080
 ```
 
 启动后统一入口是网关：`http://localhost:8080`。
+
+> 端口用 `--server.port` 显式指定，是为了绕开环境变量污染：
+> 若机器上恰好存在同名环境变量（例如 `USER_PORT`），`${USER_PORT:8081}` 会被静默改写。
+> 因此配置里的变量名统一带项目前缀（`DUODUO_USER_PORT` / `DUODUO_PRODUCT_PORT` / `DUODUO_GATEWAY_PORT`）。
 
 ### 冒烟验证（网关 → 用户服务 全链路）
 
@@ -85,12 +104,24 @@ duoduo-pet-mall-java/
 ├── docs/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   └── sql/                    生产 MySQL DDL
+├── scripts/
+│   ├── start-local.ps1         一键启动三进程（local profile，零外部依赖）
+│   ├── stop-local.ps1          停止全部服务进程
+│   └── smoke.ps1               端到端冒烟测试（54 项断言，可重复执行）
 ├── docker-compose.yml          基础设施编排（MySQL / Redis / Nacos），需 Docker
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
-└── duoduo-user/                用户服务：注册登录 / 令牌轮转 / 实名 / 宠物档案
+├── duoduo-user/                用户服务：注册登录 / 令牌轮转 / 实名 / 宠物档案
+└── duoduo-product/             商品服务：类目 / 品牌 / SPU-SKU / 检索 / 首页聚合 / C2C 闲置
 ```
+
+| 服务 | 端口 | 状态 |
+|---|---|---|
+| `duoduo-gateway` | 8080 | ✅ 已实现并验证 |
+| `duoduo-user` | 8081 | ✅ 已实现并验证 |
+| `duoduo-product` | 8082 | ✅ 已实现并验证 |
+| `duoduo-trade` / `duoduo-fulfilment` / `duoduo-marketing` / `duoduo-ai` / `duoduo-admin` | 8083–8087 | ⏳ 待实现（网关已预留路由） |
 
 **分层纪律**：Controller 不写业务逻辑；Service 不依赖 `HttpServletRequest`；
 数据访问统一走 Mapper（MyBatis-Plus），参数化查询，禁止字符串拼接 SQL。
@@ -114,6 +145,34 @@ duoduo-pet-mall-java/
 | POST | `/api/pets/{id}/default` | 设为当前宠物 | 需登录 |
 | DELETE | `/api/pets/{id}` | 删除档案（默认宠物自动顺延） | 需登录 |
 
+**商品域**（服务：`duoduo-product`）
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/categories` | 两级类目树 | 免 |
+| GET | `/api/categories/flat` | 扁平类目列表（后台/下拉用） | 免 |
+| GET | `/api/categories/{id}` | 单个类目（含子节点） | 免 |
+| GET | `/api/home` | 首页聚合：类目 / 推荐 / 新品 / 品牌 / 闲置 / 物种精选 | 免 |
+| GET | `/api/products` | 商品检索，见下方参数表 | 免 |
+| GET | `/api/products/{spuId}` | 商品详情：SKU、适用属性聚合、同类推荐 | 免 |
+| GET | `/api/listings` | C2C 闲置列表（只返回已审核通过） | 免 |
+| GET | `/api/listings/{id}` | 闲置详情 + 「同款全新」推荐 | 免 |
+| GET | `/api/meta/brands` | 品牌列表 | 免 |
+| GET | `/api/meta/dictionaries` | 筛选字典（物种 / 生命阶段 / 成色 / 供货类型 / 排序） | 免 |
+
+`GET /api/products` 查询参数：
+
+| 参数 | 说明 |
+|---|---|
+| `keyword` | 关键词，命中标题或副标题；**含违禁词直接 422** |
+| `categoryId` | 类目 id；传一级类目会**自动展开其下子类目** |
+| `brandId` / `supplyType` | 品牌 / 供货类型（`self` 自营、`merchant` 第三方） |
+| `minPrice` / `maxPrice` | 价格区间（单位：分），语义是**区间相交**而非「最低价落在区间内」 |
+| `species` / `lifeStage` | 按宠物档案筛选（`cat`/`dog`，`BABY`/`ADULT`/`SENIOR`） |
+| `inStockOnly` | 只看有货（SPU 下任一 SKU 有可售库存） |
+| `sort` | `default` / `sales` / `price_asc` / `price_desc` / `rating` / `newest`，非法值返回 400 |
+| `page` / `pageSize` | 页码从 1 开始，`pageSize` 上限 100 |
+
 统一响应：`{"code","message","data","requestId","timestamp"}`；失败时 `code` 与 HTTP 状态码语义一致。
 
 ---
@@ -136,11 +195,12 @@ duoduo-pet-mall-java/
 
 ## 六、后续阶段（按 docs/ARCHITECTURE.md 的路线推进）
 
-| 阶段 | 内容 |
-|---|---|
-| **P1** | 商品服务（类目/SPU/SKU/商详）+ 交易服务（购物车/下单拆单/支付/订单状态机）+ MySQL + Redis |
-| **P2** | 履约服务（发货/物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 |
-| **P3** | AI 服务「多多」+ Elasticsearch + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 |
-| **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） |
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 已完成，54 项冒烟全绿 |
+| **P1** | 交易服务（购物车/下单拆单/支付/订单状态机）+ 卖家中心（闲置发布）+ 接入真实 MySQL + Redis 缓存 | ⏳ 进行中 |
+| **P2** | 履约服务（发货/物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
+| **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
+| **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
 前端（React 18 + Vite）沿用此前实现的 17 个页面，接口契约调整后即可对接。
