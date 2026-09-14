@@ -1,0 +1,178 @@
+package com.duoduo.product.entity;
+
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+
+import java.time.LocalDateTime;
+
+/**
+ * C2C 闲置商品（个人卖家转卖）。
+ *
+ * <p>与 {@link SpuEntity} 分开建表的原因：两者生命周期与规则完全不同 ——
+ * 闲置是「一物一价、卖完即止」，需要审核、属地（同城自提）、成色；
+ * 自营 SPU 是「标准品、有 SKU 与库存」。硬塞进一张表会让一半字段永远为 NULL。
+ *
+ * <p>{@code auditStatus} 默认 PENDING：发布后必须经人工审核才对外可见，
+ * 这是平台对活体与药品类目合规要求的最低保障。
+ */
+@TableName("t_listing")
+public class ListingEntity {
+
+    @TableId
+    private Long id;
+    private Long sellerId;
+    private String title;
+    private String description;
+    private Long categoryId;
+    private Long price;
+    private Long originalPrice;
+    /** NEW / LIKE_NEW / GOOD / FAIR */
+    private String conditionLevel;
+    private String city;
+    private String images;
+    private String species;
+    private String breed;
+    /** ON_SALE / SOLD / OFF_SHELF */
+    private String status;
+    /** PENDING / APPROVED / REJECTED */
+    private String auditStatus;
+    private Integer viewCount;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public Long getSellerId() {
+        return sellerId;
+    }
+
+    public void setSellerId(Long sellerId) {
+        this.sellerId = sellerId;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public Long getCategoryId() {
+        return categoryId;
+    }
+
+    public void setCategoryId(Long categoryId) {
+        this.categoryId = categoryId;
+    }
+
+    public Long getPrice() {
+        return price;
+    }
+
+    public void setPrice(Long price) {
+        this.price = price;
+    }
+
+    public Long getOriginalPrice() {
+        return originalPrice;
+    }
+
+    public void setOriginalPrice(Long originalPrice) {
+        this.originalPrice = originalPrice;
+    }
+
+    public String getConditionLevel() {
+        return conditionLevel;
+    }
+
+    public void setConditionLevel(String conditionLevel) {
+        this.conditionLevel = conditionLevel;
+    }
+
+    public String getCity() {
+        return city;
+    }
+
+    public void setCity(String city) {
+        this.city = city;
+    }
+
+    public String getImages() {
+        return images;
+    }
+
+    public void setImages(String images) {
+        this.images = images;
+    }
+
+    public String getSpecies() {
+        return species;
+    }
+
+    public void setSpecies(String species) {
+        this.species = species;
+    }
+
+    public String getBreed() {
+        return breed;
+    }
+
+    public void setBreed(String breed) {
+        this.breed = breed;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getAuditStatus() {
+        return auditStatus;
+    }
+
+    public void setAuditStatus(String auditStatus) {
+        this.auditStatus = auditStatus;
+    }
+
+    public Integer getViewCount() {
+        return viewCount;
+    }
+
+    public void setViewCount(Integer viewCount) {
+        this.viewCount = viewCount;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+}
