@@ -1,11 +1,20 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.5 ｜ 更新日期：2026-09-15
+> 版本：v1.6 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.4 → v1.5）**：
+> **本版变更（v1.5 → v1.6）**：
+> 1. **沙箱内 `git push` 已恢复可用** —— 复测发现此前拦住它的旧代理（`127.0.0.1:8276`）已换成
+>    `127.0.0.1:3386`，git 的 HTTPS 链路现已打通（公开仓库 `ls-remote` 退出码 0；目标仓库带占位凭据
+>    返回 **401** 而非 502，说明链路通、只差有效凭据）。因此第 5.1 章第 9 条坑与 5.2 章 ④ 均已作废改写；
+> 2. 新增 `scripts\push-to-github.ps1`：预检 → 配置 origin → fetch 远端 → **覆盖安全闸门**
+>    → `--force` 推送 → SHA 校验，一条命令完成；
+> 3. 第 6 章第 3 项「恢复 GitHub 推送」改为**只需你授权一次登录**，且此后助手可直接推送，
+>    不再需要交换 Token。
+>
+> **v1.4 → v1.5 变更（留档）**：
 > 1. **Docker Desktop 已装好并验证可用**：安装脚本在**第 6 次重试**成功（前 5 次退出码 1603，
 >    第 6 次退出码 0）；`docker version` 显示 Server = Docker Desktop 4.90.0、引擎 29.7.2 正常响应；
 >    `docker compose v5.5.1` 可用；
@@ -472,7 +481,7 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 | 6 | 冒烟脚本赋值 `$home` 直接抛错 | PowerShell 中 `$HOME` 是**只读内置变量** | 变量改名为 `$homeData` |
 | 7 | 采集的接口样本中文乱码 | `Invoke-WebRequest` 未按 UTF-8 解码响应就落盘 | 改用 `WebClient` + `Encoding = UTF8`，文件带 BOM |
 | 8 | 父 POM 编译报 `'dependencies.dependency.version' is missing` | `dependencyManagement` 漏声明 `duoduo-common-web` 的版本 | 补上版本声明 |
-| 9 | `git push` 报 `CONNECT tunnel failed, response 502`，直连也不通 | 沙箱内本地代理拦截了 git 的 HTTPS 隧道 | 改用 **GitHub Git Data API** 构造 tree/commit/ref 完成推送，效果等价 |
+| 9 | ~~`git push` 报 `CONNECT tunnel failed, response 502`，直连也不通~~ → **已作废** | 当时沙箱本地代理（`127.0.0.1:8276`）拦截 git 的 HTTPS 隧道 | 当时改用 **GitHub Git Data API** 完成推送。**2026-09-15 复测：代理已换成 `127.0.0.1:3386`，git 链路已打通**，`git push` 可直接使用（见 5.2 ④） |
 | 10 | 推送脚本读不到中文工程路径 | 环境变量传递中文路径时被截断 | 改为把路径写进 UTF-8 配置文件、脚本从文件读取 |
 | 11 | Spring 服务启动时报 `APPLICATION FAILED`，但日志被 PowerShell 参数拆分破坏 | `-Dfile.encoding=UTF-8` 未加引号被 PowerShell 拆成两个参数 | 启动参数加引号：`"-Dfile.encoding=UTF-8"` |
 | 12 | MySQL 启动报 `Can't open shared library 'D:\lib\plugin\component_reference_cache.dll'` | **后台执行的 PowerShell 命令会被写入临时脚本文件，中文按 ANSI 解析而被截断**，`--basedir=D:\智能体项目\...` 变成 `--basedir=D:\` | 把 MySQL 放到纯 ASCII 目录 `D:\duoduo-infra`；后台命令里不出现中文 |
@@ -715,12 +724,42 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
   脚本会自动等就绪并打印访问地址。
 - **是否需要协助**：**不需要**（已脚本化）。
 
-#### ④ 沙箱内 `git push` 不可用（已规避，但需你知晓）
+#### ④ GitHub 推送：链路已恢复，只差一次登录授权（**需要你操作一次**）
 
-- **现象**：本地代理拦截 git 的 HTTPS 隧道，`git push` 必失败。
-- **影响**：**远端提交的 SHA 与本地不一致**——因为远端提交对象是通过 API 重建的，
-  内容完全相同，但对象哈希不同。克隆远端仓库不受影响。
-- **是否需要协助**：**不需要**（仅需知晓这一差异，避免以后对比 SHA 时困惑）。
+**复测结论（2026-09-15）**：先前拦路的旧代理（`127.0.0.1:8276`）已不复存在，
+当前代理为 `127.0.0.1:3386`，**git 的 HTTPS 链路已打通**：
+
+| 复测项 | 结果 | 含义 |
+|---|---|---|
+| `git ls-remote https://github.com/git/git.git HEAD`（公开仓库、免凭据） | **exit 0**，返回 SHA | git 传输层可用 |
+| 目标仓库带**占位**凭据请求 `info/refs` | **HTTP 401** | 服务端收到了凭据并拒绝 → **链路通、只差有效凭据**；若是 502/000 才说明仍被拦 |
+| `https://github.com` | **200** | 站点可达 |
+
+所以现在**不再需要绕道 GitHub Git Data API**，直接 `git push` 即可。
+
+**唯一缺的东西是「凭据」**：本机 git 为 `D:\devsoft\Git\cmd\git.exe`（2.55.0），
+系统级已配置 `credential.helper=manager`，Git Credential Manager 位于
+`D:\devsoft\Git\mingw64\bin\git-credential-manager.exe`，但 **Windows 凭据管理器里没有任何 GitHub 凭据**
+（仅有一条 `git:https://100.wunding.com:1443`，是前公司私服的残留）。
+
+**你需要做的**：在**自己的** PowerShell 窗口执行一条命令，弹出 GitHub 登录窗口后登录一次：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1"
+```
+
+- 登录一次后凭据写入 Windows 凭据管理器；因沙箱与你的终端是**同一个 Windows 用户**，
+  **此后助手也能直接 `git push`**，不需要再交换 Token。详见第 6 章第 3 项。
+
+**为什么必须 `--force`**：远端 main 上的提交是早期用 Git Data API 逐次生成的
+（内容取自本地工作区，但提交对象由 API 重建），本地提交是 `git commit` 生成的，
+**两者是互不相干的两套历史**——普通 push 会被判定为非快进而拒绝。
+内容不会丢：每一轮推送的源都是本地工作区，且脚本在 push 前会先 fetch 远端、
+逐个比对文件路径，确认「远端没有任何本地没有的文件」后才继续。
+
+**是否需要协助**：**需要你执行一次登录**（我无法代你在浏览器里授权）。
+
+**配套操作指引**：`恢复-GitHub-推送-操作指引.md`（含脚本实跑输出、常见报错对照表、Node 仓库统一方法）。
 
 #### ⑤ MySQL 必须装在纯 ASCII 目录（已规避，但需你知晓）
 
@@ -737,19 +776,20 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
 ## 6. 需要你协助的事项汇总（可勾选）
 
 > 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通并验证；
-> **Docker Desktop 也已装好并验证可用**（重试第 6 次成功，引擎与 compose 均正常）。
-> 真正需要你出手的只剩「GitHub 推送」和两个方案确认。
+> **Docker Desktop 也已装好并验证可用**（重试第 6 次成功，引擎与 compose 均正常）；
+> **GitHub 推送链路也已恢复**，只剩「登录授权一次」这个动作。
+> 真正需要你出手的是：一次 GitHub 登录 + 两个方案确认。
 
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
 | 2 | ~~Docker Desktop 安装~~ | ✅ **已完成**：`scripts\install-docker-desktop.ps1` 第 6 次重试成功；`docker version` 验证 Server（Docker Desktop 4.90.0）与引擎（29.7.2）正常响应，`docker compose v5.5.1` 可用。详见 5.2 ① | — |
-| 3 | **恢复 GitHub 推送能力** | Token 已撤销 → API 返回 401；GitHub 连接器对两个私有仓库返回 404（未授权）。二选一：<br>① 给一个新 PAT（写到 `%USERPROFILE%\.workbuddy\gh-token.txt`，我读完即用、用完即删）；<br>② 在连接器管理页给 GitHub 授权 `duoduo-pet-mall-java` 仓库 | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
+| 3 | **恢复 GitHub 推送能力** | 链路已通，只差凭据。**推荐**：在你自己终端跑一次<br>`powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1"`<br>→ 弹出 GitHub 登录窗口，用 `1694798740` 登录一次即可（此后助手也能直接推）。<br>备选：给新 PAT 写入 `%USERPROFILE%\.workbuddy\gh-token.txt`（读完即用、用完即删）。<br>连接器方案不可行（对私有仓库返回 404）。详见 5.2 ④ | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
 | 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
 | 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |
 
-**关于第 3 项**：本地仓库是完整的 —— 11 个提交 / 87 个文件，工作区干净（`git status` 无输出）。
-只有「远端同步」停在上一次可用的令牌时刻。恢复推送后可以一次性补齐，不会丢东西。
+**关于第 3 项**：本地仓库是完整的 —— **15 个提交 / 89 个文件**，工作区干净（`git status` 无输出）；
+只有「远端同步」停在上一次可用的令牌时刻，恢复推送后可以一次性补齐，不会丢东西。
 
 **关于第 4、5 项**：这两项是产品侧决策，我按默认假设推进（前端复用 Node 版页面、范围按 P1-b），
 如果判断不同再告诉我调整即可。
@@ -780,7 +820,8 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
 
 > 每一步的中间件形态都在第 4.5 章，配套脚本在 `scripts/` 下：
 > `start-infra.ps1`（MySQL + Redis）、`start-local.ps1 [-Mysql]`（三进程）、`smoke.ps1`（54 项冒烟）、
-> `stop-local.ps1` / `stop-infra.ps1`、`check-docker-prereq.ps1`（Docker 前置检查，留档备用）。
+> `stop-local.ps1` / `stop-infra.ps1`、`install-docker-desktop.ps1`（Docker 安装/修复）、
+> `check-docker-prereq.ps1`（Docker 前置检查）、`push-to-github.ps1`（推送并校验）。
 
 ---
 
@@ -809,6 +850,10 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
   GET /api/products/1001       → SKU 2 个 / 食品=True / 适用物种=cat / 过敏原=鸡肉,谷物
   GET /api/listings            → 可见 8 件（种子 10 件：1 件待审、1 件驳回不可见）
 
-代码   本地 git：9 个提交 / 87 个文件，工作区干净
-       远端 GitHub：已推送至 ec9fc13（此后因令牌撤销而暂停，见第 6 章第 3 项）
+代码   本地 git：15 个提交 / 89 个文件，工作区干净（HEAD = 982b2ec）
+       远端 GitHub：最后一次成功同步停在 ec9fc13（API 方式），此后因令牌撤销暂停
+配 置  git 链路复测（2026-09-15）：公开仓库 ls-remote exit 0；目标仓库带占位凭据返回 HTTP 401
+       代理 = 127.0.0.1:3386（旧代理 8276 已不存在，它是当时 502 的原因）
+       凭据：系统级 credential.helper=manager，GCM 位于 D:\devsoft\Git\mingw64\bin
+              Windows 凭据管理器中无任何 GitHub 凭据 → 需登录一次
 ```
