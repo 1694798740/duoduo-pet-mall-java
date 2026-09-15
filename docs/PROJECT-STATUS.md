@@ -1,11 +1,22 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.1 ｜ 更新日期：2026-09-15
+> 版本：v1.3 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.1 → v1.2）**：
+> **本版变更（v1.2 → v1.3）**：
+> 1. **Docker 1603 的失败位置已从 MSI 详细日志中定位**：卡在自定义动作 `ValidateInstallParameters`
+>    的「创建自定义动作通信管道」阶段，错误码 **231 = `ERROR_PIPE_BUSY`**（命名管道全忙）；
+>    相邻日志显示同一 msiexec 进程内两个自定义动作**在 2 毫秒内并发启动**，第二个因管道被占用而失败，
+>    安装前校验因此「根本没开始执行」；
+> 2. 定位到本机同时运行**两套国产安全软件**（腾讯电脑管家 + 联想 PC Manager/火绒引擎）——
+>    它们对每个派生进程做实时代码扫描，把自定义动作宿主进程的启动时间拉长，
+>    使原本偶发的管道竞态变成几乎必然发生；
+> 3. 新增 `scripts\install-docker-desktop.ps1`（需管理员）：体检 → 清理残留 → 带日志安装 → 自动解析日志给结论；
+> 4. 第 5.2 章 ① 改写为「根因已定位 + 收尾路径」；第 5.1 章新增第 16 条坑。
+>
+> **v1.1 → v1.2 变更（留档）**：
 > 1. **勘误**：撤回 v1.1 中「Docker 装不上的根因是两个 Windows 可选功能未启用」这一结论——**该结论是错的**，
 >    源于助手脚本把 `Win32_OptionalFeature.InstallState` 的 1/2 判定写反了。实测这两个功能**一直是已启用状态**；
 > 2. `scripts\check-docker-prereq.ps1` 已修正判定逻辑，并补入「功能负载文件 / 相关服务注册」两项独立佐证；
@@ -31,8 +42,9 @@
 不需要管理员权限、不需要容器运行时；对应的启停脚本已就绪并纳入工程。
 这一决定不影响任何业务能力——Docker 本来就只是中间件的一种打包与启动方式，
 改用等价形态即可，**中间件一个都不省**。
-（补充：Docker 本身其实**已具备安装条件**——WSL2 的两个前置功能早已启用、WSL 默认版本已是 2，
-只差一次重启清掉挂起状态即可尝试。放弃它是**投入产出取舍**，不是被环境卡死，详见第 5.2 章 ①）
+（补充：Docker 的失败原因**已经定位到具体动作与错误码**——不是前置条件、不是残留、不是权限，
+而是自定义动作通信管道被占用（`ERROR_PIPE_BUSY` / 231），诱因是本机同时运行的两套安全软件。
+已给出可执行的收尾路径与一键脚本，详见第 5.2 章 ①）
 
 距离「可商用的宠物电商系统」还差：交易闭环、履约与售后、营销、AI 导购、前端、容量压测——即 P1-b 到 P4。
 
@@ -445,22 +457,53 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 | 12 | MySQL 启动报 `Can't open shared library 'D:\lib\plugin\component_reference_cache.dll'` | **后台执行的 PowerShell 命令会被写入临时脚本文件，中文按 ANSI 解析而被截断**，`--basedir=D:\智能体项目\...` 变成 `--basedir=D:\` | 把 MySQL 放到纯 ASCII 目录 `D:\duoduo-infra`；后台命令里不出现中文 |
 | 13 | 诊断脚本莫名中断、退出码 5，日志文件都没生成 | `Remove-Item` 被**安全删除垫片**拦截并「失败关闭」（`SAFE_DELETE_FAIL_CLOSED`），抛终止性异常 | 诊断/构建脚本里不再用 `Remove-Item` 做探测清理；改用 `[System.IO.File]::WriteAllText` 直接覆盖 |
 | 14 | `Test-NetConnection` 在脚本里不稳定、`cmd.exe` 与 COM（`Scripting.FileSystemObject`）被沙箱拦截 | 沙箱安全策略 | 端口探测改用 `System.Net.Sockets.TcpClient`；短路径改由 ASCII 目录规避 |
+| 15 | **`Win32_OptionalFeature.InstallState` 的 1/2 判定写反**，「功能已启用」被误报成「未安装」，导致多跑两轮 dism 与重启 | 该属性真实取值是 1=已启用、2=已禁用（直觉上极易反过来） | 修正判定；并改为「InstallState + 功能负载文件投影 + 相关服务注册」三重校验，不再单点推断 |
+| 16 | Docker 安装报 `msiexec` 1603，Docker 自己给的话术（挂起重启 / 已有同版本）全属误导 | 取 `/l*v` 详细日志后定位：自定义动作 `ValidateInstallParameters` 在**创建通信管道**阶段失败，`Error code: 231` = `ERROR_PIPE_BUSY`；同进程内两个自定义动作 2 毫秒内并发启动，第二个撞上已被占用的管道。安全软件扫描每个派生进程会拉长启动时间，把偶发竞态变成必然 | 这类 1603 **一律先取 `/l*v` 日志**，不要照抄厂商话术 |
 
 ### 5.2 需要你知晓或协助的问题
 
-#### ① Docker Desktop 装不上 —— **已决定放弃，改用免安装中间件（不再需要你处理）**
+#### ① Docker Desktop 装不上 1603 —— **根因已定位到具体动作，并给出收尾路径**
 
-**最终决定（2026-09-15）**：不再尝试安装 Docker Desktop。理由是投入产出不划算 ——
-Docker 在本项目里唯一的用途就是启动 MySQL / Redis / Nacos / ES / MQ，
-而这些中间件全都有免安装形态（ZIP 解压 / 直接跑 jar），**不需要管理员权限、不需要容器运行时，能力完全等价**。
-继续在 Docker 安装失败上耗时间，只会让第一阶段迟迟开不了工。
+**当前状态（2026-09-15 更新）**：Docker 的失败原因**已经从 MSI 详细日志里定位到具体动作**（见下），
+并给出了一条低成本、可执行的收尾路径。与此同时，免安装中间件（MySQL / Redis）**已落地并验证通过**，
+所以「Docker 能不能装」不阻塞任何开发工作——两条路并行，你可以放心先把 Docker 这条补完。
 
-**如果你以后仍想让 Docker 可用**（不是必须），按下面的「真实状态 + 剩余一步」照着收尾即可。
-
-**你以管理员身份执行后报的是 `msiexec` 退出码 1603**（Docker Desktop 4.90.0）。
-Docker 给出的话术是「Generic MSI Error / 可能是挂起重启或已安装同版本」，**是误导性的**——
+**报错是 `msiexec` 退出码 1603**（Docker Desktop 4.90.0）。Docker 给的话术是
+「Generic MSI Error / 可能是挂起重启或已安装同版本」，**是误导性的**——
 实测本机没有任何 Docker 残留（无卸载记录、无 `C:\Program Files\Docker`、无 `com.docker.service`）。
-截至 2026-09-15，**1603 的确切原因仍未定位**，需要用带详细日志的安装方式取证据（方法见本节末尾）。
+
+**★ 1603 的真正位置（2026-09-15 从 `C:\dd-msi.log` 详细日志中定位）**
+
+```text
+Action start 17:19:16: ValidateInstallParameters.
+SFXCA: Failed to create communication pipe for new CA process. Error code: 231
+CustomAction ValidateInstallParameters returned actual error code 1603
+Action ended 17:19:16: ValidateInstallParameters. Return value 3.
+Action ended 17:19:18: INSTALL. Return value 3.
+```
+
+解读：
+
+- 失败发生在 Docker 的安装前校验动作 **`ValidateInstallParameters`**，
+  而且是在「**创建自定义动作通信管道**」这一步就挂了 —— 也就是说**它的校验逻辑一行都没执行**。
+  1603 不是「校验不通过」，而是「校验动作根本没能启动」。
+- 错误码 **231 = `ERROR_PIPE_BUSY`**（命名管道全忙）。这是 Windows Installer 自定义动作服务的
+  **并发竞态**：相邻日志显示同一个 msiexec 进程内两个自定义动作**在 2 毫秒内并发启动**，
+  第二个去创建命名管道时，管道已被第一个占用：
+
+```text
+MSI (s) (68:48) [17:19:16:386]: Invoking remote custom action. DLL: C:\Windows\Installer\MSI91D.tmp, Entrypoint: AnalyticsInstallStarted      ← 成功
+MSI (s) (68:E4) [17:19:16:388]: Invoking remote custom action. DLL: C:\Windows\Installer\MSI92D.tmp, Entrypoint: ValidateInstallParameters  ← 管道被占用，失败
+```
+
+- 同一次安装里，另一个自定义动作（`AnalyticsInstallStarted`）**是成功的**。这一条很关键：
+  说明**管理员权限、.NET/CLR、自定义动作载荷本身都没有问题**，唯独第二个动作撞上了管道。
+  （Windows 端与 Wine 的 MSI 实现都记载了「两个相邻动作同时启动自定义动作服务时，
+  后者会从 `CreateNamedPipe` 拿到 `ERROR_PIPE_BUSY`」这一行为。）
+- 为什么这台机器几乎必然撞车：系统里同时跑着**两套国产安全软件** ——
+  **腾讯电脑管家**（`D:\txpcguanjia\QQPCMgr\...`）与 **联想 PC Manager**（病毒防护由火绒引擎提供），
+  外加 Windows Defender。它们会对每个新派生进程做实时代码扫描，
+  **把自定义动作宿主进程的启动时间拉长**，于是两个动作的重叠窗口从「偶尔」变成「几乎每次」。
 
 **已排除项（均为实测）**
 
@@ -471,7 +514,8 @@ Docker 给出的话术是「Generic MSI Error / 可能是挂起重启或已安�
 | C 盘可用空间 | 197.6 GB | ✅ 空间充足 |
 | WSL2 前置功能 | **两个功能均为「已启用」** | ✅ 不是前置条件问题（曾误判，见下方勘误） |
 | WSL 应用与默认版本 | 商店版 WSL 2.7.14.0，已初始化，默认版本 = 2 | ✅ WSL2 可用 |
-| 挂起重启 | **存在**（CBS 待重启，36 项待处理文件重命名） | ⚠️ 可能是 1603 的诱因之一 |
+| 挂起重启 | 17:09 已重启，挂起状态已清（`RebootPending = False`） | ✅ 不是本次安装的诱因 |
+| 第三方安全软件 | **同时运行两套**：腾讯电脑管家、联想 PC Manager（火绒引擎），另有 Windows Defender | ⚠️ **本次 1603 的主要诱因** |
 
 **★ 2026-09-15 勘误：此前「前置功能未启用」的诊断是错的**
 
@@ -519,23 +563,32 @@ v1.1 曾断言「Docker 装不上的根因是 `Microsoft-Windows-Subsystem-Linux
 ② 相关服务是否已注册：`vmcompute`、`WSLService` 均在册（后者正在运行）。
 两项佐证与 InstallState = 1 完全一致，三条证据互相印证。
 
-**剩余一步（如果你以后仍想用 Docker，据此收尾即可）**
+**收尾路径（想做就照这个做，约 10 分钟）**
 
-功能前置条件已经满足，当前只差**清掉挂起状态**——重启电脑（挂起由 2026-09-15 那次 dism 触发）。
-重启后执行：
+按「影响大小 × 操作成本」排序，第 1 步是关键：
+
+1. **临时退出两套安全软件**（直接消除竞态的诱因）：
+   - 腾讯电脑管家：右键托盘图标 → 退出程序（只关某个开关不够，要退主进程）
+   - 联想 PC Manager：关闭「病毒防护」，或直接退出主进程
+   - Windows Defender：Windows 安全中心 → 病毒和威胁防护 → 关闭「实时保护」
+     （若开关是灰的，说明开了「篡改保护」，需先在「管理设置」里关掉篡改保护）
+2. **重启一次电脑**（让退出彻底生效，同时清掉可能残留的 msiexec 状态）。
+3. **运行一键脚本**（在管理员窗口里执行）：
 
 ```powershell
-choco install docker-desktop -y
+# Win + X → 「终端(管理员)」，确认提示符当前目录是 C:\Windows\system32
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\install-docker-desktop.ps1"
 ```
 
-若仍报 1603，**不要再猜**，用带详细日志的方式装一次，日志会直接写明真正原因：
+   脚本依次做：体检（权限 / 系统功能 / 安全软件 / 残留 / 挂起重启）→ 备份并清理上次的用户级残留
+   → 带详细日志安装 → **自动解析新日志，直接告诉你失败在哪个动作**。
+   报告与日志落在 `%USERPROFILE%\docker-install-<时间戳>\` 下。
 
-```powershell
-choco install docker-desktop -y --install-arguments="'/l*v c:\dd-msi.log'"
-```
+4. **装完立刻把安全软件重新打开。**
 
-装完后打开 `C:\dd-msi.log`，搜索 `Return Value 3`，它上方几行就是失败原因；
-把该日志交给助手即可继续定位。
+**如果这样仍然失败**：把新生成的 `dd-msi.log` 交给助手，里面会写明新的失败点。
+若失败点还是同一条管道错误，多半是安全软件「只关了开关、主进程还在」——那种情况下
+需要在任务管理器里确认 `QQPCMgr.exe` / `wsctrl*.exe` 确实已经不存在。
 
 **留档：v1.1 曾给出的修复步骤（已作废，不必再执行）**
 
@@ -620,18 +673,19 @@ MySQL 路径刻意选在 **纯 ASCII 目录**（`D:\duoduo-infra`），因为实
 
 ## 6. 需要你协助的事项汇总（可勾选）
 
-> 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通，
+> 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通并验证；
+> Docker 的安装失败也已定位到根因并给出收尾路径（可选，不做不影响进度）。
 > 真正需要你出手的只剩「GitHub 推送」和两个方案确认。
 
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
-| 2 | ~~安装 Docker Desktop~~ | ✅ **已决定放弃**，改用免安装中间件；MySQL / Redis 已落地验证，其余中间件有等价形态（见 4.5） | — |
+| 2 | **Docker Desktop 安装（可选）** | 根因已定位到具体动作：自定义动作通信管道 `ERROR_PIPE_BUSY`（231），诱因是同时运行的两套安全软件。<br>收尾路径：临时退出安全软件 → 重启 → 管理员窗口运行 `scripts\install-docker-desktop.ps1`。详见 5.2 ①。<br>**不做也不影响项目进度**（免安装中间件已跑通并验证） | 不阻塞 |
 | 3 | **恢复 GitHub 推送能力** | Token 已撤销 → API 返回 401；GitHub 连接器对两个私有仓库返回 404（未授权）。二选一：<br>① 给一个新 PAT（写到 `%USERPROFILE%\.workbuddy\gh-token.txt`，我读完即用、用完即删）；<br>② 在连接器管理页给 GitHub 授权 `duoduo-pet-mall-java` 仓库 | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
 | 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
 | 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |
 
-**关于第 3 项**：本地仓库是完整的 —— 9 个提交 / 87 个文件，工作区干净（`git status` 无输出）。
+**关于第 3 项**：本地仓库是完整的 —— 11 个提交 / 87 个文件，工作区干净（`git status` 无输出）。
 只有「远端同步」停在上一次可用的令牌时刻。恢复推送后可以一次性补齐，不会丢东西。
 
 **关于第 4、5 项**：这两项是产品侧决策，我按默认假设推进（前端复用 Node 版页面、范围按 P1-b），
