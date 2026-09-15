@@ -1,11 +1,21 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.4 ｜ 更新日期：2026-09-15
+> 版本：v1.5 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.3 → v1.4）**：
+> **本版变更（v1.4 → v1.5）**：
+> 1. **Docker Desktop 已装好并验证可用**：安装脚本在**第 6 次重试**成功（前 5 次退出码 1603，
+>    第 6 次退出码 0）；`docker version` 显示 Server = Docker Desktop 4.90.0、引擎 29.7.2 正常响应；
+>    `docker compose v5.5.1` 可用；
+> 2. 新增安装过程的关键证据：成功那一轮 `ValidateInstallParameters` 返回 **`Return value 1`**，
+>    证实 v1.4 的 tick 竞态模型（前几轮该动作在「创建通信管道」阶段就失败）；
+> 3. 工程 `docker-compose.yml` 已通过 `docker compose config` 校验（exit 0），
+>    此前文档里「已写好但从未验证过」的说法作废；
+> 4. 第 5.2 章 ① 状态改为「已解决」，第 6 章协助事项表的 Docker 项标记完成。
+>
+> **v1.3 → v1.4 变更（留档）**：
 > 1. **撤回 v1.3 的「安全软件是诱因」结论**（该结论已被实测否证：关闭 Defender 实时保护后现象完全一致；
 >    且本机并没有国产安全软件的内核驱动 `sysdiag` / `TesSafe` 等）；
 > 2. **拿到源码级根因**：报错出自 WiX DTF 的 `SfxCA.cpp` —— 自定义动作通信管道名 =
@@ -54,9 +64,8 @@
 不需要管理员权限、不需要容器运行时；对应的启停脚本已就绪并纳入工程。
 这一决定不影响任何业务能力——Docker 本来就只是中间件的一种打包与启动方式，
 改用等价形态即可，**中间件一个都不省**。
-（补充：Docker 的失败原因已**定位到源码级**——不是前置条件、不是残留、不是权限、不是杀毒软件，
-而是安装包自身「按 tick 碰撞」的竞态：通信管道名取自 `GetTickCount()`，两个自定义动作相隔
-1 毫秒启动而撞名，第二个动作拿到 `ERROR_PIPE_BUSY(231)`。对策是反复重试，详见第 5.2 章 ①）
+（补充：**Docker Desktop 已装好并验证可用** —— 失败原因定位到源码级后按竞态处理，
+重试第 6 次成功；`docker version` 显示 Server = Docker Desktop 4.90.0、引擎 29.7.2 正常响应。详见第 5.2 章 ①）
 
 距离「可商用的宠物电商系统」还差：交易闭环、履约与售后、营销、AI 导购、前端、容量压测——即 P1-b 到 P4。
 
@@ -443,7 +452,7 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 |---|---|---|
 | CI | Java 版**无** CI；Node 版有 GitHub Actions | 加 GitHub Actions：`mvn -B verify` + 冒烟脚本 |
 | 接口文档 | 只有 README 表格 | 引入 springdoc-openapi / Knife4j（版本已在父 POM 声明），自动生成在线文档 |
-| 容器化 | 有 `Dockerfile` / `docker-compose.yml` 但未验证 | 装好 Docker 后逐个构建镜像并实跑 |
+| 容器化 | Docker 已装好可用；`docker-compose.yml` 已通过 `docker compose config` 校验（exit 0）；镜像尚未构建实跑 | 逐个 `docker build` 并实跑（`Dockerfile` 已写好待验证） |
 | 配置中心 | 未接 Nacos Config | 密钥、开关、限流阈值迁到 Nacos，支持不停机调整 |
 | 幂等 | 交易域尚未实现 | 所有写接口接受 `Idempotency-Key`，落唯一索引 |
 
@@ -474,11 +483,26 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 
 ### 5.2 需要你知晓或协助的问题
 
-#### ① Docker Desktop 装不上 1603 —— **根因已定位到具体动作，并给出收尾路径**
+#### ① Docker Desktop 装不上 1603 —— **✅ 已解决（重试第 6 次成功，引擎已验证可用）**
 
-**当前状态（2026-09-15 更新）**：Docker 的失败原因**已经从 MSI 详细日志里定位到具体动作**（见下），
-并给出了一条低成本、可执行的收尾路径。与此同时，免安装中间件（MySQL / Redis）**已落地并验证通过**，
-所以「Docker 能不能装」不阻塞任何开发工作——两条路并行，你可以放心先把 Docker 这条补完。
+**当前状态（2026-09-15 18:20 更新）：已装好并验证可用。**
+
+- 安装脚本在**第 6 次重试**成功（前 5 次退出码 1603，第 6 次退出码 0、耗时 29.3 秒）
+- 日志证据：成功那一轮的 `ValidateInstallParameters` 返回 **`Return value 1`**（真正跑通并通过校验），
+  最终 `MainEngineThread is returning 0`
+- `docker version`：Server = **Docker Desktop 4.90.0 (238679)**，引擎 **29.7.2**（linux/amd64），
+  containerd v2.3.3、runc 1.4.3
+- `docker info`：驱动 `overlayfs`、16 核 / 15.4 GiB；`docker compose v5.5.1` 可用
+- **容器端到端验证通过**：`docker run --rm hello-world` → 退出码 0，镜像从 Docker Hub 成功拉取
+  （10.4 秒）并运行输出 `Hello from Docker!` → **说明引擎、镜像仓库、容器运行时三者全通**
+  （这也意味着后面拉 mysql / nacos 镜像不会有网络障碍）
+- 工程 `docker-compose.yml` 已通过 `docker compose config` 校验（exit 0）
+
+> 小提醒：若在**安装之前就已打开**的终端窗口里敲 `docker` 报「找不到命令」或
+> `docker-credential-desktop ... not found`，那是该窗口的 `PATH` 是旧的 ——
+> Docker 的 bin 目录已写入**系统 PATH**，**开一个新终端**即可。
+
+下面保留完整的根因分析与脚本用法，供以后重装或换机参考。
 
 **报错是 `msiexec` 退出码 1603**（Docker Desktop 4.90.0）。Docker 给的话术是
 「Generic MSI Error / 可能是挂起重启或已安装同版本」，**是误导性的**——
@@ -661,8 +685,15 @@ MySQL 路径刻意选在 **纯 ASCII 目录**（`D:\duoduo-infra`），因为实
 连接池日志确认 `duoduo-user-mysql-pool / duoduo-product-mysql-pool - Added connection com.mysql.cj.jdbc.ConnectionImpl`，
 端到端冒烟 **54 项全部通过**（与 H2 模式结果一致）。
 
-**Nacos 仍未接入**：它没有好用的免安装形态且启动较重，因此目前用 `local` 档的网关静态路由替代。
-需要验证服务注册发现时再装 Docker 或单独跑 Nacos ZIP（Nacos 2.x 支持 `startup.cmd -m standalone`，同样不需要 Docker）。
+**Nacos 仍未接入**：目前用 `local` 档的网关静态路由替代。
+现在 Docker 已就绪，可直接用 `docker-compose.yml` 里已定义好的 `nacos/nacos-server:v2.3.2` 起容器：
+
+```powershell
+docker compose -f docker-compose.yml up -d mysql redis nacos
+```
+
+⚠️ 注意端口冲突：compose 里的 `mysql`/`redis` 与本机那两个免安装进程占同一对端口（3306 / 6379），
+**两者只能选其一**，不要同时起。
 
 #### ② 撤销已泄露的 GitHub Token —— **已完成，无需再处理**
 
@@ -706,13 +737,13 @@ MySQL 路径刻意选在 **纯 ASCII 目录**（`D:\duoduo-infra`），因为实
 ## 6. 需要你协助的事项汇总（可勾选）
 
 > 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通并验证；
-> Docker 的安装失败也已定位到根因并给出收尾路径（可选，不做不影响进度）。
+> **Docker Desktop 也已装好并验证可用**（重试第 6 次成功，引擎与 compose 均正常）。
 > 真正需要你出手的只剩「GitHub 推送」和两个方案确认。
 
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
-| 2 | **Docker Desktop 安装（可选）** | 根因已定位到源码级：安装包自身的 tick 碰撞竞态（通信管道名取自 `GetTickCount()`，两个自定义动作相隔 1 毫秒撞名 → `ERROR_PIPE_BUSY(231)`）。<br>对策：管理员窗口运行 `scripts\install-docker-desktop.ps1`（用本地 MSI 自动重试，默认 60 次，不联网）。详见 5.2 ①。<br>**不做也不影响项目进度**（免安装中间件已跑通并验证） | 不阻塞 |
+| 2 | ~~Docker Desktop 安装~~ | ✅ **已完成**：`scripts\install-docker-desktop.ps1` 第 6 次重试成功；`docker version` 验证 Server（Docker Desktop 4.90.0）与引擎（29.7.2）正常响应，`docker compose v5.5.1` 可用。详见 5.2 ① | — |
 | 3 | **恢复 GitHub 推送能力** | Token 已撤销 → API 返回 401；GitHub 连接器对两个私有仓库返回 404（未授权）。二选一：<br>① 给一个新 PAT（写到 `%USERPROFILE%\.workbuddy\gh-token.txt`，我读完即用、用完即删）；<br>② 在连接器管理页给 GitHub 授权 `duoduo-pet-mall-java` 仓库 | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
 | 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
 | 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |
