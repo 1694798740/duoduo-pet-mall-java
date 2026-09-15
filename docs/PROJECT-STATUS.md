@@ -430,7 +430,72 @@ Node 原型有 17 个页面的 React 实现，可以直接移植。
 Windows 11 **家庭版没有 Hyper-V**，Docker Desktop 只能走 WSL2 后端；
 而 WSL 与虚拟化平台两个功能都没启用 → Docker 安装器自检失败 → 返回 1603。
 
-**修复步骤（需要管理员权限 + 一次重启）**
+**★ 2026-09-15 复查：执行修复后仍报 1603，原因已查明**
+
+你按步骤执行了 `wsl --install --no-distribution` 并重启，再装 Docker 仍报 1603。复查结果：
+
+| 检查项 | 复查结果 | 含义 |
+|---|---|---|
+| 商店版 WSL 应用 | ✅ **已装**，版本 2.7.14.0（`C:\Program Files\WSL`） | `wsl --install` 的**应用安装部分生效了** |
+| `Lxss` 注册表项 | ✅ 已创建 | WSL 已初始化 |
+| **`Microsoft-Windows-Subsystem-Linux`** | ❌ **仍未安装** | **dism 启用功能的部分没生效** |
+| **`VirtualMachinePlatform`** | ❌ **仍未安装** | 同上 |
+| 挂起重启 | ✅ 无 | 重启是做了的 |
+| Docker 残留 | ✅ 无 | 与残留无关 |
+
+**为什么会这样**：`wsl --install` 做两件事——① 安装 WSL 应用（**普通权限即可**），
+② 用 dism 启用那两个 Windows 可选功能（**必须管理员权限**）。
+第 ① 步成功了、第 ② 步没有生效，说明**那次窗口没有取得管理员权限**。
+
+**怎么判断窗口是不是管理员**：看提示符当前目录即可——
+
+| 提示符 | 是否提权 |
+|---|---|
+| `PS C:\Windows\system32>` | ✅ 已提权（管理员窗口默认目录） |
+| `PS C:\Users\16947>` | ❌ **未提权**（普通窗口默认目录） |
+
+你这次贴的输出里正是 `PS C:\Users\16947>`，而第一次是 `PS C:\Windows\system32>` —— 第二次换了窗口，且没有提权。
+
+**为了不再靠肉眼判断，已加了一个检查脚本**（只读，不需要管理员权限）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-docker-prereq.ps1
+```
+
+它会逐项核对并直接给出「还差哪几项 / 下一步粘贴什么」。本机当前实跑输出：
+
+```
+> WSL2 依赖的 Windows 功能（关键项）
+  [不满足] 虚拟机平台（VirtualMachinePlatform）：未安装
+  [不满足] WSL 子系统（Microsoft-Windows-Subsystem-Linux）：未安装
+> WSL 应用本体
+  [通过] 商店版 WSL 已安装，版本 2.7.14.0（C:\Program Files\WSL）
+=== 结论 ===
+  还差 2 项：VirtualMachinePlatform、Microsoft-Windows-Subsystem-Linux
+```
+
+**修复步骤（需要真正的管理员权限 + 一次重启）**
+
+Win+X → 选「**终端(管理员)**」或「Windows PowerShell(管理员)」，
+**确认提示符是 `C:\Windows\system32`** 后再执行下面两条（建议整段粘贴）：
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+两条都应输出「**操作成功完成**」。若出现「需要提升权限」类提示，说明窗口仍不是管理员。
+**然后重启电脑**（这一步不能跳），重启后再执行：
+
+```powershell
+wsl --update
+wsl --set-default-version 2
+choco install docker-desktop -y
+```
+
+重启后可以先跑一次 `scripts\check-docker-prereq.ps1` 确认两项都变成「已安装」，再装 Docker。
+
+**原始修复步骤（供参考，与上面等价）**
 
 ```powershell
 # 1) 以管理员身份打开 PowerShell，一条命令装齐 WSL 与虚拟化平台
@@ -448,7 +513,8 @@ wsl --set-default-version 2
 choco install docker-desktop -y
 ```
 
-**是否需要协助**：**不再需要**。原因见下——我已经用**免 Docker 方案**把真实基础设施搭起来了。
+**是否需要协助**：**需要你执行一次**（管理员窗口跑两条 dism + 重启），但**不阻塞开发**——
+我已经用**免 Docker 方案**把真实基础设施搭起来了，见下。
 
 #### ①-b 免 Docker 方案已落地（真实 MySQL + Redis，不需要管理员权限）
 
@@ -513,7 +579,7 @@ MySQL 路径刻意选在 **纯 ASCII 目录**（`D:\duoduo-infra`），因为实
 | 2 | ~~安装 Docker Desktop~~ | **已无需**：真实 MySQL + Redis 已用免安装方式落地并验证通过 | **不阻塞** |
 | 3 | 确认前端方案 | 复用 Node 版 17 个页面（工作量小）／ 重新设计（工作量大） | 阻塞前端开工 |
 | 4 | 确认下一阶段范围 | 默认按 P1-b 交易服务推进 | 不阻塞，默认可开工 |
-| 5 | （可选）装 WSL2 让 Docker 可用 | 管理员 PowerShell：`wsl --install --no-distribution` → 重启 → `choco install docker-desktop -y` | 不阻塞，仅在未来需要 Nacos / ES / RocketMQ 时有用 |
+| 5 | （可选）装 WSL2 让 Docker 可用 | ① 先跑 `scripts\check-docker-prereq.ps1` 看还差什么；② 在**管理员**窗口（提示符须为 `C:\Windows\system32`）执行两条 `dism` 启用 WSL 子系统与虚拟机平台；③ **重启**；④ 跑 `wsl --update` + `wsl --set-default-version 2`；⑤ `choco install docker-desktop -y` | 不阻塞，仅在未来需要 Nacos / ES / RocketMQ 时有用 |
 
 ---
 
