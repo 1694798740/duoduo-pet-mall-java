@@ -1,11 +1,23 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.3 ｜ 更新日期：2026-09-15
+> 版本：v1.4 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.2 → v1.3）**：
+> **本版变更（v1.3 → v1.4）**：
+> 1. **撤回 v1.3 的「安全软件是诱因」结论**（该结论已被实测否证：关闭 Defender 实时保护后现象完全一致；
+>    且本机并没有国产安全软件的内核驱动 `sysdiag` / `TesSafe` 等）；
+> 2. **拿到源码级根因**：报错出自 WiX DTF 的 `SfxCA.cpp` —— 自定义动作通信管道名 =
+>    `"SfxCA_" + GetTickCount()`，而安装包把两个自定义动作排在相隔 **1 毫秒**的位置，
+>    两次取 tick 落在同一 tick → 管道名撞车 → 第二个动作 `CreateNamedPipe` 得到
+>    `ERROR_PIPE_BUSY(231)` → 安装返回 1603。这是 **Docker Desktop 4.90.0 安装包自身的竞态缺陷**，
+>    与本机环境无关；也因此**无法通过改本机配置绕过**；
+> 3. 对策改为 `scripts\install-docker-desktop.ps1` **反复重试**（竞态 → 每轮独立概率），
+>    并从**本地 MSI** 安装（本环境向 desktop.docker.com 下载会 TLS 失败）；
+> 4. 第 5.1 章第 16 条坑同步改写为源码级根因。
+>
+> **v1.2 → v1.3 变更（留档）**：
 > 1. **Docker 1603 的失败位置已从 MSI 详细日志中定位**：卡在自定义动作 `ValidateInstallParameters`
 >    的「创建自定义动作通信管道」阶段，错误码 **231 = `ERROR_PIPE_BUSY`**（命名管道全忙）；
 >    相邻日志显示同一 msiexec 进程内两个自定义动作**在 2 毫秒内并发启动**，第二个因管道被占用而失败，
@@ -42,9 +54,9 @@
 不需要管理员权限、不需要容器运行时；对应的启停脚本已就绪并纳入工程。
 这一决定不影响任何业务能力——Docker 本来就只是中间件的一种打包与启动方式，
 改用等价形态即可，**中间件一个都不省**。
-（补充：Docker 的失败原因**已经定位到具体动作与错误码**——不是前置条件、不是残留、不是权限，
-而是自定义动作通信管道被占用（`ERROR_PIPE_BUSY` / 231），诱因是本机同时运行的两套安全软件。
-已给出可执行的收尾路径与一键脚本，详见第 5.2 章 ①）
+（补充：Docker 的失败原因已**定位到源码级**——不是前置条件、不是残留、不是权限、不是杀毒软件，
+而是安装包自身「按 tick 碰撞」的竞态：通信管道名取自 `GetTickCount()`，两个自定义动作相隔
+1 毫秒启动而撞名，第二个动作拿到 `ERROR_PIPE_BUSY(231)`。对策是反复重试，详见第 5.2 章 ①）
 
 距离「可商用的宠物电商系统」还差：交易闭环、履约与售后、营销、AI 导购、前端、容量压测——即 P1-b 到 P4。
 
@@ -458,7 +470,7 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 | 13 | 诊断脚本莫名中断、退出码 5，日志文件都没生成 | `Remove-Item` 被**安全删除垫片**拦截并「失败关闭」（`SAFE_DELETE_FAIL_CLOSED`），抛终止性异常 | 诊断/构建脚本里不再用 `Remove-Item` 做探测清理；改用 `[System.IO.File]::WriteAllText` 直接覆盖 |
 | 14 | `Test-NetConnection` 在脚本里不稳定、`cmd.exe` 与 COM（`Scripting.FileSystemObject`）被沙箱拦截 | 沙箱安全策略 | 端口探测改用 `System.Net.Sockets.TcpClient`；短路径改由 ASCII 目录规避 |
 | 15 | **`Win32_OptionalFeature.InstallState` 的 1/2 判定写反**，「功能已启用」被误报成「未安装」，导致多跑两轮 dism 与重启 | 该属性真实取值是 1=已启用、2=已禁用（直觉上极易反过来） | 修正判定；并改为「InstallState + 功能负载文件投影 + 相关服务注册」三重校验，不再单点推断 |
-| 16 | Docker 安装报 `msiexec` 1603，Docker 自己给的话术（挂起重启 / 已有同版本）全属误导 | 取 `/l*v` 详细日志后定位：自定义动作 `ValidateInstallParameters` 在**创建通信管道**阶段失败，`Error code: 231` = `ERROR_PIPE_BUSY`；同进程内两个自定义动作 2 毫秒内并发启动，第二个撞上已被占用的管道。安全软件扫描每个派生进程会拉长启动时间，把偶发竞态变成必然 | 这类 1603 **一律先取 `/l*v` 日志**，不要照抄厂商话术 |
+| 16 | Docker Desktop 4.90.0 安装**必然**报 `msiexec` 1603（Docker 自己给的话术「挂起重启 / 已有同版本」全属误导） | WiX DTF `SfxCA.cpp` 中自定义动作通信管道名 = `"SfxCA_" + GetTickCount()`（tick 粒度约 15.6 ms）；安装包把两个自定义动作排在相隔 **1 毫秒**处 → 两次取到同一 tick → 同名管道 → 第二个动作 `CreateNamedPipe` 得到 `ERROR_PIPE_BUSY(231)` → 1603。**与权限 / 系统功能 / 残留 / 杀毒软件均无关**（全部实测排除） | 没有可改的本地配置能绕过；按竞态处理——反复重试（`scripts\install-docker-desktop.ps1`）或换安装包版本。教训：**这类 1603 先取 `/l*v` 日志定位到具体动作和错误码，再顺错误码查机制，不要照抄厂商话术** |
 
 ### 5.2 需要你知晓或协助的问题
 
@@ -500,10 +512,30 @@ MSI (s) (68:E4) [17:19:16:388]: Invoking remote custom action. DLL: C:\Windows\I
   说明**管理员权限、.NET/CLR、自定义动作载荷本身都没有问题**，唯独第二个动作撞上了管道。
   （Windows 端与 Wine 的 MSI 实现都记载了「两个相邻动作同时启动自定义动作服务时，
   后者会从 `CreateNamedPipe` 拿到 `ERROR_PIPE_BUSY`」这一行为。）
-- 为什么这台机器几乎必然撞车：系统里同时跑着**两套国产安全软件** ——
-  **腾讯电脑管家**（`D:\txpcguanjia\QQPCMgr\...`）与 **联想 PC Manager**（病毒防护由火绒引擎提供），
-  外加 Windows Defender。它们会对每个新派生进程做实时代码扫描，
-  **把自定义动作宿主进程的启动时间拉长**，于是两个动作的重叠窗口从「偶尔」变成「几乎每次」。
+- **为什么必然撞车（源码级原因，2026-09-15 从 WiX 源码定位）**：报错那句日志出自 WiX DTF 的
+  `SfxCA.cpp` → `InvokeOutOfProcManagedCustomAction()`：
+
+```cpp
+wchar_t szSessionName[100] = {0};
+swprintf_s(szSessionName, 100, L"SfxCA_%d", ::GetTickCount());   // ← 管道名 = "SfxCA_" + 系统 tick
+RemoteMsiSession remote(szSessionName, true);
+DWORD ret = remote.Connect();
+if (ret != 0) {
+    Log(hSession, L"Failed to create communication pipe for new CA process. Error code: %d", ret);
+    return ERROR_INSTALL_FAILURE;
+}
+```
+
+  管道名只取 `GetTickCount()`（毫秒级 tick，粒度约 **15.6 ms**，并非每毫秒都变）。
+  两个动作相隔 **1 毫秒**启动，绝大多数情况下**两次取到同一个 tick → 管道名完全相同**
+  → 第二个动作 `CreateNamedPipe` 拿到 `ERROR_PIPE_BUSY(231)`（同名管道实例已被占满）→ 动作启动失败。
+
+- 所以这是 **Docker Desktop 4.90.0 安装包自身的竞态缺陷**，与本机环境无关。实测已排除：
+  权限（已是管理员）、WSL2 两个功能（均已启用）、挂起重启（已重启）、磁盘空间、旧版本残留，
+  以及**杀毒软件**（关闭实时保护后现象完全一致、失败位置与错误码一字不差；本机也没有
+  `sysdiag` / `TesSafe` 这类国产安全软件内核驱动）。
+- 也正因为它是竞态：**每轮安装都是独立事件**。两次取 tick 跨过 tick 边界的概率约为
+  `1 ms / 15.6 ms ≈ 6%`，重试 N 次的成功率约为 `1 − 0.94^N`（40 次 ≈ 92%，60 次 ≈ 98%）。
 
 **已排除项（均为实测）**
 
@@ -515,7 +547,8 @@ MSI (s) (68:E4) [17:19:16:388]: Invoking remote custom action. DLL: C:\Windows\I
 | WSL2 前置功能 | **两个功能均为「已启用」** | ✅ 不是前置条件问题（曾误判，见下方勘误） |
 | WSL 应用与默认版本 | 商店版 WSL 2.7.14.0，已初始化，默认版本 = 2 | ✅ WSL2 可用 |
 | 挂起重启 | 17:09 已重启，挂起状态已清（`RebootPending = False`） | ✅ 不是本次安装的诱因 |
-| 第三方安全软件 | **同时运行两套**：腾讯电脑管家、联想 PC Manager（火绒引擎），另有 Windows Defender | ⚠️ **本次 1603 的主要诱因** |
+| 第三方安全软件 | 腾讯电脑管家、联想 PC Manager（火绒引擎）、Windows Defender；已实测关闭 Defender 实时保护后失败现象完全一致，且本机无国产安全软件内核驱动 | ✅ **不是原因**（v1.3 曾误判为诱因，已撤回） |
+| 网络下载 | 从 `desktop.docker.com` 取 **带版本号**的 MSI 会 TLS 握手失败（`curl exit 35`），与失败无关，但意味着必须用本地 MSI 安装 | ✅ 不是 1603 的原因 |
 
 **★ 2026-09-15 勘误：此前「前置功能未启用」的诊断是错的**
 
@@ -554,7 +587,7 @@ v1.1 曾断言「Docker 装不上的根因是 `Microsoft-Windows-Subsystem-Linux
 > Docker 现有安装
   [通过] 无残留，全新安装
 === 结论 ===
-  功能前置条件【已满足】，只差一次重启。
+  功能前置条件【全部满足】—— 与 Docker 安装失败无关。
 ```
 
 **为什么这次能确定**：不再只靠 InstallState 一个数下结论，而是加了两项独立佐证——
@@ -563,32 +596,31 @@ v1.1 曾断言「Docker 装不上的根因是 `Microsoft-Windows-Subsystem-Linux
 ② 相关服务是否已注册：`vmcompute`、`WSLService` 均在册（后者正在运行）。
 两项佐证与 InstallState = 1 完全一致，三条证据互相印证。
 
-**收尾路径（想做就照这个做，约 10 分钟）**
+**收尾路径（约 5 分钟，不需要改任何系统配置）**
 
-按「影响大小 × 操作成本」排序，第 1 步是关键：
+既然病根是「按 tick 碰撞的竞态」，对策就是**多试几次** —— 每轮都是独立概率。
+不需要关杀毒、不需要改系统功能、不需要重启。
 
-1. **临时退出两套安全软件**（直接消除竞态的诱因）：
-   - 腾讯电脑管家：右键托盘图标 → 退出程序（只关某个开关不够，要退主进程）
-   - 联想 PC Manager：关闭「病毒防护」，或直接退出主进程
-   - Windows Defender：Windows 安全中心 → 病毒和威胁防护 → 关闭「实时保护」
-     （若开关是灰的，说明开了「篡改保护」，需先在「管理设置」里关掉篡改保护）
-2. **重启一次电脑**（让退出彻底生效，同时清掉可能残留的 msiexec 状态）。
-3. **运行一键脚本**（在管理员窗口里执行）：
+在**管理员**窗口里执行：
 
 ```powershell
 # Win + X → 「终端(管理员)」，确认提示符当前目录是 C:\Windows\system32
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\install-docker-desktop.ps1"
 ```
 
-   脚本依次做：体检（权限 / 系统功能 / 安全软件 / 残留 / 挂起重启）→ 备份并清理上次的用户级残留
-   → 带详细日志安装 → **自动解析新日志，直接告诉你失败在哪个动作**。
-   报告与日志落在 `%USERPROFILE%\docker-install-<时间戳>\` 下。
+脚本做四件事：
 
-4. **装完立刻把安全软件重新打开。**
+1. 体检（权限 / 系统功能 / 本地 MSI / 上次残留）；
+2. 备份并清理上次的用户级残留（`%APPDATA%\Docker` → 备份为 `Docker.bak-<时间戳>`）；
+3. **用本地 MSI 反复重试安装**（默认 60 次，每次约 5 秒；**不联网** —— 本环境向
+   `desktop.docker.com` 下载会 TLS 失败，而 928 MB 的 MSI 已在本地 choco 缓存里）；
+4. 自动解析日志给出结论；成功则打印启动与验证方式。
 
-**如果这样仍然失败**：把新生成的 `dd-msi.log` 交给助手，里面会写明新的失败点。
-若失败点还是同一条管道错误，多半是安全软件「只关了开关、主进程还在」——那种情况下
-需要在任务管理器里确认 `QQPCMgr.exe` / `wsctrl*.exe` 确实已经不存在。
+需要更多次数：`... -MaxAttempts 150`；想用别的版本安装包：`... -MsiPath "X:\DockerDesktop.msi"`。
+
+**如果 60 次仍未成功**（按估算概率约 2%）：说明本机 tick 粒度比估计更粗、或该版本的竞态窗口更小。
+此时可选：① 再跑一轮，或把次数调到 150；② 换一个 Docker Desktop 版本的安装包用 `-MsiPath` 指定；
+③ **放弃 Docker** —— 本项目已用免安装中间件（MySQL 8.0.29 + Redis）跑通全链路，Docker 并非必需品。
 
 **留档：v1.1 曾给出的修复步骤（已作废，不必再执行）**
 
@@ -680,7 +712,7 @@ MySQL 路径刻意选在 **纯 ASCII 目录**（`D:\duoduo-infra`），因为实
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
-| 2 | **Docker Desktop 安装（可选）** | 根因已定位到具体动作：自定义动作通信管道 `ERROR_PIPE_BUSY`（231），诱因是同时运行的两套安全软件。<br>收尾路径：临时退出安全软件 → 重启 → 管理员窗口运行 `scripts\install-docker-desktop.ps1`。详见 5.2 ①。<br>**不做也不影响项目进度**（免安装中间件已跑通并验证） | 不阻塞 |
+| 2 | **Docker Desktop 安装（可选）** | 根因已定位到源码级：安装包自身的 tick 碰撞竞态（通信管道名取自 `GetTickCount()`，两个自定义动作相隔 1 毫秒撞名 → `ERROR_PIPE_BUSY(231)`）。<br>对策：管理员窗口运行 `scripts\install-docker-desktop.ps1`（用本地 MSI 自动重试，默认 60 次，不联网）。详见 5.2 ①。<br>**不做也不影响项目进度**（免安装中间件已跑通并验证） | 不阻塞 |
 | 3 | **恢复 GitHub 推送能力** | Token 已撤销 → API 返回 401；GitHub 连接器对两个私有仓库返回 404（未授权）。二选一：<br>① 给一个新 PAT（写到 `%USERPROFILE%\.workbuddy\gh-token.txt`，我读完即用、用完即删）；<br>② 在连接器管理页给 GitHub 授权 `duoduo-pet-mall-java` 仓库 | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
 | 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
 | 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |

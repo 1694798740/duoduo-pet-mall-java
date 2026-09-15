@@ -135,17 +135,15 @@ if ($blockers.Count -eq 0) {
 } else {
     $envBlockers = @($blockers | Where-Object { $_ -ne '挂起重启' })
     if ($envBlockers.Count -eq 0) {
-        Line "  功能前置条件【已满足】，只差一次重启。"
+        Line "  功能前置条件【全部满足】—— 与 Docker 安装失败无关。"
         Line ""
-        Line "  重启后直接执行："
+        Line "  若安装仍报 1603：那是 Docker Desktop 4.90.0 安装包自身的竞态缺陷，"
+        Line "  与本机环境无关。根因：自定义动作通信管道的名字取自 GetTickCount()，"
+        Line "  安装包把两个自定义动作排在相隔 1 毫秒的位置，两次取到的 tick 相同"
+        Line "  → 管道名撞车 → 第二个动作拿到 ERROR_PIPE_BUSY(231) → 安装返回 1603。"
         Line ""
-        Line "    choco install docker-desktop -y"
-        Line ""
-        Line "  若仍报 1603，请带详细日志重装，日志会说明真正原因："
-        Line ""
-        Line "    choco install docker-desktop -y --install-arguments=""'/l*v c:\dd-msi.log'"""
-        Line ""
-        Line "  然后把 C:\dd-msi.log 交给助手分析（或在 MSI 上手动执行 msiexec /i ... /l*v c:\dd-msi.log）"
+        Line "  对策：管理员运行 scripts\install-docker-desktop.ps1（用本地 MSI 反复重试，"
+        Line "  直到某一轮跨过 tick 边界）。"
     } else {
         Line ("  还差 " + $envBlockers.Count + " 项：" + ($envBlockers -join '、'))
         Line ""
