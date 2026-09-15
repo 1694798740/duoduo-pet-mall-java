@@ -1,7 +1,9 @@
 # 恢复 GitHub 推送能力 · 操作指引
 
 > 更新日期：2026-09-15 ｜ 适用仓库：`duoduo-pet-mall-java`（私有）
-> 一句话：**你只需要在浏览器里登录一次 GitHub，推送就恢复了。**
+> **状态：✅ 已完成** —— 你登录过一次之后，凭据已存入 Windows 凭据管理器，
+> 远端 `main` 已同步为 `119fd83`，与本地**逐字节一致（90/90 文件）**。
+> 下面第 2 章的步骤仍然有效（以后需要推送时照跑即可），第 8 章记录了本次暴露的两个坑与修复。
 
 ---
 
@@ -20,7 +22,10 @@
 判断依据很直接：当初失败是 **502**（隧道被拦，服务端根本没收到请求）；
 现在带占位凭据得到的是 **401**（服务端收到了并拒绝认证）。**这是两件完全不同的事。**
 
-所以现在**不需要再绕道 API**，一条 `git push` 就够。
+> ⚠️ **后续补测的更精确结论（重要）**：同一时刻从**沙箱**访问 GitHub 的两个入口，可用性并不一致——
+> `api.github.com` **200 可用**（代理与直连均通），而 `github.com`（含 git 的 `info/refs`）
+> 返回 **502 / Empty reply from server**；但在**你自己的窗口**里两者都通（你的 `git fetch` 实测成功）。
+> 也就是说：**你侧走 `git push`，沙箱侧走 REST API**，这是两条并行可用的路。
 
 ---
 
@@ -33,10 +38,10 @@
 | git | `D:\devsoft\Git\cmd\git.exe`，版本 2.55.0.windows.2 |
 | 凭据助手 | 系统级已配置 `credential.helper=manager` |
 | Git Credential Manager | `D:\devsoft\Git\mingw64\bin\git-credential-manager.exe`（存在） |
-| Windows 凭据管理器里的 GitHub 凭据 | **0 条**（只有一条 `git:https://100.wunding.com:1443`，是前公司私服的残留） |
+| Windows 凭据管理器里的 GitHub 凭据 | 授权前 **0 条**；你跑完脚本后 **已出现 `git:https://github.com`**（另有前公司私服残留 `git:https://100.wunding.com:1443`） |
 | `gh` CLI | 未安装 |
 
-**结论：自动登录的通道是现成的，只差你授权一次。**
+**结论：自动登录的通道是现成的，只需授权一次。**（本次已完成）
 
 ---
 
@@ -166,10 +171,10 @@ Set-Content -Path "$env:USERPROFILE\.workbuddy\gh-token.txt" -Value "ghp_xxx" -N
 
 | 项 | 状态 |
 |---|---|
-| 本地 `duoduo-pet-mall-java` | ✅ **15 个提交 / 89 个文件**，分支 `main`，工作区干净，HEAD = `982b2ec` |
-| 远端 `duoduo-pet-mall-java` | ⏳ 停在 `ec9fc13`（旧 Token 失效前的最后一次 API 推送），落后若干提交 |
+| 本地 `duoduo-pet-mall-java` | ✅ **17 个提交 / 90 个文件**，分支 `main`，工作区干净，HEAD = `bad91fe` |
+| 远端 `duoduo-pet-mall-java` | ✅ **已同步为 `119fd83`**，与本地逐字节一致（90/90 文件，blob 哈希全等） |
 | 本地 `duoduo-pet-mall`（Node 原型） | ✅ 5 个提交 / 110 个文件，工作区干净，`origin` 已配置 |
-| 远端 `duoduo-pet-mall`（Node 原型） | ⏳ 同样是 API 生成的一套历史，内容一致、SHA 不同 |
+| 远端 `duoduo-pet-mall`（Node 原型） | ⏳ 仍是 API 生成的一套历史，内容一致、SHA 不同（未同步） |
 
 **Node 原型那个仓库也可以用同一份脚本统一**（把 `-RemoteUrl` 换成 `.../duoduo-pet-mall.git`，
 并把 `-RepoRoot` 指向 `D:\智能体项目\duoduo-pet-mall`；注意它的受保护分支名同样是 `main`）。
@@ -183,6 +188,60 @@ Set-Content -Path "$env:USERPROFILE\.workbuddy\gh-token.txt" -Value "ghp_xxx" -N
 
 | 文件 | 说明 |
 |---|---|
-| `D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1` | 本轮新增，一键推送 + 校验 |
-| `D:\智能体项目\duoduo-pet-mall-java\docs\PROJECT-STATUS.md` | 交付现状文档（v1.6），5.2 ④ 与第 6 章第 3 项已按本结论改写 |
+| `D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1` | 新增，一键推送 + 校验（本次已修复 1 个真缺陷，见第 8 章） |
+| `D:\智能体项目\duoduo-pet-mall-java\docs\PROJECT-STATUS.md` | 交付现状文档（v1.7），5.2 ④ 与第 6 章第 3 项已按本结论改写 |
 | 《多多宠物商店 · 项目交付现状与后续方案》 | 同上内容的对外版本 |
+
+---
+
+## 8. 本次执行暴露的两个坑（已修复，留档备查）
+
+### 8.1 脚本在 `git fetch` 行中断 —— `$ErrorActionPreference` 设错
+
+**现象**（你实际看到的）：`info: please complete authentication in your browser...` 之后，
+脚本在 `push-to-github.ps1` 第 143 行报 `NativeCommandError` 退出，看起来像认证失败。
+
+**实际状态**：认证**已经成功**，远端引用也**已经取到**（`refs/remotes/origin/main` = `ec9fc13`，
+9 个提交 / 86 个文件），只是被 PowerShell 的错误处理误判成失败。
+
+**根因**：git 会把**正常进度**写到 stderr（`From https://github.com/...`、远端分支更新行）；
+PowerShell 5.1 在 `$ErrorActionPreference = 'Stop'` 下，会把原生命令的 stderr 包装成
+`NativeCommandError` 并**当作终止性错误直接中断脚本**。
+
+**修复**：
+
+- `$ErrorActionPreference` 改为 `'Continue'`，所有成败一律以 `$LASTEXITCODE` 判定；
+- 输出统一用 `2>&1 | ForEach-Object { "$_" }` 归一为字符串，避免 stderr 行被渲染成一大段
+  `CategoryInfo` 报错块；
+- `push` 增加最多 5 次重试，且**只对网络类失败**（502 / Empty reply / timeout）重试，
+  凭据或权限类失败立即停止；
+- fetch / push 失败时按错误特征分类给出对策。
+
+### 8.2 远端 8 个 `.ps1` 文件被"推坏了" —— API 推送吞掉 UTF-8 BOM
+
+**发现方式**：推送后用 **blob 哈希逐文件比对**（内容寻址，哈希相同即字节完全相同），
+发现远端 8 个脚本与本地**内容不一致**：`check-docker-prereq.ps1`、`install-docker-desktop.ps1`、
+`push-to-github.ps1`、`smoke.ps1`、`start-infra.ps1`、`start-local.ps1`、`stop-infra.ps1`、`stop-local.ps1`。
+
+**根因**：走 REST API 推送时我用 `[IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)` 读文件内容，
+**这个方法会识别并剥离 UTF-8 BOM**。于是远端这 8 个脚本**没有 BOM**。
+而 PowerShell 5.1 在缺 BOM 时按 ANSI 解析含中文的脚本，**会直接报语法错误**——
+也就是「克隆下来根本跑不起来」。
+
+**修复**：改用 `[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))`（保留 U+FEFF）重新推送。
+复验通过：远端 `push-to-github.ps1` 首三字节 = `EF BB BF`、11690 字节，与本地一致。
+
+**教训**：
+
+- 走 API 传文件内容时**必须保留 BOM**；
+- **文件数、文件大小都可能一样却内容不同**，只有**逐文件比对 blob 哈希**才能发现这类差异——
+  本次就是靠这一步抓到的，只看"远端 90 个文件"会严重误判为成功。
+
+### 8.3 附带说明：远端提交的 SHA 与本地不同
+
+远端提交由 REST API 重建（`parent` 指向远端旧 HEAD），本地提交由 `git commit` 生成，
+**两者内容完全相同、对象哈希不同**。所以：
+
+- 克隆远端仓库得到的内容是**正确、完整**的；
+- 若以后在你自己的窗口跑 `git push`，会因为「非快进」被拒 → 脚本已内置 `--force` 与安全闸门，
+  照常跑即可，跑完远端历史就与本地统一了。

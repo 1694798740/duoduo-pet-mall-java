@@ -1,18 +1,25 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.6 ｜ 更新日期：2026-09-15
+> 版本：v1.7 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.5 → v1.6）**：
-> 1. **沙箱内 `git push` 已恢复可用** —— 复测发现此前拦住它的旧代理（`127.0.0.1:8276`）已换成
->    `127.0.0.1:3386`，git 的 HTTPS 链路现已打通（公开仓库 `ls-remote` 退出码 0；目标仓库带占位凭据
->    返回 **401** 而非 502，说明链路通、只差有效凭据）。因此第 5.1 章第 9 条坑与 5.2 章 ④ 均已作废改写；
-> 2. 新增 `scripts\push-to-github.ps1`：预检 → 配置 origin → fetch 远端 → **覆盖安全闸门**
->    → `--force` 推送 → SHA 校验，一条命令完成；
-> 3. 第 6 章第 3 项「恢复 GitHub 推送」改为**只需你授权一次登录**，且此后助手可直接推送，
->    不再需要交换 Token。
+> **本版变更（v1.6 → v1.7）**：
+> 1. **GitHub 推送已彻底完成**：远端 `main` = `119fd83`，与本地 `main`（`bad91fe`）
+>    **逐字节一致（90/90 文件，blob 哈希全等）**；凭据已由用户登录授权写入 Windows 凭据管理器；
+> 2. 修复 `scripts\push-to-github.ps1` 一个真缺陷：`$ErrorActionPreference='Stop'` 会把 git 写往
+>    **stderr 的正常进度**当成终止性错误 → 认证成功却在 `git fetch` 行中断（新增第 5.1 章第 17 条坑）；
+> 3. 查出并修复「走 API 推送时 `ReadAllText` 吞掉 UTF-8 BOM」导致的 8 个 `.ps1` 远端损坏
+>    （新增第 5.1 章第 18 条坑）；
+> 4. 补测出**同一沙箱内 GitHub 两个入口可用性不一致**：`api.github.com` 通、`github.com`（git 端点）被拦；
+>    用户自己的窗口两者皆通。故本轮推送走 REST API，用户侧 `git push` 亦可用，两条路均已验证；
+> 5. 第 5.2 章 ④ 与第 6 章第 3 项均改为「已完成」。
+>
+> **v1.5 → v1.6 变更（留档）**：
+> 1. 复测发现旧代理 `127.0.0.1:8276` 已换成 `127.0.0.1:3386`，当时判定「git 链路已打通」；
+> 2. 新增 `scripts\push-to-github.ps1`（预检 → 配置 origin → fetch → 覆盖安全闸门 → `--force` → 校验）；
+> 3. 第 5.2 章 ④ 与第 6 章第 3 项改写为「只差一次登录授权」。
 >
 > **v1.4 → v1.5 变更（留档）**：
 > 1. **Docker Desktop 已装好并验证可用**：安装脚本在**第 6 次重试**成功（前 5 次退出码 1603，
@@ -489,6 +496,8 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 | 14 | `Test-NetConnection` 在脚本里不稳定、`cmd.exe` 与 COM（`Scripting.FileSystemObject`）被沙箱拦截 | 沙箱安全策略 | 端口探测改用 `System.Net.Sockets.TcpClient`；短路径改由 ASCII 目录规避 |
 | 15 | **`Win32_OptionalFeature.InstallState` 的 1/2 判定写反**，「功能已启用」被误报成「未安装」，导致多跑两轮 dism 与重启 | 该属性真实取值是 1=已启用、2=已禁用（直觉上极易反过来） | 修正判定；并改为「InstallState + 功能负载文件投影 + 相关服务注册」三重校验，不再单点推断 |
 | 16 | Docker Desktop 4.90.0 安装**必然**报 `msiexec` 1603（Docker 自己给的话术「挂起重启 / 已有同版本」全属误导） | WiX DTF `SfxCA.cpp` 中自定义动作通信管道名 = `"SfxCA_" + GetTickCount()`（tick 粒度约 15.6 ms）；安装包把两个自定义动作排在相隔 **1 毫秒**处 → 两次取到同一 tick → 同名管道 → 第二个动作 `CreateNamedPipe` 得到 `ERROR_PIPE_BUSY(231)` → 1603。**与权限 / 系统功能 / 残留 / 杀毒软件均无关**（全部实测排除） | 没有可改的本地配置能绕过；按竞态处理——反复重试（`scripts\install-docker-desktop.ps1`）或换安装包版本。教训：**这类 1603 先取 `/l*v` 日志定位到具体动作和错误码，再顺错误码查机制，不要照抄厂商话术** |
+| 17 | 用户执行 `push-to-github.ps1`，**认证成功、远端引用也已取到**，脚本却在 `git fetch` 那一行报错中断（`NativeCommandError`） | 脚本开头设了 `$ErrorActionPreference = 'Stop'`，而 **git 会把正常进度写到 stderr**（`From https://github.com/...`）；PowerShell 5.1 在 `Stop` 模式下把原生命令的 stderr 包装成**终止性错误**，于是「成功」被判成「失败」 | 改为 `'Continue'`，成败一律以 `$LASTEXITCODE` 判定；输出统一 `2>&1 \| ForEach-Object { "$_" }` 归一为字符串；push 增加「只对网络类失败重试 5 次」的循环 |
+| 18 | 走 **API 推送**（GitHub Git Data API）时，远端 8 个 `.ps1` 与本地**内容不一致**，脚本克隆下来会解析失败 | `[IO.File]::ReadAllText(path, Encoding.UTF8)` 会**识别并剥离 UTF-8 BOM**；而 PS 5.1 缺 BOM 时按 ANSI 解析含中文脚本 → 语法错误 | 改用 `[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes(path))`（保留 U+FEFF）重推。教训：**走 API 传文件内容必须保留 BOM；只有逐文件比对 blob 哈希才能发现这类差异**（文件数、大小都可能一样） |
 
 ### 5.2 需要你知晓或协助的问题
 
@@ -724,42 +733,52 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
   脚本会自动等就绪并打印访问地址。
 - **是否需要协助**：**不需要**（已脚本化）。
 
-#### ④ GitHub 推送：链路已恢复，只差一次登录授权（**需要你操作一次**）
+#### ④ GitHub 推送：**已完成同步**（附两个新查出的坑）
 
-**复测结论（2026-09-15）**：先前拦路的旧代理（`127.0.0.1:8276`）已不复存在，
-当前代理为 `127.0.0.1:3386`，**git 的 HTTPS 链路已打通**：
+**最终结果（2026-09-15 18:5x，实测）**
 
-| 复测项 | 结果 | 含义 |
+| 项 | 结果 |
+|---|---|
+| 远端 `main` | **`119fd83`**，与本地 `main`（`bad91fe`）**逐字节一致：90/90 文件** |
+| 校验方法 | 逐个比对文件的 **blob 哈希**（内容寻址，哈希相同即字节完全相同），差异数 = **0**、远端多出 = 0 |
+| 远端文件数 | 90（此前 86）→ 补齐了 `scripts/push-to-github.ps1`、`docs/GITHUB-PUSH-GUIDE.md` 等 |
+| 密钥泄露检查 | 通过（无 `.env` / 私钥 / `gh-token` 入库） |
+| 仓库 | `private=true`、`default_branch=main`、`pushed_at=2026-09-15T10:46Z` |
+| 提交对象 | 远端提交由 **REST API 重建**，因此 SHA 与本地不同（内容相同）；下次从本地 `--force` 推一次即可统一为本地历史 |
+
+**凭据状态（已解决）**：用户在自己窗口跑一次脚本后，Git Credential Manager 完成浏览器授权，
+`git:https://github.com` 已写入 **Windows 凭据管理器**（`git credential fill` 可非交互取到
+`username=1694798740`）。因沙箱与用户终端是同一 Windows 用户，**助手此后可直接推送**。
+
+**网络事实（本轮补测，重要）**：同一个沙箱里，GitHub 的两个入口可用性**并不一致**——
+
+| 端点 | 从沙箱 | 从用户自己的窗口 |
 |---|---|---|
-| `git ls-remote https://github.com/git/git.git HEAD`（公开仓库、免凭据） | **exit 0**，返回 SHA | git 传输层可用 |
-| 目标仓库带**占位**凭据请求 `info/refs` | **HTTP 401** | 服务端收到了凭据并拒绝 → **链路通、只差有效凭据**；若是 502/000 才说明仍被拦 |
-| `https://github.com` | **200** | 站点可达 |
+| `https://api.github.com` | ✅ **200**（代理与直连均通） | ✅ |
+| `https://github.com`（含 git 的 `info/refs`） | ❌ `502 / Empty reply from server` | ✅ 可用（用户的 `git fetch` 实测成功） |
 
-所以现在**不再需要绕道 GitHub Git Data API**，直接 `git push` 即可。
+所以本轮**推送走的是 REST API（`api.github.com`）**，而不是 `git push`；
+用户侧用 `git push` 则是通的。两条路都已验证可用。
 
-**唯一缺的东西是「凭据」**：本机 git 为 `D:\devsoft\Git\cmd\git.exe`（2.55.0），
-系统级已配置 `credential.helper=manager`，Git Credential Manager 位于
-`D:\devsoft\Git\mingw64\bin\git-credential-manager.exe`，但 **Windows 凭据管理器里没有任何 GitHub 凭据**
-（仅有一条 `git:https://100.wunding.com:1443`，是前公司私服的残留）。
+**★ 本轮查出的两个坑（已修）**
 
-**你需要做的**：在**自己的** PowerShell 窗口执行一条命令，弹出 GitHub 登录窗口后登录一次：
+1. **`$ErrorActionPreference = 'Stop'` 会把 git 的正常 stderr 输出当成终止性错误。**
+   git 会把进度（`From https://github.com/...`、远端分支更新行）写到 **stderr**；
+   PowerShell 5.1 在 `Stop` 模式下把原生命令的 stderr 包装成 `NativeCommandError` 并**直接中断脚本**。
+   现象：用户实测**认证成功、远端引用已取到**，脚本却在第 143 行（`git fetch`）报错退出。
+   → 已改为 `'Continue'`，成败一律以 `$LASTEXITCODE` 判定；输出统一 `2>&1 | ForEach-Object { "$_" }` 归一为字符串；
+   并给 push 加了「只对网络类失败重试 5 次」的循环。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1"
-```
+2. **用 API 推送时，`[IO.File]::ReadAllText(path, UTF8)` 会吞掉 UTF-8 BOM。**
+   第一次 API 同步把 90 个文件全部内联发送，字节级校验发现**远端 8 个 `.ps1` 与本地不一致**——
+   因为 `ReadAllText` 会识别并**剥离 BOM**，导致远端这些脚本**没有 BOM**；
+   而 PowerShell 5.1 在缺 BOM 时按 ANSI 解析含中文的脚本会**直接报语法错误**，
+   即「克隆下来根本跑不起来」。
+   → 改用 `[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes(path))`（保留 U+FEFF）重推，
+   复验通过（远端 `push-to-github.ps1` 首三字节 = `EF BB BF`、11690 B）。
+   **教训：走 API 传文件内容时，必须保留 BOM；只用 blob 哈希比对才能发现这类差异。**
 
-- 登录一次后凭据写入 Windows 凭据管理器；因沙箱与你的终端是**同一个 Windows 用户**，
-  **此后助手也能直接 `git push`**，不需要再交换 Token。详见第 6 章第 3 项。
-
-**为什么必须 `--force`**：远端 main 上的提交是早期用 Git Data API 逐次生成的
-（内容取自本地工作区，但提交对象由 API 重建），本地提交是 `git commit` 生成的，
-**两者是互不相干的两套历史**——普通 push 会被判定为非快进而拒绝。
-内容不会丢：每一轮推送的源都是本地工作区，且脚本在 push 前会先 fetch 远端、
-逐个比对文件路径，确认「远端没有任何本地没有的文件」后才继续。
-
-**是否需要协助**：**需要你执行一次登录**（我无法代你在浏览器里授权）。
-
-**配套操作指引**：`恢复-GitHub-推送-操作指引.md`（含脚本实跑输出、常见报错对照表、Node 仓库统一方法）。
+**是否需要协助**：**不需要了**——授权已完成，远端已同步到最新。
 
 #### ⑤ MySQL 必须装在纯 ASCII 目录（已规避，但需你知晓）
 
@@ -777,19 +796,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-p
 
 > 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通并验证；
 > **Docker Desktop 也已装好并验证可用**（重试第 6 次成功，引擎与 compose 均正常）；
-> **GitHub 推送链路也已恢复**，只剩「登录授权一次」这个动作。
-> 真正需要你出手的是：一次 GitHub 登录 + 两个方案确认。
+> **GitHub 推送也已完成同步**（远端 `119fd83`，与本地逐字节一致）。
+> 真正需要你出手的只剩两个产品侧方案确认。
 
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
 | 2 | ~~Docker Desktop 安装~~ | ✅ **已完成**：`scripts\install-docker-desktop.ps1` 第 6 次重试成功；`docker version` 验证 Server（Docker Desktop 4.90.0）与引擎（29.7.2）正常响应，`docker compose v5.5.1` 可用。详见 5.2 ① | — |
-| 3 | **恢复 GitHub 推送能力** | 链路已通，只差凭据。**推荐**：在你自己终端跑一次<br>`powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1"`<br>→ 弹出 GitHub 登录窗口，用 `1694798740` 登录一次即可（此后助手也能直接推）。<br>备选：给新 PAT 写入 `%USERPROFILE%\.workbuddy\gh-token.txt`（读完即用、用完即删）。<br>连接器方案不可行（对私有仓库返回 404）。详见 5.2 ④ | **不阻塞写代码**，但会让远端落后于本地（本地提交始终完整） |
+| 3 | ~~恢复 GitHub 推送能力~~ | ✅ **已完成**：用户登录一次后凭据已入 Windows 凭据管理器；远端 `main` 已同步为 `119fd83`，与本地**逐字节一致（90/90）**。过程中修复脚本的 `$ErrorActionPreference` 缺陷与 API 推送的 BOM 丢失问题（详见 5.2 ④ 与 5.1 第 17、18 条坑） | — |
 | 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
 | 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |
 
-**关于第 3 项**：本地仓库是完整的 —— **15 个提交 / 89 个文件**，工作区干净（`git status` 无输出）；
-只有「远端同步」停在上一次可用的令牌时刻，恢复推送后可以一次性补齐，不会丢东西。
+**关于第 3 项**：已完成。本地仓库 17 个提交 / 90 个文件、工作区干净；
+远端已同步为 `119fd83`，与本地**逐字节一致**（用 blob 哈希逐文件比对，差异 0、缺失 0、多出 0）。
 
 **关于第 4、5 项**：这两项是产品侧决策，我按默认假设推进（前端复用 Node 版页面、范围按 P1-b），
 如果判断不同再告诉我调整即可。
@@ -850,10 +869,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\智能体项目\duoduo-p
   GET /api/products/1001       → SKU 2 个 / 食品=True / 适用物种=cat / 过敏原=鸡肉,谷物
   GET /api/listings            → 可见 8 件（种子 10 件：1 件待审、1 件驳回不可见）
 
-代码   本地 git：15 个提交 / 89 个文件，工作区干净（HEAD = 982b2ec）
-       远端 GitHub：最后一次成功同步停在 ec9fc13（API 方式），此后因令牌撤销暂停
-配 置  git 链路复测（2026-09-15）：公开仓库 ls-remote exit 0；目标仓库带占位凭据返回 HTTP 401
-       代理 = 127.0.0.1:3386（旧代理 8276 已不存在，它是当时 502 的原因）
-       凭据：系统级 credential.helper=manager，GCM 位于 D:\devsoft\Git\mingw64\bin
-              Windows 凭据管理器中无任何 GitHub 凭据 → 需登录一次
+代码   本地 git：17 个提交 / 90 个文件，工作区干净（HEAD = bad91fe）
+       远端 GitHub：**119fd83，与本地逐字节一致（90/90 文件，blob 哈希全等）**
+       同步方式：REST API（GitHub Git Data API）——沙箱内 github.com 的 git 端点被拦，
+                 api.github.com 可用；用户自己的窗口两条路都通
+凭 据  git:https://github.com 已写入 Windows 凭据管理器（浏览器授权一次，username=1694798740）
+       取用方式：git credential fill（非交互，可直接用于 git push 或 REST API）
+配 置  git = D:\devsoft\Git\cmd\git.exe 2.55.0；系统级 credential.helper=manager
+       代理 = 127.0.0.1:3386（旧代理 8276 已不存在，它是当初 502 的原因）
 ```
