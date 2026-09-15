@@ -1,11 +1,22 @@
 # 多多宠物商店 · 项目交付现状与后续方案
 
-> 版本：v1.7 ｜ 更新日期：2026-09-15
+> 版本：v1.8 ｜ 更新日期：2026-09-15
 > 正式工程（Java 微服务版）：`D:\智能体项目\duoduo-pet-mall-java`
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
+> **项目资产**：按时间归档，入口见第 8 章
 >
-> **本版变更（v1.6 → v1.7）**：
+> **本版变更（v1.7 → v1.8）**：
+> 1. **三项决策已确认**：开发**优先使用 Docker**；前端**复用 Node 版页面**；下一阶段范围按 **P1-b 交易服务**；
+> 2. **新增第 8 章「项目资产归档约定」**：所有文档与产物按对话时间顺序分类归档到项目资产，
+>    目录结构与维护规则均已落地（已归档 7 个文档 + 4 个分类目录）；
+> 3. 新增第 5.2 章 ⑥：**Docker 引擎需要你手动启动一次** —— 沙箱的程序黑名单拦截了 `wsl.exe`，
+>    而 Docker Desktop 启动时必须调它（WSL2 后端），助手无法代启；
+> 4. 第 6 章协助事项全部结清（第 4、5 项按默认方案确认）；
+> 5. 顺带核对发现：项目资产里那份交付文档**实际内容停留在 v1.1**（此前 v1.2–v1.7 只更新了本地与仓库），
+>    本次已按新约定把 v1.7 内容归档，旧版移入「99-历史版本」。
+>
+> **v1.6 → v1.7 变更（留档）**：
 > 1. **GitHub 推送已彻底完成**：远端 `main` = `119fd83`，与本地 `main`（`bad91fe`）
 >    **逐字节一致（90/90 文件，blob 哈希全等）**；凭据已由用户登录授权写入 Windows 凭据管理器；
 > 2. 修复 `scripts\push-to-github.ps1` 一个真缺陷：`$ErrorActionPreference='Stop'` 会把 git 写往
@@ -790,22 +801,50 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
   不要放在 `D:\智能体项目\`（中文路径）下，否则启动脚本会踩同一个坑。
 - **是否需要协助**：**不需要**（仅需知晓这条约定）。
 
+#### ⑥ Docker 引擎需要**你手动启动一次**（我起不来，属于环境硬限制）
+
+- **现象**：我尝试用命令行拉起 Docker Desktop，被沙箱安全策略直接拦截，报：
+
+  ```
+  PROGRAM BLOCKED BY SECURITY POLICY
+  The sandbox prevented a program on the configured Program Blacklist from starting:
+    - wsl.exe (C:\Windows\System32\wsl.exe)
+  This block cannot be approved or bypassed from the current command.
+  Do NOT retry this program, launch it through another shell or script, or attempt an equivalent workaround.
+  ```
+
+- **原因**：Docker Desktop 在 Windows 家庭版上**只能走 WSL2 后端**，启动时必须调用 `wsl.exe`；
+  而 `wsl.exe` 在沙箱的**程序黑名单**里，且策略明确禁止重试或任何等效绕过（换 shell、写脚本代启都不行）。
+- **为什么这不影响用 Docker 开发**：**引擎（daemon）是独立进程**，只要它已经在跑，
+  我就能用 `docker` 命令行（`docker.exe` 不在黑名单里）完成一切：拉镜像、起容器、
+  查看日志、执行 compose、跑集成测试。之前实测 `docker version` / `docker info` /
+  `docker run --rm hello-world` / `docker compose config` 全部成功走的就是这条路。
+- **需要你做什么**：**双击桌面上的 Docker Desktop 图标启动一次**（或开始菜单搜索启动），
+  等托盘图标变成 Running 即可。之后无需再做任何事。
+- **是否需要协助**：**需要**（且只需这一次；之后每次开机如果你想用 Docker，同样先起它）。
+- **当前状态（实测）**：`docker.exe` 与 `Docker Desktop.exe` 都在，
+  **引擎未运行**（`docker version` 报 `failed to connect ... npipe:////./pipe/dockerDesktopLinuxEngine`），
+  且 3306 / 6379 / 8848 / 8080 / 8081 / 8082 端口**全部空闲**（免安装的 MySQL/Redis 已被会话回收），
+  所以引擎一起来，`docker compose up` 起容器化中间件**不会与任何进程抢端口**。
+
 ---
 
 ## 6. 需要你协助的事项汇总（可勾选）
 
-> 结论先说：**技术环境已经没有阻塞项了**。免安装中间件方案已跑通并验证；
-> **Docker Desktop 也已装好并验证可用**（重试第 6 次成功，引擎与 compose 均正常）；
-> **GitHub 推送也已完成同步**（远端 `119fd83`，与本地逐字节一致）。
-> 真正需要你出手的只剩两个产品侧方案确认。
+> 结论先说：**技术环境已经没有阻塞项，需要你决定的事也都定了**。
+> 免安装中间件方案已跑通并验证；**Docker Desktop 已装好并验证可用**；
+> **GitHub 推送已同步**（远端与本地逐字节一致）；**前端复用 Node 版页面**、**范围按 P1-b 交易服务**。
+> 唯一还需要你动手的是：**启动一次 Docker Desktop**（原因见 5.2 ⑥）。
+> 另外从本版起，所有文档与产物**按时间顺序分类归档到项目资产**，规则见第 8 章。
 
 | # | 事项 | 操作 | 是否阻塞开发 |
 |---|---|---|---|
 | 1 | ~~撤销 GitHub Token~~ | ✅ **已完成**，无需再处理（Token 已失效，旧令牌已无法使用） | — |
 | 2 | ~~Docker Desktop 安装~~ | ✅ **已完成**：`scripts\install-docker-desktop.ps1` 第 6 次重试成功；`docker version` 验证 Server（Docker Desktop 4.90.0）与引擎（29.7.2）正常响应，`docker compose v5.5.1` 可用。详见 5.2 ① | — |
 | 3 | ~~恢复 GitHub 推送能力~~ | ✅ **已完成**：用户登录一次后凭据已入 Windows 凭据管理器；远端 `main` 已同步为 `119fd83`，与本地**逐字节一致（90/90）**。过程中修复脚本的 `$ErrorActionPreference` 缺陷与 API 推送的 BOM 丢失问题（详见 5.2 ④ 与 5.1 第 17、18 条坑） | — |
-| 4 | 确认前端方案 | ① 复用 Node 版 17 个页面（工作量小，接口已收敛到网关）；② 重新设计（工作量约为 ① 的 2 倍） | **阻塞前端开工** |
-| 5 | 确认下一阶段范围 | 默认按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | 不阻塞，默认可开工 |
+| 4 | ~~确认前端方案~~ | ✅ **已确认（2026-09-15）**：**复用 Node 版 17 个页面**，接口指向网关 `http://localhost:8080` | — |
+| 5 | ~~确认下一阶段范围~~ | ✅ **已确认（2026-09-15）**：按 **P1-b 交易服务**（购物车 / 下单拆单 / 支付 / 订单状态机 + 卖家中心）推进 | — |
+| 6 | **启动一次 Docker Desktop** | 双击桌面图标即可（或开始菜单搜索）。原因见 5.2 ⑥：沙箱程序黑名单拦截 `wsl.exe`，助手无法代启。启动后助手就能全程用 `docker` 命令行驱动 | **阻塞「用 Docker 开发」** |
 
 **关于第 3 项**：已完成。本地仓库 17 个提交 / 90 个文件、工作区干净；
 远端已同步为 `119fd83`，与本地**逐字节一致**（用 blob 哈希逐文件比对，差异 0、缺失 0、多出 0）。
@@ -815,7 +854,12 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
 
 ---
 
-## 7. 后续执行顺序（建议，**全程不使用 Docker**）
+## 7. 后续执行顺序（**Docker 优先**）
+
+> **优先级调整（2026-09-15 确认）**：中间件**优先用 Docker 容器**跑（Docker Desktop 已装好并验证可用）；
+> 免安装形态（ZIP / 直接跑 jar）降级为**备用方案**，仅在 Docker 出问题且无法解决时启用。
+> 第 4.5 章的对照表因此改为「Docker 首选形态 / 免安装备用形态」两列来读。
+> 前提：需要你先启动一次 Docker Desktop（见 5.2 ⑥）。
 
 1. **P1-b 交易服务 + 卖家中心**（`duoduo-trade` :8083）——补齐「下单 → 支付 → 履约」闭环：
    购物车、下单拆单、库存冻结与回滚、订单状态机、支付回调幂等、超时关单（Spring `@Scheduled`）、
@@ -844,17 +888,63 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
 
 ---
 
-## 附：当前验证证据（可复现，**全程不使用 Docker**）
+## 8. 项目资产归档约定（v1.8 起生效）
+
+**要求来源**：所有生成的文档与产物都要**分类好、按对话的时间顺序**放进项目资产。
+
+**已落地的目录结构**（项目资产根目录下，本次已建好并归档内容）：
+
+```
+多多宠物商店 · 项目资产（按时间归档）/
+├── README-资产目录说明.md                      ← 导航 + 维护约定
+├── 00-总览与最新状态/                          ← 任何时候先看这里
+│   ├── 项目交付现状与后续方案-v1.7.md
+│   └── 迭代概览-2026-09-14至09-15.md
+├── 2026-09-14-架构与设计/
+│   ├── ARCHITECTURE-微服务架构设计.md
+│   └── 数据库DDL-用户域.sql
+├── 2026-09-15-Docker与推送排障/
+│   ├── Docker-1603-根因与解决方案.md
+│   └── 恢复-GitHub-推送-操作指引.md
+└── 99-历史版本/
+    └── 项目交付现状与后续方案-v1.1（历史）.md     ← 由根目录移入
+```
+
+**维护约定（后续每轮都照此执行）**
+
+1. 新产物放进**对应日期**的文件夹，命名格式 `YYYY-MM-DD-主题`；同一天多轮就在该文件夹内按主题细分。
+2. 「当前状态」类文档**只保留一份**，放 `00-总览与最新状态/`；旧版移入 `99-历史版本/`，
+   **不新建重复副本**（避免以后不知道该看哪份）。
+3. **版本号写进文件名**（如 `-v1.7`），避免同名互相覆盖。
+4. 项目资产里的文档与工程 `docs/` 下的同名文档**保持同一份内容**，改完两边同步。
+5. 每轮结束在 `README-资产目录说明.md` 的「归档记录」里追加一条，保持可追溯。
+
+**本次归档动作（已执行，可核对）**
+
+| 动作 | 明细 |
+|---|---|
+| 新建目录 | 1 个顶层 + 4 个分类子目录（`00-总览与最新状态` / `2026-09-14-架构与设计` / `2026-09-15-Docker与推送排障` / `99-历史版本`） |
+| 上传文档 | 7 个（含工程 `docs/ARCHITECTURE.md`、`docs/sql/01-duoduo-user.sql`、`README-资产目录说明.md`） |
+| 整理旧版 | 原根目录那份文档**实际内容停留在 v1.1**（v1.2–v1.7 仅更新了本地与仓库、未上传）→ 已重命名为 `项目交付现状与后续方案-v1.1（历史）.md` 并移入 `99-历史版本/` |
+
+---
+
+## 附：当前验证证据（可复现）
 
 ```
 构建  mvn -gs maven/settings.xml -B -DskipTests package
       → BUILD SUCCESS；duoduo-gateway 45MB / duoduo-user 43MB / duoduo-product 43MB
 
-基础设施（免安装，无容器运行时、无管理员权限）
-      MySQL 8.0.29 @ 127.0.0.1:3306   D:\duoduo-infra\mysql-8.0.29-winx64
-      Redis 3.0.504 @ 127.0.0.1:6379  D:\devsoft\redis
-      库：duoduo_user(3 表) / duoduo_product(5 表 + 种子数据 18 SPU / 22 SKU / 24 类目 / 10 闲置)
-      一键启停：scripts\start-infra.ps1 / stop-infra.ps1
+基础设施（**Docker 容器**，首选形态；免安装形态为备用）
+      docker compose up -d mysql redis nacos
+        mysql 8.0.36 / redis 7.2-alpine / nacos v2.3.2
+      ⚠️ 端口互斥：容器化的 mysql/redis 占用 3306/6379，
+         不要与免安装版同时起（二选一）
+      当前引擎状态（2026-09-15 18:5x 实测）：**未运行**
+        docker version → failed to connect ... npipe:////./pipe/dockerDesktopLinuxEngine
+        3306 / 6379 / 8848 / 8080 / 8081 / 8082 端口全部空闲 → 引擎起来后不会撞端口
+      备用（免安装）：MySQL 8.0.29 @ 3306（D:\duoduo-infra）+ Redis 3.0.504 @ 6379（D:\devsoft\redis）
+        一键启停：scripts\start-infra.ps1 / stop-infra.ps1
 
 运行  网关 :8080 + 用户服务 :8081 + 商品服务 :8082
       profile = local,mysql（真实 MySQL + 静态路由 + 关闭注册中心）
