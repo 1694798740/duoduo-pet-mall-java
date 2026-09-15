@@ -5,7 +5,14 @@
 > 原型工程（Node 版）：`D:\智能体项目\duoduo-pet-mall`
 > 远程仓库：https://github.com/1694798740/duoduo-pet-mall-java （私有）
 >
-> **本版变更（v1.0 → v1.1）**：
+> **本版变更（v1.1 → v1.2）**：
+> 1. **勘误**：撤回 v1.1 中「Docker 装不上的根因是两个 Windows 可选功能未启用」这一结论——**该结论是错的**，
+>    源于助手脚本把 `Win32_OptionalFeature.InstallState` 的 1/2 判定写反了。实测这两个功能**一直是已启用状态**；
+> 2. `scripts\check-docker-prereq.ps1` 已修正判定逻辑，并补入「功能负载文件 / 相关服务注册」两项独立佐证；
+> 3. 第 5.2 章 ① 改写为「Docker 的真实状态 + 剩余一步」，删除已被证伪的修复叙事；
+> 4. 第 5.1 章新增第 15 条坑（InstallState 判定反了）。
+>
+> **v1.0 → v1.1 变更（留档）**：
 > 1. **确定放弃 Docker**，改走「免安装中间件」路线（MySQL / Redis 已落地验证；Nacos / ES / MQ 等有等价免安装形态）；
 > 2. 补充 Docker 安装失败的完整根因与已查明的失败环节（留档，供以后需要时参考）；
 > 3. 新增第 4.5 章「中间件落地方案（全程不使用 Docker）」，逐项给出替代形态与做法；
@@ -23,7 +30,9 @@
 **运行方式已定：全程不使用 Docker。** 所有中间件改用免安装形态（ZIP 解压 / 直接跑 jar），
 不需要管理员权限、不需要容器运行时；对应的启停脚本已就绪并纳入工程。
 这一决定不影响任何业务能力——Docker 本来就只是中间件的一种打包与启动方式，
-既然本机装不上（根因见第 5.2 章 ①），改用等价形态即可，**中间件一个都不省**。
+改用等价形态即可，**中间件一个都不省**。
+（补充：Docker 本身其实**已具备安装条件**——WSL2 的两个前置功能早已启用、WSL 默认版本已是 2，
+只差一次重启清掉挂起状态即可尝试。放弃它是**投入产出取舍**，不是被环境卡死，详见第 5.2 章 ①）
 
 距离「可商用的宠物电商系统」还差：交易闭环、履约与售后、营销、AI 导购、前端、容量压测——即 P1-b 到 P4。
 
@@ -444,109 +453,105 @@ Nacos + Elasticsearch + RocketMQ 若同时常驻会吃掉约 4~6 GB 内存。
 **最终决定（2026-09-15）**：不再尝试安装 Docker Desktop。理由是投入产出不划算 ——
 Docker 在本项目里唯一的用途就是启动 MySQL / Redis / Nacos / ES / MQ，
 而这些中间件全都有免安装形态（ZIP 解压 / 直接跑 jar），**不需要管理员权限、不需要容器运行时，能力完全等价**。
-继续在 WSL2 前置条件上折腾，只会让第一阶段迟迟开不了工。
+继续在 Docker 安装失败上耗时间，只会让第一阶段迟迟开不了工。
 
-**如果你以后仍想让 Docker 可用**（不是必须），把下面两段留档参考即可。
+**如果你以后仍想让 Docker 可用**（不是必须），按下面的「真实状态 + 剩余一步」照着收尾即可。
 
-**你以管理员身份执行后报的是 `msiexec` 退出码 1603**（Docker Desktop 4.90.0）。这个报错信息写的是
-「Generic MSI Error / 可能是挂起重启或已安装同版本」，**是误导性的**——实测本机既没有挂起重启，
-也没有任何 Docker 残留。真正的根因是 **Docker Desktop 的前置条件没装**：
+**你以管理员身份执行后报的是 `msiexec` 退出码 1603**（Docker Desktop 4.90.0）。
+Docker 给出的话术是「Generic MSI Error / 可能是挂起重启或已安装同版本」，**是误导性的**——
+实测本机没有任何 Docker 残留（无卸载记录、无 `C:\Program Files\Docker`、无 `com.docker.service`）。
+截至 2026-09-15，**1603 的确切原因仍未定位**，需要用带详细日志的安装方式取证据（方法见本节末尾）。
+
+**已排除项（均为实测）**
 
 | 检查项 | 实测结果 | 结论 |
 |---|---|---|
 | 操作系统 | Windows 11 家庭版 25H2（Build 26200） | ✅ 版本满足要求 |
 | 已安装的 Docker 残留 | 0 条卸载记录、无 `C:\Program Files\Docker`、无 `com.docker.service` | ✅ 不是版本冲突 |
-| 挂起重启 | `RebootPending=False`、`RebootRequired=False` | ✅ 不是重启问题 |
 | C 盘可用空间 | 197.6 GB | ✅ 空间充足 |
-| **`Microsoft-Windows-Subsystem-Linux`** | **未安装** | ❌ **根因 1** |
-| **`VirtualMachinePlatform`** | **未安装** | ❌ **根因 2** |
-| WSL 内核包（appx） | 未安装；`HKCU\...\Lxss` 注册表项不存在 | ❌ WSL 从未装过 |
+| WSL2 前置功能 | **两个功能均为「已启用」** | ✅ 不是前置条件问题（曾误判，见下方勘误） |
+| WSL 应用与默认版本 | 商店版 WSL 2.7.14.0，已初始化，默认版本 = 2 | ✅ WSL2 可用 |
+| 挂起重启 | **存在**（CBS 待重启，36 项待处理文件重命名） | ⚠️ 可能是 1603 的诱因之一 |
 
-Windows 11 **家庭版没有 Hyper-V**，Docker Desktop 只能走 WSL2 后端；
-而 WSL 与虚拟化平台两个功能都没启用 → Docker 安装器自检失败 → 返回 1603。
+**★ 2026-09-15 勘误：此前「前置功能未启用」的诊断是错的**
 
-**★ 2026-09-15 复查：执行修复后仍报 1603，原因已查明**
+v1.1 曾断言「Docker 装不上的根因是 `Microsoft-Windows-Subsystem-Linux` 与
+`VirtualMachinePlatform` 两个功能未启用，需要用管理员权限跑 dism 启用后重启」。
+**这个结论是错的，由助手的判定错误导致，特此撤回。**
 
-你按步骤执行了 `wsl --install --no-distribution` 并重启，再装 Docker 仍报 1603。复查结果：
+**错在哪**：脚本读取 `Win32_OptionalFeature.InstallState` 后，把取值 1 判成了「未安装」。
+该属性的真实含义是：
 
-| 检查项 | 复查结果 | 含义 |
-|---|---|---|
-| 商店版 WSL 应用 | ✅ **已装**，版本 2.7.14.0（`C:\Program Files\WSL`） | `wsl --install` 的**应用安装部分生效了** |
-| `Lxss` 注册表项 | ✅ 已创建 | WSL 已初始化 |
-| **`Microsoft-Windows-Subsystem-Linux`** | ❌ **仍未安装** | **dism 启用功能的部分没生效** |
-| **`VirtualMachinePlatform`** | ❌ **仍未安装** | 同上 |
-| 挂起重启 | ✅ 无 | 重启是做了的 |
-| Docker 残留 | ✅ 无 | 与残留无关 |
-
-**为什么会这样**：`wsl --install` 做两件事——① 安装 WSL 应用（**普通权限即可**），
-② 用 dism 启用那两个 Windows 可选功能（**必须管理员权限**）。
-第 ① 步成功了、第 ② 步没有生效，说明**那次窗口没有取得管理员权限**。
-
-**怎么判断窗口是不是管理员**：看提示符当前目录即可——
-
-| 提示符 | 是否提权 |
+| 取值 | 含义 |
 |---|---|
-| `PS C:\Windows\system32>` | ✅ 已提权（管理员窗口默认目录） |
-| `PS C:\Users\16947>` | ❌ **未提权**（普通窗口默认目录） |
+| 1 | **已启用（Enabled）** |
+| 2 | 已禁用（Disabled） |
+| 3 | 不存在（Absent） |
+| 4 | 未知（Unknown） |
 
-你这次贴的输出里正是 `PS C:\Users\16947>`，而第一次是 `PS C:\Windows\system32>` —— 第二次换了窗口，且没有提权。
+脚本把 1/2 判反了，于是**「已启用」被反复误报成「未安装」**，让你多跑了两轮 dism 与重启。
+这是我交付物里的真实缺陷，已在 v1.2 修正。
 
-**为了不再靠肉眼判断，已加了一个检查脚本**（只读，不需要管理员权限）：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-docker-prereq.ps1
-```
-
-它会逐项核对并直接给出「还差哪几项 / 下一步粘贴什么」。本机当前实跑输出：
+**修正后的实测状态（`scripts\check-docker-prereq.ps1` 实跑输出，exit 0）**
 
 ```
 > WSL2 依赖的 Windows 功能（关键项）
-  [不满足] 虚拟机平台（VirtualMachinePlatform）：未安装
-  [不满足] WSL 子系统（Microsoft-Windows-Subsystem-Linux）：未安装
+  [通过] WSL 子系统（Microsoft-Windows-Subsystem-Linux）：已启用（负载已就位，服务 WSLService 已注册(Running)）
+  [通过] 虚拟机平台（VirtualMachinePlatform）：已启用（负载已就位，服务 vmcompute 已注册(Stopped)）
 > WSL 应用本体
   [通过] 商店版 WSL 已安装，版本 2.7.14.0（C:\Program Files\WSL）
+  [通过] WSL 已初始化（Lxss 注册表项存在）
+  [信息] WSL 默认版本 = 2
+> 挂起的重启
+  [信息] 组件服务(CBS) 待重启：是（启用/禁用 Windows 功能会触发）
+  [信息] Windows Update 待重启：否
+  [信息] 待处理的文件重命名操作：36 项
+  [不满足] 存在挂起的重启
+> Docker 现有安装
+  [通过] 无残留，全新安装
 === 结论 ===
-  还差 2 项：VirtualMachinePlatform、Microsoft-Windows-Subsystem-Linux
+  功能前置条件【已满足】，只差一次重启。
 ```
 
-**修复步骤（需要真正的管理员权限 + 一次重启）**
+**为什么这次能确定**：不再只靠 InstallState 一个数下结论，而是加了两项独立佐证——
+① 功能负载文件是否已投影到 `System32`（功能被禁用时这些文件会被系统摘除）：
+`C:\Windows\System32\vmcompute.exe`、`C:\Windows\System32\lxss\tools`、`Vhdmp.sys` 均存在；
+② 相关服务是否已注册：`vmcompute`、`WSLService` 均在册（后者正在运行）。
+两项佐证与 InstallState = 1 完全一致，三条证据互相印证。
 
-Win+X → 选「**终端(管理员)**」或「Windows PowerShell(管理员)」，
-**确认提示符是 `C:\Windows\system32`** 后再执行下面两条（建议整段粘贴）：
+**剩余一步（如果你以后仍想用 Docker，据此收尾即可）**
 
-```powershell
-dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-```
-
-两条都应输出「**操作成功完成**」。若出现「需要提升权限」类提示，说明窗口仍不是管理员。
-**然后重启电脑**（这一步不能跳），重启后再执行：
+功能前置条件已经满足，当前只差**清掉挂起状态**——重启电脑（挂起由 2026-09-15 那次 dism 触发）。
+重启后执行：
 
 ```powershell
-wsl --update
-wsl --set-default-version 2
 choco install docker-desktop -y
 ```
 
-重启后可以先跑一次 `scripts\check-docker-prereq.ps1` 确认两项都变成「已安装」，再装 Docker。
-
-**原始修复步骤（供参考，与上面等价）**
+若仍报 1603，**不要再猜**，用带详细日志的方式装一次，日志会直接写明真正原因：
 
 ```powershell
-# 1) 以管理员身份打开 PowerShell，一条命令装齐 WSL 与虚拟化平台
+choco install docker-desktop -y --install-arguments="'/l*v c:\dd-msi.log'"
+```
+
+装完后打开 `C:\dd-msi.log`，搜索 `Return Value 3`，它上方几行就是失败原因；
+把该日志交给助手即可继续定位。
+
+**留档：v1.1 曾给出的修复步骤（已作废，不必再执行）**
+
+```powershell
+# v1.1 误判时给出的步骤 —— 前提已被证伪，重复执行不会带来任何变化
 wsl --install --no-distribution
-
-# 如果上面这条因故不可用，就手动启用两个功能：
 dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
 dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-
-# 2) 重启电脑（这一步不能跳）
-
-# 3) 重启后再执行
+# 重启后
 wsl --update
 wsl --set-default-version 2
 choco install docker-desktop -y
 ```
+
+保留这段只为说明「当时为什么让你这么做」。你已执行过 `wsl --install`，
+WSL 应用与默认版本 2 均已就绪，两个功能也确认是已启用状态——**不需要再照此重跑**。
 
 **是否需要协助**：**不需要了**（已放弃 Docker，改走免安装中间件，见下 ①-b 与第 4.5 章）。
 
