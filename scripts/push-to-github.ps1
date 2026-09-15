@@ -43,7 +43,12 @@ param(
     [switch]$Force
 )
 
-$ErrorActionPreference = 'Stop'
+# 注意：这里**必须**用 'Continue'，不能用 'Stop'。
+# git 会把正常进度（例如 "From https://github.com/..."、远端分支更新行）写到 stderr，
+# 在 $ErrorActionPreference = 'Stop' 下，PowerShell 5.1 会把原生命令的 stderr 包装成
+# NativeCommandError 并当作**终止性错误**，于是「fetch 明明成功了」却被判为失败、
+# 脚本在中途中断。因此统一用 'Continue'，所有成败判定一律以 $LASTEXITCODE 为准。
+$ErrorActionPreference = 'Continue'
 
 function Say([string]$t) { Write-Host $t }
 function Rule { Write-Host ('-' * 70) }
@@ -140,16 +145,28 @@ Say "[3] 读取远端"
 Say "    首次运行会弹出 GitHub 登录窗口 —— 请用 1694798740 账号登录授权。"
 Say "    登录一次后凭据会存入 Windows 凭据管理器，之后不再询问。"
 
-$fetchOut = & git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main' 2>&1
+$fetchOut = & git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main' 2>&1 | ForEach-Object { "$_" }
 $fetchCode = $LASTEXITCODE
 if ($fetchCode -ne 0) {
     Say "    [x] 读取远端失败（退出码 $fetchCode）："
     $fetchOut | Select-Object -First 15 | ForEach-Object { Say "        $_" }
+    $joined = ($fetchOut -join ' ')
     Say ""
-    Say "    常见原因："
-    Say "      · 弹出的登录窗口被关掉或超过时限 → 重新运行本脚本"
-    Say "      · 代理拦住了 git 的 HTTPS 隧道 → 检查 HTTPS_PROXY 环境变量"
-    Say "      · 远端仓库被改名 / 删除 → 到 GitHub 网页确认仓库还在"
+    Say "    常见原因与对策："
+    if ($joined -match 'CONNECT tunnel failed|502|Empty reply') {
+        Say "      · 网络出口拦住了 git 的 HTTPS 隧道（报 502 / Empty reply from server）"
+        Say "        → 先确认浏览器能打开 https://github.com ；再检查 HTTPS_PROXY 环境变量："
+        Say "          临时清空后重试：`$env:HTTPS_PROXY=''; `$env:HTTP_PROXY=''"
+        Say "        → 若代理不稳定，多跑几次本脚本即可（链路是间歇性的）"
+    } elseif ($joined -match 'Authentication failed|could not read Username|403') {
+        Say "      · 凭据无效或没登录成功"
+        Say "        → 手动登录一次：git credential-manager github login"
+        Say "        → 并用 1694798740 这个账号（仓库所有者）授权"
+    } elseif ($joined -match 'not found|404|Repository not found') {
+        Say "      · 仓库不存在或当前账号无权限 → 到 GitHub 网页确认仓库还在、且账号正确"
+    } else {
+        Say "      · 请把上面的原始输出整段发给我，我继续定位"
+    }
     exit 1
 }
 $fetchOut | ForEach-Object { Say "    $_" }
@@ -203,20 +220,39 @@ if ($remoteExists) {
 # ---------- 5. 推送 ----------
 Say ""
 Say "[5] 推送（--force 覆盖远端 main 的分支指针）"
-$pushOut = & git push --force origin "main`:refs/heads/main" 2>&1
-$pushCode = $LASTEXITCODE
-$pushOut | ForEach-Object { Say "    $_" }
+$pushOut = @()
+$pushCode = 1
+for ($try = 1; $try -le 5; $try++) {
+    $pushOut = & git push --force origin "main`:refs/heads/main" 2>&1 | ForEach-Object { "$_" }
+    $pushCode = $LASTEXITCODE
+    Say "    [第 $try/5 次] 退出码 $pushCode"
+    $pushOut | ForEach-Object { Say "        $_" }
+    if ($pushCode -eq 0) { break }
+    $joined = ($pushOut -join ' ')
+    # 只对「网络类」失败重试；凭据/权限类失败重试没有意义
+    if ($joined -notmatch 'CONNECT tunnel failed|502|Empty reply|Could not connect|timed out|Timeout|Recv failure') {
+        break
+    }
+    if ($try -lt 5) { Start-Sleep -Seconds 4 }
+}
 
 if ($pushCode -ne 0) {
     Say ""
-    Say "    [x] 推送失败（退出码 $pushCode）。把上面的原始输出交给助手即可继续定位。"
+    Say "    [x] 推送失败（退出码 $pushCode）"
+    if (($pushOut -join ' ') -match 'CONNECT tunnel failed|502|Empty reply') {
+        Say "        网络出口拦住了 git 的 HTTPS 隧道（502 / Empty reply from server）。"
+        Say "        这类失败是间歇性的：fetch 阶段已经成功过一次，说明凭据完全正常。"
+        Say "        对策：直接再跑一次本脚本（或先关掉代理再跑）。"
+    } else {
+        Say "        把上面的原始输出交给助手即可继续定位。"
+    }
     exit 1
 }
 
 # ---------- 6. 校验 ----------
 Say ""
 Say "[6] 校验"
-$verify = ((& git ls-remote origin refs/heads/main 2>&1) | Select-Object -First 1)
+$verify = ((& git ls-remote origin refs/heads/main 2>&1 | ForEach-Object { "$_" }) | Select-Object -First 1)
 if (-not $verify) {
     Say "    [!] 无法读取远端引用，请到 GitHub 网页确认"
     exit 1
