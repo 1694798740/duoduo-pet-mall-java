@@ -1,0 +1,29 @@
+# MySQL 数据源档（与 local 档组合使用，用于「真实 MySQL + 无注册中心」的本地验证）
+#
+#   java -jar duoduo-user-1.0.0.jar --spring.profiles.active=local,mysql
+#
+# 说明：
+#   * Spring 按 profile 声明顺序加载，后声明的覆盖先声明的 —— 所以本档只覆盖数据源，
+#     local 档仍然提供「关闭 Nacos + 网关静态路由」的能力，两者互不冲突。
+#   * 生产环境直接用默认档（application.yml 的 DB_URL / DB_USERNAME / DB_PASSWORD 环境变量），
+#     不需要本档。
+#   * sql.init.mode=never：表结构由 DDL 统一管理（docs/sql/ 与各模块 db/schema.sql），
+#     绝不能在启动时自动执行 schema.sql —— 里面有 DROP TABLE。
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/duoduo_user?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
+    username: duoduo
+    password: duoduo
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 30
+      connection-timeout: 3000
+      pool-name: duoduo-user-mysql-pool
+  sql:
+    init:
+      mode: never
+
+logging:
+  level:
+    com.duoduo: DEBUG

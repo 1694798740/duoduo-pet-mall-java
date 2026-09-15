@@ -15,11 +15,12 @@
 | JDK 21 | ✅ `D:\jdk\jdk21`（21.0.10 LTS） | — | 已配置 `maven/env.ps1` |
 | Maven 3.9.4 | ✅ `D:\devsoft\apache-maven-3.9.4` | 全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443` | 用项目内 `maven/settings.xml`（阿里云镜像）绕开，**不改你的全局配置** |
 | Docker Desktop | ❌ 未安装（choco 安装因缺管理员权限失败） | MySQL / Redis / Nacos 无法用 compose 起 | 见下 |
-| MySQL | ❌ 未安装 | 用户服务连不上库 | `--spring.profiles.active=local` 用 **H2 内存库**（同一份 `schema.sql`，与生产 MySQL 方言一致） |
+| MySQL | ✅ **已装免安装版** `D:\duoduo-infra\mysql-8.0.29-winx64`（无需管理员权限） | — | 用 `--spring.profiles.active=local,mysql` 跑真实库；也可退回 H2 内存库 |
+| Redis | ✅ 已就绪 `D:\devsoft\redis`（:6379） | 代码尚未依赖（刷新令牌走库表） | P1-b 阶段接入缓存时启用 |
 | Nacos | ❌ 未启动 | 服务注册与网关 `lb://` 路由不可用 | `local` profile 关闭 Nacos，网关路由改静态地址 |
-| Redis | ✅ `D:\devsoft\redis`（未启动） | 当前阶段未依赖（刷新令牌走库表） | P3 阶段接入缓存时再启动 |
 
-**结论**：本机可以真编译、真启动、真验证「网关 + 用户服务 + 商品服务」三进程链路；完整微服务栈需要你补齐 Docker Desktop 或原生安装 MySQL / Nacos。
+**结论**：本机可以真编译、真启动、真验证「网关 + 用户服务 + 商品服务」三进程链路，
+并且**已切到真实 MySQL 跑通 54 项端到端断言**。只剩服务注册发现（Nacos）尚未验证。
 
 需要管理员权限安装 Docker Desktop 时，请以**管理员身份**打开 PowerShell 执行：
 
@@ -31,14 +32,18 @@ choco install docker-desktop -y
 
 ## 二、构建与运行
 
-### 推荐：一键启动三进程
+### 推荐：一键启动（两种模式）
 
 ```powershell
 # 1) 全量构建（首次会拉取 Spring 依赖，约数分钟）
 . .\maven\env.ps1
 mvn -gs maven\settings.xml -B -DskipTests package
 
-# 2) 一键启动（用户服务 8081 + 商品服务 8082 + 网关 8080，全部 local profile）
+# 2A) 真实 MySQL 模式：先起基础设施，再起三进程
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-infra.ps1        # MySQL:3306 + Redis:6379
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-local.ps1 -Mysql # profile = local,mysql
+
+# 2B) 零依赖模式（不想起 MySQL 时用 H2 内存库，效果等价）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-local.ps1
 
 # 3) 端到端冒烟（54 项断言，每次用随机手机号，可重复执行）
@@ -46,7 +51,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
 
 # 4) 停止
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-local.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-infra.ps1
 ```
+
+### 本地基础设施（免 Docker，不需要管理员权限）
+
+| 组件 | 路径 | 端口 | 说明 |
+|---|---|---|---|
+| MySQL 8.0.29 | `D:\duoduo-infra\mysql-8.0.29-winx64`（程序）/ `D:\duoduo-infra\mysql-data`（数据） | 3306 | 官网 ZIP 免安装版，以进程运行，不注册 Windows 服务 |
+| Redis 3.0.504 | `D:\devsoft\redis` | 6379 | 复用机器上已有版本 |
+
+库与账号：`duoduo_user`（3 张表）、`duoduo_product`（5 张表 + 种子数据），账号 `duoduo / duoduo`。
+DDL 与种子数据在首次初始化时灌入，之后由 `spring.sql.init.mode=never` 保证启动不会重建表。
+
+> MySQL 装在 **纯 ASCII 目录**是刻意的：后台执行的 PowerShell 命令会被写入临时脚本文件，
+> 中文会按 ANSI 解析而被截断，导致 `--basedir` 只剩 `D:\`，MySQL 随即报
+> `Can't open shared library 'D:\lib\plugin\...'`。
 
 ### 手动逐个启动
 

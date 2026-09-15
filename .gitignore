@@ -15,7 +15,10 @@ target/
 *.class
 
 # 日志与本地数据
+# 注意：*.log 只匹配以 .log 结尾的名字，重定向产生的 *.log.err 需要单独排除
 *.log
+*.log.err
+*.log.txt
 logs/
 data/
 *.db
