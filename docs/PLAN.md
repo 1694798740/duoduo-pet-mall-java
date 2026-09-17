@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-17 14:05
+> 更新时间：2026-09-17 14:15
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -58,12 +58,15 @@
 | **M5-4 下单拆单** | 4 个实体与 Mapper（订单 / 明细 / 状态日志 / 冻结台账）+ `OrderStatus` 状态枚举 + `OrderNoGenerator`（时间戳+随机+校验位，不用雪花 ID 对外）+ `ProductGateway`（跨服务调用与降级口径收敛到一处）+ `OrderService` + `OrderController`；接口 `POST /api/orders`（下单）、`GET /api/orders`（我的订单）、`GET /api/orders/{orderNo}`、`POST /api/orders/{orderNo}/cancel`；幂等靠 `uk_order_user_idem` 兜底；明细存下单时刻快照；**自测 `scripts/order-smoke.ps1` → 76 通过 / 0 失败** |
 | **M5-5 库存冻结与释放** | `SkuMapper` 的 freeze / release / deduct 三个**原子条件更新**（判断写进 WHERE，靠数据库行级原子性防超卖，不用分布式锁）；`StockService` + `StockController`（`/api/products/skus/stock/{freeze,release,deduct}`）；`InternalTokenFilter` 强制校验服务间凭据（**失败关闭**，不做「没配就放行」）；修正可售判定为 `stock − frozen_stock`；下单冻结、取消释放、**部分失败精确补偿**均已实测 |
 
+| **M5-6 订单状态机 + 超时关单** | `OrderStatus` 枚举承载合法流转、各接口再收窄自己的合法起点；`POST /api/orders/{orderNo}/ship`（内部凭据）、`/confirm`；`@Scheduled` 超时关单自动关闭待付款订单并释放冻结（**可重入**，释放判据用订单状态而非台账过期时间）；`POST /api/orders/internal/sweep` 支持手动触发补偿调度（运维排障 + 自动化测试）；**自测 `scripts/payment-smoke.ps1` → 71 通过 / 0 失败** |
+| **M5-7 支付幂等** | `PaymentEntity` / `PaymentMapper`；`POST /api/orders/{orderNo}/pay`（模拟渠道）；幂等三层防线（先查 `(channel,idempotent_key)` → 订单状态校验 → `uk_pay_channel_idem` 唯一索引兜并发）；**先落支付单再扣库存**（顺序错会留下「库存扣了、订单没付款」的残留）；成功后冻结台账置 DEDUCTED；新增交易侧 `InternalTokenFilter` |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| **M5-6 订单状态机 + 超时关单** | 下一步：`PAID → SHIPPED → COMPLETED` 流转、`@Scheduled` 扫描 `expire_at` 自动关单并释放冻结、失败重试 |
-| **M5-7 支付幂等** | 依赖 M5-6；`t_payment` 的 `uk_pay_channel_idem` 已就绪 |
+| **M5-8 C2C 担保交易** | 下一步：买家付款后资金进平台托管、确认收货后放款卖家、售后退回买家；`t_settlement` 表与 `uk_settle_order` 已就绪 |
+| **M5-9 卖家中心** | 依赖 M5-8；落地卖家账号体系后，把 `/ship` 从「内部凭据」改为「校验调用者是否该订单的卖家」 |
 
 ### 未开始（P1-b 交易服务，既定范围）
 
@@ -95,7 +98,8 @@
 | I-07 | 容器构建需拉 `eclipse-temurin` 基础镜像，曾担心网络不通 | **已自愈** | 无需操作 | 镜像已拉到本地（287 MB），三个业务镜像构建成功 |
 | I-08 | 容器化后冒烟 2 项失败：中文关键词检索命中 0 条、详情过敏原断言失败 | **已自愈**（2026-09-17 修复） | 无需操作 | 根因：初始化 SQL 被客户端按 **latin1** 执行，中文被**双重编码**入库（`猫粮` 的 UTF-8 字节 `E78CAB` 被拆成 6 个字符再存为 UTF-8）。修法：三个初始化脚本开头加 `SET NAMES utf8mb4`。复验：库内 `HEX` = `E9BAA6`（正确）、关键词检索命中 4 条、**冒烟 54/54** |
 | I-09 | 购物车自测脚本自身有缺陷，一度把种子数据改坏（**测试代码问题，非业务代码问题**） | **已自愈**（2026-09-17 修复） | 无需操作 | ① 哈希表用 `[long]` 建键、`[int]` 查键 —— PowerShell 按键**类型相等**匹配，查不到就静默返回 `$null`，夹具价格库存全变 0 → 21 条断言误报；② 改库复原时**写死数字**（`stock = 32`），每跑一次就把种子数据改坏一次，而种子 `data.sql` 里 SKU 2001 实为 **320**。修法：统一字符串键 + 夹具读不到就立即终止不写库 + 先读原值再写回原值 + 新增「测试结束后库内数据仍为原值」自证断言。数据已按种子恢复（2001→320） |
-| I-10 | 下单存在**幽灵冻结**风险：库存冻结发生在商品服务，不受本服务事务保护 | **已自愈**（2026-09-17 编写自测前自查发现并修复） | 无需操作 | 缺陷：原实现只在「整批冻结全部成功」时才记录待补偿列表，**部分成功时已冻成功的 SKU 会被漏记** → 订单回滚后那部分库存永久冻住（用户看到「没下单成功」但商品显示无货，且很难排查）。修法：按逐项结果精确挑出「真的冻成功了」的 SKU 再记入补偿列表。已由自测用例固定住：2001 冻成功 + 2004 冻失败 → 下单 422、订单未落库、购物车保留、**2001 冻结量回到 0、无残留 FROZEN 台账** |
+| I-10 | 下单存在**幽灵冻结**风险：库存冻结发生在商品服务，不受本服务事务保护 | **已自愈**（2026-09-17 编写自测前自查发现并修复） | 无需操作 | 缺陷：原实现只在「整批冻结全部成功」时才记录待补偿列表，**部分成功时已冻成功的 SKU 会被漏记** → 订单回滚后那部分库存永久冻住（用户看到「没下单成功」但商品显示无货，且很难排查）。修法：按逐项结果精确挑出「真的冻成功了」的 SKU 再记入补偿列表；同时把商品侧的批次冻结/释放/扣减改为**整批原子**（任一项失败即回滚），从根上减少对跨服务补偿的依赖。已由自测固定住：2001 冻成功 + 2004 冻失败 → 下单 422、订单未落库、购物车保留、**2001 冻结量回到 0、无残留 FROZEN 台账** |
+| I-11 | 订单生命周期里有**三处真实缺陷**（由本轮自测暴露，非测试代码问题） | **已自愈**（2026-09-17 修复） | 无需操作 | ① **已付款订单可被用户自助取消**：`cancel()` 误用了状态表（`PAID → CLOSED` 是留给退款关单的边），钱与货归属立刻说不清 → 改为显式要求「待付款」；② **超时关单不释放冻结**：释放判据错用「冻结台账自身的 `expire_at`」，它与订单过期时间是同一件事的两份副本，不同步时就会出现「订单已关闭、库存一直冻着」 → 改为以**订单状态**为唯一真相；③ **并发释放被记成失败**：定时调度与手动触发同时释放，先成功的一方把库存归零，另一方拿到 `FREEZE_NOT_ENOUGH` 被当作失败，台账永远卡在 FROZEN 且每轮刷 ERROR → 该原因码本就说明商品侧已无此冻结，改为**冲正为 RELEASED** 并打 WARN 留痕。三处均已由断言固定住（含「已关闭订单不允许残留 FROZEN 台账」这一不变式） |
 
 ---
 
@@ -133,6 +137,14 @@
 | `duoduo-trade/.../resources/application.yml` | 新增 `duoduo.internal.token` |
 | `docker-compose.yml` | product / trade 两个服务注入 `INTERNAL_TOKEN` |
 | `scripts/order-smoke.ps1` | **新增** 订单端到端自测（76 项断言，含安全断言与部分冻结失败补偿） |
+| `duoduo-trade/.../entity/PaymentEntity.java`、`mapper/PaymentMapper.java` | **新增** 支付单（幂等的落点：`uk_pay_channel_idem`） |
+| `duoduo-trade/.../support/InternalTokenFilter.java` | **新增** 交易侧内部接口凭据校验（保护发货与补偿调度） |
+| `duoduo-trade/.../support/OrderStatus.java` | 补充说明：状态表是「业务上可能发生的流转」全集，各接口必须再收窄自己的合法起点 |
+| `duoduo-trade/.../service/OrderService.java` | 新增支付（幂等）/ 发货 / 确认收货 / 超时关单调度；`cancel()` 改为显式要求「待付款」；释放改为以订单状态为判据并对 `FREEZE_NOT_ENOUGH` 冲正 |
+| `duoduo-trade/.../dto/OrderDtos.java`、`controller/OrderController.java` | 新增 `PayRequest` / `PayResult` / `SweepResult`；`OrderView` 增加 `paidAt` / `shippedAt` / `finishedAt`；新增 4 个接口 |
+| `duoduo-product/.../service/StockService.java` | 批次库存变更改为**整批原子**（任一项失败即 `setRollbackOnly`，仍返回逐项结果供定位原因） |
+| `README.md` | 按「每次推送前更新」的新约定整体刷新（Docker 优先运行方式、7 容器与端口、四套冒烟、三大域接口表、内部凭据、工程约束、里程碑与变更记录） |
+| `scripts/payment-smoke.ps1` | **新增** 支付 / 状态机 / 超时关单端到端自测（71 项断言） |
 | `Dockerfile` / `.dockerignore` / `duoduo-gateway/pom.xml` | 上一轮新增，本轮首次全程验证通过 |
 
 ---
@@ -154,6 +166,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1
 
 # 下单 / 拆单 / 库存冻结 端到端自测（76 项，含安全断言与部分冻结失败补偿）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1
+
+# 支付 / 订单状态机 / 超时关单 端到端自测（71 项）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1
 
 # 从零重建（连数据卷一起删，会重新执行 docs/sql 初始化）
 docker compose down -v; docker compose up -d
