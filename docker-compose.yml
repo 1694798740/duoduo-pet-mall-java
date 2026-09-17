@@ -165,6 +165,33 @@ services:
       nacos:
         condition: service_healthy
 
+  duoduo-trade-app:
+    container_name: duoduo-app-trade
+    image: duoduo/duoduo-trade:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-trade/target/duoduo-trade-1.0.0.jar
+        APP_PORT: '8083'
+    restart: unless-stopped
+    environment:
+      DUODUO_TRADE_PORT: '8083'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_trade?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+    ports:
+      - '8083:8083'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
   duoduo-gateway-app:
     container_name: duoduo-app-gateway
     image: duoduo/duoduo-gateway:1.0.0
@@ -189,6 +216,8 @@ services:
       duoduo-user-app:
         condition: service_healthy
       duoduo-product-app:
+        condition: service_healthy
+      duoduo-trade-app:
         condition: service_healthy
 
 volumes:

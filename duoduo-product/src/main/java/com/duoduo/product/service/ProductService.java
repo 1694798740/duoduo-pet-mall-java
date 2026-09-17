@@ -7,6 +7,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.product.dto.ProductDtos.ProductCard;
 import com.duoduo.product.dto.ProductDtos.ProductDetail;
 import com.duoduo.product.dto.ProductDtos.ProductQuery;
+import com.duoduo.product.dto.ProductDtos.SkuPurchaseView;
 import com.duoduo.product.dto.ProductDtos.SkuView;
 import com.duoduo.product.dto.ProductDtos.Suitability;
 import com.duoduo.product.entity.SkuEntity;
@@ -225,6 +226,73 @@ public class ProductService {
         }
         List<SpuEntity> spus = spuMapper.selectBatchIds(new LinkedHashSet<>(spuIds));
         return toCards(spus);
+    }
+
+    // ---------------- 供交易服务调用（内部接口） ----------------
+
+    /**
+     * 批量取 SKU 采购视图。
+     *
+     * <p>调用方是交易服务（加购校验、下单快照）。设计要点：
+     * <ul>
+     *   <li><b>批量</b>：购物车一次可能涉及几十个 SKU，逐条查询会把跨服务调用放大成 N 次</li>
+     *   <li><b>查不到不报错</b>：SKU 可能已物理删除，此时返回空列表由调用方判定为「商品不存在」，
+     *       比让整个购物车接口 500 更合理</li>
+     *   <li><b>不 JOIN</b>：SKU 与 SPU 分两次批量查，避免 JOIN 写法在分库分表后失效</li>
+     * </ul>
+     */
+    public List<SkuPurchaseView> purchaseViews(Collection<Long> skuIds) {
+        if (skuIds == null || skuIds.isEmpty()) {
+            return List.of();
+        }
+        List<SkuEntity> skus = skuMapper.selectBatchIds(new LinkedHashSet<>(skuIds));
+        if (skus.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> spuIds = skus.stream()
+                .map(SkuEntity::getSpuId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, SpuEntity> spuMap = spuIds.isEmpty()
+                ? Map.of()
+                : spuMapper.selectBatchIds(spuIds).stream()
+                        .collect(Collectors.toMap(SpuEntity::getId, s -> s, (a, b) -> a));
+
+        return skus.stream().map(sku -> {
+            SpuEntity spu = spuMap.get(sku.getSpuId());
+            int stock = sku.getStock() == null ? 0 : sku.getStock();
+            int frozen = sku.getFrozenStock() == null ? 0 : sku.getFrozenStock();
+            int available = Math.max(0, stock - frozen);
+            String spuStatus = spu == null ? "OFF_SHELF" : spu.getStatus();
+            boolean sellable = STATUS_ON_SALE.equals(spuStatus)
+                    && SKU_ACTIVE.equals(sku.getStatus())
+                    && available > 0;
+            String image = sku.getImage() != null && !sku.getImage().isBlank()
+                    ? sku.getImage()
+                    : (spu == null ? null : spu.getMainImage());
+            return new SkuPurchaseView(
+                    sku.getId(),
+                    sku.getSpuId(),
+                    spu == null ? null : spu.getTitle(),
+                    specText(sku.getSpecJson()),
+                    image,
+                    nz(sku.getPrice()),
+                    available,
+                    sellable,
+                    spuStatus,
+                    sku.getStatus());
+        }).toList();
+    }
+
+    /** 把规格 JSON 拍平成「规格:2kg / 口味:冻干双拼」这样的可读串，前端直接展示 */
+    private String specText(String specJson) {
+        Map<String, String> spec = parseSpec(specJson);
+        if (spec.isEmpty()) {
+            return null;
+        }
+        return spec.entrySet().stream()
+                .map(e -> e.getKey() + ":" + e.getValue())
+                .collect(Collectors.joining(" / "));
     }
 
     // ---------------- 内部实现 ----------------

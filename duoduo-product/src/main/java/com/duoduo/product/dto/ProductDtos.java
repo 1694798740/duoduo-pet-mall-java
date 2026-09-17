@@ -66,6 +66,29 @@ public final class ProductDtos {
     ) {
     }
 
+    /**
+     * 采购视图：交易服务加购 / 下单时需要的 SKU 快照。
+     *
+     * <p>刻意与 C 端 {@link SkuView} 分开：C 端不需要「可售库存」与原始状态码，
+     * 采购方也不需要过敏原等展示字段 —— 两边字段混用会让任一侧的改动都变得危险。
+     *
+     * <p>{@code availableStock} 是 {@code stock - frozenStock}，即「现在还能买几件」。
+     * 库存的冻结与扣减由交易服务负责，商品服务只读。
+     */
+    public record SkuPurchaseView(
+            Long skuId,
+            Long spuId,
+            String spuTitle,
+            String specText,
+            String image,
+            long price,
+            int availableStock,
+            boolean sellable,
+            String spuStatus,
+            String skuStatus
+    ) {
+    }
+
     /** 列表卡片：字段刻意精简，只保留列表页渲染与筛选所需的信息 */
     public record ProductCard(
             Long id,
