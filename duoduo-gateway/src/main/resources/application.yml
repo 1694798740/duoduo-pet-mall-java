@@ -46,7 +46,7 @@ spring:
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:
-            - Path=/api/cart/**,/api/orders/**
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/sandbox/pay/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

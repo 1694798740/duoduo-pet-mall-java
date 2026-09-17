@@ -34,6 +34,9 @@ import com.duoduo.trade.mapper.OrderMapper;
 import com.duoduo.trade.mapper.OrderStatusLogMapper;
 import com.duoduo.trade.mapper.PaymentMapper;
 import com.duoduo.trade.mapper.StockFreezeMapper;
+import com.duoduo.trade.payment.PaymentChannel;
+import com.duoduo.trade.payment.PaymentChannelRegistry;
+import com.duoduo.trade.payment.SandboxPaymentChannel;
 import com.duoduo.trade.support.OrderNoGenerator;
 import com.duoduo.trade.support.OrderStatus;
 import com.duoduo.trade.support.SettlementStatus;
@@ -115,6 +118,7 @@ public class OrderService {
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
     private final SettlementService settlementService;
+    private final PaymentChannelRegistry channelRegistry;
     private final SnowflakeIdGenerator idGenerator;
     private final OrderNoGenerator orderNoGenerator;
     private final ApplicationEventPublisher eventPublisher;
@@ -145,6 +149,7 @@ public class OrderService {
                         CartItemMapper cartItemMapper,
                         ProductGateway productGateway,
                         SettlementService settlementService,
+                        PaymentChannelRegistry channelRegistry,
                         SnowflakeIdGenerator idGenerator,
                         OrderNoGenerator orderNoGenerator,
                         ApplicationEventPublisher eventPublisher) {
@@ -156,6 +161,7 @@ public class OrderService {
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
         this.settlementService = settlementService;
+        this.channelRegistry = channelRegistry;
         this.idGenerator = idGenerator;
         this.orderNoGenerator = orderNoGenerator;
         this.eventPublisher = eventPublisher;
@@ -387,6 +393,10 @@ public class OrderService {
         orderMapper.updateById(order);
         writeStatusLog(order.getId(), current.name(), OrderStatus.CLOSED.name(), OPERATOR_USER, userId, closeReason, now);
 
+        // 作废该订单所有未完成的支付单：否则「订单已关闭、二维码还能扫出钱来」，
+        // 收款入口虽然也会校验订单状态拒绝入账，但直接消除矛盾状态更省事也更好排查
+        paymentMapper.markClosedByOrder(order.getId(), "订单已取消：" + closeReason, now);
+
         int[] release = releaseOrderFreeze(order.getId(), now);
         if (release[1] > 0) {
             log.error("订单 {} 取消后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
@@ -467,18 +477,23 @@ public class OrderService {
     // ---------------- 支付（幂等） ----------------
 
     /**
-     * 支付订单（本阶段为模拟渠道，即时成功）。
+     * 发起支付（预下单）。
+     *
+     * <p>渠道不同，返回的 {@code payStatus} 不同：
+     * <ul>
+     *   <li><b>即时渠道（MOCK）</b>：预下单即收款完成，返回 {@code SUCCESS}；
+     *       用于自动化测试与最简联调，不依赖任何外部条件；</li>
+     *   <li><b>沙箱 / 真实渠道</b>：预下单只拿到二维码内容（{@code codeUrl}），
+     *       返回 {@code PENDING}，钱到没到<b>必须以渠道回调为准</b>——
+     *       把「预下单成功」当成「已付款」是支付系统最经典的严重缺陷。</li>
+     * </ul>
      *
      * <p>幂等的三层防线（从外到内）：
      * <ol>
-     *   <li><b>先查</b>：同一 {@code (channel, idempotentKey)} 已存在 → 直接返回首次结果，这是常规重复回调的路径；</li>
+     *   <li><b>先查</b>：同一 {@code (channel, idempotentKey)} 已存在 → 直接返回首次结果；</li>
      *   <li><b>订单状态</b>：订单已不是「待付款」→ 拒绝，防止对同一订单二次收款；</li>
-     *   <li><b>唯一索引</b>：{@code uk_pay_channel_idem} 兜住并发——两个请求同时通过前两道检查时，
-     *       数据库只会让一个插入成功；插入失败的那方按「重放」处理。</li>
+     *   <li><b>唯一索引</b>：{@code uk_pay_channel_idem} 兜住并发插入。</li>
      * </ol>
-     *
-     * <p>扣库存用的是 {@code deduct}（库存与冻结量同时减少），其 WHERE 条件要求冻结量足够，
-     * 因此即使前面的防线都被绕过，也不可能把同一笔冻结扣两次。
      */
     @Transactional
     public PayResult pay(String orderNo, PayRequest request) {
@@ -488,7 +503,9 @@ public class OrderService {
             throw BizException.notFound("订单");
         }
 
-        PaymentEntity existing = findPayment(request.channel(), request.idempotentKey());
+        PaymentChannel channel = channelRegistry.require(request.channel());
+
+        PaymentEntity existing = findPayment(channel.code(), request.idempotentKey());
         if (existing != null) {
             return replayPayment(order, existing);
         }
@@ -505,7 +522,7 @@ public class OrderService {
         payment.setPayNo(orderNoGenerator.next());
         payment.setOrderId(order.getId());
         payment.setUserId(userId);
-        payment.setChannel(request.channel().trim().toUpperCase());
+        payment.setChannel(channel.code());
         payment.setAmount(nz(order.getPayAmount()));
         payment.setStatus(PaymentEntity.STATUS_INIT);
         payment.setIdempotentKey(request.idempotentKey());
@@ -518,54 +535,151 @@ public class OrderService {
         try {
             paymentMapper.insert(payment);
         } catch (DuplicateKeyException e) {
-            PaymentEntity winner = findPayment(request.channel(), request.idempotentKey());
+            PaymentEntity winner = findPayment(channel.code(), request.idempotentKey());
             if (winner != null) {
                 throw BizException.conflict("该支付请求已处理，请先查询订单状态（支付单号 " + winner.getPayNo() + "）");
             }
             throw BizException.conflict("检测到重复的支付请求正在处理中，请稍后查询订单状态");
         }
 
-        // 扣减库存：库存与冻结量同时减少；失败则整批回滚，本次支付不成立
-        // （支付单行会随事务回滚消失，客户端可用同一幂等键重试）
-        List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
-                new LambdaQueryWrapper<StockFreezeEntity>()
-                        .eq(StockFreezeEntity::getOrderId, order.getId())
-                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
-        if (freezes.isEmpty()) {
-            throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
-        }
-        List<StockChangeItem> items = freezes.stream()
-                .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
-                .toList();
-        StockChangeOutcome outcome = productGateway.deduct(order.getId(), items);
-        if (outcome == null || !outcome.allSuccess()) {
-            throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
-                    "扣减库存失败：" + describeFailure(outcome, Map.of()));
+        // 预下单：向渠道登记这笔支付，拿到二维码内容与支付单过期时间。
+        // 渠道差异被收敛在这一处 —— 换渠道不改订单、库存、账本的任何代码。
+        PaymentChannel.PrepayResult prepay = channel.prepay(new PaymentChannel.PrepayCommand(
+                payment.getPayNo(), order.getOrderNo(), nz(order.getPayAmount()),
+                "多多宠物商店订单 " + order.getOrderNo()));
+        payment.setCodeUrl(prepay.codeUrl());
+        payment.setExpireAt(prepay.expireAt());
+
+        if (channel.instantSuccess()) {
+            // 即时渠道：预下单即视为收款完成，走与渠道回调**完全相同**的入账路径
+            return completePayment(order, payment, "MOCK-" + payment.getPayNo(), now, false);
         }
 
-        payment.setStatus(PaymentEntity.STATUS_SUCCESS);
-        // 模拟渠道的流水号：真实渠道应使用渠道返回值；这里用支付单号补齐，保证对账字段非空
-        payment.setChannelTradeNo("MOCK-" + payment.getPayNo());
-        payment.setPaidAt(now);
+        // 沙箱 / 真实渠道：支付单转 PENDING，前端用 codeUrl 渲染二维码，等待渠道回调
+        payment.setStatus(PaymentEntity.STATUS_PENDING);
         payment.setUpdatedAt(now);
         paymentMapper.updateById(payment);
+        return toPayResult(order, payment, false);
+    }
 
-        order.setStatus(OrderStatus.PAID.name());
-        order.setPaidAt(now);
-        order.setUpdatedAt(now);
-        orderMapper.updateById(order);
-        writeStatusLog(order.getId(), current.name(), OrderStatus.PAID.name(), OPERATOR_USER, userId,
-                "支付成功（渠道 " + payment.getChannel() + "）", now);
-        markFreezeDeducted(order.getId(), now);
+    /**
+     * 渠道回调入口（沙箱与真实渠道共用）。
+     *
+     * <p>验签 / 防重放在 {@link PaymentChannel#verifyCallback} 里做；
+     * 这里做剩下的四件事：<b>幂等重放</b>、<b>金额核对</b>、<b>订单状态校验</b>、<b>入账</b>。
+     * 金额核对必须独立于验签 —— 签名只证明「这条回调来自渠道」，不证明「金额没被改过」。
+     */
+    @Transactional
+    public PayResult handleChannelCallback(String channelCode, String rawBody, Map<String, String> headers) {
+        PaymentChannel channel = channelRegistry.require(channelCode);
+        if (channel.instantSuccess()) {
+            // MOCK 不存在「稍后回调」；收到它的回调只有配错渠道或伪造两种可能，都该拒绝
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "渠道 " + channel.code() + " 不支持支付回调：它在预下单时即完成收款");
+        }
+        PaymentChannel.CallbackPayload payload = channel.verifyCallback(rawBody, headers);
 
-        // 钱进平台托管（C2C 担保交易的核心语义）：
-        // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
-        // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
-        settlementService.openCustody(order.getId(), order.getSellerId(), nz(order.getPayAmount()), now);
+        PaymentEntity payment = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getPayNo, payload.payNo()));
+        if (payment == null) {
+            throw BizException.notFound("支付单");
+        }
+        OrderEntity order = orderMapper.selectById(payment.getOrderId());
+        if (order == null) {
+            throw BizException.notFound("支付单对应的订单");
+        }
 
-        return new PayResult(order.getOrderNo(), payment.getPayNo(), payment.getChannel(),
-                nz(payment.getAmount()), payment.getStatus(), order.getStatus(),
-                OrderStatus.labelOf(order.getStatus()), false);
+        // 幂等重放：渠道回调必然重复投递（重试 / 网络抖动），「已成功」是常态路径而非异常
+        if (PaymentEntity.STATUS_SUCCESS.equals(payment.getStatus())) {
+            return toPayResult(order, payment, true);
+        }
+        if (!PaymentEntity.STATUS_PENDING.equals(payment.getStatus())
+                && !PaymentEntity.STATUS_INIT.equals(payment.getStatus())) {
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "支付单当前状态（" + payment.getStatus() + "）不允许入账");
+        }
+        if (!"SUCCESS".equals(payload.status())) {
+            throw BizException.validation("暂不支持处理非成功状态的支付回调：" + payload.status());
+        }
+        if (payload.amount() != nz(payment.getAmount())) {
+            throw new BizException(ErrorCode.PAYMENT_AMOUNT_MISMATCH,
+                    "回调金额（" + payload.amount() + " 分）与支付单金额（" + nz(payment.getAmount())
+                            + " 分）不一致，已拒绝入账");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许支付入账");
+        }
+        return completePayment(order, payment, payload.channelTradeNo(), payload.paidAt(), false);
+    }
+
+    /**
+     * 沙箱收银台的「模拟支付」动作：构造一条与真实渠道回调**格式完全相同**的签名报文，
+     * 再交给 {@link #handleChannelCallback} 走同一套验签与入账 ——
+     * 验签路径因此是被真实使用的，而不是摆着好看的死代码。
+     *
+     * <p>不校验登录：现实中「扫了二维码的人就是付款人」，收银台页面在扫码设备上打开，
+     * 那台设备上没有买家的登录态。金额一律取库内值，不信任请求参数。
+     */
+    @Transactional
+    public PayResult sandboxPay(String payNo) {
+        PaymentEntity payment = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getPayNo, payNo));
+        if (payment == null) {
+            throw BizException.notFound("支付单");
+        }
+        if (!SandboxPaymentChannel.CODE.equals(payment.getChannel())) {
+            throw BizException.validation("仅沙箱渠道（SANDBOX）支持收银台模拟支付，当前渠道：" + payment.getChannel());
+        }
+        OrderEntity order = orderMapper.selectById(payment.getOrderId());
+        if (order == null) {
+            throw BizException.notFound("支付单对应的订单");
+        }
+        if (PaymentEntity.STATUS_SUCCESS.equals(payment.getStatus())) {
+            return toPayResult(order, payment, true);
+        }
+        if (!PaymentEntity.STATUS_PENDING.equals(payment.getStatus())) {
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "支付单当前状态（" + payment.getStatus() + "）不允许支付");
+        }
+        SandboxPaymentChannel sandbox =
+                (SandboxPaymentChannel) channelRegistry.require(SandboxPaymentChannel.CODE);
+        Map<String, String> callback = sandbox.buildSignedCallback(
+                payment.getPayNo(), "SANDBOX-" + payment.getPayNo(), nz(payment.getAmount()));
+        return handleChannelCallback(SandboxPaymentChannel.CODE, callback.get("body"), callback);
+    }
+
+    /** 查询自己的支付单（扫码后前端轮询用；不是自己的支付单一律 404，不暴露存在性） */
+    public PayResult getPaymentView(String payNo) {
+        Long userId = UserContext.requireUserId();
+        PaymentEntity payment = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getPayNo, payNo));
+        if (payment == null || !payment.getUserId().equals(userId)) {
+            throw BizException.notFound("支付单");
+        }
+        OrderEntity order = orderMapper.selectById(payment.getOrderId());
+        if (order == null) {
+            throw BizException.notFound("支付单对应的订单");
+        }
+        return toPayResult(order, payment, false);
+    }
+
+    /**
+     * 收银台预览（只读、无副作用）：给沙箱收银台页面渲染金额与单号用。
+     * 只认 SANDBOX 渠道 —— 收银台是沙箱的自有页面，不该替别的渠道展示。
+     */
+    public PayResult sandboxPayPreview(String payNo) {
+        PaymentEntity payment = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getPayNo, payNo));
+        if (payment == null || !SandboxPaymentChannel.CODE.equals(payment.getChannel())) {
+            throw BizException.notFound("支付单");
+        }
+        OrderEntity order = orderMapper.selectById(payment.getOrderId());
+        if (order == null) {
+            throw BizException.notFound("支付单对应的订单");
+        }
+        return toPayResult(order, payment, false);
     }
 
     // ---------------- 发货与收货（状态机后半段） ----------------
@@ -969,7 +1083,23 @@ public class OrderService {
             orderMapper.updateById(order);
             writeStatusLog(order.getId(), OrderStatus.PENDING_PAYMENT.name(), OrderStatus.CLOSED.name(),
                     OPERATOR_SYSTEM, null, reason, now);
+            paymentMapper.markClosedByOrder(order.getId(), reason, now);
             closed++;
+        }
+
+        // 1.5) 支付单过期：PENDING 且已过自身过期时间的，二维码作废。
+        // 只动 PENDING（CAS），已成功 / 已作废的不受影响；过期支付单对应的订单
+        // 仍处于待付款时，买家可以重新发起支付（新支付单、新二维码）。
+        List<PaymentEntity> stalePayments = paymentMapper.selectList(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getStatus, PaymentEntity.STATUS_PENDING)
+                .le(PaymentEntity::getExpireAt, now)
+                .last("LIMIT " + Math.max(1, sweepBatchSize)));
+        int paymentsExpired = 0;
+        for (PaymentEntity stale : stalePayments) {
+            paymentsExpired += paymentMapper.markExpired(stale.getPayNo(), now);
+        }
+        if (paymentsExpired > 0) {
+            log.info("补偿调度：{} 张支付单超时未支付，已置为 EXPIRED（二维码作废）", paymentsExpired);
         }
 
         // 2) 释放：所有仍为 FROZEN 且**所属订单已关闭**的台账行（含历史遗留），按订单分组逐单释放。
@@ -1090,6 +1220,71 @@ public class OrderService {
 
     /** 支付幂等重放：返回首次支付的结果，不产生任何副作用 */
     private PayResult replayPayment(OrderEntity order, PaymentEntity payment) {
+        return toPayResult(order, payment, true);
+    }
+
+    /**
+     * 确认收款（入账）：即时渠道的预下单路径与渠道回调路径共用这一段，
+     * 保证两条路径对「订单 / 库存 / 托管」的副作用完全一致。
+     *
+     * <p>第一步先用 <b>CAS</b> 把支付单置为 SUCCESS（只有 INIT / PENDING 能被置入）。
+     * 并发回调只可能有一个成功，落败的一方把库里的最终状态读出来按重放返回 ——
+     * 这比「先扣库存再改状态」安全：库存扣减发生在 CAS 之后，
+     * 两个并发回调不会都走到扣库存那一步。
+     *
+     * <p>扣库存失败会连 CAS 一起回滚（同一事务），客户端可重新发起支付。
+     */
+    private PayResult completePayment(OrderEntity order, PaymentEntity payment,
+                                      String channelTradeNo, LocalDateTime paidAt, boolean replay) {
+        LocalDateTime now = nowUtc();
+        int marked = paymentMapper.markSuccess(payment.getPayNo(), channelTradeNo, now);
+        if (marked == 0) {
+            // 并发已有一方入账：读出最终状态按重放返回，不再产生任何副作用
+            PaymentEntity winner = paymentMapper.selectById(payment.getId());
+            return toPayResult(order, winner == null ? payment : winner, true);
+        }
+
+        // 扣减库存：库存与冻结量同时减少；失败则整批回滚（含上面的 CAS），本次支付不成立
+        List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getOrderId, order.getId())
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
+        if (freezes.isEmpty()) {
+            throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
+        }
+        List<StockChangeItem> items = freezes.stream()
+                .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
+                .toList();
+        StockChangeOutcome outcome = productGateway.deduct(order.getId(), items);
+        if (outcome == null || !outcome.allSuccess()) {
+            throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
+                    "扣减库存失败：" + describeFailure(outcome, Map.of()));
+        }
+
+        // 同步内存对象，供返回视图使用（库内状态已由上面的 CAS 落好）
+        payment.setStatus(PaymentEntity.STATUS_SUCCESS);
+        payment.setChannelTradeNo(channelTradeNo);
+        payment.setPaidAt(paidAt == null ? now : paidAt);
+
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        order.setStatus(OrderStatus.PAID.name());
+        order.setPaidAt(now);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+        writeStatusLog(order.getId(), current == null ? "UNKNOWN" : current.name(), OrderStatus.PAID.name(),
+                OPERATOR_USER, order.getUserId(),
+                "支付成功（渠道 " + payment.getChannel() + "，流水号 " + channelTradeNo + "）", now);
+        markFreezeDeducted(order.getId(), now);
+
+        // 钱进平台托管（C2C 担保交易的核心语义）：
+        // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
+        // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
+        settlementService.openCustody(order.getId(), order.getSellerId(), nz(order.getPayAmount()), now);
+
+        return toPayResult(order, payment, replay);
+    }
+
+    private PayResult toPayResult(OrderEntity order, PaymentEntity payment, boolean replay) {
         return new PayResult(
                 order.getOrderNo(),
                 payment.getPayNo(),
@@ -1098,7 +1293,9 @@ public class OrderService {
                 payment.getStatus(),
                 order.getStatus(),
                 OrderStatus.labelOf(order.getStatus()),
-                true);
+                replay,
+                payment.getCodeUrl(),
+                isoTs(payment.getExpireAt()));
     }
 
     /** 幂等重放：返回该幂等键首次产生的订单 */

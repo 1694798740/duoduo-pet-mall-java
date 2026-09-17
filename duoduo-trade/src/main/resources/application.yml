@@ -76,6 +76,17 @@ duoduo:
     platform-fee-bps: ${PLATFORM_FEE_BPS:100}
     # 发货后多少天自动确认收货并放款给卖家；配 0 或负数即关闭（仅手动确认收货）
     auto-receipt-days: ${AUTO_RECEIPT_DAYS:7}
+  pay:
+    sandbox:
+      # 沙箱收银台地址（预下单返回的二维码内容指向这里）。
+      # 二维码会被任一扫码设备打开，所以必须走**网关**（唯一对外入口，8080），
+      # 不能填交易服务的直连端口（8083，宿主未必映射到扫码设备可达的地址）。
+      # 扫码设备必须能访问该地址：本机开发用 127.0.0.1，容器对外/联机时用宿主 IP。
+      cashier-url: ${SANDBOX_CASHIER_URL:http://127.0.0.1:8080/sandbox/pay}
+      # 回调验签密钥（HMAC-SHA256）。本地开发有默认值，生产必须用环境变量覆盖
+      callback-secret: ${SANDBOX_CALLBACK_SECRET:duoduo-sandbox-pay-secret}
+      # 支付单有效期（分钟）：过期后二维码作废，由补偿调度置为 EXPIRED
+      expire-minutes: ${SANDBOX_EXPIRE_MINUTES:15}
 
 management:
   endpoints:

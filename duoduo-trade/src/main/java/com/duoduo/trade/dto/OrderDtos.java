@@ -119,7 +119,14 @@ public final class OrderDtos {
     ) {
     }
 
-    /** 支付结果 */
+    /**
+     * 支付结果。
+     *
+     * <p>{@code payStatus} 的取值：
+     * {@code SUCCESS}（即时渠道已入账）/ {@code PENDING}（沙箱与真实渠道：已预下单，等用户扫码支付）。
+     * {@code PENDING} 时前端用 {@code codeUrl} 渲染二维码、用 {@code expireAt} 做倒计时，
+     * 并轮询 {@code GET /api/payments/{payNo}} 直到终态。
+     */
     public record PayResult(
             String orderNo,
             String payNo,
@@ -128,7 +135,11 @@ public final class OrderDtos {
             String payStatus,
             String orderStatus,
             String orderStatusLabel,
-            boolean idempotentReplay
+            boolean idempotentReplay,
+            /** 二维码内容：即时渠道为 mock:// 串；沙箱为收银台地址；微信 Native 为 weixin:// 串 */
+            String codeUrl,
+            /** 支付单过期时间（ISO-8601 UTC），过期后二维码失效 */
+            String expireAt
     ) {
     }
 

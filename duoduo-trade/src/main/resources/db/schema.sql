@@ -130,6 +130,18 @@ CREATE INDEX idx_freeze_order ON t_stock_freeze (order_id);
 
 -- ---------- 支付单 ----------
 -- (channel, idempotent_key) 唯一：同一渠道同一幂等键的重复回调只入账一次。
+--
+-- status 取值（真实渠道与沙箱渠道共用同一套）：
+--   INIT     已创建、尚未向渠道预下单
+--   PENDING  已预下单，等待用户支付（沙箱/真实渠道的常态）
+--   SUCCESS  渠道已确认收款
+--   FAILED   渠道明确失败
+--   EXPIRED  超时未支付（由补偿调度置入）
+--   CLOSED   订单被取消/关闭，支付单随之作废
+--
+-- code_url 是渠道给的**二维码内容**（微信 Native 给 weixin:// 串，沙箱给收银台地址），
+-- 由前端渲染成二维码。刻意不在服务端生成图片：与真实渠道返回形态一致，
+-- 且省掉一个图片依赖。
 CREATE TABLE t_payment (
     id                BIGINT       NOT NULL,
     pay_no            VARCHAR(32)  NOT NULL,
@@ -140,7 +152,9 @@ CREATE TABLE t_payment (
     status            VARCHAR(20)  NOT NULL,
     idempotent_key    VARCHAR(64)  NOT NULL,
     channel_trade_no  VARCHAR(64),
+    code_url          VARCHAR(500),
     fail_reason       VARCHAR(200),
+    expire_at         TIMESTAMP,
     paid_at           TIMESTAMP,
     created_at        TIMESTAMP    NOT NULL,
     updated_at        TIMESTAMP    NOT NULL,
@@ -149,6 +163,8 @@ CREATE TABLE t_payment (
 CREATE UNIQUE INDEX uk_pay_no ON t_payment (pay_no);
 CREATE UNIQUE INDEX uk_pay_channel_idem ON t_payment (channel, idempotent_key);
 CREATE INDEX idx_pay_order ON t_payment (order_id);
+-- 支付单超时扫描（补偿调度）走这条索引
+CREATE INDEX idx_pay_expire ON t_payment (status, expire_at);
 
 -- ---------- C2C 担保交易资金托管 ----------
 -- 买家付款后钱进平台托管（CUSTODY），确认收货后打给卖家（RELEASED），

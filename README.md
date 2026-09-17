@@ -4,9 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-17** — 交易域推进到 **C2C 担保交易**：买家付款后资金进平台托管，确认收货后放款给卖家，
-退款原路退回买家，并支持「发货满 N 天自动确认收货放款」。五套端到端冒烟共 **413 项断言全绿**。
-下一步是买家端（Web 商城 + 微信小程序）与**真实微信/支付宝扫码支付**接入。详见文末「变更记录」。
+**最近更新：2026-09-18** — **沙箱支付渠道（M8-1）完成**：支付改为「预下单 + 扫码 + 回调入账」的真实形态——
+`PaymentChannel` 渠道抽象（MOCK 即时 / SANDBOX 扫码两个实现）、HMAC 回调验签、沙箱收银台页面、
+支付单过期作废。六套端到端冒烟共 **475 项断言全绿**。
+支付口径已按用户决定定为**沙箱支付**（不接真实微信/支付宝商户渠道）。详见文末「变更记录」。
 
 ---
 
@@ -27,7 +28,7 @@ docker ps                     # 期望：7 个容器全是 healthy
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
-| `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / **C2C 担保交易** |
+| `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -49,22 +50,23 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（五套，共 413 项断言）
+### 端到端冒烟（六套，共 475 项断言）
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1             # 54 项：用户域 + 商品域
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1       # 87 项：购物车
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1       # 76 项：下单拆单 + 库存冻结
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1     # 71 项：支付幂等 + 状态机 + 超时关单
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1  # 125 项：担保交易 + 资金托管 + 退款
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 76 项：下单拆单 + 库存冻结
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 ```
 
-五套脚本的共同约定（踩过坑才有的）：
+六套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
 - 跨轮次的断言按「本次测试开始时间」**限定范围**，不被功能上线前的历史数据误伤；
-- 前两套加 `-SkipDbCheck` 可跳过改库段落，只跑接口断言。
+- 部分脚本加 `-SkipDbCheck` 可跳过改库段落，只跑接口断言。
 
 ### 降级方案：不开 Docker
 
@@ -87,13 +89,13 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库）
-├── scripts/                    一键启动、冒烟测试（5 套）
+├── scripts/                    一键启动、冒烟测试（6 套）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
 ├── duoduo-user/                用户服务
 ├── duoduo-product/             商品服务（含库存主数据）
-└── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付 / 资金托管）
+└── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
 ```
 
 **分层纪律**：Controller 不写业务逻辑；Service 不依赖 `HttpServletRequest`；
@@ -160,13 +162,22 @@ duoduo-pet-mall-java/
 | GET | `/api/orders` | 我的订单列表（可按 `status` 过滤，**每条内嵌资金托管信息**） | 需登录 |
 | GET | `/api/orders/{orderNo}` | 订单详情（含明细快照 + 内嵌托管信息） | 需登录 |
 | GET | `/api/orders/{orderNo}/settlement` | **查询该订单的资金托管状态**（托管中 / 已放款 / 已退回买家） | 需登录 |
-| POST | `/api/orders/{orderNo}/pay` | **支付**（当前为模拟渠道，必须带 `idempotentKey`），重复回调只入账一次 | 需登录 |
-| POST | `/api/orders/{orderNo}/cancel` | 取消（**仅待付款可取消**），并释放冻结 | 需登录 |
+| POST | `/api/orders/{orderNo}/pay` | **支付预下单**（必须带 `idempotentKey`）；`channel=sandbox` 返回**二维码内容与过期时间**，`channel=mock` 即时完成 | 需登录 |
+| POST | `/api/orders/{orderNo}/cancel` | 取消（**仅待付款可取消**），并释放冻结 + 作废未支付支付单 | 需登录 |
 | POST | `/api/orders/{orderNo}/confirm` | **确认收货**（已发货 → 已完成），并**放款给卖家** | 需登录 |
 | POST | `/api/orders/{orderNo}/refund` | **买家自助退款**（仅「已付款且未发货」），资金退回买家 | 需登录 |
 | POST | `/api/orders/{orderNo}/ship` | 发货（已付款 → 已发货） | **内部凭据** |
 | POST | `/api/orders/internal/{orderNo}/refund` | **运营侧退款**（售后审核通过后执行，已付款 / 已发货均可） | **内部凭据** |
-| POST | `/api/orders/internal/sweep` | 手动触发一轮补偿调度（超时关单 / 释放冻结 / 自动确认收货 / 入库补偿） | **内部凭据** |
+| POST | `/api/orders/internal/sweep` | 手动触发一轮补偿调度（超时关单 / 释放冻结 / 自动确认收货 / 入库补偿 / 支付单过期） | **内部凭据** |
+
+### 支付渠道（`duoduo-trade` /payment）
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| POST | `/api/payments/callback/{channel}` | **渠道支付回调**（HMAC 验签 + 金额核对 + 幂等入账；时间戳过期 / 签名错误拒绝） | 渠道密钥验签 |
+| POST | `/api/payments/sandbox/{payNo}` | **沙箱「扫码后确认支付」**（模拟用户在收银台点确认；走与回调同一套验签与入账逻辑） | 免（沙箱专属） |
+| GET | `/api/payments/sandbox/pay/{payNo}` | **沙箱收银台页面**（二维码指向这里；展示单号 / 金额 / 状态，带确认按钮） | 免（扫码设备无登录态） |
+| GET | `/api/payments/{payNo}` | 查询支付单状态（仅本人） | 需登录 |
 
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
@@ -174,11 +185,44 @@ duoduo-pet-mall-java/
 
 ---
 
-## 四、C2C 担保交易（资金托管）
+## 四、支付：渠道抽象与沙箱扫码（M8-1）
+
+支付的形态是**真实渠道的完整仿真**（只是不接真实的微信/支付宝商户通道）：
+
+```
+买家点「支付」(channel=sandbox)
+   │ POST /api/orders/{orderNo}/pay     ← 预下单：落支付单 PENDING + 返回 codeUrl（二维码内容）与过期时间
+   ▼
+二维码（指向网关 /sandbox/pay/{payNo} 的收银台页面）
+   │ 扫码设备打开收银台 → 看到 单号/金额/状态 → 点「模拟扫码支付」
+   │ POST /api/payments/sandbox/{payNo} ← 与渠道回调走同一套验签 + 金额核对 + 幂等入账
+   ▼
+支付单 PENDING → SUCCESS（CAS）；订单 → 已付款；资金进平台托管（CUSTODY）
+   ├─ 二维码过期（默认 15 分钟）→ 支付单 EXPIRED（补偿调度自动扫）
+   └─ 订单被取消 / 超时关单 → 未支付支付单作废（CLOSED），二维码作废后不可再付
+```
+
+**`PaymentChannel` 接口**（`duoduo-trade/.../payment/`）：预下单 / 回调验签 / 查询三个动作，
+`MOCK`（即时成功，供自动化测试与本地联调）与 `SANDBOX`（扫码形态）是两个实现；
+将来接真实渠道 = 再加一个实现类，**订单与账本代码不动**。
+
+**回调安全（真实渠道同款攻击面，全部有测试覆盖）**：
+- HMAC-SHA256 验签（密钥来自环境变量 `SANDBOX_HMAC_KEY`，compose 提供开发默认值）；
+- 时间戳窗口校验（默认 ±5 分钟，防重放）；
+- **金额核对**：回调金额与支付单金额不一致 → 拒绝入账（422），防止「1 分钱付 100 元的单」；
+- 幂等：重复回调只入账一次（先查快路径 + `uk_pay_channel_idem` 唯一索引兜并发 + CAS 状态迁移）。
+
+**口径说明（用户已拍板）**：本项目用**沙箱支付**，不申请真实微信/支付宝商户资质。
+沙箱渠道的「扣款」不会真实发生，但**从预下单到入账的每一环（含验签、金额核对、幂等、过期作废）
+都与真实渠道一致**——将来若要接真实渠道，只需替换渠道实现并配置商户密钥。
+
+---
+
+## 五、C2C 担保交易（资金托管）
 
 ```
 下单 ──冻结库存──→ 待付款
-                    │ 支付成功
+                    │ 支付成功（渠道回调/沙箱确认）
                     ▼
                  已付款 ──资金进平台托管（CUSTODY）──→ 已发货
                                                         │ 买家确认收货 / 发货满 N 天自动确认
@@ -194,6 +238,7 @@ duoduo-pet-mall-java/
 | 概念 | 位置 | 说明 |
 |---|---|---|
 | 订单状态 | `t_order.status` | `PENDING_PAYMENT` / `PAID` / `SHIPPED` / `COMPLETED` / `REFUNDED` / `CLOSED` |
+| 支付单状态 | `t_payment.status` | `PENDING`（待支付，沙箱扫码中）/ `SUCCESS` / `EXPIRED` / `CLOSED` / `FAILED` |
 | 托管状态 | `t_settlement.status` | `CUSTODY`（托管中）/ `RELEASED`（已放款）/ `REFUNDED`（已退回买家） |
 | 冻结台账 | `t_stock_freeze.status` | `FROZEN` → `DEDUCTED` → `RESTOCK_PENDING` → `RESTOCKED`；或 `FROZEN` → `RELEASED` |
 | 平台佣金 | `t_settlement.platform_fee` | 按 `duoduo.trade.platform-fee-bps`（默认 100 bp = 1%）计，**结算当刻的口径落库留档** |
@@ -205,7 +250,8 @@ duoduo-pet-mall-java/
 - **已放款的订单不能直接退款**：钱已到卖家手里，需走追偿或平台垫付（属另一条流程，见 `docs/PLAN.md` 的已知边界）；
 - **退款界限在服务端强制**：已付款未发货才允许买家自助退款；已发货必须走售后（货在买家手上，系统无从判断有没有退回来）；
 - **退款不阻塞入库**：钱该退就退，货回库是仓库侧的后续动作，由台账 `RESTOCK_PENDING → RESTOCKED` 与补偿调度兜住；
-- **发货不等于放款**：买家没见到货之前，钱一直留在托管里。
+- **发货不等于放款**：买家没见到货之前，钱一直留在托管里；
+- **订单关闭必须作废未支付支付单**：否则订单已取消、二维码还能扫出钱来（本期接通了此前一直缺失的 `markClosedByOrder`）。
 
 ### 内部接口的凭据
 
@@ -215,7 +261,7 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 
 ---
 
-## 五、已落地的工程约束
+## 六、已落地的工程约束
 
 - **认证**：JWT 短时效 access（15 min）+ 服务端 refresh（7 d）。refresh 只存 SHA-256 哈希并轮转，
   即使库被拖走也无法直接冒用；令牌只走 httpOnly Cookie，**禁止写入 localStorage 或 URL 参数**。
@@ -237,34 +283,27 @@ compose 里提供开发默认值，**生产必须注入真实值**。
   避免「远程已生效、本地回滚」造成对不上账；补偿调度作为最终兜底（可重入）。
 - **状态机集中在枚举**：合法流转写在一处，非法流转一处拒绝；各接口再收窄自己的合法起点
   （例如已付款订单不允许买家自助取消，退款走独立的 `REFUNDED` 终态而不是复用「已关闭」）。
+- **支付回调安全**：HMAC 验签 + 时间戳窗口 + 金额核对 + 幂等入账四道防线（见第四节）。
 - **业务规则**：宠物档案的「出生日期 vs 生命阶段」矛盾时拒绝写入并要求确认（对应 PRD PET-05）。
 
 ---
 
-## 六、后续阶段：端形态与支付渠道
+## 七、后续阶段：端形态与支付口径
 
 ### 端形态（用户端两端口，商家与平台都是 Web）
 
 | 端 | 形态 | 面向谁 | 支付方式 |
 |---|---|---|---|
-| 买家端 | **微信小程序** | 买家 | 微信 JSAPI（小程序内拉起） |
-| 买家端 | **响应式网页** | 买家 | PC 上**扫码支付**（微信 Native 二维码 / 支付宝电脑网站支付） |
+| 买家端 | **微信小程序** | 买家 | 小程序内拉起支付（沙箱渠道） |
+| 买家端 | **响应式网页** | 买家 | PC 上**扫码支付**（沙箱渠道：二维码 → 收银台 → 确认支付） |
 | 商家端 | Web（商家服务平台） | 商家 / 卖家 | 商品、订单、发货、售后、结算对账 |
 | 平台管理后台 | Web | 平台运营 | 类目品牌、内容审核、订单干预、资金对账、报表 |
 
-### 支付渠道（真实微信 / 支付宝扫码收款）
+### 支付口径（沙箱支付 · 用户已拍板）
 
-当前支付是**模拟渠道**（`channel=MOCK`，即时成功），资金链路（冻结 → 入账 → 托管 → 放款 / 退款）已全部打通并可测。
-接入真实收款分三步，**第一步不依赖任何资质**：
-
-1. **渠道抽象**：抽出 `PaymentChannel` 接口（预下单 / 查询 / 退款 / 回调验签），MOCK 是其中一个实现 ——
-   切换渠道不改订单与账本代码；
-2. **真实渠道接入**：微信支付 Native（PC 扫码）+ JSAPI（小程序）+ 退款 API（APIv3 + 平台证书 + 回调验签）；
-   支付宝电脑网站支付 / 当面付 + 退款。回调先落库再处理，靠已有唯一索引保证幂等；
-3. **出账与对账**：退款走渠道退款接口（与账本 `REFUNDED` 同源）；卖家提现打款；每日对账比对渠道流水与 `t_payment` / `t_settlement`。
-
-> ⚠️ 第 2 步的瓶颈在**资质**而非代码：微信支付商户号需营业执照（个人主体申请不到），
-> 支付宝需企业实名认证，回调还需可公网访问的 HTTPS 域名。所需材料清单见 `docs/PLAN.md` 协助区 I-12。
+支付用**沙箱渠道**：不申请真实微信/支付宝商户资质，资金不真实流转。
+但支付链路的工程形态与真实渠道完全一致（预下单 / 二维码 / 收银台 / 回调验签 / 金额核对 / 幂等 / 过期作废），
+将来切真实渠道只需新增 `PaymentChannel` 实现并配置商户密钥。
 
 ### 阶段路线
 
@@ -272,10 +311,10 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 |---|---|---|
 | **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 完成（54 项冒烟） |
 | **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（7 容器 healthy） |
-| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结与释放 ✅ / 订单状态机 ✅ / 支付幂等 ✅ / **C2C 担保交易 ✅** / 卖家中心 ⏳ | 🔄 进行中 |
+| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结 ✅ / 状态机 ✅ / 支付幂等 ✅ / C2C 担保交易 ✅ / **沙箱支付渠道 ✅** / 卖家中心 ⏳ | 🔄 进行中 |
 | **P1-c** | 买家端 **Web 商城**（复用 Node 版 17 个页面，接口指向网关 :8080） | ⏳ |
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
-| **P1-e** | **真实支付渠道**（微信 Native/JSAPI + 支付宝）+ 真实退款 + 对账 | ⏳ 需商户资质 |
+| **P1-e** | ~~真实支付渠道~~ → **沙箱支付渠道**（已完成；真实渠道为可选后续） | ✅ |
 | **P1-f** | 商家端 Web（商家服务平台）+ 平台管理后台 Web | ⏳ |
 | **P2** | 履约服务（物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
@@ -283,7 +322,25 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 
 ---
 
-## 七、变更记录
+## 八、变更记录
+
+### 2026-09-18（沙箱支付渠道 M8-1）
+- **支付口径定为沙箱支付**（用户拍板）：不接真实微信/支付宝商户渠道，资金不真实流转。
+- **`PaymentChannel` 渠道抽象**：预下单 / 回调验签 / 查询三个动作；`MOCK`（即时成功）与
+  `SANDBOX`（扫码形态）两个实现；`PaymentChannelRegistry` 统一注册。将来接真实渠道只加实现类。
+- **支付改为「预下单」语义**：`POST /api/orders/{orderNo}/pay` 返回 `codeUrl`（二维码内容，
+  指向网关的沙箱收银台）与过期时间（默认 15 分钟）；`MOCK` 渠道保持即时完成（自动化测试用）。
+- **沙箱收银台**（`GET /api/payments/sandbox/pay/{payNo}`）：服务端渲染页面，展示单号 / 金额 / 状态，
+  「模拟扫码支付」按钮走 `POST /api/payments/sandbox/{payNo}`，**与渠道回调共用同一套验签与入账逻辑**。
+- **回调入口**（`POST /api/payments/callback/{channel}`）：HMAC-SHA256 验签 + 时间戳窗口（±5 分钟）
+  + **金额核对**（不一致拒绝入账）+ 幂等（先查 + 唯一索引 + CAS）；重复回调只入账一次。
+- **支付单生命周期**：`PENDING → SUCCESS / EXPIRED / CLOSED`；`t_payment` 增加 `code_url`、`expire_at`；
+  过期扫描并入补偿调度；**订单取消/关单时作废未支付支付单**（接通了此前一直缺失的 `markClosedByOrder`，
+  修复「订单已取消、二维码还能扫出钱来」的漏洞）。
+- **六套端到端冒烟共 475 项断言全绿**：54 / 87 / 76 / 71 / 125 / **62（新增支付渠道）**。
+- 修复自测暴露的问题：① 未知渠道/MOCK 回调拒绝用错了 400（应为 422 业务错误，与注册表 javadoc 一致）；
+  ② 二维码内容默认指向交易服务 8083 直连地址（扫码设备不可达，改为网关 8080 并补网关路由与白名单）；
+  ③ 收银台响应头缺 charset（严格客户端按 Latin-1 解码中文乱码，已声明 UTF-8）。
 
 ### 2026-09-17（第二轮）
 - **C2C 担保交易（M5-8）**：买家付款后资金进平台托管（`t_settlement`，`uk_settle_order` 一单一条）；
@@ -297,7 +354,6 @@ compose 里提供开发默认值，**生产必须注入真实值**。
   退款后货回库走台账 `RESTOCK_PENDING → RESTOCKED`，失败由补偿调度重试 —— **退款不因入库失败而回滚**。
 - **`t_order` 增加 `refunded_at`**（退款不是「订单关闭」，资金动作需要独立时间戳）与
   `idx_order_auto_receipt`（自动收货扫描）索引。
-- **五套端到端冒烟共 413 项断言全绿**：54 / 87 / 76 / 71 / **125（新增担保交易）**。
 - 修复自测暴露的问题：① 退货入库端点编译通过但运行时 404（新增端点无内部引用，编译发现不了，
   必须实调一次验证）；② 自测脚本里佣金取整用了 PowerShell 的「四舍五入」而非 Java 的整数除；
   ③ 跨轮次断言未按时间范围限定，被历史数据误伤。

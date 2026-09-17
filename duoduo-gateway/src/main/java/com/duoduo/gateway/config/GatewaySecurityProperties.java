@@ -37,6 +37,12 @@ public class GatewaySecurityProperties {
             "/api/coupons/**",
             "/api/duoduo/chat",
             "/api/duoduo/capabilities",
+            // 渠道回调来自渠道服务器，没有我们的登录态；安全靠验签 + 金额核对 + CAS 幂等
+            "/api/payments/callback/**",
+            // 沙箱收银台：扫码设备上没有买家登录态（现实中谁扫码谁付款）
+            "/api/payments/sandbox/**",
+            // 沙箱收银台页面（服务端渲染，与上一条同理由放行）
+            "/sandbox/pay/**",
             "/actuator/**",
             "/health/**"
     );

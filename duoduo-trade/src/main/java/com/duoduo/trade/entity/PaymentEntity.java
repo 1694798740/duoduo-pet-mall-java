@@ -20,9 +20,15 @@ import java.time.LocalDateTime;
 @TableName("t_payment")
 public class PaymentEntity {
 
+    /** 已创建、尚未向渠道预下单 */
     public static final String STATUS_INIT = "INIT";
+    /** 已预下单，等待用户支付（沙箱与真实渠道的常态） */
+    public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
+    /** 超时未支付，由补偿调度置入 */
+    public static final String STATUS_EXPIRED = "EXPIRED";
+    /** 订单被取消 / 关闭，支付单随之作废 */
     public static final String STATUS_CLOSED = "CLOSED";
 
     @TableId
@@ -36,7 +42,11 @@ public class PaymentEntity {
     private String status;
     private String idempotentKey;
     private String channelTradeNo;
+    /** 渠道返回的**二维码内容**（沙箱为收银台地址，微信 Native 为 weixin:// 串），由前端渲染成二维码 */
+    private String codeUrl;
     private String failReason;
+    /** 支付单过期时间；超时未支付由补偿调度置为 EXPIRED */
+    private LocalDateTime expireAt;
     private LocalDateTime paidAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -59,6 +69,10 @@ public class PaymentEntity {
     public void setIdempotentKey(String idempotentKey) { this.idempotentKey = idempotentKey; }
     public String getChannelTradeNo() { return channelTradeNo; }
     public void setChannelTradeNo(String channelTradeNo) { this.channelTradeNo = channelTradeNo; }
+    public String getCodeUrl() { return codeUrl; }
+    public void setCodeUrl(String codeUrl) { this.codeUrl = codeUrl; }
+    public LocalDateTime getExpireAt() { return expireAt; }
+    public void setExpireAt(LocalDateTime expireAt) { this.expireAt = expireAt; }
     public String getFailReason() { return failReason; }
     public void setFailReason(String failReason) { this.failReason = failReason; }
     public LocalDateTime getPaidAt() { return paidAt; }
