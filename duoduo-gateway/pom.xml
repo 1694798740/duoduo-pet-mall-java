@@ -32,6 +32,15 @@
       <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
     </dependency>
 
+    <!-- 负载均衡：lb:// 路由必需。
+         缺失时网关仍能用静态 http:// 路由（local 档），但 lb:// 会直接返回
+         503 Service Unavailable 且日志无异常 —— 极易误判成网络问题。
+         版本由 Spring Cloud BOM 管理。 -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>

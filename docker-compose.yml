@@ -1,13 +1,24 @@
-# 多多宠物商店 · 基础设施编排
+# 多多宠物商店 · 基础设施编排（本机开发首选方式）
 #
-# 说明：本文件提供「真微服务多进程」所需的中间件。
-# 本机未安装 Docker Desktop 时无法使用；此时请用 application-local.yaml（H2 + 关闭 Nacos）跑骨架，
-# 或参考 docs/LOCAL-SETUP.md 的原生安装方式。
+# 说明：本文件提供「真微服务多进程」所需的中间件，是**开发环境的首选**运行方式。
+# 备用方式（Docker 出问题且无法解决时才用）：免安装 ZIP 版 MySQL + Redis，
+#   见 scripts/start-infra.ps1 / stop-infra.ps1；或轻量验证用 application-local.yml（H2 + 关闭 Nacos）。
 #
 # 用法：
-#   docker compose up -d
-#   docker compose logs -f nacos
+#   mvn -gs maven/settings.xml -B -DskipTests package   # ① 先构建三个服务的 jar
+#   docker compose up -d --build                        # ② 起中间件 + 业务服务
+#   docker compose up -d mysql redis nacos              #    只起中间件（业务用本机进程跑）
+#   docker compose logs -f duoduo-user-app              #    看某个服务日志
+#   docker compose down                                 # 停（保留数据卷）；加 -v 连数据一起删
 #
+# 目录 role 划分：mysql / redis / nacos 是中间件（用官方镜像），
+#                 duoduo-*-app 是本项目业务服务（用根目录 Dockerfile 构建）。
+#
+# 首次启动会自动执行 docs/sql/ 下的初始化脚本（仅数据卷为空时执行一次）：
+#   00-init-databases-and-user.sql  建 duoduo_user / duoduo_product / nacos 三个库，
+#                                   建应用账号 duoduo/duoduo 并授权
+#   01-duoduo-user.sql              用户域建表
+#   02-duoduo-product.sql           商品域建表 + 种子数据
 # 生产环境请勿直接使用此文件：账号口令、资源规格、持久化与高可用策略都需要按容量重新设计。
 
 services:
@@ -19,12 +30,15 @@ services:
       - '3306:3306'
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-duoduo_root}
+      # 仅创建一个库用于通过健康检查；其余库由 00-init-databases-and-user.sql 创建
       MYSQL_DATABASE: duoduo_user
-      TZ: Asia/Shanghai
+      # 应用约定「时间统一 UTC」：JDBC 连接串带 serverTimezone=UTC，免安装版 MySQL 也用 +00:00。
+      # 容器必须同口径，否则 TIMESTAMP 读写会出现 8 小时偏差（影响令牌过期等时间比较逻辑）。
+      TZ: UTC
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --default-time-zone=+08:00
+      - --default-time-zone=+00:00
       # 生产应由 DBA 按容量重新设定，这里取开发默认值
       - --max-connections=2000
       - --innodb-buffer-pool-size=1G
@@ -63,23 +77,119 @@ services:
       - '9848:9848'
     environment:
       MODE: standalone
+      # PREFER_HOST_MODE=hostname 让控制台与客户端都用 localhost 访问，避免回显容器内 IP
       PREFER_HOST_MODE: hostname
-      SPRING_DATASOURCE_PLATFORM: mysql
-      MYSQL_SERVICE_HOST: mysql
-      MYSQL_SERVICE_PORT: 3306
-      MYSQL_SERVICE_DB_NAME: nacos
-      MYSQL_SERVICE_USER: root
-      MYSQL_SERVICE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-duoduo_root}
+      # 开发环境使用内嵌 Derby：省掉导入 nacos-mysql.sql 的步骤，起停更快。
+      # 若要让 Nacos 也用 MySQL 持久化（更接近生产），去掉下面 Nacos 相关的注释并
+      # 先把 docs/sql/nacos-mysql.sql 放进来（来自 Nacos 发行包的 conf/mysql-schema.sql）。
+      # SPRING_DATASOURCE_PLATFORM: mysql
+      # MYSQL_SERVICE_HOST: mysql
+      # MYSQL_SERVICE_PORT: 3306
+      # MYSQL_SERVICE_DB_NAME: nacos
+      # MYSQL_SERVICE_USER: root
+      # MYSQL_SERVICE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-duoduo_root}
       JVM_XMS: 512m
       JVM_XMX: 512m
+    # Nacos 镜像内自带 curl（已实测 /usr/bin/curl），可以直接打到 readiness 端点。
+    # 有了 healthcheck，业务服务才能用 condition: service_healthy 等待注册中心真正可用，
+    # 否则服务会先起来注册失败、再靠重试。
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:8848/nacos/v1/console/health/readiness']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # 业务服务
+  #
+  # 要点：
+  #   * 用**默认 profile**（不是 local）：走 Nacos 服务发现，网关用 lb:// 负载均衡，
+  #     这与生产形态一致；local 档的静态 127.0.0.1 路由只在容器外跑进程时才适用。
+  #   * 数据库连接靠环境变量覆盖（各模块 application.yml 已参数化 DB_URL /
+  #     DB_USERNAME / DB_PASSWORD），因此容器化不需要改任何 Java 代码。
+  #   * 先 mvn package 构建出 jar，compose 才会用 Dockerfile 把它拷进镜像。
+  # ---------------------------------------------------------------------------
+  duoduo-user-app:
+    container_name: duoduo-app-user
+    image: duoduo/duoduo-user:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-user/target/duoduo-user-1.0.0.jar
+        APP_PORT: '8081'
+    restart: unless-stopped
+    environment:
+      DUODUO_USER_PORT: '8081'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_user?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
+    ports:
+      - '8081:8081'
     depends_on:
       mysql:
         condition: service_healthy
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:8848/nacos/v1/console/health/readiness']
-      interval: 15s
-      timeout: 5s
-      retries: 20
+      nacos:
+        condition: service_healthy
+
+  duoduo-product-app:
+    container_name: duoduo-app-product
+    image: duoduo/duoduo-product:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-product/target/duoduo-product-1.0.0.jar
+        APP_PORT: '8082'
+    restart: unless-stopped
+    environment:
+      DUODUO_PRODUCT_PORT: '8082'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_product?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+    ports:
+      - '8082:8082'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  duoduo-gateway-app:
+    container_name: duoduo-app-gateway
+    image: duoduo/duoduo-gateway:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-gateway/target/duoduo-gateway-1.0.0.jar
+        APP_PORT: '8080'
+    restart: unless-stopped
+    environment:
+      DUODUO_GATEWAY_PORT: '8080'
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+    ports:
+      - '8080:8080'
+    depends_on:
+      duoduo-user-app:
+        condition: service_healthy
+      duoduo-product-app:
+        condition: service_healthy
 
 volumes:
   mysql-data:

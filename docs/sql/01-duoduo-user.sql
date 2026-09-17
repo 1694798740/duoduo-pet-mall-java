@@ -8,6 +8,12 @@
 --           时间统一 UTC（TIMESTAMP），由应用层写入，避免依赖数据库时区设置。
 -- ============================================================================
 
+-- 注意：必须显式声明客户端字符集。
+-- 若执行本文件的客户端按 latin1 发送（容器 entrypoint 下曾发生），中文会被「双重编码」写入：
+--   UTF-8 字节 E78CAB 被按 Latin-1 解释成 6 个字符再存为 UTF-8，
+--   结果是数据看似存在、但中文关键词检索永远命中 0 条。
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS `duoduo_user`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS `nacos`

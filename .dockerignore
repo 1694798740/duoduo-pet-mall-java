@@ -1,0 +1,37 @@
+# 排除不需要进镜像的内容，避免构建上下文过大 / 把临时文件带进镜像
+.git
+.github
+.idea
+.vscode
+
+# 构建中间产物：target 下除了最终 fat jar，其余全部排除。
+# 注意：不要写 **/target/** —— 那会把要 COPY 进镜像的 fat jar 一起排掉，
+# 导致 COPY 报 "not found"。这里逐项排除中间目录，并显式保留 fat jar。
+**/target/classes/**
+**/target/test-classes/**
+**/target/generated-sources/**
+**/target/generated-test-sources/**
+**/target/maven-status/**
+**/target/maven-archiver/**
+**/target/surefire-reports/**
+**/target/*.jar.original
+**/target/*-sources.jar
+!**/target/*.jar
+
+# 本机脚本与日志
+scripts/
+*.log
+*.log.err
+
+# 环境变量与密钥：绝不进镜像
+.env
+.env.*
+*.pem
+*.key
+gh-token.txt
+
+# 本地仓库与运行时数据（体积大且与镜像无关）
+.m2repo/
+duoduo-infra/
+docker-nocreds/
+docs/
