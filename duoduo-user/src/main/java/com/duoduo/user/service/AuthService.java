@@ -198,6 +198,33 @@ public class AuthService {
         return toView(entity);
     }
 
+    /**
+     * 申请成为卖家（商家入驻）。
+     *
+     * <p>前置条件：**必须已实名**。这不是形式主义 —— 资金托管最终会放款给卖家，
+     * 匿名卖家意味着「钱可以打给一个无法追责的主体」，担保交易的信任基础就没了（对应 PRD ACC-04）。
+     *
+     * <p>本期不做资质审核（没有人工审核台），实名即开通；真实业务里这里应生成待审核的入驻单。
+     * 幂等：已是卖家时直接返回当前资料，不报错 —— 重复点击「成为卖家」不该把人吓一跳。
+     */
+    @Transactional
+    public UserView applyMerchant(Long userId) {
+        UserEntity entity = userMapper.selectById(userId);
+        if (entity == null) {
+            throw BizException.notFound("用户");
+        }
+        if (!entity.isRealNameVerified()) {
+            throw BizException.businessRule("请先完成实名认证再申请成为卖家");
+        }
+        if (!"SELLER".equalsIgnoreCase(entity.getRole())) {
+            entity.setRole("SELLER");
+            entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+            userMapper.updateById(entity);
+            log.info("用户升级为卖家 userId={}", userId);
+        }
+        return toView(entity);
+    }
+
     // ---------------- 内部方法 ----------------
 
     private LoginResponse issueTokens(UserEntity entity, String userAgent) {

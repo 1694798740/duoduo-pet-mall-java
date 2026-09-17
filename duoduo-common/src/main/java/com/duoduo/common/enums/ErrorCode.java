@@ -15,6 +15,15 @@ public enum ErrorCode {
 
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "请求不合法"),
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "请求参数不合法"),
+    /**
+     * 请求体格式不支持（415）。
+     *
+     * <p>典型触发：客户端发 POST 却带 {@code application/x-www-form-urlencoded}
+     * （curl、部分 HTTP 库在无 body 时的默认行为），而接口要的是 JSON。
+     * 这<b>是客户端的问题</b>，此前落到兜底分支变成 500，
+     * 既污染了 5xx 告警，又把「你发错了格式」说成了「我坏了」。
+     */
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "不支持的请求体格式，请使用 application/json"),
 
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "身份未认证或登录已过期"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "没有权限执行该操作"),

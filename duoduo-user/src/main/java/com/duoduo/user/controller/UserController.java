@@ -45,4 +45,17 @@ public class UserController {
     public ApiResponse<UserView> submitRealName(@Valid @RequestBody RealNameRequest request) {
         return ApiResponse.ok(authService.submitRealName(UserContext.requireUserId(), request));
     }
+
+    /**
+     * 申请成为卖家（商家入驻）：实名后把 role 升级为 {@code SELLER}。
+     *
+     * <p>幂等：已是卖家时直接返回当前资料。未实名返回 422 —— 钱最终要放款给卖家，
+     * 匿名卖家会让资金流向不可追责。
+     *
+     * <p>注意：角色升级后必须<b>重新登录</b>才能生效，因为 access token 里带了 role 快照。
+     */
+    @PostMapping("/me/merchant")
+    public ApiResponse<UserView> applyMerchant() {
+        return ApiResponse.ok(authService.applyMerchant(UserContext.requireUserId()));
+    }
 }

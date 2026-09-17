@@ -4,10 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-18** — **沙箱支付渠道（M8-1）完成**：支付改为「预下单 + 扫码 + 回调入账」的真实形态——
-`PaymentChannel` 渠道抽象（MOCK 即时 / SANDBOX 扫码两个实现）、HMAC 回调验签、沙箱收银台页面、
-支付单过期作废。六套端到端冒烟共 **475 项断言全绿**。
-支付口径已按用户决定定为**沙箱支付**（不接真实微信/支付宝商户渠道）。详见文末「变更记录」。
+**最近更新：2026-09-17（第三轮）** — **买家端 Web 商城（M6 / P1-c）完成**：新建 `frontend/`
+（React 18 + TypeScript + Vite），10 页覆盖「注册登录 → 检索 → 详情 → 购物车 → 结算 → 下单 →
+扫码支付（二维码 + 3 秒轮询）→ 资金托管明细」全闭环；已在真实 Chromium 中逐页验证，
+`tsc --noEmit` 零错误、`vite build` 通过。详见「七、买家端 Web 商城」与文末「变更记录」。
 
 ---
 
@@ -50,7 +50,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（六套，共 475 项断言）
+### 端到端冒烟（七套，共 557 项断言）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -59,9 +59,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1     
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 82 项：卖家中心（准入/归属隔离/发货/售后/结算）
 ```
 
-六套脚本的共同约定（踩过坑才有的）：
+七套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -95,7 +96,8 @@ duoduo-pet-mall-java/
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
 ├── duoduo-user/                用户服务
 ├── duoduo-product/             商品服务（含库存主数据）
-└── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
+├── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
+└── frontend/                   买家端 Web 商城（React 18 + TS + Vite，见第七节）
 ```
 
 **分层纪律**：Controller 不写业务逻辑；Service 不依赖 `HttpServletRequest`；
@@ -118,6 +120,7 @@ duoduo-pet-mall-java/
 | POST | `/api/auth/logout` | 吊销刷新令牌并清 Cookie | 免 |
 | GET / PATCH | `/api/users/me` | 当前用户资料 / 改昵称头像 | 需登录 |
 | POST | `/api/users/me/realname` | 实名认证（身份证仅存掩码） | 需登录 |
+| POST | `/api/users/me/merchant` | **申请成为卖家**（实名前置：未实名 422；已是卖家则幂等返回）；角色升级后**需重新登录**才生效 | 需登录 |
 | GET / POST | `/api/pets` | 宠物档案列表 / 新建（首只自动设为当前宠物） | 需登录 |
 | PUT / DELETE | `/api/pets/{id}` | 更新 / 删除档案（默认宠物自动顺延） | 需登录 |
 | POST | `/api/pets/{id}/default` | 设为当前宠物 | 需登录 |
@@ -178,6 +181,30 @@ duoduo-pet-mall-java/
 | POST | `/api/payments/sandbox/{payNo}` | **沙箱「扫码后确认支付」**（模拟用户在收银台点确认；走与回调同一套验签与入账逻辑） | 免（沙箱专属） |
 | GET | `/api/payments/sandbox/pay/{payNo}` | **沙箱收银台页面**（二维码指向这里；展示单号 / 金额 / 状态，带确认按钮） | 免（扫码设备无登录态） |
 | GET | `/api/payments/{payNo}` | 查询支付单状态（仅本人） | 需登录 |
+
+### 卖家中心（`duoduo-trade` /api/seller，M5-9）
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/seller/summary` | 经营概览：各状态订单数 + 托管/已放款/已退回金额（**过滤后汇总仍是全量**） | 卖家或运营 |
+| GET | `/api/seller/orders` | 我的订单列表（按 `status` 过滤；**只返回归属自己的单**） | 卖家或运营 |
+| GET | `/api/seller/orders/{orderNo}` | 订单详情（含买家收货信息与资金区） | 归属校验 |
+| POST | `/api/seller/orders/{orderNo}/ship` | **发货**（填物流公司/单号）；资金**仍托管**，不触发放款 | 归属校验 |
+| POST | `/api/seller/orders/{orderNo}/refund` | **售后退款**（已付款/已发货；已完成需追偿或平台垫付，返回 422） | 归属校验 |
+| GET | `/api/seller/settlements` | 结算对账（分页 + 全量汇总金额） | 卖家或运营 |
+
+**权限模型（刻意的三条边界）**：
+
+- **准入与归属分开校验**。准入看角色（非卖家 403），归属看 `t_order.seller_id`。
+  **订单不存在返回 404、存在但不是你的返回 403**——刻意区分：订单号是雪花 ID 不可枚举，
+  若统一 404 会让越权探测看起来像「查无此单」。
+- **状态机不重写**。发货与退款转调 `OrderService` 的 `shipInternal` / `refundInternal`，
+  与内部凭据入口共用同一段逻辑，避免两处状态机各改各的。
+- **运营可见平台自营**（`sellerId=0`），因为当前商品域没有商家字段，自营单没有真正的卖家账号可登录。
+- 接口**不接受任何 `sellerId` 参数**——可见范围完全由登录态推导，杜绝「换个 ID 看别人的单」。
+
+> `/api/seller/**` **不在网关白名单里**（必须带登录态），也不受 `InternalTokenFilter` 管辖。
+> 内部凭据只能证明「你是自己人」，证明不了「这单是你的」。
 
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
@@ -288,7 +315,89 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 
 ---
 
-## 七、后续阶段：端形态与支付口径
+## 七、买家端 Web 商城（`frontend/`，M6 / P1-c）
+
+### 技术栈与启动
+
+React 18.3 · react-router-dom 6.28 · TypeScript 5.6（strict + noUncheckedIndexedAccess）· Vite 5.4。
+无状态管理库（两个 Context 够用）、无 UI 框架（一份手写 CSS 主题）、**无任何运行时依赖做二维码**（自实现编码器）。
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173，需后端 7 容器在跑（网关 :8080）
+npm run build      # tsc --noEmit && vite build
+```
+
+### 页面清单（主交易闭环 10 页）
+
+| 路由 | 页面 | 说明 |
+|---|---|---|
+| `/` | 首页 | `GET /api/home` 聚合一次拉全：类目 / 推荐 / 新品 / 闲置 / 品牌 |
+| `/search` | 检索 | 筛选条件全部同步进 URL query，可分享可回退 |
+| `/product/:id` | 商品详情 | SKU 选择、过敏原与宠物档案比对提示、同类推荐 |
+| `/listings` · `/listing/:id` | 二手闲置 | 列表筛选 + 详情（担保交易规则说明；本期只浏览不下单） |
+| `/login` | 登录/注册 | `?next=` 回跳原路径；一键生成体验账号（走真实注册） |
+| `/cart` | 购物车 | 以 `skuId` 为键；失效条目标注原因且不可结算 |
+| `/checkout` | 结算 | 幂等键进入页面即生成、失败不更换；成功清空已勾选 |
+| `/orders` · `/orders/:orderNo` | 订单 | 7 状态页签；详情含二维码、3 秒轮询、资金托管明细 |
+| `/pets` | 宠物档案 | 全 CRUD；生日与生命阶段一致性实时提示（对齐后端 422 规则） |
+| `/me` | 我的 | 资料 / 实名（身份证只回显掩码） |
+
+### 关键实现决策
+
+- **令牌零接触**：JWT 全在 httpOnly Cookie（`dd_at` 15 min / `dd_rt` 7 d），前端读不到也不需要读；
+  登录态唯一判据是 `GET /api/users/me`，401 时用 `dd_rt` 单飞刷新并重放原请求一次。
+- **开发代理避免 CORS**：`vite.config.ts` 把 `/api` 与 `/sandbox` 代理到 `VITE_DEV_API_TARGET ?? http://localhost:8080`，
+  同源请求天然带上 Cookie，绕开 httpOnly Cookie 的 SameSite 与 CORS 组合问题。
+- **金额全用「分」**：接口层不做换算，仅在展示层 `formatPrice`（分 → 元）。
+- **筛选字典由后端驱动**：成色 / 物种 / 生命周期等下拉与标签从 `/api/meta/dictionaries` 取
+  （后端下发的是码值，前端只做 code→label 映射），避免硬编码字典与后端漂移。
+- **错误映射**：4xx 不重试、5xx 与网络错误退避重试 ≤3 次；`ApiError.isAuthError` 区分登录态失效；
+  `toFriendlyMessage` 把后端 code 翻成可读文案，绝不把堆栈甩给用户。
+- **零依赖二维码**：自实现 UTF-8 Byte 模式 + Reed-Solomon 纠错 + 8 掩码择优（ISO/IEC 18004），
+  SVG 渲染。实测 21×21 模块矩阵在真实 Chromium 中清晰可扫。
+
+自测记录：`tsc --noEmit` 零错误；curl 冒烟覆盖注册/加购/下单幂等/支付/托管/退款全链；
+真实浏览器（Chromium 153）逐页验证 12 个路由的渲染与交互，含真实 UI 填单下单 → 模拟扫码 →
+3 秒轮询自动刷新为「已付款」→ 托管明细金额核对（¥59.00 / 服务费 ¥0.59 / 卖家实收 ¥58.41）。
+验证截图见 `frontend/docs/screenshots/`。
+
+已知边界（对齐 `docs/PLAN.md`）：依赖未部署服务（履约 / 营销 / AI / 管理后台）的功能未做页面；
+闲置发布与下单入口留待后续迭代；演示库**不预置演示账号**（登录页提供一键生成体验账号）。
+
+---
+
+## 八、商家端 Web（`frontend/src/pages/seller/`，M9 / P1-f）
+
+与买家端**同一套工程、同一套登录态**（`/seller/**` 与 `/**` 共用 `frontend/`），只是按角色开入口。
+
+| 路由 | 页面 | 说明 |
+|---|---|---|
+| `/seller` | 经营概览 | 六状态订单数 + 托管 / 已放款 / 已退回三栏资金；平台自营范围提示 |
+| `/seller/orders` | 订单管理 | 状态页签过滤；列表卡片带买家收货信息；**立即发货**弹窗（物流公司 / 单号） |
+| `/seller/orders/:orderNo` | 订单详情 | 状态步骤条 + 履约信息 + 资金区 + 发货 / 退款表单 |
+| `/seller/settlements` | 结算对账 | 分页表格 + **全量汇总三栏**（过滤不变）；与买家端口径同源 |
+
+**成为卖家**：实名认证后，在「我的」页点「申请成为卖家」（`POST /api/users/me/merchant`）。
+角色快照写在 access token 内，**需重新登录**才能看到商家端入口（前端已在提示里写明，见 `docs/PLAN.md` B-08）。
+
+**关键实现决策**：
+
+- **`RequireSeller` 只校验登录、不拦角色**。前端拦角色是体验优化，不是安全边界——
+  真正的边界在后端 `SellerService.requireSellerScope()`（403）与 `requireOwnOrder()`（404/403）。
+  前端硬拦会造成「角色刚升级、token 还没换，入口就消失」的假故障。
+- **`canAccessSellerConsole` 统一判定入口可见性**（Layout 导航 + 「我的」页快捷入口），
+  角色字符串统一转大写比对，避免 `USER`/`user` 两种写法漂移。
+- **概览与对账的汇总取全量、列表取过滤后**——分页只影响列表，不影响「我一共托管了多少钱」。
+- **「已完成」的订单不显示退款按钮**（后端同样 422），钱已放款给卖家，需走追偿或平台垫付。
+
+自测记录：`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；后端 `scripts/seller-smoke.ps1` **82 项断言全绿**
+（准入 401/403、实名前置 422、归属隔离、越权 403、重复发货 422、已完成退款 422、平台自营可见性、夹具自动复原）。
+
+---
+
+## 九、后续阶段：端形态与支付口径
 
 ### 端形态（用户端两端口，商家与平台都是 Web）
 
@@ -311,18 +420,53 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 |---|---|---|
 | **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 完成（54 项冒烟） |
 | **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（7 容器 healthy） |
-| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结 ✅ / 状态机 ✅ / 支付幂等 ✅ / C2C 担保交易 ✅ / **沙箱支付渠道 ✅** / 卖家中心 ⏳ | 🔄 进行中 |
-| **P1-c** | 买家端 **Web 商城**（复用 Node 版 17 个页面，接口指向网关 :8080） | ⏳ |
+| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结 ✅ / 状态机 ✅ / 支付幂等 ✅ / C2C 担保交易 ✅ / 沙箱支付渠道 ✅ / **卖家中心 ✅** | ✅ 完成 |
+| **P1-c** | 买家端 **Web 商城**（主交易闭环 10 页，接口指向网关 :8080） | ✅ 完成 |
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
 | **P1-e** | ~~真实支付渠道~~ → **沙箱支付渠道**（已完成；真实渠道为可选后续） | ✅ |
-| **P1-f** | 商家端 Web（商家服务平台）+ 平台管理后台 Web | ⏳ |
+| **P1-f** | **商家端 Web（商家服务平台）✅** + 平台管理后台 Web ⏳ | 🔄 商家端已上线 |
 | **P2** | 履约服务（物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
 | **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
 ---
 
-## 八、变更记录
+## 十、变更记录
+
+### 2026-09-18（第四轮 · 卖家中心 M5-9 + 商家端 Web M9）
+
+- **卖家账号体系**：`POST /api/users/me/merchant`（实名前置 422、幂等、角色写 `SELLER`）；
+  `LoginUser` 修角色大小写 bug 并新增 `isSeller()` / `canAccessSellerConsole()`。
+- **卖家中心 6 个接口**（`/api/seller/**`）：概览 / 订单列表 / 订单详情 / 发货 / 售后退款 / 结算对账。
+  发货与退款**复用 `OrderService` 的 `shipInternal` / `refundInternal`**，状态机只有一份。
+- **权限模型**：准入（角色 403）与归属（`seller_id`）分开校验；不存在 404、越权 403 刻意区分；
+  接口不接受任何 `sellerId` 参数；运营可见平台自营 `sellerId=0`；聚合下推到 SQL，不全量捞回内存。
+- **网关与过滤器**：trade 路由补 `/api/seller/**`（不在白名单，必须登录）；
+  `InternalTokenFilter` 排除 `/api/seller/**`。
+- **修复真实缺陷**：客户端发错 `Content-Type` 原本落到兜底返回 **500** → 新增
+  `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 handler，返回 **415**。
+- **商家端 Web 4 页**（`/seller` · `/seller/orders` · `/seller/orders/:orderNo` · `/seller/settlements`），
+  Layout 与「我的」页按角色显示入口。
+- **自测**：后端 6 模块 `BUILD SUCCESS`，4 个业务镜像重建、7 容器 healthy；
+  新增 `scripts/seller-smoke.ps1` **82 项断言全绿**；前端 `tsc --noEmit` 零错误、`vite build` 通过。
+  七套冒烟合计 **557 项**。
+
+### 2026-09-17（第三轮 · 买家端 Web 商城 M6 / P1-c）
+- **新建 `frontend/`**（React 18 + TS strict + Vite 5）：12 路由覆盖主交易闭环 10 页；
+  API 层（类型化客户端 + 端点清单 + 统一错误/重试/刷新）、通用组件（卡片/分页/弹窗/状态步骤/表格）、
+  两个 store（auth 会话恢复 / 购物车角标）。
+- **零依赖二维码组件**：自实现 QR 编码（Byte 模式 / L-M-Q-H 纠错 / 版本 1–10 / 8 掩码择优），
+  服务于沙箱扫码支付；支付弹窗带 30 分钟倒计时 + 3 秒轮询（支付成功自动刷新订单状态）。
+- **与后端口径逐一对齐**（以真实接口实测为准）：响应解包 `data`、分页嵌套于 `data`、
+  金额单位分、成色/物种/生命周期字典码值、订单状态枚举、托管三态、幂等键语义。
+- **两处自测暴露的前端缺陷修复**：① 闲置成色原先硬编码中文，而后端下发码值
+  （`NEW`/`LIKE_NEW`/…），会导致筛选下发错值——改为字典驱动 + 常量兜底映射；
+  ② 宠物建档表单未提示「生命阶段须与生日推算一致」（后端 422 规则）——
+  表单增加实时一致性提示与一键修正，提交前拦截并说明原因。
+- **登录页演示账号修正**：实测演示库 `1380000*` 段无预置账号（此前文档与数据不符），
+  移除失效的快捷填充按钮，改为「一键生成体验账号」走真实注册流程。
+- **验证手段**：curl 端到端冒烟（注册→加购→下单幂等→沙箱扫码→托管→退款，全绿）+
+  真实 Chromium 逐页渲染验证（12 路由），截图归档 `frontend/docs/screenshots/`。
 
 ### 2026-09-18（沙箱支付渠道 M8-1）
 - **支付口径定为沙箱支付**（用户拍板）：不接真实微信/支付宝商户渠道，资金不真实流转。

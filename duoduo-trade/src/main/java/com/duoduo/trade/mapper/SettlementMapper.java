@@ -4,9 +4,13 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.duoduo.trade.entity.SettlementEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 资金托管单数据访问。
@@ -50,4 +54,24 @@ public interface SettlementMapper extends BaseMapper<SettlementEntity> {
     @Update("UPDATE t_settlement SET status = 'REFUNDED', updated_at = #{at} "
             + "WHERE order_id = #{orderId} AND status = 'CUSTODY'")
     int markRefunded(@Param("orderId") Long orderId, @Param("at") LocalDateTime at);
+
+    /**
+     * 按托管状态汇总某（几）个卖家的资金，供商家端对账用。
+     *
+     * <p>三个聚合量刻意一次查回：金额、佣金、笔数。
+     * 「可得 = 金额 − 佣金」留给服务层算，因为佣金口径（含四舍五入）属于领域规则，
+     * 写进 SQL 就等于把规则藏进了一句很难被测试到的字符串里。
+     *
+     * @return 形如 {@code [{status: "CUSTODY", cnt: 3, amount_sum: 5900, fee_sum: 59}, ...]}
+     */
+    @Select("<script>"
+            + "SELECT status, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(amount), 0) AS amount_sum, "
+            + "COALESCE(SUM(platform_fee), 0) AS fee_sum "
+            + "FROM t_settlement "
+            + "WHERE seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "GROUP BY status"
+            + "</script>")
+    List<Map<String, Object>> aggregateBySellers(@Param("sellerIds") Collection<Long> sellerIds);
 }

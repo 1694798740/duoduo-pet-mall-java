@@ -697,6 +697,18 @@ public class OrderService {
         if (order == null) {
             throw BizException.notFound("订单");
         }
+        return shipInternal(order, "卖家发货");
+    }
+
+    /**
+     * 发货的状态机本体：<b>调用方已完成归属校验</b>。
+     *
+     * <p>拆出来是为了让「内部凭据调用」与「卖家中心调用」（M5-9）共用同一段状态机 ——
+     * 两条入口只差在准入方式，状态流转、资金不动、日志留痕必须完全一致，
+     * 否则会出现「从商家端发货不写日志」「内部接口发货跳过状态校验」这类分叉。
+     */
+    @Transactional
+    public OrderView shipInternal(OrderEntity order, String reason) {
         OrderStatus current = OrderStatus.of(order.getStatus());
         if (current == null || !current.canTransitionTo(OrderStatus.SHIPPED)) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
@@ -708,7 +720,7 @@ public class OrderService {
         order.setUpdatedAt(now);
         orderMapper.updateById(order);
         writeStatusLog(order.getId(), current.name(), OrderStatus.SHIPPED.name(),
-                OPERATOR_SELLER, order.getSellerId(), "卖家发货", now);
+                OPERATOR_SELLER, order.getSellerId(), reason, now);
 
         // 资金仍在托管中：发货不等于钱该给卖家 —— 买家还没见到货。
         // 这一句日志是为了在排查「钱为什么还没到账」时能直接看到答案。
@@ -809,6 +821,15 @@ public class OrderService {
         if (order == null) {
             throw BizException.notFound("订单");
         }
+        return refundInternal(order, reason, "运营侧退款（售后处理）");
+    }
+
+    /**
+     * 售后退款的状态机本体：<b>调用方已完成归属校验</b>。
+     * 与 {@link #shipInternal} 同理 —— 准入方式可以有两种，退款的资金路径只有一条。
+     */
+    @Transactional
+    public RefundResult refundInternal(OrderEntity order, String reason, String defaultReason) {
         OrderStatus current = OrderStatus.of(order.getStatus());
         if (current != OrderStatus.PAID && current != OrderStatus.SHIPPED) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
@@ -816,7 +837,7 @@ public class OrderService {
                             ? "订单已完成、款项已放款给卖家，无法直接退款；需走追责或平台垫付（售后追偿尚未实现）"
                             : "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许退款");
         }
-        return doRefund(order, reason, OPERATOR_SELLER, order.getSellerId(), "运营侧退款（售后处理）", nowUtc());
+        return doRefund(order, reason, OPERATOR_SELLER, order.getSellerId(), defaultReason, nowUtc());
     }
 
     /** 买家自助退款被拒时，按状态给出**可操作**的提示，而不是一句「不允许」 */
@@ -1319,8 +1340,14 @@ public class OrderService {
         statusLogMapper.insert(entity);
     }
 
-    /** 批量装配订单视图（明细与托管单都一次查回，避免逐单查询造成 N+1） */
-    private List<OrderView> toViews(List<OrderEntity> orders) {
+    /**
+     * 批量装配订单视图（明细与托管单都一次查回，避免逐单查询造成 N+1）。
+     *
+     * <p>开放给卖家中心（{@code SellerService}）复用：买家端与商家端看的是同一份订单事实，
+     * 「明细快照 + 托管状态」的装配口径必须只有一处实现，
+     * 否则迟早出现「买家看到已放款、卖家看到托管中」这种对不上账的分歧。
+     */
+    public List<OrderView> toViews(List<OrderEntity> orders) {
         if (orders == null || orders.isEmpty()) {
             return List.of();
         }

@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-18 10:40
+> 更新时间：2026-09-18 18:20
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -25,11 +25,11 @@
 | M2 | 商品域 | ✅ 已完成 | 类目树、品牌、SPU-SKU 检索（6 排序）、价格区间、物种/生命阶段筛选、C2C 闲置 |
 | M3 | 端到端冒烟（54 项） | ✅ 已完成 | 免安装模式 54/54；容器化模式复跑 54/54 |
 | M4 | **Docker 化开发环境** | ✅ **已完成** | **7 容器全健康**；Nacos 注册 **4 服务**；从零重建数据卷可复现 |
-| M5 | **P1-b 交易服务** | 🔄 进行中 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / C2C 担保交易 / 卖家中心 |
-| M6 | 买家端 · **Web 商城** | ⬜ 未开始 | 响应式网站；PC 端展示支付二维码 |
+| M5 | **P1-b 交易服务** | ✅ 已完成 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / C2C 担保交易 / **卖家中心（M5-9）** |
+| M6 | 买家端 · **Web 商城** | ✅ 已完成 | 主交易闭环 10 页（React 18 + TS + Vite）；PC 端二维码扫码支付 + 3 秒轮询；**真实浏览器逐页验证通过** |
 | M7 | 买家端 · **微信小程序** | ⬜ 未开始 | 小程序内复用同一套支付接口 |
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
-| M9 | 商家端 · **Web（商家服务平台）** | ⬜ 未开始 | 商品 / 订单 / 发货 / 售后 / 结算；后端即 M5-9 卖家中心 |
+| M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ⬜ 未开始 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
 | M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | ⬜ 未开始 | 更后期 |
 
@@ -110,21 +110,23 @@
 | **M5-7 支付幂等** | `PaymentEntity`；**三层防线**（先查 → 订单状态 → `uk_pay_channel_idem`）；**先落支付单再扣库存**；成功后台账置 `DEDUCTED` |
 | **M5-8 C2C 担保交易（资金托管与放款）** | `SettlementEntity` / CAS 状态迁移 / `SettlementService`；支付成功**资金进平台托管** → 确认收货**放款给卖家** → 退款**退回买家**；平台佣金按基点计算并落库留档；订单新增终态 `REFUNDED`；**退货入库**与 `RESTOCK_PENDING → RESTOCKED` 台账补偿；**发货满 N 天自动确认收货并放款**；**自测 125 通过 / 0 失败** |
 | **M8-1 沙箱支付渠道** | `PaymentChannel` 抽象（预下单 / 回调验签 / 查询）+ 注册表；`MOCK`（即时）与 `SANDBOX`（扫码）两实现；`pay()` 改预下单语义，返回二维码内容（指向网关收银台）与过期时间；回调入口 HMAC-SHA256 验签 + 时间戳窗口 + **金额核对** + 幂等 CAS 入账；沙箱收银台页面；支付单 `PENDING → SUCCESS/EXPIRED/CLOSED` 生命周期；订单关单时**作废未支付支付单**（接通此前缺失的 `markClosedByOrder`，堵住「订单已取消、二维码还能扫出钱」）；**自测 62 通过 / 0 失败，六套合计 475 项全绿** |
+| **M6 买家端 Web 商城（P1-c）** | 新建 `frontend/`（React 18 + TS strict + Vite 5）；12 路由 / 10 页主交易闭环；API 层（401 单飞刷新 + 5xx 退避重试 + 错误映射）；**零依赖二维码组件**（Byte 模式 + Reed-Solomon + 8 掩码择优）；PC 端扫码支付 + 3 秒轮询；`tsc --noEmit` 零错误、`vite build` 通过；curl 全链冒烟 + **真实 Chromium 逐页验证 12 路由**（含真实 UI 填单下单 → 模拟扫码 → 轮询自动变已付款 → 托管金额核对 ¥59.00/¥0.59/¥58.41），截图 13 张见 `frontend/docs/screenshots/` |
+
+| **M5-9 卖家中心（后端）** | 卖家账号体系（`applyMerchant` 实名前置 + 幂等）；`/api/seller/**` 6 个接口（概览 / 订单列表 / 订单详情 / 发货 / 售后退款 / 结算对账）；**归属校验取代内部凭据**（越权 403 / 不存在 404 刻意区分）；运营可见平台自营 `sellerId=0`；**自测 82 通过 / 0 失败** |
+| **M9 商家端 Web（前端）** | `frontend/src/pages/seller/` 4 页（Dashboard / Orders / OrderDetail / Settlements）+ `shared.tsx`；`sellerApi` 端点层；`RequireSeller` 路由守卫（只校验登录，真正的权限边界仍在后端 403）；Layout 与「我的」页按角色显示入口；`tsc --noEmit` 零错误、`vite build` 通过（60 模块） |
 
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| **M5-9 卖家中心** | 商品管理 / 订单查看 / 发货 / 售后。落地卖家账号体系后，把 `/ship` 与运营侧退款从「内部凭据」升级为「校验调用者是否为该订单的卖家」，并让退款走完整的售后申请-审核链路 |
+| _（本轮已收口，暂无进行中任务）_ | 下一步建议：M10 平台管理后台；或先补商品域 `seller_id`，打通「商家管自己的商品」 |
 
 ### 未开始（按你确认的端形态排期）
 
 | # | 任务 | 依赖 | 说明 |
 |---|---|---|---|
-| M6 | 买家端 Web 商城 | M5 接口就绪 | 复用 Node 版 17 个页面骨架，接口指向网关 `:8080`；补订单/售后/资金托管页与**支付二维码页** |
 | M7 | 买家端 微信小程序 | M6 的接口封装 + 小程序 AppID | 登录接 `code2Session`；支付复用同一套预下单 + 轮询接口 |
-| M9 | 商家端 Web（商家服务平台） | M5-9 | 商品、订单、发货、售后、结算对账 |
-| M10 | 平台管理后台 Web | M5-9 | 类目品牌、内容审核、订单干预、资金对账、报表 |
+| M10 | 平台管理后台 Web | M5-9 ✅ | 类目品牌、内容审核、订单干预、资金对账、报表 |
 | M11 | 营销 / AI 导购「多多」/ 履约售后 / ES 检索 / RocketMQ 削峰 / Sentinel / 压测 | 全部后期 | — |
 
 ---
@@ -149,6 +151,7 @@
 | I-12 | 真实微信 / 支付宝扫码支付需要商户资质与密钥 | **已协助**（2026-09-17 你决定改用**沙箱支付**，资质不再需要） | **无需操作**。材料清单仍留在下方折叠区，将来要接真实收款时再取 | 沙箱支付链路已按真实渠道的形态实现并自测通过：预下单返回二维码内容 → 收银台确认支付 → **签名回调** → 幂等入账 → 订单转已付款 → 资金进托管。将来把 `SANDBOX` 换成真实实现即可 |
 | I-13 | 退货入库端点**编译通过但运行时 404**（新增端点无内部引用，编译期发现不了） | **已自愈**（2026-09-17） | 无需操作 | 现象：`NoResourceFoundException`，退款后入库一直失败、台账卡在 `RESTOCK_PENDING`。根因：源码里 `/restock` 路由在编辑过程中丢失，而它没有任何内部调用方。修法：补回路由 + 重建镜像；复验：调度 `restocked=2`，台账迁移到 `RESTOCKED`。**教训**：新增对外端点必须实调一次 |
 | I-14 | **历史订单缺托管单**（M5-8 上线前的订单没有 `t_settlement` 记录） | **待办（数据迁移）** | 无需你操作 | 影响：这些订单确认收货时「放款」会找不到托管单（只记 ERROR，不影响买家收货）。处理：写一次性回补脚本按订单状态推断资金状态；当前开发库可清空重建，**生产上线前必须回补** |
+| I-16 | 客户端发错 `Content-Type`（如 POST 无 body 时带 `x-www-form-urlencoded`）落到兜底 handler → 返回 **500** | **已自愈**（2026-09-18） | 无需操作 | 客户端错误不应是 5xx，会污染告警。修法：新增 `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 `handleUnsupportedMediaType`，返回 **415**；由卖家冒烟断言固定 |
 | I-15 | 支付渠道首轮自测暴露**三处缺陷**（M8-1 实现期） | **已自愈**（2026-09-18） | 无需操作 | ① **未知渠道 / MOCK 回调拒绝用了 400**（应为 422 业务错误，注册表 javadoc 与实现不一致）→ 补错误码 `PAYMENT_CHANNEL_UNKNOWN` 并改用之；② **二维码内容默认指向交易服务 8083 直连地址**——扫码设备不可达，且网关缺 `/sandbox/pay` 路由 → 改为网关 8080 + 补路由与白名单；③ **订单取消 / 关单不作废未支付支付单**——`markClosedByOrder` 在 Mapper 里定义了却从未被调用，订单已取消、二维码还能扫出钱来 → 在取消与调度关单两条路径都接上。三处均已由 62 项自测断言固定 |
 
 <details>
@@ -164,6 +167,47 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-17（第三轮 · 买家端 Web 商城 M6 / P1-c）
+
+| 文件 | 变更 |
+|---|---|
+| `frontend/`（**新增整个工程**） | React 18 + TS 5.6（strict）+ Vite 5；12 路由 / 10 页主交易闭环；`package.json` / `tsconfig.json` / `vite.config.ts` / `index.html` / `.env.example` |
+| `frontend/src/api/` | `client.ts` 类型化客户端（解包 `data`、401 单飞 refresh 并重放、5xx 与网络退避 ≤3 次、4xx 不重试、`ApiError` 分类）；`types.ts` 对齐 Java DTO；`endpoints.ts` 端点清单 |
+| `frontend/src/components/` | `ui.tsx`（卡片/分页/弹窗/状态步骤/Toast）、`Layout.tsx`、`hooks.ts`、`QRCode.tsx`（**零依赖 QR 编码器**：Byte 模式 + Reed-Solomon + 8 掩码择优） |
+| `frontend/src/store/` | `auth.tsx`（令牌在 httpOnly Cookie，登录态唯一判据是 `/users/me`）、`app.tsx`（购物车角标） |
+| `frontend/src/pages/` | Home / Search / ProductDetail / Listings / ListingDetail / Login / Pets / Me / Cart / Checkout / Orders / OrderDetail（二维码 + 3 秒轮询 + 托管明细）/ NotFound |
+| `docs/PROJECT-STATUS.md` | 澄清演示账号**仅存在于 Node 原型种子数据**，Java 库不预置（此前误把 Node 版账号当 Java 版使用） |
+
+**自测结论**：`tsc --noEmit` 零错误、`vite build` exit 0（55 模块）；curl 全链冒烟（注册 → 加购 → 下单幂等复放 → 沙箱扫码 → 托管 → 退款）全绿；
+真实 Chromium 逐页验证 12 路由，含真实 UI 填单下单 → 模拟扫码 → 3 秒轮询自动刷新为已付款 → 托管金额核对（¥59.00 / 服务费 ¥0.59 / 卖家实收 ¥58.41）。
+
+**自测暴露并修复的前端缺陷**：① 闲置成色硬编码中文而后端下发码值（`NEW`/`LIKE_NEW`/…），会下发错值 → 改字典驱动 + 常量兜底；
+② 宠物建档未提示「生命阶段须与生日推算一致」（后端 422）→ 表单实时提示 + 一键修正 + 提交前拦截；
+③ 登录页演示账号按钮引用 Node 原型种子账号（Java 库无）→ 改「一键生成体验账号」走真实注册。
+
+### 2026-09-18（第四轮 · 卖家中心 M5-9 + 商家端 Web M9）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-common/.../context/LoginUser.java` | 修角色大小写 bug（`equalsIgnoreCase`）；新增 `isSeller()` / `canAccessSellerConsole()`（卖家 / 运营） |
+| `duoduo-user/.../service/AuthService.java`、`controller/UserController.java` | 新增 `applyMerchant`：实名前置（未实名 422）+ 幂等（已是卖家直接返回）+ 写 `role=SELLER`；端点 `POST /api/users/me/merchant` |
+| `duoduo-trade/.../service/OrderService.java` | 抽出 **`shipInternal`** / **`refundInternal`**（发货与退款的状态机只留一处），`toViews` 改 public 供卖家侧复用，避免「买家看到已放款、卖家看到托管中」的口径分叉 |
+| `duoduo-trade/.../service/SellerService.java`、`controller/SellerController.java` | **新增**：`SellerScope` 可见范围模型；`requireSellerScope`（非卖家 403）+ `requireOwnOrder`（不存在 404 / 越权 **403**）；6 个接口 |
+| `duoduo-trade/.../dto/SellerDtos.java` | **新增**：`ShipRequest` / `SellerSummary` / `SettlementPage` |
+| `duoduo-trade/.../mapper/OrderMapper.java`、`SettlementMapper.java` | 新增 SQL 侧聚合（`countBySellerAndStatus` / `aggregateBySellers`），避免把全量订单捞回内存数 |
+| `duoduo-trade/.../support/InternalTokenFilter.java` | 排除 `/api/seller/**`——内部凭据只能证明「你是自己人」，证明不了「这单是你的」 |
+| `duoduo-gateway/.../application.yml` | trade 路由补 `/api/seller/**`（**不加白名单**：卖家端必须带登录态） |
+| `duoduo-common/.../enums/ErrorCode.java`、`duoduo-common-web/.../GlobalExceptionHandler.java` | **新增** `UNSUPPORTED_MEDIA_TYPE`（415）——客户端发错 Content-Type 原本落到兜底返回 **500**，属真实缺陷 |
+| `frontend/src/api/endpoints.ts`、`types.ts` | 新增 `sellerApi` 与 3 个类型；`userApi.applyMerchant` |
+| `frontend/src/pages/seller/`（**新增**） | `shared.tsx` / `Dashboard.tsx` / `Orders.tsx` / `OrderDetail.tsx` / `Settlements.tsx` |
+| `frontend/src/App.tsx`、`components/Layout.tsx`、`pages/Me.tsx` | 新增 `RequireSeller` 与 4 条 `/seller/**` 路由；导航与「我的」按角色显示商家端入口 |
+| `scripts/seller-smoke.ps1`（**新增**） | 12 段场景 / **82 项断言**，含越权、归属隔离、重复发货、已完成订单退款边界、平台自营可见性、夹具自动复原 |
+
+**自测结论**：后端 6 模块 `BUILD SUCCESS`；重建 4 个业务镜像并重启（7 容器 healthy）；`scripts/seller-smoke.ps1` **82 通过 / 0 失败**；前端 `tsc --noEmit` 零错误、`vite build` 通过（60 模块）。
+
+**自测暴露并修复的缺陷**：① 错误 Content-Type 导致 **500**（应为 415）→ 新增错误码与 handler，客户端错误不再污染 5xx 告警；
+② 首轮脚本场景设计错误（订单 B 未发货直接确认收货 → 422），连带把「已完成订单退款被拒」误判为 200 且钱真的退了 → 修正为先发货再确认，两项随即转绿。
 
 ### 2026-09-18（沙箱支付渠道 M8-1）
 
@@ -225,6 +269,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 # 沙箱支付渠道 / 预下单 / 回调验签 端到端自测
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1
 
+# 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（82 项，会临时改夹具并自动复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
+
+# ---------- 买家端 Web 商城（frontend/） ----------
+cd D:\智能体项目\duoduo-pet-mall-java\frontend
+npm install                 # 首次
+npm run dev                 # http://localhost:5173（需后端 7 容器在跑，网关 :8080）
+npm run build               # tsc --noEmit && vite build
+# 改后端地址：设 VITE_DEV_API_TARGET 环境变量（默认 http://localhost:8080）
+
 # 从零重建（连数据卷一起删，会重新执行 docs/sql 初始化）
 docker compose down -v; docker compose up -d
 
@@ -272,7 +326,10 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | B-01 | 退款只覆盖「托管中」的资金（已付款 / 已发货）；**已完成订单的退款需向卖家追偿或平台垫付** | 那是另一条资金流程（含平台垫付与风控），与担保交易主链路分开做更清晰 | 接售后体系时 |
 | B-02 | 退货入库若出现「客户端已生效、响应丢失」，重试可能重复入库 | 彻底解决要给入库也带幂等键（商品侧按 `(ref_no, sku_id)` 去重建记录表） | 对账任务落地时一并解决 |
 | B-03 | 服务间凭据用**共享密钥** `X-Internal-Token` | 开发阶段简单可靠；生产应换 mTLS / 服务网格授权 | 上生产前 |
-| B-04 | 订单卖家归属统一为平台自营 `sellerId=0`（商品域 SPU 暂无商家字段） | 第三方商家接入需要商品域先补字段；订单与明细结构已支持按卖家拆单 | M5-9 卖家中心 / M9 商家端 |
+| B-04 | **商品域 SPU / SKU 仍无 `seller_id`**——所以「商家管理自己的商品」本轮不做；订单归属靠 `t_order.seller_id` 校验 | 卖家中心先做订单侧（发货 / 售后 / 结算），商品侧要改商品域模型 | 做「商家上下架商品」前必须先补字段 |
 | B-05 | 补偿调度用 `@Scheduled`（单实例） | 开发环境单实例足够；生产多实例需 XXL-Job 之类保证只跑一份 | 上生产前 |
 | B-06 | 历史订单缺托管单（见 I-14） | 当前库里的都是早期测试数据，可清空重建 | 生产上线前必须回补 |
 | B-07 | **支付走沙箱渠道，不是真实资金渠道**（不入账、不结算到银行卡） | 你的决定：真实渠道资质门槛过高，先用沙箱把工程链路做实 | **上线真实收款前**：实现 `PaymentChannel` 的微信 / 支付宝版本，材料清单见协助区折叠附件 |
+| B-08 | **角色升级后需重新登录才生效**（角色快照写在 access token 内，15 分钟） | 避免每次请求回源查角色；前端已在入驻成功提示里写明 | 若要即时生效：网关每次回源查角色，或入驻成功后服务端主动使旧 refresh 失效并强制重登 |
+| B-09 | **售后只有「卖家直接退款」一种形态**，没有独立的售后单（申请-审核-退货物流） | 售后单是独立领域模型，与担保交易主链路分开做 | 接入完整售后体系时 |
+| B-10 | 旧的内部凭据端点 `/api/orders/{no}/ship` 与 `/internal/**` **保留** | 现有 6 套冒烟脚本依赖它们 | 清理脚本依赖后可收敛为卖家端单一入口 |

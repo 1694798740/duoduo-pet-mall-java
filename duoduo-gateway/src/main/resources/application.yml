@@ -46,7 +46,9 @@ spring:
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/sandbox/pay/**
+            # /api/seller/** = 卖家中心（M5-9），由网关鉴权 + 服务端归属校验保护，
+            # 不进白名单 —— 不登录就拿不到 X-User-*，服务端无从判断归属
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

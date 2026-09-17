@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -66,6 +67,21 @@ public class GlobalExceptionHandler {
         log.warn("请求体/参数不合法 requestId={} msg={}", RequestIdHolder.get(), ex.getMessage());
         return ResponseEntity.status(ErrorCode.BAD_REQUEST.httpStatus())
                 .body(ApiResponse.fail(ErrorCode.BAD_REQUEST.name(), ErrorCode.BAD_REQUEST.defaultMessage()));
+    }
+
+    /**
+     * 请求体格式不支持 → 415，而不是 500。
+     *
+     * <p>「客户端发错了 Content-Type」属于 4xx。落到兜底的 5xx 分支会带来两个后果：
+     * 一是 5xx 告警被无关噪声淹没（真正的服务故障反而看不见），
+     * 二是调用方拿到的提示是「服务内部错误」，完全指不出问题出在自己身上。
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException ex) {
+        log.warn("请求体格式不支持 requestId={} msg={}", RequestIdHolder.get(), ex.getMessage());
+        return ResponseEntity.status(ErrorCode.UNSUPPORTED_MEDIA_TYPE.httpStatus())
+                .body(ApiResponse.fail(ErrorCode.UNSUPPORTED_MEDIA_TYPE.name(),
+                        ErrorCode.UNSUPPORTED_MEDIA_TYPE.defaultMessage()));
     }
 
     @ExceptionHandler(Exception.class)

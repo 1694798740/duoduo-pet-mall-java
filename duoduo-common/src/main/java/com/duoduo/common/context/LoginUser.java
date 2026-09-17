@@ -14,10 +14,26 @@ public record LoginUser(
 ) {
 
     public boolean isAdmin() {
-        return "admin".equals(role);
+        return "admin".equalsIgnoreCase(role);
     }
 
     public boolean isOperator() {
-        return "operator".equals(role) || isAdmin();
+        return "operator".equalsIgnoreCase(role) || isAdmin();
+    }
+
+    /**
+     * 是否为卖家（商家端可见性的唯一判据）。
+     *
+     * <p>角色取值在库里是大写（{@code USER / SELLER / OPERATOR / ADMIN}），
+     * 这里一律忽略大小写比较 —— 历史代码曾用 {@code "admin".equals(role)}，
+     * 在大写存储下永远为 false，属于「看起来有权限校验、实际形同虚设」的隐蔽缺陷。
+     */
+    public boolean isSeller() {
+        return "seller".equalsIgnoreCase(role);
+    }
+
+    /** 能否进入商家端：卖家本人，或运营 / 管理员（后者用于代运营与排查） */
+    public boolean canAccessSellerConsole() {
+        return isSeller() || isOperator();
     }
 }
