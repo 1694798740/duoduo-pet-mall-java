@@ -4,8 +4,11 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.trade.dto.OrderDtos.CancelRequest;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
+import com.duoduo.trade.dto.OrderDtos.PayRequest;
+import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.SweepResult;
 import com.duoduo.trade.service.OrderService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -71,5 +74,46 @@ public class OrderController {
                                          @Valid @RequestBody(required = false) CancelRequest request) {
         String reason = request == null ? null : request.reason();
         return ApiResponse.ok(orderService.cancel(orderNo, reason));
+    }
+
+    /**
+     * 支付订单（本阶段为模拟渠道，即时成功）。
+     *
+     * <p>必须带 {@code idempotentKey}：同一渠道同一幂等键只会入账一次，
+     * 重复提交返回首次结果（{@code idempotentReplay=true}）。
+     */
+    @PostMapping("/{orderNo}/pay")
+    public ApiResponse<PayResult> pay(@PathVariable String orderNo,
+                                      @Valid @RequestBody PayRequest request) {
+        return ApiResponse.ok(orderService.pay(orderNo, request));
+    }
+
+    /**
+     * 发货（已付款 → 已发货）。
+     *
+     * <p><b>内部接口</b>：由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}，
+     * 调用方是卖家侧 / 运营侧系统。卖家账号体系在卖家中心（M5-9）落地后，
+     * 这里会改为校验「调用者是否为该订单的卖家」。
+     */
+    @PostMapping("/{orderNo}/ship")
+    public ApiResponse<OrderView> ship(@PathVariable String orderNo) {
+        return ApiResponse.ok(orderService.ship(orderNo));
+    }
+
+    /** 确认收货（已发货 → 已完成） */
+    @PostMapping("/{orderNo}/confirm")
+    public ApiResponse<OrderView> confirmReceipt(@PathVariable String orderNo) {
+        return ApiResponse.ok(orderService.confirmReceipt(orderNo));
+    }
+
+    /**
+     * 手动触发一次超时关单补偿调度（<b>内部接口</b>，同样需要内部凭据）。
+     *
+     * <p>定时任务每 {@code duoduo.trade.sweep-interval-ms} 自动跑一次；
+     * 这个入口是给运维排障与自动化测试用的 —— 否则「等 30 分钟」既不可测也不好排查。
+     */
+    @PostMapping("/internal/sweep")
+    public ApiResponse<SweepResult> sweep() {
+        return ApiResponse.ok(orderService.sweepExpiredOrders());
     }
 }

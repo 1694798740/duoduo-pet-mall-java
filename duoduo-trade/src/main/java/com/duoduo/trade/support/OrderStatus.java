@@ -49,10 +49,17 @@ public enum OrderStatus {
         return status == null ? code : status.label();
     }
 
-    /** 是否允许从当前状态流转到目标状态 */
+    /**
+     * 是否允许从当前状态流转到目标状态。
+     *
+     * <p><b>注意</b>：这是「业务上可能发生的流转」的全集，不等于「每个接口都能走」。
+     * 例如 {@code PAID → CLOSED} 只有「退款关单」能走（需售后流程与资金操作），
+     * 不能让用户自助「取消订单」直接命中这条边 —— 各接口必须再收窄自己的合法起点。
+     */
     public boolean canTransitionTo(OrderStatus target) {
         return switch (this) {
             case PENDING_PAYMENT -> target == PAID || target == CLOSED;
+            // PAID → CLOSED 仅限退款关单（售后流程），不对外开放给「用户取消」
             case PAID -> target == SHIPPED || target == CLOSED;
             case SHIPPED -> target == COMPLETED;
             case COMPLETED, CLOSED -> false;

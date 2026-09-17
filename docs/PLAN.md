@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-17 10:30
+> 更新时间：2026-09-17 14:05
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -55,13 +55,15 @@
 | **M5-1 交易库 DDL** | 7 张表：`t_cart_item` / `t_order` / `t_order_item` / `t_order_status_log` / `t_stock_freeze` / `t_payment` / `t_settlement`；已在容器 MySQL 实际执行（exit 0）并校验表、唯一索引、字符集 |
 | **M5-2 交易服务容器接入** | compose 增加 `duoduo-trade-app`（:8083）；实测 **7 容器全 healthy**、Nacos 注册 `duoduo-trade@172.18.0.8:8083`、启动 2.7s；网关既有 `lb://duoduo-trade` 路由直接生效 |
 | **M5-3 购物车** | 商品服务新增批量 SKU 接口 `GET /api/products/skus/batch`；交易服务引入 OpenFeign，新增 `CartItemEntity` / `CartItemMapper` / `CartDtos` / `CartService` / `CartController`；7 个接口（列表 / 角标 / 加购 / 改数量 / 勾选 / 删除 / 清空已勾选）；**自测 `scripts/trade-smoke.ps1` → 87 通过 / 0 失败** |
+| **M5-4 下单拆单** | 4 个实体与 Mapper（订单 / 明细 / 状态日志 / 冻结台账）+ `OrderStatus` 状态枚举 + `OrderNoGenerator`（时间戳+随机+校验位，不用雪花 ID 对外）+ `ProductGateway`（跨服务调用与降级口径收敛到一处）+ `OrderService` + `OrderController`；接口 `POST /api/orders`（下单）、`GET /api/orders`（我的订单）、`GET /api/orders/{orderNo}`、`POST /api/orders/{orderNo}/cancel`；幂等靠 `uk_order_user_idem` 兜底；明细存下单时刻快照；**自测 `scripts/order-smoke.ps1` → 76 通过 / 0 失败** |
+| **M5-5 库存冻结与释放** | `SkuMapper` 的 freeze / release / deduct 三个**原子条件更新**（判断写进 WHERE，靠数据库行级原子性防超卖，不用分布式锁）；`StockService` + `StockController`（`/api/products/skus/stock/{freeze,release,deduct}`）；`InternalTokenFilter` 强制校验服务间凭据（**失败关闭**，不做「没配就放行」）；修正可售判定为 `stock − frozen_stock`；下单冻结、取消释放、**部分失败精确补偿**均已实测 |
 
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| **M5-4 下单拆单** | 下一步：按卖家拆单、下单快照（title/spec/price）、幂等键 `uk_order_user_idem` 防重复提交；需先定义卖家归属（自营/商家的 sellerId 来源） |
-| **M5-5 库存冻结与释放** | 依赖 M5-4；`t_stock_freeze` 表与唯一索引已就绪 |
+| **M5-6 订单状态机 + 超时关单** | 下一步：`PAID → SHIPPED → COMPLETED` 流转、`@Scheduled` 扫描 `expire_at` 自动关单并释放冻结、失败重试 |
+| **M5-7 支付幂等** | 依赖 M5-6；`t_payment` 的 `uk_pay_channel_idem` 已就绪 |
 
 ### 未开始（P1-b 交易服务，既定范围）
 
@@ -93,6 +95,7 @@
 | I-07 | 容器构建需拉 `eclipse-temurin` 基础镜像，曾担心网络不通 | **已自愈** | 无需操作 | 镜像已拉到本地（287 MB），三个业务镜像构建成功 |
 | I-08 | 容器化后冒烟 2 项失败：中文关键词检索命中 0 条、详情过敏原断言失败 | **已自愈**（2026-09-17 修复） | 无需操作 | 根因：初始化 SQL 被客户端按 **latin1** 执行，中文被**双重编码**入库（`猫粮` 的 UTF-8 字节 `E78CAB` 被拆成 6 个字符再存为 UTF-8）。修法：三个初始化脚本开头加 `SET NAMES utf8mb4`。复验：库内 `HEX` = `E9BAA6`（正确）、关键词检索命中 4 条、**冒烟 54/54** |
 | I-09 | 购物车自测脚本自身有缺陷，一度把种子数据改坏（**测试代码问题，非业务代码问题**） | **已自愈**（2026-09-17 修复） | 无需操作 | ① 哈希表用 `[long]` 建键、`[int]` 查键 —— PowerShell 按键**类型相等**匹配，查不到就静默返回 `$null`，夹具价格库存全变 0 → 21 条断言误报；② 改库复原时**写死数字**（`stock = 32`），每跑一次就把种子数据改坏一次，而种子 `data.sql` 里 SKU 2001 实为 **320**。修法：统一字符串键 + 夹具读不到就立即终止不写库 + 先读原值再写回原值 + 新增「测试结束后库内数据仍为原值」自证断言。数据已按种子恢复（2001→320） |
+| I-10 | 下单存在**幽灵冻结**风险：库存冻结发生在商品服务，不受本服务事务保护 | **已自愈**（2026-09-17 编写自测前自查发现并修复） | 无需操作 | 缺陷：原实现只在「整批冻结全部成功」时才记录待补偿列表，**部分成功时已冻成功的 SKU 会被漏记** → 订单回滚后那部分库存永久冻住（用户看到「没下单成功」但商品显示无货，且很难排查）。修法：按逐项结果精确挑出「真的冻成功了」的 SKU 再记入补偿列表。已由自测用例固定住：2001 冻成功 + 2004 冻失败 → 下单 422、订单未落库、购物车保留、**2001 冻结量回到 0、无残留 FROZEN 台账** |
 
 ---
 
@@ -117,6 +120,19 @@
 | `duoduo-trade/.../service/CartService.java` | **新增** 购物车业务逻辑（唯一索引兜底并发、服务端失效判定、依赖故障抛 503） |
 | `duoduo-trade/.../controller/CartController.java` | **新增** 7 个接口 |
 | `scripts/trade-smoke.ps1` | **新增** 购物车端到端自测（87 项断言，夹具动态取、改库先存原值） |
+| `duoduo-product/.../mapper/SkuMapper.java` | 新增 `freezeStock` / `releaseStock` / `deductStock` 三个原子条件更新（条件写进 WHERE，`COALESCE` 兼容 NULL） |
+| `duoduo-product/.../dto/StockDtos.java`、`service/StockService.java`、`controller/StockController.java` | **新增** 库存变更接口（逐项返回结果，不做整批原子） |
+| `duoduo-product/.../support/InternalTokenFilter.java` | **新增** 库存写接口的服务间凭据校验（失败关闭） |
+| `duoduo-product/.../service/ProductService.java` | 修正可售判定：`inStockOnly` / `sellable` / `SkuView.stock` 全部改为 `stock − frozen_stock` |
+| `duoduo-product/.../application.yml` | 新增 `duoduo.internal.token`（生产必须用 `INTERNAL_TOKEN` 覆盖） |
+| `duoduo-trade/.../entity/**`、`mapper/**` | **新增** `OrderEntity` / `OrderItemEntity` / `OrderStatusLogEntity` / `StockFreezeEntity` 及对应 Mapper |
+| `duoduo-trade/.../support/OrderStatus.java`、`OrderNoGenerator.java` | **新增** 状态机枚举（合法流转集中定义）+ 订单号生成器 |
+| `duoduo-trade/.../client/ProductGateway.java`、`client/dto/StockChangeDtos.java`、`config/InternalCallConfig.java` | **新增** 跨服务调用网关（统一降级口径）+ 库存变更 DTO + Feign 请求头注入 |
+| `duoduo-trade/.../dto/OrderDtos.java`、`service/OrderService.java`、`controller/OrderController.java` | **新增** 下单拆单 / 幂等 / 快照 / 冻结 / 补偿 / 取消释放 |
+| `duoduo-trade/.../service/CartService.java` | 改为复用 `ProductGateway`，去掉自己那份 Feign 异常处理 |
+| `duoduo-trade/.../resources/application.yml` | 新增 `duoduo.internal.token` |
+| `docker-compose.yml` | product / trade 两个服务注入 `INTERNAL_TOKEN` |
+| `scripts/order-smoke.ps1` | **新增** 订单端到端自测（76 项断言，含安全断言与部分冻结失败补偿） |
 | `Dockerfile` / `.dockerignore` / `duoduo-gateway/pom.xml` | 上一轮新增，本轮首次全程验证通过 |
 
 ---
@@ -135,6 +151,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
 # 购物车端到端自测（87 项，需登录，会临时改库并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1
 #   加 -SkipDbCheck 可跳过「改库模拟无货/下架」那一段（只跑接口断言）
+
+# 下单 / 拆单 / 库存冻结 端到端自测（76 项，含安全断言与部分冻结失败补偿）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1
 
 # 从零重建（连数据卷一起删，会重新执行 docs/sql 初始化）
 docker compose down -v; docker compose up -d

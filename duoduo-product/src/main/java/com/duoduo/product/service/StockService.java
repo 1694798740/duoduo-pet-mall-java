@@ -10,6 +10,7 @@ import com.duoduo.product.entity.SkuEntity;
 import com.duoduo.product.mapper.SkuMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -28,10 +29,10 @@ import java.util.Set;
  * <p>并发安全：三个操作都是原子条件更新（见 {@link SkuMapper}），
  * 靠数据库的行级原子性防超卖，<b>不需要分布式锁</b>。
  *
- * <p>关于部分失败：本接口**不保证整批原子**。一个订单跨多个 SKU，
- * 逐个冻结时若中途失败，由调用方（交易服务）负责把已成功的部分释放掉 ——
- * 这是刻意的：跨服务的分布式事务成本远高于一次补偿调用，
- * 而补偿的幂等性由「释放接口在冻结量不足时返回失败」保证。
+ * <p>关于原子性：本接口对<b>单次请求内的整批 SKU 是原子的</b>（同一本地事务），
+ * 任意一项失败则整批回滚，并照常返回逐项结果供调用方定位原因。
+ * 这样调用方拿到失败时，远端状态一定是「什么都没改」，不需要再依赖跨服务补偿 ——
+ * 补偿调用本身也可能失败，那才是真正难查的库存残留。
  */
 @Service
 public class StockService {
@@ -89,6 +90,20 @@ public class StockService {
                 allSuccess = false;
                 results.add(new StockChangeResult(item.skuId(), item.quantity(), false, diagnose(action, item.skuId())));
             }
+        }
+
+        // 整批原子：只要有一项没成功，把本事务标记为回滚，
+        // 前面已经成功的那些 SKU 也会一并撤销。
+        //
+        // 为什么不「部分成功就返回部分成功」：调用方（交易服务）拿到部分成功后必须自己补偿，
+        // 而一旦补偿调用本身失败（网络抖动、对方重启），就会留下**库存被扣了但订单没成立**的残留 ——
+        // 这种残留用户侧看不见，只能靠人工对账发现。
+        // 用一次本地事务换取「要么全成、要么全不成」，比依赖跨服务的补偿可靠得多。
+        //
+        // 注意：这里不抛异常，而是标记回滚后**照常返回逐项结果** ——
+        // 调用方需要知道「是哪个 SKU、因为什么失败」才能给出准确提示。
+        if (!allSuccess) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
         }
         return new StockChangeResponse(action, allSuccess, List.copyOf(results));
     }

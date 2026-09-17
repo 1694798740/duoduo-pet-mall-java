@@ -14,17 +14,22 @@ import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeOutcome;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeResult;
 import com.duoduo.trade.dto.OrderDtos.OrderItemView;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
+import com.duoduo.trade.dto.OrderDtos.PayRequest;
+import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.SweepResult;
 import com.duoduo.trade.entity.CartItemEntity;
 import com.duoduo.trade.entity.OrderEntity;
 import com.duoduo.trade.entity.OrderItemEntity;
 import com.duoduo.trade.entity.OrderStatusLogEntity;
+import com.duoduo.trade.entity.PaymentEntity;
 import com.duoduo.trade.entity.StockFreezeEntity;
 import com.duoduo.trade.mapper.CartItemMapper;
 import com.duoduo.trade.mapper.OrderItemMapper;
 import com.duoduo.trade.mapper.OrderMapper;
 import com.duoduo.trade.mapper.OrderStatusLogMapper;
+import com.duoduo.trade.mapper.PaymentMapper;
 import com.duoduo.trade.mapper.StockFreezeMapper;
 import com.duoduo.trade.support.OrderNoGenerator;
 import com.duoduo.trade.support.OrderStatus;
@@ -32,6 +37,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -78,7 +84,11 @@ public class OrderService {
 
     private static final String ORDER_TYPE_NORMAL = "NORMAL";
     private static final String OPERATOR_USER = "USER";
+    private static final String OPERATOR_SELLER = "SELLER";
+    private static final String OPERATOR_SYSTEM = "SYSTEM";
     private static final String OP_CREATE = "创建订单";
+    /** 与商品服务约定的失败原因码（见 StockDtos.Reason）：冻结量不足 */
+    private static final String REASON_FREEZE_NOT_ENOUGH = "FREEZE_NOT_ENOUGH";
     private static final int SELECTED = 1;
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
@@ -87,6 +97,7 @@ public class OrderService {
     private final OrderItemMapper orderItemMapper;
     private final OrderStatusLogMapper statusLogMapper;
     private final StockFreezeMapper stockFreezeMapper;
+    private final PaymentMapper paymentMapper;
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
     private final SnowflakeIdGenerator idGenerator;
@@ -98,10 +109,15 @@ public class OrderService {
     @Value("${duoduo.trade.max-items-per-order:50}")
     private int maxItemsPerOrder;
 
+    /** 单轮超时关单最多处理多少单，避免一次把库压住 */
+    @Value("${duoduo.trade.sweep-batch-size:200}")
+    private int sweepBatchSize;
+
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
                         OrderStatusLogMapper statusLogMapper,
                         StockFreezeMapper stockFreezeMapper,
+                        PaymentMapper paymentMapper,
                         CartItemMapper cartItemMapper,
                         ProductGateway productGateway,
                         SnowflakeIdGenerator idGenerator,
@@ -110,6 +126,7 @@ public class OrderService {
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
         this.stockFreezeMapper = stockFreezeMapper;
+        this.paymentMapper = paymentMapper;
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
         this.idGenerator = idGenerator;
@@ -324,9 +341,13 @@ public class OrderService {
             throw BizException.notFound("订单");
         }
         OrderStatus current = OrderStatus.of(order.getStatus());
-        if (current == null || !current.canTransitionTo(OrderStatus.CLOSED)) {
+        // 用户自助取消**只允许从「待付款」**发起。
+        // 注意不要图省事写成 current.canTransitionTo(CLOSED)：状态表里 PAID → CLOSED 是合法边，
+        // 但那条边是留给「退款关单」的（需走售后流程），不是给用户直接反悔用的。
+        // 早先就是踩了这个坑：已付款订单被用户直接取消，钱与货的归属立刻说不清。
+        if (current != OrderStatus.PENDING_PAYMENT) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
-                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许取消");
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许取消；已付款订单请走售后申请退款");
         }
 
         LocalDateTime now = nowUtc();
@@ -338,52 +359,335 @@ public class OrderService {
         orderMapper.updateById(order);
         writeStatusLog(order.getId(), current.name(), OrderStatus.CLOSED.name(), OPERATOR_USER, userId, closeReason, now);
 
-        releaseOrderFreeze(order, now);
+        int[] release = releaseOrderFreeze(order.getId(), now);
+        if (release[1] > 0) {
+            log.error("订单 {} 取消后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
+        }
         return toViews(List.of(order)).get(0);
     }
 
     /**
-     * 释放某订单仍处于 FROZEN 的冻结。
+     * 释放某订单仍处于 FROZEN 的冻结，返回 {@code [成功数, 失败数]}。
      *
      * <p>逐条落状态，因此**可重入**：已释放的不会被重复释放。
      * 若商品服务此刻不可用，只记录 ERROR 而**不**让取消失败 ——
-     * 用户的取消意图应当被尊重，未释放的台账行保持 FROZEN 供后续重试
-     * （超时关单的补偿调度会扫描它们，见 M5-6）。
+     * 用户的取消意图应当被尊重；未释放的台账行保持 FROZEN，
+     * 由超时关单的补偿调度（{@link #sweepExpiredOrders()}）在后续轮次重试。
      */
-    private void releaseOrderFreeze(OrderEntity order, LocalDateTime now) {
+    private int[] releaseOrderFreeze(Long orderId, LocalDateTime now) {
         List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
                 new LambdaQueryWrapper<StockFreezeEntity>()
-                        .eq(StockFreezeEntity::getOrderId, order.getId())
+                        .eq(StockFreezeEntity::getOrderId, orderId)
                         .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
         if (freezes.isEmpty()) {
-            return;
+            return new int[]{0, 0};
         }
         List<StockChangeItem> items = freezes.stream()
                 .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
                 .toList();
-        StockChangeOutcome outcome = productGateway.release(order.getId(), items);
-
-        Set<Long> succeeded = new LinkedHashSet<>();
-        if (outcome != null && outcome.results() != null) {
-            for (StockChangeResult r : outcome.results()) {
-                if (r.success()) {
-                    succeeded.add(r.skuId());
-                }
-            }
+        StockChangeOutcome outcome = productGateway.release(orderId, items);
+        Set<Long> released = succeededSkuIds(outcome);
+        // 「冻结量不足」= 商品服务那边这份冻结已经不存在了。
+        // 在本订单的台账仍记 FROZEN 的前提下，最可能的成因是**并发释放**
+        // （定时调度与手动触发、或上一轮已释放成功但事务未提交就被重试）。
+        // 此时把台账冲正为 RELEASED 才是与事实一致的做法：
+        // 否则这一行会永远卡在 FROZEN，每轮调度都会重试失败并刷 ERROR 日志，真正的异常反而被淹没。
+        // 冲正同时打 WARN 留痕，便于需要时回溯。
+        Set<Long> alreadyReleased = failedSkuIdsWithReason(outcome, REASON_FREEZE_NOT_ENOUGH);
+        if (!alreadyReleased.isEmpty()) {
+            log.warn("订单 {} 有 {} 个 SKU 的冻结在商品服务侧已不存在（并发释放或重复释放），台账冲正为 RELEASED",
+                    orderId, alreadyReleased.size());
         }
+
         int releasedCount = 0;
         for (StockFreezeEntity freeze : freezes) {
-            if (succeeded.contains(freeze.getSkuId())) {
+            Long skuId = freeze.getSkuId();
+            if (released.contains(skuId) || alreadyReleased.contains(skuId)) {
                 freeze.setStatus(StockFreezeEntity.STATUS_RELEASED);
                 freeze.setUpdatedAt(now);
                 stockFreezeMapper.updateById(freeze);
                 releasedCount++;
             }
         }
-        if (releasedCount < freezes.size()) {
-            log.error("订单 {} 取消后仍有 {} 条库存冻结未释放（商品服务异常），台账保持 FROZEN 待重试",
-                    order.getOrderNo(), freezes.size() - releasedCount);
+        return new int[]{releasedCount, freezes.size() - releasedCount};
+    }
+
+    /** 从库存变更结果里挑出「因指定原因失败」的 SKU（用于区分可冲正的失败与真故障） */
+    private static Set<Long> failedSkuIdsWithReason(StockChangeOutcome outcome, String reason) {
+        if (outcome == null || outcome.results() == null) {
+            return Set.of();
         }
+        return outcome.results().stream()
+                .filter(r -> !r.success() && reason.equals(r.reason()))
+                .map(StockChangeResult::skuId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /** 支付成功后把该订单的冻结台账置为 DEDUCTED（库存已真实扣减） */
+    private void markFreezeDeducted(Long orderId, LocalDateTime now) {
+        List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getOrderId, orderId)
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
+        for (StockFreezeEntity freeze : freezes) {
+            freeze.setStatus(StockFreezeEntity.STATUS_DEDUCTED);
+            freeze.setUpdatedAt(now);
+            stockFreezeMapper.updateById(freeze);
+        }
+    }
+
+    // ---------------- 支付（幂等） ----------------
+
+    /**
+     * 支付订单（本阶段为模拟渠道，即时成功）。
+     *
+     * <p>幂等的三层防线（从外到内）：
+     * <ol>
+     *   <li><b>先查</b>：同一 {@code (channel, idempotentKey)} 已存在 → 直接返回首次结果，这是常规重复回调的路径；</li>
+     *   <li><b>订单状态</b>：订单已不是「待付款」→ 拒绝，防止对同一订单二次收款；</li>
+     *   <li><b>唯一索引</b>：{@code uk_pay_channel_idem} 兜住并发——两个请求同时通过前两道检查时，
+     *       数据库只会让一个插入成功；插入失败的那方按「重放」处理。</li>
+     * </ol>
+     *
+     * <p>扣库存用的是 {@code deduct}（库存与冻结量同时减少），其 WHERE 条件要求冻结量足够，
+     * 因此即使前面的防线都被绕过，也不可能把同一笔冻结扣两次。
+     */
+    @Transactional
+    public PayResult pay(String orderNo, PayRequest request) {
+        Long userId = UserContext.requireUserId();
+        OrderEntity order = findByOrderNo(userId, orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+
+        PaymentEntity existing = findPayment(request.channel(), request.idempotentKey());
+        if (existing != null) {
+            return replayPayment(order, existing);
+        }
+
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许支付");
+        }
+
+        LocalDateTime now = nowUtc();
+        PaymentEntity payment = new PaymentEntity();
+        payment.setId(idGenerator.nextId());
+        payment.setPayNo(orderNoGenerator.next());
+        payment.setOrderId(order.getId());
+        payment.setUserId(userId);
+        payment.setChannel(request.channel().trim().toUpperCase());
+        payment.setAmount(nz(order.getPayAmount()));
+        payment.setStatus(PaymentEntity.STATUS_INIT);
+        payment.setIdempotentKey(request.idempotentKey());
+        payment.setCreatedAt(now);
+        payment.setUpdatedAt(now);
+
+        // 先落支付单（INIT），再动库存。
+        // 顺序很关键：若并发下唯一索引拦下了本次插入，此时还**没有**任何库存变更，
+        // 直接返回冲突即可；反过来先扣库存再插单，一旦插入失败就会留下「库存扣了、订单没付款」的残留。
+        try {
+            paymentMapper.insert(payment);
+        } catch (DuplicateKeyException e) {
+            PaymentEntity winner = findPayment(request.channel(), request.idempotentKey());
+            if (winner != null) {
+                throw BizException.conflict("该支付请求已处理，请先查询订单状态（支付单号 " + winner.getPayNo() + "）");
+            }
+            throw BizException.conflict("检测到重复的支付请求正在处理中，请稍后查询订单状态");
+        }
+
+        // 扣减库存：库存与冻结量同时减少；失败则整批回滚，本次支付不成立
+        // （支付单行会随事务回滚消失，客户端可用同一幂等键重试）
+        List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getOrderId, order.getId())
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
+        if (freezes.isEmpty()) {
+            throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
+        }
+        List<StockChangeItem> items = freezes.stream()
+                .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
+                .toList();
+        StockChangeOutcome outcome = productGateway.deduct(order.getId(), items);
+        if (outcome == null || !outcome.allSuccess()) {
+            throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
+                    "扣减库存失败：" + describeFailure(outcome, Map.of()));
+        }
+
+        payment.setStatus(PaymentEntity.STATUS_SUCCESS);
+        // 模拟渠道的流水号：真实渠道应使用渠道返回值；这里用支付单号补齐，保证对账字段非空
+        payment.setChannelTradeNo("MOCK-" + payment.getPayNo());
+        payment.setPaidAt(now);
+        payment.setUpdatedAt(now);
+        paymentMapper.updateById(payment);
+
+        order.setStatus(OrderStatus.PAID.name());
+        order.setPaidAt(now);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+        writeStatusLog(order.getId(), current.name(), OrderStatus.PAID.name(), OPERATOR_USER, userId,
+                "支付成功（渠道 " + payment.getChannel() + "）", now);
+        markFreezeDeducted(order.getId(), now);
+
+        return new PayResult(order.getOrderNo(), payment.getPayNo(), payment.getChannel(),
+                nz(payment.getAmount()), payment.getStatus(), order.getStatus(),
+                OrderStatus.labelOf(order.getStatus()), false);
+    }
+
+    // ---------------- 发货与收货（状态机后半段） ----------------
+
+    /**
+     * 发货（已付款 → 已发货）。
+     *
+     * <p>调用方是<b>卖家侧 / 运营侧系统</b>，由 {@code InternalTokenFilter} 校验内部凭据。
+     * 卖家账号体系要到卖家中心（M5-9）才落地，在那之前用内部凭据把口子关上，
+     * 而不是把「任何人登录后都能替别人发货」留在线上。
+     */
+    @Transactional
+    public OrderView ship(String orderNo) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.SHIPPED)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许发货");
+        }
+        LocalDateTime now = nowUtc();
+        order.setStatus(OrderStatus.SHIPPED.name());
+        order.setShippedAt(now);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+        writeStatusLog(order.getId(), current.name(), OrderStatus.SHIPPED.name(),
+                OPERATOR_SELLER, order.getSellerId(), "卖家发货", now);
+        return toViews(List.of(order)).get(0);
+    }
+
+    /** 确认收货（已发货 → 已完成）。完成后订单流程终结。 */
+    @Transactional
+    public OrderView confirmReceipt(String orderNo) {
+        Long userId = UserContext.requireUserId();
+        OrderEntity order = findByOrderNo(userId, orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.COMPLETED)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许确认收货");
+        }
+        LocalDateTime now = nowUtc();
+        order.setStatus(OrderStatus.COMPLETED.name());
+        order.setFinishedAt(now);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+        writeStatusLog(order.getId(), current.name(), OrderStatus.COMPLETED.name(), OPERATOR_USER, userId, "买家确认收货", now);
+        return toViews(List.of(order)).get(0);
+    }
+
+    // ---------------- 超时关单（补偿调度） ----------------
+
+    /**
+     * 超时关单调度：定时把「待付款且已过期」的订单关掉，并释放其冻结库存。
+     *
+     * <p>两个刻意的设计：
+     * <ul>
+     *   <li><b>可重入</b>：关单只处理仍为「待付款」的订单；释放只处理仍为 FROZEN 的台账行。
+     *       重复执行不会有副作用，因此不需要「恰好执行一次」这种做不到的保证。</li>
+     *   <li><b>自愈</b>：第二步「释放所有已过期且仍 FROZEN 的台账」不只处理本轮关掉的单，
+     *       也覆盖「上几轮关单成功、但释放时商品服务挂了」的遗留。
+     *       这条路径是库存不会永久冻住的最终保障。</li>
+     * </ul>
+     *
+     * <p>单实例开发环境用 {@code @Scheduled} 足够；生产多实例必须交给 XXL-Job 之类的
+     * 分布式调度（否则每个实例都会扫一遍 —— 虽然可重入不会错，但会浪费与放大压力）。
+     */
+    @Scheduled(fixedDelayString = "${duoduo.trade.sweep-interval-ms:60000}",
+            initialDelayString = "${duoduo.trade.sweep-initial-delay-ms:30000}")
+    @Transactional
+    public void scheduledSweep() {
+        try {
+            SweepResult result = sweepExpiredOrders();
+            if (result.scanned() > 0 || result.released() > 0 || result.releaseFailed() > 0) {
+                log.info("超时关单调度：扫描 {} 单，关闭 {} 单，释放 {} 条冻结，释放失败 {} 条",
+                        result.scanned(), result.closed(), result.released(), result.releaseFailed());
+            }
+        } catch (RuntimeException e) {
+            // 调度线程里必须吞掉异常，否则一次异常会让后续调度静默停摆
+            log.error("超时关单调度执行异常", e);
+        }
+    }
+
+    /**
+     * 真正执行一轮关单与释放。
+     *
+     * <p>注意：{@code @Transactional} 加在<b>本方法</b>上是刻意的 ——
+     * 调度入口 {@link #scheduledSweep()} 内部调用本方法属于「自调用」，
+     * Spring 的事务代理不生效，所以事务边界必须由被调用的这一层自己声明，
+     * 且调度入口也标注了 {@code @Transactional} 以覆盖自调用路径。
+     */
+    @Transactional
+    public SweepResult sweepExpiredOrders() {
+        LocalDateTime now = nowUtc();
+        int closed = 0;
+
+        // 1) 关单：待付款且已过期
+        List<OrderEntity> expired = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                .eq(OrderEntity::getStatus, OrderStatus.PENDING_PAYMENT.name())
+                .le(OrderEntity::getExpireAt, now)
+                .orderByAsc(OrderEntity::getExpireAt)
+                .last("LIMIT " + Math.max(1, sweepBatchSize)));
+        for (OrderEntity order : expired) {
+            String reason = "超时未支付，系统自动关闭";
+            order.setStatus(OrderStatus.CLOSED.name());
+            order.setClosedAt(now);
+            order.setCloseReason(reason);
+            order.setUpdatedAt(now);
+            orderMapper.updateById(order);
+            writeStatusLog(order.getId(), OrderStatus.PENDING_PAYMENT.name(), OrderStatus.CLOSED.name(),
+                    OPERATOR_SYSTEM, null, reason, now);
+            closed++;
+        }
+
+        // 2) 释放：所有仍为 FROZEN 且**所属订单已关闭**的台账行（含历史遗留），按订单分组逐单释放。
+        //
+        // 判据刻意用「订单状态」而不是「台账自己的 expire_at」：
+        // 台账上的 expire_at 与订单的过期时间是同一件事的两份副本，一旦两者不同步
+        // （改期、补数据、时区处理差异都会造成），按台账判就会出现「订单已关闭、库存却一直冻着」。
+        // 订单状态是唯一真相，释放必须以它为准。
+        List<StockFreezeEntity> pendingFreezes = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN)
+                        .orderByAsc(StockFreezeEntity::getCreatedAt)
+                        .last("LIMIT " + (Math.max(1, sweepBatchSize) * 4)));
+        Set<Long> candidateOrderIds = pendingFreezes.stream()
+                .map(StockFreezeEntity::getOrderId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        int released = 0;
+        int releaseFailed = 0;
+        for (Long orderId : candidateOrderIds) {
+            OrderEntity order = orderMapper.selectById(orderId);
+            if (order == null) {
+                // 订单不存在（数据异常）：不擅自释放，留证据给人查
+                log.error("库存冻结台账指向的订单 {} 不存在，跳过释放，请人工核对", orderId);
+                continue;
+            }
+            if (!OrderStatus.CLOSED.name().equals(order.getStatus())) {
+                // 订单还没关闭（正常在途），冻结本就该保留
+                continue;
+            }
+            int[] result = releaseOrderFreeze(orderId, now);
+            released += result[0];
+            releaseFailed += result[1];
+        }
+        if (releaseFailed > 0) {
+            log.error("超时关单调度：{} 条冻结未能释放，台账保持 FROZEN，下轮重试（常见成因：商品服务不可用，"
+                    + "或该 SKU 冻结量已被并发释放且原因码非 FREEZE_NOT_ENOUGH，需人工核对）", releaseFailed);
+        }
+        return new SweepResult(expired.size(), closed, released, releaseFailed);
     }
 
     // ---------------- 内部实现 ----------------
@@ -398,6 +702,31 @@ public class OrderService {
         return orderMapper.selectOne(new LambdaQueryWrapper<OrderEntity>()
                 .eq(OrderEntity::getUserId, userId)
                 .eq(OrderEntity::getOrderNo, orderNo));
+    }
+
+    /** 不带用户范围查订单：仅用于卖家侧 / 运营侧动作（发货），调用方已由内部凭据保护 */
+    private OrderEntity findAnyByOrderNo(String orderNo) {
+        return orderMapper.selectOne(new LambdaQueryWrapper<OrderEntity>()
+                .eq(OrderEntity::getOrderNo, orderNo));
+    }
+
+    private PaymentEntity findPayment(String channel, String idempotentKey) {
+        return paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getChannel, channel.trim().toUpperCase())
+                .eq(PaymentEntity::getIdempotentKey, idempotentKey));
+    }
+
+    /** 支付幂等重放：返回首次支付的结果，不产生任何副作用 */
+    private PayResult replayPayment(OrderEntity order, PaymentEntity payment) {
+        return new PayResult(
+                order.getOrderNo(),
+                payment.getPayNo(),
+                payment.getChannel(),
+                nz(payment.getAmount()),
+                payment.getStatus(),
+                order.getStatus(),
+                OrderStatus.labelOf(order.getStatus()),
+                true);
     }
 
     /** 幂等重放：返回该幂等键首次产生的订单 */
@@ -460,6 +789,9 @@ public class OrderService {
                     items,
                     isoTs(order.getCreatedAt()),
                     isoTs(order.getExpireAt()),
+                    isoTs(order.getPaidAt()),
+                    isoTs(order.getShippedAt()),
+                    isoTs(order.getFinishedAt()),
                     isoTs(order.getClosedAt()),
                     order.getCloseReason()));
         }

@@ -72,6 +72,9 @@ public final class OrderDtos {
             List<OrderItemView> items,
             String createdAt,
             String expireAt,
+            String paidAt,
+            String shippedAt,
+            String finishedAt,
             String closedAt,
             String closeReason
     ) {
@@ -92,6 +95,51 @@ public final class OrderDtos {
     /** 取消订单请求 */
     public record CancelRequest(
             @Size(max = 100, message = "取消原因过长") String reason
+    ) {
+    }
+
+    /**
+     * 支付请求（本阶段为模拟渠道，支付即时成功）。
+     *
+     * <p>{@code idempotentKey} 由客户端生成：真实支付渠道的回调会重复投递，
+     * 同一 {@code (channel, idempotentKey)} 只允许成功一次。
+     * 重复提交返回首次结果，{@code idempotentReplay=true} 可用于区分。
+     */
+    public record PayRequest(
+            @NotBlank(message = "支付渠道不能为空")
+            @Size(max = 20, message = "支付渠道过长") String channel,
+
+            @NotBlank(message = "idempotentKey 不能为空，用于防止重复扣款")
+            @Size(max = 64, message = "idempotentKey 过长") String idempotentKey
+    ) {
+    }
+
+    /** 支付结果 */
+    public record PayResult(
+            String orderNo,
+            String payNo,
+            String channel,
+            long amount,
+            String payStatus,
+            String orderStatus,
+            String orderStatusLabel,
+            boolean idempotentReplay
+    ) {
+    }
+
+    /**
+     * 超时关单（补偿调度）的执行结果。
+     * 运维排障与自测都靠它把「扫了多少、关了多少、释放失败多少」说清楚。
+     */
+    public record SweepResult(
+            /** 本轮扫描到的超时待付款订单数 */
+            int scanned,
+            /** 成功关单的订单数 */
+            int closed,
+            /** 关单后成功释放冻结的条数 */
+            int released,
+            /** 释放失败、仍留在 FROZEN 台账待下次重试的条数 */
+            int releaseFailed
     ) {
     }
 }
