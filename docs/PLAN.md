@@ -53,13 +53,15 @@
 | **中文双重编码缺陷修复** | 见 I-08；`SET NAMES utf8mb4` 已写入 3 个初始化脚本，从零重建数据卷复验通过 |
 | **M5-1 `duoduo-trade` 模块骨架** | 模块已建并接入父 POM（6 模块反应堆）；`TradeApplication`（`@EnableScheduling` + `@MapperScan`）、`TradeServiceConfig`（分页插件 + 雪花 worker-id=3）、`application.yml` / `-local`（H2）/ `-mysql` 三档；**`MVN_EXIT=0`、BUILD SUCCESS、产出 fat jar 42.5 MB** |
 | **M5-1 交易库 DDL** | 7 张表：`t_cart_item` / `t_order` / `t_order_item` / `t_order_status_log` / `t_stock_freeze` / `t_payment` / `t_settlement`；已在容器 MySQL 实际执行（exit 0）并校验表、唯一索引、字符集 |
+| **M5-2 交易服务容器接入** | compose 增加 `duoduo-trade-app`（:8083）；实测 **7 容器全 healthy**、Nacos 注册 `duoduo-trade@172.18.0.8:8083`、启动 2.7s；网关既有 `lb://duoduo-trade` 路由直接生效 |
+| **M5-3 购物车** | 商品服务新增批量 SKU 接口 `GET /api/products/skus/batch`；交易服务引入 OpenFeign，新增 `CartItemEntity` / `CartItemMapper` / `CartDtos` / `CartService` / `CartController`；7 个接口（列表 / 角标 / 加购 / 改数量 / 勾选 / 删除 / 清空已勾选）；**自测 `scripts/trade-smoke.ps1` → 87 通过 / 0 失败** |
 
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| **M5-2 交易服务容器接入** | 下一步：compose 增加 `duoduo-trade-app`（:8083）、构建镜像、验证注册进 Nacos、交易库初始化纳入 `docs/sql/03` |
-| **M5-3 购物车实现** | 待 M5-2 完成后开始（合并加购、改数量、勾选、失效校验） |
+| **M5-4 下单拆单** | 下一步：按卖家拆单、下单快照（title/spec/price）、幂等键 `uk_order_user_idem` 防重复提交；需先定义卖家归属（自营/商家的 sellerId 来源） |
+| **M5-5 库存冻结与释放** | 依赖 M5-4；`t_stock_freeze` 表与唯一索引已就绪 |
 
 ### 未开始（P1-b 交易服务，既定范围）
 
@@ -90,6 +92,7 @@
 | I-06 | 沙箱侧 `github.com` 的 git 端点间歇 502，`git push` 不稳 | **已自愈** | 无需操作 | 改用 `api.github.com` 做增量同步 + 逐文件 blob 哈希比对 |
 | I-07 | 容器构建需拉 `eclipse-temurin` 基础镜像，曾担心网络不通 | **已自愈** | 无需操作 | 镜像已拉到本地（287 MB），三个业务镜像构建成功 |
 | I-08 | 容器化后冒烟 2 项失败：中文关键词检索命中 0 条、详情过敏原断言失败 | **已自愈**（2026-09-17 修复） | 无需操作 | 根因：初始化 SQL 被客户端按 **latin1** 执行，中文被**双重编码**入库（`猫粮` 的 UTF-8 字节 `E78CAB` 被拆成 6 个字符再存为 UTF-8）。修法：三个初始化脚本开头加 `SET NAMES utf8mb4`。复验：库内 `HEX` = `E9BAA6`（正确）、关键词检索命中 4 条、**冒烟 54/54** |
+| I-09 | 购物车自测脚本自身有缺陷，一度把种子数据改坏（**测试代码问题，非业务代码问题**） | **已自愈**（2026-09-17 修复） | 无需操作 | ① 哈希表用 `[long]` 建键、`[int]` 查键 —— PowerShell 按键**类型相等**匹配，查不到就静默返回 `$null`，夹具价格库存全变 0 → 21 条断言误报；② 改库复原时**写死数字**（`stock = 32`），每跑一次就把种子数据改坏一次，而种子 `data.sql` 里 SKU 2001 实为 **320**。修法：统一字符串键 + 夹具读不到就立即终止不写库 + 先读原值再写回原值 + 新增「测试结束后库内数据仍为原值」自证断言。数据已按种子恢复（2001→320） |
 
 ---
 
@@ -101,12 +104,19 @@
 | `docs/sql/01-duoduo-user.sql` | 开头新增 `SET NAMES utf8mb4` |
 | `docs/sql/02-duoduo-product.sql` | 开头新增 `SET NAMES utf8mb4` |
 | `docs/sql/03-duoduo-trade.sql` | **新增**：交易库建库建表（由模块内 `db/schema.sql` 拼装，7 张表） |
+| `docker-compose.yml` | 新增 `duoduo-trade-app`（:8083），网关 depends_on 补上 trade |
 | `pom.xml` | 父 POM 增加 `<module>duoduo-trade</module>` |
-| `duoduo-trade/pom.xml` | **新增**：依赖 common / common-web / web / validation / actuator / nacos-discovery / mybatis-plus / H2 / MySQL |
-| `duoduo-trade/.../TradeApplication.java` | **新增**：`@SpringBootApplication` + `@EnableDiscoveryClient` + `@EnableScheduling` + `@MapperScan` |
-| `duoduo-trade/.../config/TradeServiceConfig.java` | **新增**：MyBatis-Plus 分页插件（上限 100）+ 雪花 ID（worker-id=3，与用户 1 / 商品 2 区分） |
-| `duoduo-trade/.../resources/application*.yml` | **新增** 三档：默认（MySQL + Nacos）/ local（H2，启动重建表）/ mysql（覆盖数据源） |
-| `duoduo-trade/.../resources/db/schema.sql` | **新增**：交易域 7 张表（H2/MySQL 双兼容，索引单独 CREATE INDEX） |
+| `duoduo-product/.../ProductController.java` | 新增 `GET /api/products/skus/batch`（批量 SKU 采购视图，供交易服务调用） |
+| `duoduo-product/.../ProductDtos.java` | 新增 `SkuPurchaseView`（与 C 端 `SkuView` 刻意分开，避免字段互相污染） |
+| `duoduo-product/.../ProductService.java` | 新增 `purchaseViews()`（批量、不 JOIN、查不到不报错）+ `specText()` |
+| `duoduo-trade/pom.xml` | 增加 `spring-cloud-starter-openfeign` + `spring-cloud-starter-loadbalancer` |
+| `duoduo-trade/.../TradeApplication.java` | 增加 `@EnableFeignClients` |
+| `duoduo-trade/.../client/**` | **新增** `ProductClient`（Feign，服务间直连不走网关）+ `SkuSnapshot`（跨服务 DTO，不共享类） |
+| `duoduo-trade/.../entity/CartItemEntity.java`、`mapper/CartItemMapper.java` | **新增** |
+| `duoduo-trade/.../dto/CartDtos.java` | **新增** `CartItemView` / `CartView` / 三个请求体 / 失效原因码常量 |
+| `duoduo-trade/.../service/CartService.java` | **新增** 购物车业务逻辑（唯一索引兜底并发、服务端失效判定、依赖故障抛 503） |
+| `duoduo-trade/.../controller/CartController.java` | **新增** 7 个接口 |
+| `scripts/trade-smoke.ps1` | **新增** 购物车端到端自测（87 项断言，夹具动态取、改库先存原值） |
 | `Dockerfile` / `.dockerignore` / `duoduo-gateway/pom.xml` | 上一轮新增，本轮首次全程验证通过 |
 
 ---
@@ -119,8 +129,12 @@ cd D:\智能体项目\duoduo-pet-mall-java
 docker compose up -d
 docker ps                                  # 6 个容器应全为 healthy
 
-# 端到端冒烟（54 项）
+# 端到端冒烟（54 项，网关 + 用户域 + 商品域）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
+
+# 购物车端到端自测（87 项，需登录，会临时改库并自动复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1
+#   加 -SkipDbCheck 可跳过「改库模拟无货/下架」那一段（只跑接口断言）
 
 # 从零重建（连数据卷一起删，会重新执行 docs/sql 初始化）
 docker compose down -v; docker compose up -d

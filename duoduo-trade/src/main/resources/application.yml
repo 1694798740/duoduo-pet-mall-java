@@ -53,6 +53,10 @@ duoduo:
   id:
     datacenter-id: ${ID_DATACENTER:1}
     worker-id: ${ID_WORKER:3}
+  internal:
+    # 服务间调用共享密钥，与商品服务共用同一个值（容器里由 INTERNAL_TOKEN 注入）。
+    # 用于调用商品服务的库存写接口（冻结 / 释放 / 扣减）。
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
   trade:
     # 待付款订单多久自动关单（分钟）。生产按业务口径核定，这里取 30 分钟。
     order-expire-minutes: ${ORDER_EXPIRE_MINUTES:30}

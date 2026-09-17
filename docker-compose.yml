@@ -157,6 +157,9 @@ services:
       NACOS_ADDR: 'nacos:8848'
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
+      # 服务间调用共享密钥：保护商品服务的库存写接口（/api/products/skus/stock/**）。
+      # 生产必须由外部注入真实值（compose 里只提供开发默认值）。
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
     ports:
       - '8082:8082'
     depends_on:
@@ -184,6 +187,7 @@ services:
       NACOS_ADDR: 'nacos:8848'
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
     ports:
       - '8083:8083'
     depends_on:

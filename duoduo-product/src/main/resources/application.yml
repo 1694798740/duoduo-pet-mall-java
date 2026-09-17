@@ -51,6 +51,11 @@ duoduo:
   id:
     datacenter-id: ${ID_DATACENTER:1}
     worker-id: ${ID_WORKER:2}
+  internal:
+    # 服务间调用共享密钥，用于保护库存写接口（/api/products/skus/stock/**）。
+    # 默认值只是为了让本地容器开箱可跑；**生产必须用环境变量 INTERNAL_TOKEN 覆盖**。
+    # 校验默认开启（失败关闭），不做「没配就放行」。
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
   product:
     # 平台禁售/违规词表，搜索与商品标题双向拦截。
     # 生产形态下由配置中心下发，并叠加内容安全服务做语义识别。

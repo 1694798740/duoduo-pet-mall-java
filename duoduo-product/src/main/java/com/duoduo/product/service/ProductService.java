@@ -127,8 +127,10 @@ public class ProductService {
                     + " AND s.status = 'ACTIVE' AND s.target_life_stage LIKE {0})", "%" + lifeStage + "%");
         }
         if (query.inStockOnly()) {
+            // 可售余量 = stock - frozen_stock：只看 stock 会把「已被他人下单锁定」的商品也算作有货
             wrapper.apply("EXISTS (SELECT 1 FROM t_sku s WHERE s.spu_id = t_spu.id"
-                    + " AND s.status = 'ACTIVE' AND s.stock > 0)");
+                    + " AND s.status = 'ACTIVE'"
+                    + " AND s.stock - COALESCE(s.frozen_stock, 0) > 0)");
         }
         applySort(wrapper, query.sort());
         wrapper.orderByDesc(SpuEntity::getId);
@@ -360,12 +362,14 @@ public class ProductService {
             return Map.of();
         }
         List<SkuEntity> skus = skuMapper.selectList(new LambdaQueryWrapper<SkuEntity>()
-                .select(SkuEntity::getSpuId, SkuEntity::getStock)
+                .select(SkuEntity::getSpuId, SkuEntity::getStock, SkuEntity::getFrozenStock)
                 .in(SkuEntity::getSpuId, spuIds)
                 .eq(SkuEntity::getStatus, SKU_ACTIVE));
         Map<Long, Boolean> result = new HashMap<>();
         for (SkuEntity sku : skus) {
-            boolean available = sku.getStock() != null && sku.getStock() > 0;
+            int stock = sku.getStock() == null ? 0 : sku.getStock();
+            int frozen = sku.getFrozenStock() == null ? 0 : sku.getFrozenStock();
+            boolean available = stock - frozen > 0;
             result.merge(sku.getSpuId(), available, (a, b) -> a || b);
         }
         return result;
@@ -373,8 +377,11 @@ public class ProductService {
 
     private SkuView toSkuView(SkuEntity sku) {
         int stock = sku.getStock() == null ? 0 : sku.getStock();
+        int frozen = sku.getFrozenStock() == null ? 0 : sku.getFrozenStock();
+        int available = Math.max(0, stock - frozen);
         boolean food = sku.getIsFood() != null && sku.getIsFood() == 1;
-        boolean sellable = SKU_ACTIVE.equals(sku.getStatus()) && stock > 0;
+        // 可售 = 已上架 且 还有可售余量（被他人下单冻结的部分不算可售）
+        boolean sellable = SKU_ACTIVE.equals(sku.getStatus()) && available > 0;
         return new SkuView(
                 sku.getId(),
                 sku.getSkuCode(),
@@ -382,7 +389,7 @@ public class ProductService {
                 sku.getImage(),
                 nz(sku.getPrice()),
                 nz(sku.getMarketPrice()),
-                stock,
+                available,
                 food,
                 Csv.split(sku.getTargetSpecies()),
                 Csv.split(sku.getTargetLifeStage()),

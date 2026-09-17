@@ -1,12 +1,11 @@
 package com.duoduo.trade.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
-import com.duoduo.trade.client.ProductClient;
+import com.duoduo.trade.client.ProductGateway;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.dto.CartDtos.AddCartRequest;
 import com.duoduo.trade.dto.CartDtos.CartItemView;
@@ -14,7 +13,6 @@ import com.duoduo.trade.dto.CartDtos.CartView;
 import com.duoduo.trade.dto.CartDtos.InvalidReason;
 import com.duoduo.trade.entity.CartItemEntity;
 import com.duoduo.trade.mapper.CartItemMapper;
-import feign.FeignException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,13 +21,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * 购物车。
@@ -58,14 +53,14 @@ public class CartService {
     private static final String SKU_ACTIVE = "ACTIVE";
 
     private final CartItemMapper cartItemMapper;
-    private final ProductClient productClient;
+    private final ProductGateway productGateway;
     private final SnowflakeIdGenerator idGenerator;
 
     public CartService(CartItemMapper cartItemMapper,
-                       ProductClient productClient,
+                       ProductGateway productGateway,
                        SnowflakeIdGenerator idGenerator) {
         this.cartItemMapper = cartItemMapper;
-        this.productClient = productClient;
+        this.productGateway = productGateway;
         this.idGenerator = idGenerator;
     }
 
@@ -287,39 +282,11 @@ public class CartService {
 
     /**
      * 批量取 SKU 快照。
-     * 商品服务不可用时抛 503（DEGRADED）而不是返回「空购物车」——
-     * 把依赖故障伪装成「商品都没了」会让用户误删自己的购物车。
+     * 降级口径统一收在 {@link ProductGateway} 里（4xx 当查不到、不可用抛 503），
+     * 本类不再自己处理 Feign 异常，避免两个服务对同一份数据给出不同行为。
      */
     private Map<Long, SkuSnapshot> loadSnapshots(Collection<Long> skuIds) {
-        Set<Long> distinct = skuIds.stream()
-                .filter(Objects::nonNull)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        if (distinct.isEmpty()) {
-            return Map.of();
-        }
-        String csv = distinct.stream().map(String::valueOf).collect(Collectors.joining(","));
-        ApiResponse<List<SkuSnapshot>> response;
-        try {
-            response = productClient.batchSkus(csv);
-        } catch (FeignException e) {
-            if (e.status() >= 400 && e.status() < 500) {
-                // 商品服务明确回了 4xx（如参数被拒），按「查不到」处理，不让整车挂掉
-                return Map.of();
-            }
-            throw new BizException(ErrorCode.DEGRADED, "商品服务暂时不可用，请稍后重试", e);
-        } catch (RuntimeException e) {
-            throw new BizException(ErrorCode.DEGRADED, "商品服务暂时不可用，请稍后重试", e);
-        }
-        if (response == null || response.data() == null) {
-            return Map.of();
-        }
-        Map<Long, SkuSnapshot> map = new HashMap<>();
-        for (SkuSnapshot snap : response.data()) {
-            if (snap != null && snap.skuId() != null) {
-                map.put(snap.skuId(), snap);
-            }
-        }
-        return map;
+        return productGateway.loadSnapshots(skuIds);
     }
 
     /** 判定失效原因；返回 null 表示有效 */
