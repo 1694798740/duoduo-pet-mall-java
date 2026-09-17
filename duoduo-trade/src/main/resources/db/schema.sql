@@ -58,6 +58,8 @@ CREATE TABLE t_order (
     closed_at         TIMESTAMP,
     refunded_at       TIMESTAMP,
     close_reason      VARCHAR(100),
+    logistics_company VARCHAR(50),
+    logistics_no      VARCHAR(64),
     created_at        TIMESTAMP    NOT NULL,
     updated_at        TIMESTAMP    NOT NULL,
     PRIMARY KEY (id)

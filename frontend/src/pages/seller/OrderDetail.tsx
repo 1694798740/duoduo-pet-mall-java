@@ -168,6 +168,13 @@ export const SellerOrderDetailPage: React.FC = () => {
             <dd>{order.receiverPhone}</dd>
             <dt>收货地址</dt>
             <dd>{order.receiverAddress}</dd>
+            {/* 物流信息只在已发货后有值。
+                为什么必须显示在这里：卖家填完单号后要能回头核对，
+                买家来问「我的货到哪了」时，这一屏就是唯一的事实来源。 */}
+            <dt>物流公司</dt>
+            <dd>{order.logisticsCompany ?? '—'}</dd>
+            <dt>物流单号</dt>
+            <dd>{order.logisticsNo ?? '—'}</dd>
           </dl>
 
           <div className="divider" />

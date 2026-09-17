@@ -81,7 +81,14 @@ public final class OrderDtos {
             String closedAt,
             /** 退款时间（钱退回买家的时刻）；未退款为 null */
             String refundedAt,
-            String closeReason
+            String closeReason,
+            /**
+             * 物流公司与单号（发货后才有值）。
+             * 买家端与卖家端共用同一个 OrderView：买家要看「我的货到哪了」，
+             * 卖家要看「我这单发的什么」——同一份事实的两个视角，不该各存一份。
+             */
+            String logisticsCompany,
+            String logisticsNo
     ) {
     }
 

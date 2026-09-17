@@ -112,8 +112,8 @@
 | **M8-1 沙箱支付渠道** | `PaymentChannel` 抽象（预下单 / 回调验签 / 查询）+ 注册表；`MOCK`（即时）与 `SANDBOX`（扫码）两实现；`pay()` 改预下单语义，返回二维码内容（指向网关收银台）与过期时间；回调入口 HMAC-SHA256 验签 + 时间戳窗口 + **金额核对** + 幂等 CAS 入账；沙箱收银台页面；支付单 `PENDING → SUCCESS/EXPIRED/CLOSED` 生命周期；订单关单时**作废未支付支付单**（接通此前缺失的 `markClosedByOrder`，堵住「订单已取消、二维码还能扫出钱」）；**自测 62 通过 / 0 失败，六套合计 475 项全绿** |
 | **M6 买家端 Web 商城（P1-c）** | 新建 `frontend/`（React 18 + TS strict + Vite 5）；12 路由 / 10 页主交易闭环；API 层（401 单飞刷新 + 5xx 退避重试 + 错误映射）；**零依赖二维码组件**（Byte 模式 + Reed-Solomon + 8 掩码择优）；PC 端扫码支付 + 3 秒轮询；`tsc --noEmit` 零错误、`vite build` 通过；curl 全链冒烟 + **真实 Chromium 逐页验证 12 路由**（含真实 UI 填单下单 → 模拟扫码 → 轮询自动变已付款 → 托管金额核对 ¥59.00/¥0.59/¥58.41），截图 13 张见 `frontend/docs/screenshots/` |
 
-| **M5-9 卖家中心（后端）** | 卖家账号体系（`applyMerchant` 实名前置 + 幂等）；`/api/seller/**` 6 个接口（概览 / 订单列表 / 订单详情 / 发货 / 售后退款 / 结算对账）；**归属校验取代内部凭据**（越权 403 / 不存在 404 刻意区分）；运营可见平台自营 `sellerId=0`；**自测 82 通过 / 0 失败** |
-| **M9 商家端 Web（前端）** | `frontend/src/pages/seller/` 4 页（Dashboard / Orders / OrderDetail / Settlements）+ `shared.tsx`；`sellerApi` 端点层；`RequireSeller` 路由守卫（只校验登录，真正的权限边界仍在后端 403）；Layout 与「我的」页按角色显示入口；`tsc --noEmit` 零错误、`vite build` 通过（60 模块） |
+| **M5-9 卖家中心（后端）** | 卖家账号体系（`applyMerchant` 实名前置 + 幂等）；`/api/seller/**` 6 个接口（概览 / 订单列表 / 订单详情 / 发货 / 售后退款 / 结算对账）；**归属校验取代内部凭据**（越权 403 / 不存在 404 刻意区分）；运营可见平台自营 `sellerId=0`；物流信息落订单表并回显；**自测 84 通过 / 0 失败** |
+| **M9 商家端 Web（前端）** | `frontend/src/pages/seller/` 4 页（Dashboard / Orders / OrderDetail / Settlements）+ `shared.tsx`；`sellerApi` 端点层；`RequireSeller` 路由守卫（只校验登录，真正的权限边界仍在后端 403）；Layout 与「我的」页按角色显示入口；`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；**真实浏览器 UI 自测 29 项全绿**（截图见 `frontend/docs/screenshots/sel_*.png`） |
 
 ### 进行中
 
@@ -202,12 +202,31 @@
 | `frontend/src/api/endpoints.ts`、`types.ts` | 新增 `sellerApi` 与 3 个类型；`userApi.applyMerchant` |
 | `frontend/src/pages/seller/`（**新增**） | `shared.tsx` / `Dashboard.tsx` / `Orders.tsx` / `OrderDetail.tsx` / `Settlements.tsx` |
 | `frontend/src/App.tsx`、`components/Layout.tsx`、`pages/Me.tsx` | 新增 `RequireSeller` 与 4 条 `/seller/**` 路由；导航与「我的」按角色显示商家端入口 |
-| `scripts/seller-smoke.ps1`（**新增**） | 12 段场景 / **82 项断言**，含越权、归属隔离、重复发货、已完成订单退款边界、平台自营可见性、夹具自动复原 |
+| `scripts/seller-smoke.ps1`（**新增**） | 12 段场景 / **84 项断言**，含越权、归属隔离、重复发货、已完成订单退款边界、平台自营可见性、物流落库回显、夹具自动复原 |
+| `scripts/e2e/seller-ui-check.mjs`（**新增**） | 真实 Chromium UI 自测：**29 项断言**。自动备夹具（卖家账号 + 两笔归属订单），逐页走概览 / 订单 / 过滤 / 一键发货 / 详情 / 对账 / 非卖家视角，每页截图，并收集全部 HTTP 4xx/5xx 与 console 错误 |
+| `duoduo-trade/.../entity/OrderEntity.java`、`dto/OrderDtos.java`、`service/OrderService.java`、`SellerService.java`；`db/schema.sql`、`docs/sql/03-duoduo-trade.sql` | 物流信息落库：`t_order` 增加 `logistics_company` / `logistics_no`，`OrderView` 回显，`shipInternal` 写入（内部接口不传则为空） |
+| `frontend/src/api/types.ts`、`pages/OrderDetail.tsx`、`pages/seller/OrderDetail.tsx` | 买家与卖家详情页都显示物流公司与单号（同一份事实的两个视角） |
+| `frontend/public/favicon.svg`、`index.html` | 补 favicon，消除 `/favicon.ico` 404 |
 
-**自测结论**：后端 6 模块 `BUILD SUCCESS`；重建 4 个业务镜像并重启（7 容器 healthy）；`scripts/seller-smoke.ps1` **82 通过 / 0 失败**；前端 `tsc --noEmit` 零错误、`vite build` 通过（60 模块）。
+**自测结论**：后端 6 模块 `BUILD SUCCESS`；重建 4 个业务镜像并重启（7 容器 healthy）；
+`scripts/seller-smoke.ps1` **84 通过 / 0 失败**；真实浏览器 UI 自测 `scripts/e2e/seller-ui-check.mjs` **29 通过 / 0 失败**；
+前端 `tsc --noEmit` 零错误、`vite build` 通过（60 模块）。
 
-**自测暴露并修复的缺陷**：① 错误 Content-Type 导致 **500**（应为 415）→ 新增错误码与 handler，客户端错误不再污染 5xx 告警；
-② 首轮脚本场景设计错误（订单 B 未发货直接确认收货 → 422），连带把「已完成订单退款被拒」误判为 200 且钱真的退了 → 修正为先发货再确认，两项随即转绿。
+**自测暴露并修复的缺陷**：
+
+1. **错误 Content-Type 导致 500**（应为 415）→ 新增 `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 handler，客户端错误不再污染 5xx 告警。
+2. **首轮脚本场景设计错误**：订单 B 未发货就直接确认收货（状态机只允许 SHIPPED→COMPLETED，故 422），
+   连带把「已完成订单退款被拒」误判成 200 且钱真的退了 → 修正为先发货再确认，两项随即转绿。
+3. **物流信息只写进状态日志，没落在订单上**（UI 自测发现：卖家发货后详情页看不到自己填的单号）→
+   `t_order` 增加 `logistics_company` / `logistics_no`，`OrderView` 回显，卖家与买家详情页都显示；
+   冒烟补两条断言（视图回显 + 落库），杜绝「只写流水不写事实」。
+4. **页面缺 favicon**，浏览器每次请求 `/favicon.ico` 拿 404 → 补 `public/favicon.svg` 并在 `index.html` 声明。
+
+**踩到的环境坑（已写进脚本注释）**：① 前端**必须用 `http://localhost:5173` 访问**，
+用 `127.0.0.1` 时 Origin 不在网关 CORS 白名单里，Spring 直接 403，前端只显示「没有权限执行该操作」，
+而 curl 不带 Origin 头复现不出来；② **雪花 ID 有 18 位，超过 `Number.MAX_SAFE_INTEGER`**，
+JavaScript 里 `JSON.parse` 会把它改成另一个数，拿去写 `seller_id` 会得到「夹具改成功了、卖家却一笔都看不到」的假象，
+必须按原始文本用正则提取。
 
 ### 2026-09-18（沙箱支付渠道 M8-1）
 
@@ -269,8 +288,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 # 沙箱支付渠道 / 预下单 / 回调验签 端到端自测
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1
 
-# 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（82 项，会临时改夹具并自动复原）
+# 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（84 项，会临时改夹具并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
+
+# 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server，必须走 localhost:5173）
+cd D:\智能体项目\duoduo-pet-mall-java\frontend
+node node_modules/vite/bin/vite.js --port 5173            # 另开一个终端
+cd .. && node scripts/e2e/seller-ui-check.mjs
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

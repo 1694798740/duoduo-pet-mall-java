@@ -277,6 +277,9 @@ export interface OrderView {
   closedAt: string | null;
   refundedAt: string | null;
   closeReason: string | null;
+  /** 物流公司与单号；发货后才有值。买家与卖家看的是同一份事实 */
+  logisticsCompany: string | null;
+  logisticsNo: string | null;
 }
 
 export interface PlaceOrderRequest {

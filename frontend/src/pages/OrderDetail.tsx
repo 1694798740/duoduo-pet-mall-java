@@ -315,6 +315,15 @@ export const OrderDetailPage: React.FC = () => {
               <dd>{order.receiverAddress}</dd>
               <dt>备注</dt>
               <dd>{order.remark ?? '—'}</dd>
+              {/* 已发货后才有值：买家问「我的货到哪了」时，这里就是答案 */}
+              {order.logisticsNo ? (
+                <>
+                  <dt>物流公司</dt>
+                  <dd>{order.logisticsCompany ?? '—'}</dd>
+                  <dt>物流单号</dt>
+                  <dd>{order.logisticsNo}</dd>
+                </>
+              ) : null}
             </dl>
           </div>
 

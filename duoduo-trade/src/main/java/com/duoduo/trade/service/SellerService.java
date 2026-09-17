@@ -143,7 +143,11 @@ public class SellerService {
         OrderEntity order = requireOwnOrder(scope, orderNo);
         String reason = request == null ? "卖家发货" : request.describe();
         log.info("卖家 {} 对订单 {} 执行发货", scope.sellerId(), orderNo);
-        return orderService.shipInternal(order, reason);
+        // 物流信息同时落两处：订单字段（给买卖双方看）+ 状态日志 reason（给排查看）。
+        // 只写日志的话，卖家事后在详情页看不到自己填的单号。
+        String company = request == null ? null : request.logisticsCompany();
+        String no = request == null ? null : request.logisticsNo();
+        return orderService.shipInternal(order, reason, company, no);
     }
 
     /**

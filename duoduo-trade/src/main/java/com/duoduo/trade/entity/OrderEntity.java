@@ -42,6 +42,16 @@ public class OrderEntity {
     private LocalDateTime finishedAt;
     private LocalDateTime closedAt;
     /**
+     * 物流公司与单号（发货时由卖家填写）。
+     *
+     * <p>为什么必须落在订单上，而不是只写进状态日志的 reason 文本：
+     * 日志是「给排查问题看的流水」，订单是「给买卖双方看的事实」。
+     * 只写日志的话，卖家事后在订单详情里看不到自己填的物流单号，
+     * 买家来问「我的货到哪了」时系统给不出答案 —— 真实电商里这是不可接受的。
+     */
+    private String logisticsCompany;
+    private String logisticsNo;
+    /**
      * 退款时间（钱退回买家的时刻）。与 closedAt 刻意分开：
      * 退款不代表「订单被关闭」，资金动作必须有独立时间戳，
      * 否则对账时无法区分「没付过款」和「付了又退了」。
@@ -95,6 +105,10 @@ public class OrderEntity {
     public void setRefundedAt(LocalDateTime refundedAt) { this.refundedAt = refundedAt; }
     public String getCloseReason() { return closeReason; }
     public void setCloseReason(String closeReason) { this.closeReason = closeReason; }
+    public String getLogisticsCompany() { return logisticsCompany; }
+    public void setLogisticsCompany(String logisticsCompany) { this.logisticsCompany = logisticsCompany; }
+    public String getLogisticsNo() { return logisticsNo; }
+    public void setLogisticsNo(String logisticsNo) { this.logisticsNo = logisticsNo; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

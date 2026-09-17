@@ -50,7 +50,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（七套，共 557 项断言）
+### 端到端冒烟（七套 557 项接口断言 + 一套 29 项真实浏览器 UI 断言）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -59,7 +59,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1     
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 82 项：卖家中心（准入/归属隔离/发货/售后/结算）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 84 项：卖家中心（准入/归属隔离/发货/售后/结算）
+
+# 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
+cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
+cd .. && node scripts/e2e/seller-ui-check.mjs
 ```
 
 七套脚本的共同约定（踩过坑才有的）：
@@ -189,7 +193,7 @@ duoduo-pet-mall-java/
 | GET | `/api/seller/summary` | 经营概览：各状态订单数 + 托管/已放款/已退回金额（**过滤后汇总仍是全量**） | 卖家或运营 |
 | GET | `/api/seller/orders` | 我的订单列表（按 `status` 过滤；**只返回归属自己的单**） | 卖家或运营 |
 | GET | `/api/seller/orders/{orderNo}` | 订单详情（含买家收货信息与资金区） | 归属校验 |
-| POST | `/api/seller/orders/{orderNo}/ship` | **发货**（填物流公司/单号）；资金**仍托管**，不触发放款 | 归属校验 |
+| POST | `/api/seller/orders/{orderNo}/ship` | **发货**（填物流公司/单号，落 `t_order` 并回显）；资金**仍托管**，不触发放款 | 归属校验 |
 | POST | `/api/seller/orders/{orderNo}/refund` | **售后退款**（已付款/已发货；已完成需追偿或平台垫付，返回 422） | 归属校验 |
 | GET | `/api/seller/settlements` | 结算对账（分页 + 全量汇总金额） | 卖家或运营 |
 
@@ -392,8 +396,15 @@ npm run build      # tsc --noEmit && vite build
 - **概览与对账的汇总取全量、列表取过滤后**——分页只影响列表，不影响「我一共托管了多少钱」。
 - **「已完成」的订单不显示退款按钮**（后端同样 422），钱已放款给卖家，需走追偿或平台垫付。
 
-自测记录：`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；后端 `scripts/seller-smoke.ps1` **82 项断言全绿**
-（准入 401/403、实名前置 422、归属隔离、越权 403、重复发货 422、已完成退款 422、平台自营可见性、夹具自动复原）。
+自测记录：`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；后端 `scripts/seller-smoke.ps1` **84 项断言全绿**
+（准入 401/403、实名前置 422、归属隔离、越权 403、重复发货 422、已完成退款 422、物流落库与回显、平台自营可见性、夹具自动复原）；
+真实浏览器 `scripts/e2e/seller-ui-check.mjs` **29 项断言全绿**（逐页走概览 / 订单 / 状态过滤 / 一键发货 / 详情 / 对账 / 非卖家视角，
+每页截图，并收集全部 HTTP 4xx/5xx 与 console 错误），截图见 `frontend/docs/screenshots/sel_*.png`。
+
+两个只在浏览器里现形的坑（已写进脚本注释，别再踩第二次）：
+- **前端必须用 `http://localhost:5173`**，不能用 `127.0.0.1` —— 网关 CORS 白名单只认 `localhost`，
+  带 `127.0.0.1` 的 Origin 会被按非法跨域直接 403，页面只显示「没有权限执行该操作」，curl 复现不出来；
+- **雪花 ID 有 18 位，超过 JS 安全整数范围**，`JSON.parse` 会悄悄把它变成另一个数。
 
 ---
 
@@ -445,11 +456,15 @@ npm run build      # tsc --noEmit && vite build
   `InternalTokenFilter` 排除 `/api/seller/**`。
 - **修复真实缺陷**：客户端发错 `Content-Type` 原本落到兜底返回 **500** → 新增
   `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 handler，返回 **415**。
+- **物流信息落库**：`t_order` 增加 `logistics_company` / `logistics_no`，`OrderView` 回显，
+  买家与卖家详情页都显示 —— 此前只写进状态日志，卖家发货后在详情页看不到自己填的单号。
 - **商家端 Web 4 页**（`/seller` · `/seller/orders` · `/seller/orders/:orderNo` · `/seller/settlements`），
-  Layout 与「我的」页按角色显示入口。
+  Layout 与「我的」页按角色显示入口；补 favicon，消除 `/favicon.ico` 404。
 - **自测**：后端 6 模块 `BUILD SUCCESS`，4 个业务镜像重建、7 容器 healthy；
-  新增 `scripts/seller-smoke.ps1` **82 项断言全绿**；前端 `tsc --noEmit` 零错误、`vite build` 通过。
-  七套冒烟合计 **557 项**。
+  新增 `scripts/seller-smoke.ps1` **84 项断言全绿**；真实浏览器
+  `scripts/e2e/seller-ui-check.mjs` **29 项断言全绿**（含截图）；
+  前端 `tsc --noEmit` 零错误、`vite build` 通过。七套接口冒烟合计 **557 项**。
+- **UI 自测暴露并修复**：物流信息没落订单表（只写进状态日志）；页面缺 favicon 导致 404。
 
 ### 2026-09-17（第三轮 · 买家端 Web 商城 M6 / P1-c）
 - **新建 `frontend/`**（React 18 + TS strict + Vite 5）：12 路由覆盖主交易闭环 10 页；

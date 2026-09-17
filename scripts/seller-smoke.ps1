@@ -278,10 +278,16 @@ $r = Call 'Post' "$Gateway/api/seller/orders/$onA/ship" $sessSeller @{ logistics
 Check "★ 卖家发货成功（200，无需内部凭据）" ($r.status -eq 200) $r.status
 Check "发货后订单状态为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
 Check "★ 发货不等于放款：托管仍为 CUSTODY" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
+# 物流必须落库并回显：只写进状态日志的话，卖家事后在详情页看不到自己填的单号，
+# 买家来问「我的货到哪了」时系统给不出答案。
+Check "★ 订单视图回显物流公司与单号" (($r.body.data.logisticsCompany -eq '顺丰速运') -and ($r.body.data.logisticsNo -eq 'SF1234567890')) "$($r.body.data.logisticsCompany)/$($r.body.data.logisticsNo)"
 
 if (-not $SkipDbCheck) {
     Check "物流信息随状态日志留痕（含顺丰速运）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$onA') AND to_status='SHIPPED' AND reason LIKE '%顺丰速运%';") -eq '1')
     Check "发货日志操作者类型为 SELLER" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$onA') AND to_status='SHIPPED' AND operator_type='SELLER';") -eq '1')
+    # 只比 ASCII 的单号：docker exec 的中文输出在 PowerShell 里按 ANSI 解析会乱码，
+    # 断言中文必然假失败（视图里那条 200 回显已经证明了中文没问题）
+    Check "★ 物流单号已落库 t_order（不是只写进日志）" ((Sql 'duoduo_trade' "SELECT IFNULL(logistics_no,'') FROM t_order WHERE order_no='$onA';") -eq 'SF1234567890')
 }
 
 $r = Call 'Post' "$Gateway/api/seller/orders/$onA/ship" $sessSeller @{}

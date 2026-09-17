@@ -697,7 +697,7 @@ public class OrderService {
         if (order == null) {
             throw BizException.notFound("订单");
         }
-        return shipInternal(order, "卖家发货");
+        return shipInternal(order, "卖家发货", null, null);
     }
 
     /**
@@ -706,15 +706,23 @@ public class OrderService {
      * <p>拆出来是为了让「内部凭据调用」与「卖家中心调用」（M5-9）共用同一段状态机 ——
      * 两条入口只差在准入方式，状态流转、资金不动、日志留痕必须完全一致，
      * 否则会出现「从商家端发货不写日志」「内部接口发货跳过状态校验」这类分叉。
+     *
+     * @param logisticsCompany 物流公司（可空；内部接口不传）
+     * @param logisticsNo      物流单号（可空）
      */
     @Transactional
-    public OrderView shipInternal(OrderEntity order, String reason) {
+    public OrderView shipInternal(OrderEntity order, String reason,
+                                  String logisticsCompany, String logisticsNo) {
         OrderStatus current = OrderStatus.of(order.getStatus());
         if (current == null || !current.canTransitionTo(OrderStatus.SHIPPED)) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
                     "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许发货");
         }
         LocalDateTime now = nowUtc();
+        String company = trimToNull(logisticsCompany);
+        String no = trimToNull(logisticsNo);
+        order.setLogisticsCompany(company);
+        order.setLogisticsNo(no);
         order.setStatus(OrderStatus.SHIPPED.name());
         order.setShippedAt(now);
         order.setUpdatedAt(now);
@@ -1392,7 +1400,9 @@ public class OrderService {
                     isoTs(order.getFinishedAt()),
                     isoTs(order.getClosedAt()),
                     isoTs(order.getRefundedAt()),
-                    order.getCloseReason()));
+                    order.getCloseReason(),
+                    order.getLogisticsCompany(),
+                    order.getLogisticsNo()));
         }
         return views;
     }
@@ -1465,6 +1475,15 @@ public class OrderService {
 
     private static long nz(Long value) {
         return value == null ? 0L : value;
+    }
+
+    /** 空串一律按「没填」处理，避免库里出现只有空格的物流公司名 */
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private static LocalDateTime nowUtc() {
