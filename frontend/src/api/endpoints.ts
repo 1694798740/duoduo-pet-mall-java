@@ -4,23 +4,33 @@
  * 网关路由（duoduo-gateway/application.yml）：
  *   /api/auth/**, /api/users/**, /api/pets/**      → duoduo-user   :8081
  *   /api/categories/**, /api/products/**, /api/listings/**,
- *   /api/home/**, /api/meta/**                     → duoduo-product:8082
+ *   /api/home/**, /api/meta/**,
+ *   /api/seller/products/**                        → duoduo-product:8082
  *   /api/cart/**, /api/orders/**, /api/payments/**,
  *   /api/seller/**, /sandbox/pay/**                → duoduo-trade  :8083
  *
  * 注意：duoduo-fulfilment / marketing / ai / admin 尚未部署，
  * 因此评价、优惠券、运营后台的接口在本期不存在，前端不实现对应页面。
- * 卖家中心（/api/seller/**）落在 trade 服务，不依赖 fulfilment。
+ * 卖家中心（/api/seller/orders|summary|settlements）落在 trade 服务；
+ * 商品管理（/api/seller/products/**）落在 product 服务 —— 两者共用 /api/seller 前缀与准入模型，
+ * 网关按「products 先于 trade 兜底」的顺序路由，不依赖 fulfilment。
  */
 
 import { api } from './client';
 import type {
+  AbnormalSettlement,
+  AdminReport,
+  AdminSettlementSummary,
+  BrandSaveRequest,
   BrandView,
   CartItemView,
   CartView,
   CategoryNode,
+  CategorySaveRequest,
   DictItem,
   HomeView,
+  ListingAuditRequest,
+  ListingAuditView,
   ListingCard,
   ListingDetail,
   OrderView,
@@ -33,6 +43,7 @@ import type {
   ProductCard,
   ProductDetail,
   RefundResult,
+  SellerProductView,
   SellerSummary,
   SettlementPage,
   SettlementView,
@@ -232,6 +243,61 @@ export const sellerApi = {
   /** 我的资金托管单；status 可选 CUSTODY / RELEASED / REFUNDED，汇总不受过滤影响 */
   settlements: (query?: { status?: string; page?: number; pageSize?: number }) =>
     api.get<SettlementPage>('/api/seller/settlements', { query }),
+
+  // ---- 商品管理（/api/seller/products/**，落在 duoduo-product 服务） ----
+
+  /** 我的商品列表；运营 / 管理员可显式按 sellerId 筛选（普通卖家传了也会被服务端忽略） */
+  products: (query?: { keyword?: string; sellerId?: number; page?: number; pageSize?: number }) =>
+    api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
+
+  /** 上下架（幂等开关）：action = ON_SALE | OFF_SHELF；越权操作别人的商品返回 403 */
+  changeProductStatus: (spuId: number, action: 'ON_SALE' | 'OFF_SHELF') =>
+    api.post<SellerProductView>(`/api/seller/products/${spuId}/status`, { action }),
+};
+
+// ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------
+
+/**
+ * 平台管理后台接口。
+ *
+ * 与卖家中心的关键差别：卖家中心的可见范围是「我的单」，这里是「全平台」。
+ * 全部接口由服务端 OperatorGuard.requireOperator() 把关，非运营返回 403；
+ * 前端据此把入口藏给运营 / 管理员，但那只是体验优化，不是安全边界。
+ */
+export const adminApi = {
+  // ---- 运营报表与资金对账（落在 duoduo-trade） ----
+  reportOverview: () => api.get<AdminReport>('/api/admin/reports/overview'),
+  settlementSummary: () => api.get<AdminSettlementSummary>('/api/admin/settlements/summary'),
+  settlementAbnormal: () => api.get<AbnormalSettlement[]>('/api/admin/settlements/abnormal'),
+
+  // ---- 订单干预（落在 duoduo-trade；仅待付款订单可强关） ----
+  orders: (query?: { status?: string; orderNo?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<OrderView>>('/api/admin/orders', { query }),
+  orderDetail: (orderNo: string) => api.get<OrderView>(`/api/admin/orders/${orderNo}`),
+  forceCloseOrder: (orderNo: string, reason?: string) =>
+    api.post<OrderView>(`/api/admin/orders/${orderNo}/force-close`, reason ? { reason } : undefined),
+
+  // ---- 基础数据：类目 / 品牌（落在 duoduo-product） ----
+  categories: () => api.get<CategoryNode[]>('/api/admin/categories'),
+  createCategory: (body: CategorySaveRequest) => api.post<CategoryNode>('/api/admin/categories', body),
+  updateCategory: (id: number, body: CategorySaveRequest) =>
+    api.put<CategoryNode>(`/api/admin/categories/${id}`, body),
+  setCategoryStatus: (id: number, active: boolean) =>
+    api.put<void>(`/api/admin/categories/${id}/status?active=${active}`),
+  deleteCategory: (id: number) => api.del<void>(`/api/admin/categories/${id}`),
+
+  brands: () => api.get<BrandView[]>('/api/admin/brands'),
+  createBrand: (body: BrandSaveRequest) => api.post<BrandView>('/api/admin/brands', body),
+  updateBrand: (id: number, body: BrandSaveRequest) => api.put<BrandView>(`/api/admin/brands/${id}`, body),
+  setBrandStatus: (id: number, active: boolean) =>
+    api.put<void>(`/api/admin/brands/${id}/status?active=${active}`),
+  deleteBrand: (id: number) => api.del<void>(`/api/admin/brands/${id}`),
+
+  // ---- 内容审核（落在 duoduo-product；含未审核通过的内容） ----
+  listingsForAudit: (query?: { auditStatus?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
+  auditListing: (id: number, body: ListingAuditRequest) =>
+    api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
 };
 
 // ---------- 支付（/api/payments） ----------

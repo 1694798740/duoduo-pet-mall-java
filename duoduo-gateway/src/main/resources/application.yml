@@ -42,13 +42,20 @@ spring:
         - id: duoduo-product
           uri: lb://duoduo-product
           predicates:
-            - Path=/api/categories/**,/api/products/**,/api/listings/**,/api/home/**,/api/meta/**
+            # /api/seller/products/** = 商家端商品管理（M9 商品侧）。
+            # 必须排在 trade 路由之前：/api/seller/** 会被 trade 兜底捕获，
+            # 商品管理要落到 product 服务（归属判断靠 X-User-*，也是服务端责任）
+            # /api/admin/{categories,brands,listings} = 平台管理后台（M10）的类目/品牌/审核，
+            # 数据在商品库，运营接口本质是商品域数据的「管理视图」，落回 product 服务最自然
+            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:
             # /api/seller/** = 卖家中心（M5-9），由网关鉴权 + 服务端归属校验保护，
             # 不进白名单 —— 不登录就拿不到 X-User-*，服务端无从判断归属
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**
+            # /api/admin/{orders,settlements,reports} = 平台管理后台（M10）的订单干预/对账/报表，
+            # 数据在交易库，落回 trade 服务；同样不进白名单（operator 角色由服务端校验）
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:
@@ -57,14 +64,14 @@ spring:
           uri: lb://duoduo-marketing
           predicates:
             - Path=/api/promotions/**,/api/coupons/**
+        # /api/admin/** 已拆段并入 product 与 trade 两服务（M10）：
+        # 运营管理接口本质是商品域 / 交易域数据的「管理视图」，数据在哪就落哪个服务，
+        # 避免新建独立 admin 微服务时的跨库查询与额外 Feign 链路。
+        # 若将来运营管理面需要独立扩展（如接入风控、审批流），再单独建 duoduo-admin 并回收这些路由。
         - id: duoduo-ai
           uri: lb://duoduo-ai
           predicates:
             - Path=/api/duoduo/**
-        - id: duoduo-admin
-          uri: lb://duoduo-admin
-          predicates:
-            - Path=/api/admin/**
 
 duoduo:
   security:

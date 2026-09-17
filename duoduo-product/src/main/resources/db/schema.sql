@@ -62,12 +62,15 @@ CREATE TABLE t_spu (
     max_price    BIGINT       NOT NULL DEFAULT 0,
     created_at   TIMESTAMP    NOT NULL,
     updated_at   TIMESTAMP    NOT NULL,
+    -- 卖家归属（t_user.id；0 = 平台自营）。第三方商家接入后由入驻流程写入
+    seller_id    BIGINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_spu_category ON t_spu (category_id, status);
 CREATE INDEX idx_spu_brand ON t_spu (brand_id);
 CREATE INDEX idx_spu_sales ON t_spu (sales_count);
 CREATE INDEX idx_spu_price ON t_spu (min_price);
+CREATE INDEX idx_spu_seller ON t_spu (seller_id, status);
 
 -- ---------- SKU：可售最小单元（库存与价格落在这一层） ----------
 CREATE TABLE t_sku (
@@ -111,6 +114,9 @@ CREATE TABLE t_listing (
     status           VARCHAR(20)  NOT NULL DEFAULT 'ON_SALE',
     -- PENDING / APPROVED / REJECTED —— 发布需人工审核，审核通过前不对外展示
     audit_status     VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+    -- 审核结论要可追溯：驳回原因 + 审核时间，不能只留一个状态码
+    audit_reason     VARCHAR(200),
+    audit_at         TIMESTAMP,
     view_count       INT          NOT NULL DEFAULT 0,
     created_at       TIMESTAMP    NOT NULL,
     updated_at       TIMESTAMP    NOT NULL,

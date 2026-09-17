@@ -30,4 +30,25 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
             + "GROUP BY status"
             + "</script>")
     List<Map<String, Object>> countBySellerAndStatus(@Param("sellerIds") Collection<Long> sellerIds);
+
+    /** 全平台订单按状态统计（运营报表），返回形如 {@code [{status:"PAID", cnt:9}, ...]} */
+    @Select("SELECT status, COUNT(*) AS cnt FROM t_order GROUP BY status")
+    List<Map<String, Object>> countAllByStatus();
+
+    /** 已付款订单的实付总额（GMV）：PAID / SHIPPED / COMPLETED 都算「钱已进平台托管」 */
+    @Select("SELECT COALESCE(SUM(pay_amount), 0) FROM t_order "
+            + "WHERE status IN ('PAID','SHIPPED','COMPLETED')")
+    long sumPaidAmount();
+
+    /**
+     * 异常挂账：已付款却缺托管单的订单。
+     *
+     * <p>资金进入平台托管会同步写 t_settlement；这里用 LEFT JOIN 找出「有订单、没账本」的
+     * 漏网之鱼。这种订单在确认收货放款时会因为找不到托管单而失败，必须在后台暴露出来。
+     */
+    @Select("SELECT o.order_no AS orderNo, o.status AS orderStatus, o.pay_amount AS payAmount "
+            + "FROM t_order o LEFT JOIN t_settlement s ON s.order_id = o.id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED') AND s.id IS NULL "
+            + "ORDER BY o.id DESC LIMIT 100")
+    List<Map<String, Object>> findOrdersWithoutSettlement();
 }

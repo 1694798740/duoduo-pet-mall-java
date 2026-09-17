@@ -72,6 +72,8 @@ export interface CategoryNode {
   parentId: number | null;
   depth: number;
   icon: string | null;
+  /** 后台列表会返回停用项；公开接口只暴露 ACTIVE */
+  status?: 'ACTIVE' | 'INACTIVE' | string;
   children: CategoryNode[];
 }
 
@@ -81,6 +83,8 @@ export interface BrandView {
   logo: string | null;
   country: string | null;
   story: string | null;
+  /** 后台列表会返回停用项；公开接口只暴露 ACTIVE */
+  status?: 'ACTIVE' | 'INACTIVE' | string;
 }
 
 export interface DictItem {
@@ -389,6 +393,90 @@ export interface SettlementPage {
 export interface ShipRequest {
   logisticsCompany?: string;
   logisticsNo?: string;
+}
+
+/** 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存） */
+export interface SellerProductView {
+  id: number;
+  title: string;
+  mainImage: string | null;
+  status: 'ON_SALE' | 'OFF_SHELF' | string;
+  /** 状态中文文案由服务端给出，前端不维护映射表 */
+  statusLabel: string;
+  sellerId: number;
+  minPrice: number;
+  maxPrice: number;
+  salesCount: number;
+  skuCount: number;
+  totalStock: number;
+}
+
+// ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------
+
+export interface CategorySaveRequest {
+  name: string;
+  parentId?: number;
+  sortNo?: number;
+  icon?: string;
+}
+
+export interface BrandSaveRequest {
+  name: string;
+  logo?: string;
+  country?: string;
+  story?: string;
+}
+
+/** 闲置审核列表条目（运营视角，含未审核通过的内容） */
+export interface ListingAuditView {
+  id: number;
+  sellerId: number;
+  title: string;
+  price: number;
+  conditionLevel: string;
+  city: string | null;
+  species: string | null;
+  auditStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | string;
+  auditReason: string | null;
+  createdAt: string | null;
+}
+
+export interface ListingAuditRequest {
+  action: 'APPROVE' | 'REJECT';
+  reason?: string;
+}
+
+/** 全平台托管资金汇总（与商家端按卖家过滤的口径分开） */
+export interface AdminSettlementSummary {
+  custodyAmount: number;
+  custodyFee: number;
+  custodyCount: number;
+  releasedAmount: number;
+  releasedFee: number;
+  releasedCount: number;
+  refundedAmount: number;
+  refundedCount: number;
+}
+
+/** 异常挂账：已付款却缺托管单的订单 */
+export interface AbnormalSettlement {
+  orderNo: string;
+  orderStatus: string;
+  payAmount: number;
+}
+
+/** 运营概览报表 */
+export interface AdminReport {
+  totalOrders: number;
+  paidOrders: number;
+  gmv: number;
+  refundedOrders: number;
+  refundRate: string;
+  conversionRate: string;
+}
+
+export interface ForceCloseRequest {
+  reason?: string;
 }
 
 // ---------- 通用 ----------

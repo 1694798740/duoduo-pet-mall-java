@@ -139,7 +139,7 @@ Check "经网关未登录触发补偿调度返回 401（网关先拦一层）" (
 # ---------- 2. 夹具 ----------
 Write-Host ""
 Write-Host "> 夹具"
-$batch = Call 'Get' "$Gateway/api/products/skus/batch?ids=$SKU_A,$SKU_B" $null $null
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
 $skus = @{}
 foreach ($x in @($batch.body.data)) { $skus["$($x.skuId)"] = $x }
 $P1 = [long]$skus["$SKU_A"].price

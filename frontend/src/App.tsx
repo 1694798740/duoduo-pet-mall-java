@@ -5,6 +5,7 @@
  *   主交易闭环 10 页 —— 首页 / 搜索 / 商品详情 / 闲置列表 / 闲置详情 / 登录
  *     / 购物车 / 结算 / 订单列表 / 订单详情（含资金托管）/ 宠物档案 / 我的
  *   商家端 4 页（M5-9 / M9）—— 概览 / 卖出订单 / 订单详情（履约）/ 资金对账
+ *   平台管理后台 5 页（M10）—— 运营概览（含资金对账）/ 内容审核 / 类目 / 品牌 / 订单干预
  *
  * 需登录的页面统一由 RequireAuth 包裹：
  *  · 会话校验期间渲染加载态，避免「先闪一下登录页再跳回来」
@@ -36,7 +37,13 @@ import { SearchPage } from './pages/Search';
 import { SellerDashboardPage } from './pages/seller/Dashboard';
 import { SellerOrderDetailPage } from './pages/seller/OrderDetail';
 import { SellerOrdersPage } from './pages/seller/Orders';
+import { SellerProductsPage } from './pages/seller/Products';
 import { SellerSettlementsPage } from './pages/seller/Settlements';
+import { AdminDashboardPage } from './pages/admin/Dashboard';
+import { AdminAuditsPage } from './pages/admin/Audits';
+import { AdminCategoriesPage } from './pages/admin/Categories';
+import { AdminBrandsPage } from './pages/admin/Brands';
+import { AdminOrdersPage } from './pages/admin/Orders';
 
 export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -59,6 +66,27 @@ export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children 
  * 角色不对时由页面渲染入驻引导 —— 见文件头注释。
  */
 export const RequireSeller: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <LoadingBlock text="正在校验登录状态…" />;
+  if (!user) {
+    return (
+      <Navigate
+        to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
+        replace
+      />
+    );
+  }
+  return <>{children}</>;
+};
+
+/**
+ * 平台管理后台守卫（M10）：与商家端同一哲学 —— 这里只保证「已登录」，
+ * 非运营 / 管理员进入时由各页面统一渲染 AdminDenied 拦截页；
+ * 真正的权限边界在后端 OperatorGuard（403）。
+ */
+export const RequireOperator: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -164,6 +192,57 @@ export const App: React.FC = () => (
           <RequireSeller>
             <SellerSettlementsPage />
           </RequireSeller>
+        }
+      />
+      {/* 商品管理落在 product 服务（/api/seller/products/**），与订单侧同一套准入 */}
+      <Route
+        path="/seller/products"
+        element={
+          <RequireSeller>
+            <SellerProductsPage />
+          </RequireSeller>
+        }
+      />
+
+      {/* ---------- 平台管理后台（M10，需登录；非运营由页面渲染 AdminDenied） ---------- */}
+      <Route
+        path="/admin"
+        element={
+          <RequireOperator>
+            <AdminDashboardPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/audits"
+        element={
+          <RequireOperator>
+            <AdminAuditsPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/categories"
+        element={
+          <RequireOperator>
+            <AdminCategoriesPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/brands"
+        element={
+          <RequireOperator>
+            <AdminBrandsPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/orders"
+        element={
+          <RequireOperator>
+            <AdminOrdersPage />
+          </RequireOperator>
         }
       />
 

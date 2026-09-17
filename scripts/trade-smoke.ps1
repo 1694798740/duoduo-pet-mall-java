@@ -119,7 +119,7 @@ if (-not $ready) { Write-Host "网关未就绪，终止"; exit 1 }
 # ---------- 0b. 批量 SKU 接口（交易服务加购校验所依赖的内部接口） ----------
 Write-Host ""
 Write-Host "> 批量 SKU 接口（夹具来源）"
-$batch = Call 'Get' "$Gateway/api/products/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT,$SKU_SOLD_OUT,$SKU_OFF_SHELF" $null $null
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT,$SKU_SOLD_OUT,$SKU_OFF_SHELF" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
 Check "批量 SKU 接口返回 200" ($batch.status -eq 200) $batch.status
 # 注意：PowerShell 哈希表按键的**类型相等**匹配，[long]2001 与 [int]2001 不相等，
 # 用数值键会静默查不到（返回 $null，进而把价格库存都当 0）—— 所以统一用字符串键。

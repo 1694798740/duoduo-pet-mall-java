@@ -36,6 +36,10 @@ public class ListingEntity {
     private String status;
     /** PENDING / APPROVED / REJECTED */
     private String auditStatus;
+    /** 驳回原因（REJECTED 时必填）；审核结论要可追溯，不能只留一个状态码 */
+    private String auditReason;
+    /** 审核时间 */
+    private LocalDateTime auditAt;
     private Integer viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -150,6 +154,22 @@ public class ListingEntity {
 
     public void setAuditStatus(String auditStatus) {
         this.auditStatus = auditStatus;
+    }
+
+    public String getAuditReason() {
+        return auditReason;
+    }
+
+    public void setAuditReason(String auditReason) {
+        this.auditReason = auditReason;
+    }
+
+    public LocalDateTime getAuditAt() {
+        return auditAt;
+    }
+
+    public void setAuditAt(LocalDateTime auditAt) {
+        this.auditAt = auditAt;
     }
 
     public Integer getViewCount() {

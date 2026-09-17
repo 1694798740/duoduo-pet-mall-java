@@ -27,6 +27,7 @@ public final class ProductDtos {
             Long parentId,
             int depth,
             String icon,
+            String status,
             List<CategoryNode> children
     ) {
     }
@@ -36,12 +37,55 @@ public final class ProductDtos {
             String name,
             String logo,
             String country,
-            String story
+            String story,
+            String status
     ) {
     }
 
     /** 字典项（物种 / 生命阶段 / 成色），前端筛选器直接消费 */
     public record DictItem(String code, String label) {
+    }
+
+    // ---------------- 运营管理（M10 平台管理后台） ----------------
+
+    /** 类目保存请求（创建 / 更新共用；id 为空表示新建） */
+    public record CategorySaveRequest(
+            String name,
+            Long parentId,
+            Integer sortNo,
+            String icon
+    ) {
+    }
+
+    /** 品牌保存请求（创建 / 更新共用） */
+    public record BrandSaveRequest(
+            String name,
+            String logo,
+            String country,
+            String story
+    ) {
+    }
+
+    /** 闲置审核请求；action = APPROVE / REJECT，驳回时 reason 必填 */
+    public record ListingAuditRequest(
+            String action,
+            String reason
+    ) {
+    }
+
+    /** 闲置审核列表条目（运营视角，含未审核通过的内容） */
+    public record ListingAuditView(
+            Long id,
+            Long sellerId,
+            String title,
+            Long price,
+            String conditionLevel,
+            String city,
+            String species,
+            String auditStatus,
+            String auditReason,
+            String createdAt
+    ) {
     }
 
     // ---------------- 商品 ----------------
@@ -91,7 +135,29 @@ public final class ProductDtos {
             int availableStock,
             boolean sellable,
             String spuStatus,
-            String skuStatus
+            String skuStatus,
+            /**
+             * 卖家归属（t_user.id；0 = 平台自营）。
+             * 交易服务下单时用它做「按卖家拆单」——之前全部写 0（自营），
+             * 是因为商品域还没有归属字段；现在补上，第三方商家的订单才能正确落到商家端。
+             */
+            Long sellerId
+    ) {
+    }
+
+    /** 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存），管理列表够用 */
+    public record SellerProductView(
+            Long id,
+            String title,
+            String mainImage,
+            String status,
+            String statusLabel,
+            Long sellerId,
+            long minPrice,
+            long maxPrice,
+            int salesCount,
+            int skuCount,
+            int totalStock
     ) {
     }
 

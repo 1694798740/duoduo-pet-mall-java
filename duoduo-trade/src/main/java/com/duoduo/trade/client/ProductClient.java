@@ -28,8 +28,11 @@ import java.util.List;
 @FeignClient(name = "duoduo-product", path = "/api/products")
 public interface ProductClient {
 
-    /** 批量取 SKU 快照；参数为逗号分隔的 SKU ID，例如 {@code 2001,2002} */
-    @GetMapping("/skus/batch")
+    /**
+     * 批量取 SKU 快照；参数为逗号分隔的 SKU ID，例如 {@code 2001,2002}。
+     * 走内部路由（快照含卖家归属），由 {@code InternalCallConfig} 统一带 {@code X-Internal-Token}。
+     */
+    @GetMapping("/internal/skus/batch")
     ApiResponse<List<SkuSnapshot>> batchSkus(@RequestParam("ids") String skuIds);
 
     /** 冻结库存（下单时调用）：可售余量足够才成功 */

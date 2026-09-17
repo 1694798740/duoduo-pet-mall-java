@@ -101,6 +101,7 @@ public class OrderService {
     private static final String OPERATOR_USER = "USER";
     private static final String OPERATOR_SELLER = "SELLER";
     private static final String OPERATOR_SYSTEM = "SYSTEM";
+    private static final String OPERATOR_OPERATOR = "OPERATOR";
     private static final String OP_CREATE = "创建订单";
     /** 与商品服务约定的失败原因码（见 StockDtos.Reason）：冻结量不足 */
     private static final String REASON_FREEZE_NOT_ENOUGH = "FREEZE_NOT_ENOUGH";
@@ -209,10 +210,15 @@ public class OrderService {
             }
         }
 
-        // 4) 按卖家拆单（当前全部自营 → 只有一个分组）
+        // 4) 按卖家拆单：归属来自商品域 t_spu.seller_id（随 SKU 快照下发）。
+        //    商品域没归属字段时这里只能全部写 0（自营）；现在按真实卖家分组，
+        //    第三方商家的订单才能落进他的商家端。快照缺归属（理论上不该发生）回退自营 0。
         Map<Long, List<CartItemEntity>> groups = rows.stream()
-                .collect(Collectors.groupingBy(r -> PLATFORM_SELLER_ID,
-                        LinkedHashMap::new, Collectors.toList()));
+                .collect(Collectors.groupingBy(r -> {
+                    SkuSnapshot snap = snapshots.get(r.getSkuId());
+                    Long sellerId = snap == null ? null : snap.sellerId();
+                    return sellerId == null ? PLATFORM_SELLER_ID : sellerId;
+                }, LinkedHashMap::new, Collectors.toList()));
 
         LocalDateTime now = nowUtc();
         LocalDateTime expireAt = now.plusMinutes(orderExpireMinutes);
@@ -365,6 +371,43 @@ public class OrderService {
         return toViews(List.of(order)).get(0);
     }
 
+    // ---------------- 运营查询（M10，无归属限制；调用方须先过 OperatorGuard） ----------------
+
+    /**
+     * 运营全平台订单列表：可按状态 / 订单号模糊过滤。
+     *
+     * <p>不做归属校验 —— 这是后台运营视角，准入由控制层的
+     * {@code OperatorGuard.requireOperator()} 统一把关。
+     */
+    public PageResult<OrderView> adminList(String status, String orderNo, int page, int pageSize) {
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        if (status != null && !status.isBlank() && OrderStatus.of(status.trim()) == null) {
+            throw BizException.validation("不支持的订单状态：" + status.trim());
+        }
+
+        LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>();
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(OrderEntity::getStatus, status.trim());
+        }
+        if (orderNo != null && !orderNo.isBlank()) {
+            wrapper.likeRight(OrderEntity::getOrderNo, orderNo.trim());
+        }
+        wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
+
+        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        return PageResult.of(toViews(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
+    /** 运营按订单号查详情（无归属限制），查不到返回 404 */
+    public OrderView adminDetail(String orderNo) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        return toViews(List.of(order)).get(0);
+    }
+
     // ---------------- 取消（含释放冻结） ----------------
 
     @Transactional
@@ -400,6 +443,44 @@ public class OrderService {
         int[] release = releaseOrderFreeze(order.getId(), now);
         if (release[1] > 0) {
             log.error("订单 {} 取消后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
+        }
+        return toViews(List.of(order)).get(0);
+    }
+
+    /**
+     * 运营强制关单（平台管理后台 M10）：只针对「待付款」订单。
+     *
+     * <p>与用户自助取消走同一条状态机与资金路径（作废未支付支付单 + 释放冻结），
+     * 区别只在于：操作者身份是运营（记 {@code OPERATOR} 日志），且不校验 userId ——
+     * 运营处理的是「任何人的异常订单」。
+     * 已付款 / 已发货的订单**不可**在这里强关：钱已在托管或已放款，需要走退款 / 售后 / 追偿，
+     * 若图省事把 PAID → CLOSED 这条边放给运营，钱与货的归属会立刻说不清（历史已踩过这个坑）。
+     */
+    @Transactional
+    public OrderView forceClose(String orderNo, String reason) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current != OrderStatus.PENDING_PAYMENT) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许强制关单；已付款/已发货订单请走退款或售后流程");
+        }
+        LocalDateTime now = nowUtc();
+        String closeReason = (reason == null || reason.isBlank()) ? "平台干预关单" : reason.trim();
+        order.setStatus(OrderStatus.CLOSED.name());
+        order.setClosedAt(now);
+        order.setCloseReason(closeReason);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+        writeStatusLog(order.getId(), current.name(), OrderStatus.CLOSED.name(), OPERATOR_OPERATOR,
+                null, closeReason, now);
+
+        paymentMapper.markClosedByOrder(order.getId(), "平台干预关单：" + closeReason, now);
+        int[] release = releaseOrderFreeze(order.getId(), now);
+        if (release[1] > 0) {
+            log.error("订单 {} 运营强关后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
         }
         return toViews(List.of(order)).get(0);
     }

@@ -37,6 +37,16 @@ public class SpuEntity {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * 卖家归属（t_user.id；0 = 平台自营）。
+     *
+     * <p>为什么放在 SPU 而不是 SKU：库存与价格在 SKU，但「这货是谁的」是商品级事实 ——
+     * 同一商品的 SKU 不会属于两个卖家（那是平台撮合的 C2C，走 t_listing）。
+     * 下单拆单时交易服务从这里读 sellerId，商家端按它过滤「我的商品」。
+     * 与 t_order.seller_id 是同一事实的两份记录，改动必须两边同步（见交易侧夹具）。
+     */
+    private Long sellerId;
+
     public Long getId() {
         return id;
     }
@@ -171,5 +181,13 @@ public class SpuEntity {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Long getSellerId() {
+        return sellerId;
+    }
+
+    public void setSellerId(Long sellerId) {
+        this.sellerId = sellerId;
     }
 }

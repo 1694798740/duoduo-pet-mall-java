@@ -30,7 +30,7 @@
 | M7 | 买家端 · **微信小程序** | ⬜ 未开始 | 小程序内复用同一套支付接口 |
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
-| M10 | 平台管理后台 · **Web** | ⬜ 未开始 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
+| M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
 | M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | ⬜ 未开始 | 更后期 |
 
 ---
@@ -114,20 +114,21 @@
 
 | **M5-9 卖家中心（后端）** | 卖家账号体系（`applyMerchant` 实名前置 + 幂等）；`/api/seller/**` 6 个接口（概览 / 订单列表 / 订单详情 / 发货 / 售后退款 / 结算对账）；**归属校验取代内部凭据**（越权 403 / 不存在 404 刻意区分）；运营可见平台自营 `sellerId=0`；物流信息落订单表并回显；**自测 84 通过 / 0 失败** |
 | **M9 商家端 Web（前端）** | `frontend/src/pages/seller/` 4 页（Dashboard / Orders / OrderDetail / Settlements）+ `shared.tsx`；`sellerApi` 端点层；`RequireSeller` 路由守卫（只校验登录，真正的权限边界仍在后端 403）；Layout 与「我的」页按角色显示入口；`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；**真实浏览器 UI 自测 29 项全绿**（截图见 `frontend/docs/screenshots/sel_*.png`） |
+| **M10 平台管理后台** | 后端：`/api/admin/**` 13 个接口 —— 运营报表（GMV/订单量/退款率/转化率）、资金对账（托管汇总 + 异常挂账 LEFT JOIN 排查）、类目/品牌增改删+启停用（后台列表含停用项，公开接口仍只暴露 ACTIVE）、闲置审核（通过/驳回留痕：原因+时间，公开只可见 APPROVED）、订单干预（全平台列表/详情 + 仅待付款可强关，冻结释放、支付单作废、状态日志记 OPERATOR）；`OperatorGuard`（user-common，`isOperator()` 与登录态同口径）；网关 `/api/admin/**` 路由（不进白名单）；`t_listing` 补 `audit_reason` / `audit_at` 追溯列。前端：`pages/admin/` 5 页（运营概览含对账 / 内容审核 / 类目 / 品牌 / 订单干预）+ `AdminTabs` + `RequireOperator`；Layout 按角色显示「管理后台」入口。**自测 `scripts/admin-smoke.ps1` 49 通过 / 0 失败**（覆盖 401/403 边界、审核留痕、强关状态机拒绝、夹具自建自毁）；`tsc` 零错误、`vite build` 通过 |
 
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| _（本轮已收口，暂无进行中任务）_ | 下一步建议：M10 平台管理后台；或先补商品域 `seller_id`，打通「商家管自己的商品」 |
+| _（本轮已收口，暂无进行中任务）_ | 下一步建议：M7 小程序，或 M11 营销/AI/ES；也可先做运营账号管理页（提权目前靠 SQL） |
 
 ### 未开始（按你确认的端形态排期）
 
 | # | 任务 | 依赖 | 说明 |
 |---|---|---|---|
 | M7 | 买家端 微信小程序 | M6 的接口封装 + 小程序 AppID | 登录接 `code2Session`；支付复用同一套预下单 + 轮询接口 |
-| M10 | 平台管理后台 Web | M5-9 ✅ | 类目品牌、内容审核、订单干预、资金对账、报表 |
 | M11 | 营销 / AI 导购「多多」/ 履约售后 / ES 检索 / RocketMQ 削峰 / Sentinel / 压测 | 全部后期 | — |
+| M10+ | 运营账号管理页（提权目前靠 SQL） | M10 ✅ | 后台可视化开通/停用运营账号 |
 
 ---
 
@@ -167,6 +168,47 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-18（第五轮 · 平台管理后台 M10）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-common/.../context/OperatorGuard.java`（**新增**） | 运营准入统一入口：`requireOperator()`（未登录 401 已被网关拦，非运营 **403**），`isOperator()` 与 `LoginUser` 同口径（忽略大小写，OPERATOR/ADMIN 均可） |
+| `duoduo-product/.../controller/AdminCatalogController.java`（**新增**） | `/api/admin/categories`、`/api/admin/brands`：增 / 改 / 删 / 启停用 / 后台列表（**含停用项**） |
+| `duoduo-product/.../controller/AdminListingController.java`（**新增**） | `/api/admin/listings`：审核工作台列表（含未通过内容）+ `POST /{id}/audit`（APPROVE / REJECT，驳回必须填原因） |
+| `duoduo-product/.../service/CategoryService.java` | 新增管理方法；**创建显式赋雪花 id**（product 服务 `id-type: input`，此前 insert 直接报 id 为 null）；`flatForAdmin()` / `adminBrands()` 不过滤状态——停用后后台仍可见、可重新启用 |
+| `duoduo-product/.../service/ListingService.java` | 新增 `listForAudit` / `audit`：审核动词（APPROVE/REJECT）与库内状态（APPROVED/REJECTED）分离；`audit_reason` / `audit_at` 落库留痕 |
+| `duoduo-product/.../entity/ListingEntity.java`、`db/schema.sql`、`docs/sql/02-duoduo-product.sql` | `t_listing` 增加 `audit_reason`、`audit_at`（容器已 ALTER，从零建库脚本同步） |
+| `duoduo-product/.../dto/ProductDtos.java` | `CategorySaveRequest` / `BrandSaveRequest` / `ListingAuditRequest` / `ListingAuditView`；`CategoryNode` / `BrandView` 增加 `status`（后台要展示停用项） |
+| `duoduo-trade/.../service/OrderService.java` | 新增 `adminList` / `adminDetail`（无归属限制，准入由 OperatorGuard 把关）；`forceClose`（仅待付款：关单 + 作废未支付支付单 + 释放冻结 + 状态日志记 OPERATOR，**复用既有状态机与补偿语义**） |
+| `duoduo-trade/.../controller/AdminOrderController.java`（**新增**） | `/api/admin/orders`（列表/详情/强关） |
+| `duoduo-trade/.../service/AdminOpsService.java`（**新增**） | 资金对账：托管汇总（SQL 聚合）+ 异常挂账（`LEFT JOIN` 找「已付款却缺托管单」）+ 运营报表（GMV / 订单量 / 退款率 / 转化率） |
+| `duoduo-trade/.../controller/AdminSettlementController.java`、`AdminReportController.java`（**新增**） | `/api/admin/settlements/**`、`/api/admin/reports/overview` |
+| `duoduo-trade/.../dto/AdminDtos.java`（**新增**） | `SettlementSummary` / `AbnormalSettlement` / `AdminReport` / `ForceCloseRequest` |
+| `duoduo-trade/.../mapper/OrderMapper.java`、`SettlementMapper.java` | 新增全平台聚合 SQL（`countAllByStatus` / `sumPaidAmount` / `findOrdersWithoutSettlement`） |
+| `duoduo-gateway/.../application.yml` | 路由补 `/api/admin/**`（product + trade，**不进白名单**） |
+| `frontend/src/api/endpoints.ts`、`types.ts` | 新增 `adminApi`（14 个端点）与后台类型 |
+| `frontend/src/pages/admin/`（**新增**） | `shared.tsx`（isOperator / AdminTabs / AdminDenied / AdminStat）、`Dashboard.tsx`（报表 + 资金对账 + 异常挂账表）、`Audits.tsx`（待审/通过/驳回三视图 + 驳回原因弹窗）、`Categories.tsx`、`Brands.tsx`（状态列 + 按状态切换启停按钮）、`Orders.tsx`（状态过滤 + 订单号前缀搜索 + 强关确认弹窗） |
+| `frontend/src/App.tsx`、`components/Layout.tsx` | `RequireOperator` 守卫 + 5 条 `/admin/**` 路由；导航与用户菜单按角色显示「管理后台」 |
+| `scripts/admin-smoke.ps1`（**新增**） | **49 项断言**：401/403 边界、报表与对账、类目品牌增改删启停（含停用后仍可见）、审核通过/驳回留痕（中文经接口读回无乱码）、强关全链（冻结释放、重复强关被拒、买家可见关单原因）、夹具自建自毁、运营账号用完降回 USER |
+
+**自测结论**：后端 `BUILD SUCCESS`；重建 product / trade 镜像并重启（7 容器 healthy）；
+`scripts/admin-smoke.ps1` **49 通过 / 0 失败**；前端 `tsc --noEmit` 零错误、`vite build` 通过。
+
+**自测暴露并修复的缺陷**：
+
+1. **类目 / 品牌创建报 500**（`Column 'id' cannot be null`）→ product 服务 MyBatis-Plus `id-type: input`，
+   实体不自动生成主键；创建时显式赋雪花 id（与种子数据的 SQL 赋值同一口径）。
+2. **审核 action 契约错位**：服务端拿动词与状态常量比较（`APPROVE` ≠ `APPROVED`），任何审核请求都被 422 →
+   明确「对外动词、库内状态」两层，switch 显式映射。
+3. **停用即消失**：后台类目/品牌列表复用只含 ACTIVE 的公开查询，停用后运营再也找不到它、无法重新启用 →
+   后台列表改走不过滤状态的 `flatForAdmin()` / `adminBrands()`，DTO 增加 `status` 字段，前端按状态切换「启用/停用」按钮。
+4. **PS 5.1 无 BOM 乱码**：脚本含中文必须 UTF-8 with BOM，否则被按 GBK 解析直接语法报错；
+   `docker exec mysql` 的控制台输出走 GBK，**中文等值断言会假失败** —— 库内断言只判状态与非空，
+   中文内容改走接口（JSON UTF-8 链路干净）读回比对。
+
+**踩到的协作坑（写进脚本注释）**：运营账号由脚本自助注册 + SQL 提权 + 结尾降回 USER，
+保证脚本可反复执行且不碰种子数据；审核夹具用大数段显式 id（避开雪花段），用完即删并自证复原。
 
 ### 2026-09-17（第三轮 · 买家端 Web 商城 M6 / P1-c）
 
@@ -290,6 +332,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps
 
 # 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（84 项，会临时改夹具并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
+
+# 平台管理后台：权限边界、报表对账、类目品牌、内容审核、订单强关（49 项，夹具自建自毁）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server，必须走 localhost:5173）
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

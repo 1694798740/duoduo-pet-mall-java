@@ -50,7 +50,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（七套 557 项接口断言 + 一套 29 项真实浏览器 UI 断言）
+### 端到端冒烟（八套 606 项接口断言 + 一套 29 项真实浏览器 UI 断言）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -60,13 +60,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1   
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 84 项：卖家中心（准入/归属隔离/发货/售后/结算）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
 cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
 cd .. && node scripts/e2e/seller-ui-check.mjs
 ```
 
-七套脚本的共同约定（踩过坑才有的）：
+八套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -213,6 +214,24 @@ duoduo-pet-mall-java/
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
 **失效条目不计入结算金额** —— 否则结算页金额与订单金额会对不上。
+
+### 平台管理后台（`/api/admin/**`，M10）
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/admin/reports/overview` | 运营报表：GMV / 总订单 / 已付款 / 退款率 / 转化率（全平台口径，SQL 聚合） | 运营 |
+| GET | `/api/admin/settlements/summary` | 资金对账：托管中 / 已放款 / 已退回三组金额与笔数、佣金 | 运营 |
+| GET | `/api/admin/settlements/abnormal` | 异常挂账：已付款却缺托管单的订单（`LEFT JOIN` 排查） | 运营 |
+| GET/POST/PUT/DELETE | `/api/admin/categories`、`/{id}`、`/{id}/status` | 类目增改删 + 启停用；**后台列表含停用项**（可重新启用），公开接口仍只暴露 ACTIVE | 运营 |
+| GET/POST/PUT/DELETE | `/api/admin/brands`、`/{id}`、`/{id}/status` | 品牌同上 | 运营 |
+| GET | `/api/admin/listings` | 闲置审核工作台列表（含待审 / 已驳回，按 `auditStatus` 过滤） | 运营 |
+| POST | `/api/admin/listings/{id}/audit` | 审核：`APPROVE` / `REJECT`（驳回必须填原因）；`audit_reason` / `audit_at` 落库留痕 | 运营 |
+| GET | `/api/admin/orders`、`/{orderNo}` | 全平台订单列表（状态 / 订单号前缀过滤）与详情（无归属限制） | 运营 |
+| POST | `/api/admin/orders/{orderNo}/force-close` | **强制关单**（仅待付款）：复用状态机合法流转 + 作废未支付支付单 + 释放冻结 + 状态日志记 OPERATOR | 运营 |
+
+**权限模型**：统一 `OperatorGuard.requireOperator()`（OPERATOR / ADMIN，忽略大小写）；
+网关层 `/api/admin/**` 不进白名单（未登录 401），服务层校验角色（非运营 403）——两层各挡一种流量。
+已付款 / 已发货订单**不开**后台干预口子，一律走退款 / 售后的合法流转。
 
 ---
 
@@ -408,7 +427,33 @@ npm run build      # tsc --noEmit && vite build
 
 ---
 
-## 九、后续阶段：端形态与支付口径
+## 九、平台管理后台 Web（`frontend/src/pages/admin/`，M10）
+
+运营 / 管理员登录后，导航栏出现「管理后台」入口。五个工作台共用一条标签导航：
+
+| 路由 | 工作台 | 内容 |
+|---|---|---|
+| `/admin` | 运营概览 | 经营报表（GMV / 订单量 / 退款率 / 转化率）+ 资金对账三栏 + **异常挂账表**（已付款却缺托管单，需人工回补） |
+| `/admin/audits` | 内容审核 | 待审 / 已通过 / 已驳回三视图；通过后公开可见，驳回必须填原因（留痕：原因 + 时间） |
+| `/admin/categories` | 类目管理 | 增改删 + 启停用；状态列 + 按状态切换按钮；**停用项仍可见可恢复** |
+| `/admin/brands` | 品牌管理 | 同类目 |
+| `/admin/orders` | 订单干预 | 全平台订单（状态过滤 + 订单号前缀搜索）；**仅待付款**可强制关单（确认弹窗说明后果：作废支付单、释放冻结、写状态日志） |
+
+**关键实现决策**（与商家端同一套哲学）：
+
+- **`RequireOperator` 只校验登录、不拦角色**。非运营进入时页面统一渲染 `AdminDenied` 拦截页；
+  真正的边界在后端 `OperatorGuard.requireOperator()`（403）。
+- **`isOperator` 与后端 `LoginUser#isOperator()` 同口径**（忽略大小写，OPERATOR/ADMIN 均可），
+  入口可见性与接口准入不会出现「页面让进、接口拒绝」的分叉。
+- **后台与公开查询分离**：类目 / 品牌的后台列表走不过滤状态的专用方法，
+  停用后运营仍可见、可重新启用；公开的树形 / 下拉接口仍只暴露 ACTIVE。
+
+自测记录：后端 `scripts/admin-smoke.ps1` **49 项断言全绿**
+（未登录 401 / 普通用户 403 / 运营放行，报表与对账字段，类目品牌增改删启停 + 停用可见，
+审核通过 / 驳回留痕且被驳回内容公开不可见，强关全链含冻结释放与重复强关被拒，夹具自建自毁、账号用完降权）；
+前端 `tsc --noEmit` 零错误、`vite build` 通过。
+
+## 十、后续阶段：端形态与支付口径
 
 ### 端形态（用户端两端口，商家与平台都是 Web）
 
@@ -435,14 +480,29 @@ npm run build      # tsc --noEmit && vite build
 | **P1-c** | 买家端 **Web 商城**（主交易闭环 10 页，接口指向网关 :8080） | ✅ 完成 |
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
 | **P1-e** | ~~真实支付渠道~~ → **沙箱支付渠道**（已完成；真实渠道为可选后续） | ✅ |
-| **P1-f** | **商家端 Web（商家服务平台）✅** + 平台管理后台 Web ⏳ | 🔄 商家端已上线 |
+| **P1-f** | **商家端 Web ✅ + 平台管理后台 Web ✅（M10：报表/对账/审核/类目品牌/订单干预）** | ✅ 完成 |
 | **P2** | 履约服务（物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
 | **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
 ---
 
-## 十、变更记录
+## 十一、变更记录
+
+### 2026-09-18（第五轮 · 平台管理后台 M10）
+
+- **后端**：`/api/admin/**` 13 个接口（运营报表 / 资金对账 / 类目品牌管理 / 闲置审核 / 订单查询与强关），
+  统一 `OperatorGuard` 准入；`t_listing` 补 `audit_reason` / `audit_at` 审核留痕列；
+  网关路由补 `/api/admin/**`（不进白名单）。
+- **前端**：`pages/admin/` 5 个工作台（运营概览含对账、内容审核、类目、品牌、订单干预）+
+  `RequireOperator` 守卫 + 按角色显示的「管理后台」入口。
+- **自测**：新增 `scripts/admin-smoke.ps1` **49 项断言全绿**（夹具自建自毁、运营账号用完降权）。
+- **自测暴露并修复**：① product 服务 `id-type: input` 下创建类目/品牌未赋主键报 500 → 显式雪花 id；
+  ② 审核动词与状态常量比较错位，任何审核都被 422 → 动词/状态两层映射；
+  ③ 后台列表复用只含 ACTIVE 的公开查询，停用后无法重新启用 → 专用后台列表 + DTO 带 `status`；
+  ④ PS 5.1 中文脚本必须 UTF-8 BOM；`docker exec mysql` 控制台输出 GBK，中文等值断言要改走接口读回。
+
+（以下为历史轮次）
 
 ### 2026-09-18（第四轮 · 卖家中心 M5-9 + 商家端 Web M9）
 

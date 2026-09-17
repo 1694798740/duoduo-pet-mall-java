@@ -3,9 +3,11 @@ package com.duoduo.product.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.product.dto.ProductDtos.ListingCard;
 import com.duoduo.product.dto.ProductDtos.ListingDetail;
+import com.duoduo.product.dto.ProductDtos.ListingAuditView;
 import com.duoduo.product.dto.ProductDtos.ListingQuery;
 import com.duoduo.product.entity.ListingEntity;
 import com.duoduo.product.mapper.ListingMapper;
@@ -175,5 +177,72 @@ public class ListingService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    // ---------------- 运营审核（M10） ----------------
+
+    private static final String AUDIT_PENDING = "PENDING";
+    private static final String AUDIT_REJECTED = "REJECTED";
+
+    /** 运营侧审核列表：按审核状态过滤，含未审核通过的内容（公开接口里这些是不可见的） */
+    public PageResult<ListingAuditView> listForAudit(String auditStatus, int page, int pageSize) {
+        OperatorGuard.requireOperator();
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        LambdaQueryWrapper<ListingEntity> wrapper = new LambdaQueryWrapper<ListingEntity>();
+        if (auditStatus != null && !auditStatus.isBlank()) {
+            wrapper.eq(ListingEntity::getAuditStatus, auditStatus.trim().toUpperCase());
+        }
+        wrapper.orderByAsc(ListingEntity::getAuditStatus)
+                .orderByDesc(ListingEntity::getCreatedAt)
+                .orderByDesc(ListingEntity::getId);
+        Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        List<ListingAuditView> views = result.getRecords().stream().map(this::toAuditView).toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 审核一条闲置：APPROVE / REJECT。
+     *
+     * <p>驳回必须填原因 —— 否则卖家不知道自己为什么被拒，审核结论也留不下可追溯的解释。
+     * 审核是可重入的（重复通过 / 驳回覆盖上一次结论），方便运营改判。
+     */
+    public ListingAuditView audit(Long id, String action, String reason) {
+        OperatorGuard.requireOperator();
+        // 对外契约是动词（APPROVE / REJECT），库内落状态（APPROVED / REJECTED）
+        String act = action == null ? "" : action.trim().toUpperCase();
+        String target = switch (act) {
+            case "APPROVE" -> AUDIT_APPROVED;
+            case "REJECT" -> AUDIT_REJECTED;
+            default -> throw BizException.validation("action 仅支持 APPROVE / REJECT");
+        };
+        ListingEntity listing = listingMapper.selectById(id);
+        if (listing == null) {
+            throw BizException.notFound("闲置商品");
+        }
+        if (AUDIT_REJECTED.equals(target) && trimToNull(reason) == null) {
+            throw BizException.validation("驳回时必须填写原因");
+        }
+        listing.setAuditStatus(target);
+        listing.setAuditReason(AUDIT_REJECTED.equals(target) ? trimToNull(reason) : null);
+        listing.setAuditAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        listing.setUpdatedAt(listing.getAuditAt());
+        listingMapper.updateById(listing);
+        return toAuditView(listing);
+    }
+
+    private ListingAuditView toAuditView(ListingEntity listing) {
+        return new ListingAuditView(
+                listing.getId(),
+                listing.getSellerId(),
+                listing.getTitle(),
+                listing.getPrice() == null ? 0L : listing.getPrice(),
+                listing.getConditionLevel(),
+                listing.getCity(),
+                listing.getSpecies(),
+                listing.getAuditStatus(),
+                listing.getAuditReason(),
+                listing.getCreatedAt() == null ? null
+                        : listing.getCreatedAt().toInstant(java.time.ZoneOffset.UTC).toString());
     }
 }

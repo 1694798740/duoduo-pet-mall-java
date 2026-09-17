@@ -7,11 +7,13 @@
  *
  * 「商家端」入口按角色显示：卖家中心（M5-9）落在 trade 服务上，不依赖上述服务，
  * 但普通买家点进去只会看到入驻引导，把入口藏掉更干净。
+ * 「管理后台」入口（M10）同理：只对运营 / 管理员显示，与后端 isOperator 同口径。
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole } from '../pages/seller/shared';
+import { isOperator } from '../pages/admin/shared';
 import { useApp } from '../store/app';
 import { useAuth } from '../store/auth';
 
@@ -41,13 +43,17 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   }, [location.pathname]);
 
   // 商家端入口只在「真的是卖家」时出现；角色判定与后端同源（忽略大小写）
-  const navItems = useMemo(
-    () =>
-      canAccessSellerConsole(user?.role)
-        ? [...NAV, { to: '/seller', label: '商家端' }]
-        : NAV,
-    [user?.role],
-  );
+  // 管理后台入口同理：只对运营 / 管理员显示（M10）
+  const navItems = useMemo(() => {
+    let items = NAV;
+    if (canAccessSellerConsole(user?.role)) {
+      items = [...items, { to: '/seller', label: '商家端' }];
+    }
+    if (isOperator(user?.role)) {
+      items = [...items, { to: '/admin', label: '管理后台' }];
+    }
+    return items;
+  }, [user?.role]);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();

@@ -74,4 +74,11 @@ public interface SettlementMapper extends BaseMapper<SettlementEntity> {
             + "GROUP BY status"
             + "</script>")
     List<Map<String, Object>> aggregateBySellers(@Param("sellerIds") Collection<Long> sellerIds);
+
+    /** 全平台托管资金汇总（运营对账），与 {@link #aggregateBySellers} 同为聚合但不过滤卖家 */
+    @Select("SELECT status, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(amount), 0) AS amount_sum, "
+            + "COALESCE(SUM(platform_fee), 0) AS fee_sum "
+            + "FROM t_settlement GROUP BY status")
+    List<Map<String, Object>> aggregateAll();
 }

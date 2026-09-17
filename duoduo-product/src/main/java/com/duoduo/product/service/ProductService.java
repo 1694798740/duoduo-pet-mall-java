@@ -282,7 +282,8 @@ public class ProductService {
                     available,
                     sellable,
                     spuStatus,
-                    sku.getStatus());
+                    sku.getStatus(),
+                    spu == null ? 0L : (spu.getSellerId() == null ? 0L : spu.getSellerId()));
         }).toList();
     }
 

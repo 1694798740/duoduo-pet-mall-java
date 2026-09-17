@@ -182,6 +182,9 @@ export const SellerDashboardPage: React.FC = () => {
                 <Link className="btn btn-ghost btn-sm" to="/seller/settlements">
                   资金对账
                 </Link>
+                <Link className="btn btn-ghost btn-sm" to="/seller/products">
+                  商品管理
+                </Link>
                 <Link className="btn btn-ghost btn-sm" to="/me">
                   账号与实名
                 </Link>
@@ -189,9 +192,8 @@ export const SellerDashboardPage: React.FC = () => {
 
               <div className="divider" />
               <div className="small muted">
-                本期商家端聚焦<b>订单履约</b>与<b>资金结算</b>。
-                商品管理不在本页：商品域 SPU 目前没有 seller_id，
-                强行在此建商品只会把错误的归属关系写进库里。
+                本期商家端覆盖<b>订单履约</b>、<b>资金结算</b>与<b>商品上下架</b>。
+                新建商品涉及类目 / 品牌 / SKU / 库存的完整表单与审核，属入驻运营流程，另行排期。
               </div>
             </div>
           </div>

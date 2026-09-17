@@ -59,16 +59,15 @@ public class ProductController {
     /**
      * 批量取 SKU 采购视图（内部接口，供交易服务加购 / 下单调用）。
      *
-     * <p>路径落在 {@code /skus/batch}：两段路径不会与单段的 {@code /{spuId}} 冲突，
-     * 无需额外排除规则。
+     * <p>路径落在 {@code /internal/skus/batch}：两段路径不会与单段的 {@code /{spuId}} 冲突。
      *
-     * <p>暴露面说明：网关的 duoduo-product 路由是 {@code /api/products/**}，
-     * 因此本接口当前**是可由外部直接访问的**。它只返回标题 / 规格 / 价格 / 可售库存，
-     * 与商品详情接口同级别的公开信息，不含任何内部字段，因此当前不额外加访问控制。
-     * 后续若加入成本价、商家 ID 等内部字段，必须先改为内部路由（如 /internal/** 并限制来源），
-     * 不能沿用本路径。
+     * <p>暴露面说明：视图里带卖家归属（sellerId），属于服务间口径字段 ——
+     * 按本类此前留下的约定，加入商家 ID 这类字段时必须改为内部路由。
+     * 现在 {@code /api/products/internal/**} 由 {@code InternalTokenFilter} 校验
+     * {@code X-Internal-Token}（外部直接调用返回 403），交易侧的 Feign 客户端
+     * 由 {@code InternalCallConfig} 统一带上该请求头。
      */
-    @GetMapping("/skus/batch")
+    @GetMapping("/internal/skus/batch")
     public ApiResponse<List<SkuPurchaseView>> batchSkus(@RequestParam("ids") List<Long> ids) {
         return ApiResponse.ok(productService.purchaseViews(ids));
     }

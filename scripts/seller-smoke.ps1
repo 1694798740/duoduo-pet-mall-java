@@ -167,7 +167,7 @@ Check "普通卖家不含平台自营范围（platformScope=false）" ($r.body.d
 # ---------- 3. 夹具：买家下单支付 ----------
 Write-Host ""
 Write-Host "> 夹具：买家下单并支付"
-$batch = Call 'Get' "$Gateway/api/products/skus/batch?ids=$SKU" $null $null
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
 $skuInfo = @($batch.body.data)[0]
 $P1 = [long]$skuInfo.price
 $stockBefore = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU;")
@@ -392,7 +392,64 @@ if ($SkipDbCheck) {
     Check "（复原）另一卖家角色已改回 SELLER" ((Sql 'duoduo_user' "SELECT role FROM t_user WHERE id = $otherId;") -eq 'SELLER')
 }
 
-# ---------- 12. 复原夹具 ----------
+# ---------- 12. 商家商品管理（M9 商品侧：t_spu.seller_id + 上下架 + 下单归属链路） ----------
+Write-Host ""
+Write-Host "> 商家商品管理（商品归属 / 上下架 / 下单归属链路）"
+if ($SkipDbCheck) {
+    Write-Host "  [SKIP] 已指定 -SkipDbCheck"
+} else {
+    # 夹具：选两个在售 SPU 划给卖家，验证归属、越权与上下架；结尾就地复原
+    $spuA = Sql 'duoduo_product' "SELECT id FROM t_spu WHERE status='ON_SALE' ORDER BY id LIMIT 1;"
+    $spuB = Sql 'duoduo_product' "SELECT id FROM t_spu WHERE status='ON_SALE' AND id <> $spuA ORDER BY id LIMIT 1;"
+    Sql 'duoduo_product' "UPDATE t_spu SET seller_id = $sellerId WHERE id IN ($spuA,$spuB);" | Out-Null
+    Check "（夹具）SPU A / B 已划给卖家 $sellerId" ((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = $sellerId;") -eq '2')
+
+    $r = Call 'Get' "$Gateway/api/seller/products?pageSize=50" $sessSeller $null
+    Check "★ 商家商品列表返回 200" ($r.status -eq 200) $r.status
+    Check "★ 列表含划给该卖家的 SPU A" ((@($r.body.data.items | Where-Object { $_.id -eq [long]$spuA }).Count) -eq 1)
+    Check "★ 普通卖家看不到平台自营商品（sellerId=0）" ((@($r.body.data.items | Where-Object { $_.sellerId -eq 0 }).Count) -eq 0)
+
+    $r = Call 'Get' "$Gateway/api/seller/products" $sessBuyer $null
+    Check "★ 普通买家访问商家商品列表返回 403" ($r.status -eq 403) $r.status
+    $r = Call 'Get' "$Gateway/api/seller/products?pageSize=50" $sessOther $null
+    Check "★ 另一卖家看不到 SPU A" ((@($r.body.data.items | Where-Object { $_.id -eq [long]$spuA }).Count) -eq 0)
+
+    $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessOther @{ action = 'OFF_SHELF' }
+    Check "★ 另一卖家下架 SPU A 返回 403" ($r.status -eq 403) $r.status
+    $r = Call 'Post' "$Gateway/api/seller/products/999999999999/status" $sessSeller @{ action = 'OFF_SHELF' }
+    Check "不存在的商品返回 404" ($r.status -eq 404) $r.status
+    $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessSeller @{ action = 'FOO' }
+    Check "非法 action 返回 400" ($r.status -eq 400) $r.status
+
+    $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessSeller @{ action = 'OFF_SHELF' }
+    Check "★ 卖家下架自己的商品（200，OFF_SHELF）" ($r.status -eq 200 -and $r.body.data.status -eq 'OFF_SHELF') "$($r.status)/$($r.body.data.status)"
+    $r = Call 'Get' "$Gateway/api/products/$spuA" $sessBuyer $null
+    Check "★ 下架后买家看商品详情不可购（404 或 422）" ($r.status -eq 404 -or $r.status -eq 422) $r.status
+    $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessSeller @{ action = 'ON_SALE' }
+    Check "★ 重新上架成功（幂等开关）" ($r.status -eq 200 -and $r.body.data.status -eq 'ON_SALE') "$($r.status)/$($r.body.data.status)"
+
+    # 下单归属链路：买家买卖家的商品 → 订单与托管单自动归属卖家（不再改库）
+    $skuA = Sql 'duoduo_product' "SELECT id FROM t_sku WHERE spu_id = $spuA ORDER BY id LIMIT 1;"
+    $stockA = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $skuA;")
+    if ($stockA -ge 1) {
+        $own = PlaceAndPay $sessBuyer $skuA 1 '归属链路'
+        Check "★ 买家买卖家的商品：下单支付成功" ($own.ok) $own.step
+        if ($own.ok) {
+            Check "★ 订单 seller_id 自动为该卖家（拆单链路打通）" ((Sql 'duoduo_trade' "SELECT seller_id FROM t_order WHERE order_no='$($own.orderNo)';") -eq "$sellerId")
+            Check "★ 托管单 seller_id 同步为该卖家" ((Sql 'duoduo_trade' "SELECT s.seller_id FROM t_settlement s JOIN t_order o ON o.id=s.order_id WHERE o.order_no='$($own.orderNo)';") -eq "$sellerId")
+            $r = Call 'Get' "$Gateway/api/seller/orders?pageSize=50" $sessSeller $null
+            Check "★ 商家端订单列表能看到这笔新订单" ((@($r.body.data.items | Where-Object { $_.orderNo -eq $own.orderNo }).Count) -eq 1)
+        }
+    } else {
+        Check "归属链路：SKU A 库存充足" $false "stock=$stockA"
+    }
+
+    # 复原商品归属（测试产生的订单是本轮新数据，不在复原范围）
+    Sql 'duoduo_product' "UPDATE t_spu SET seller_id = 0 WHERE id IN ($spuA,$spuB);" | Out-Null
+    Check "（复原）SPU A / B 的 seller_id 已归零" ((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = 0;") -eq '2')
+}
+
+# ---------- 13. 复原夹具 ----------
 Write-Host ""
 Write-Host "> 复原夹具"
 if ($SkipDbCheck) {

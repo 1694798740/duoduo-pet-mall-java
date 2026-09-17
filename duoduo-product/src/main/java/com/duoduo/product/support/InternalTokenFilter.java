@@ -31,8 +31,9 @@ import java.io.IOException;
 @Component
 public class InternalTokenFilter extends OncePerRequestFilter {
 
-    /** 受保护的路径前缀 */
-    private static final String PROTECTED_PREFIX = "/api/products/skus/stock/";
+    /** 受保护的路径前缀：库存写操作 + 服务间批量快照（快照含卖家归属等内部口径字段） */
+    private static final String PROTECTED_PREFIX_STOCK = "/api/products/skus/stock/";
+    private static final String PROTECTED_PREFIX_INTERNAL = "/api/products/internal/";
     private static final String HEADER = "X-Internal-Token";
 
     private final String expectedToken;
@@ -48,7 +49,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        if (!request.getRequestURI().startsWith(PROTECTED_PREFIX)) {
+        String uri = request.getRequestURI();
+        if (!uri.startsWith(PROTECTED_PREFIX_STOCK) && !uri.startsWith(PROTECTED_PREFIX_INTERNAL)) {
             filterChain.doFilter(request, response);
             return;
         }

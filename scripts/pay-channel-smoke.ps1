@@ -148,7 +148,7 @@ Check "用户 B 注册/登录" ($uB.result.status -eq 200) $uB.result.status
 $sessA = $uA.session
 $sessB = $uB.session
 
-$batch = Call 'Get' "$Gateway/api/products/skus/batch?ids=$SKU_A" $null $null
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
 $sku = @($batch.body.data)[0]
 $P1 = [long]$sku.price
 $S1 = [int]$sku.availableStock

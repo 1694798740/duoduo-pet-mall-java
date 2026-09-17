@@ -18,6 +18,9 @@ package com.duoduo.trade.client.dto;
  * @param sellable       服务端算好的「是否可下单」（含上下架与库存两类判定）
  * @param spuStatus      SPU 状态（ON_SALE / OFF_SHELF）
  * @param skuStatus      SKU 状态（ACTIVE / OFF_SHELF）
+ * @param sellerId       卖家归属（t_user.id；0 = 平台自营）。下单拆单按它分组 ——
+ *                       之前商品域没有归属字段，拆单只能全部写 0；现在补上，
+ *                       第三方商家的订单才能正确落进商家端（M5-9 / M9）
  */
 public record SkuSnapshot(
         Long skuId,
@@ -29,6 +32,7 @@ public record SkuSnapshot(
         int availableStock,
         boolean sellable,
         String spuStatus,
-        String skuStatus
+        String skuStatus,
+        Long sellerId
 ) {
 }
