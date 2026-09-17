@@ -92,6 +92,20 @@ public class ProductGateway {
     }
 
     /**
+     * 退货入库（退款后把货补回库存）。
+     *
+     * <p>注意：入库接口<b>不像 freeze/release 那样自带幂等护栏</b>，
+     * 重复调用会真的把库存加多。调用方必须把「只调一次」交给台账状态迁移来保证
+     * （见 {@code StockFreezeEntity} 的 RESTOCK_PENDING → RESTOCKED）。
+     */
+    public StockChangeOutcome restock(Long orderId, List<StockChangeItem> items) {
+        ApiResponse<StockChangeOutcome> response = call(
+                () -> productClient.restockStock(new StockChangePayload(items)),
+                "退货入库(订单 " + orderId + ")");
+        return response == null ? null : response.data();
+    }
+
+    /**
      * 统一异常转换。
      * Feign 对 4xx 会抛 {@link FeignException}，此时 body 里其实是标准的 ApiResponse，
      * 但这里刻意不解析它：4xx 意味着「这次调用本身不成立」，

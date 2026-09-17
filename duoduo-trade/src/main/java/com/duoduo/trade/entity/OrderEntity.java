@@ -25,7 +25,7 @@ public class OrderEntity {
     private Long sellerId;
     /** NORMAL = 自营商品订单；C2C = 闲置担保交易订单 */
     private String orderType;
-    /** PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / CLOSED */
+    /** PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED（见 OrderStatus） */
     private String status;
     private Long totalAmount;
     private Long freightAmount;
@@ -41,6 +41,12 @@ public class OrderEntity {
     private LocalDateTime shippedAt;
     private LocalDateTime finishedAt;
     private LocalDateTime closedAt;
+    /**
+     * 退款时间（钱退回买家的时刻）。与 closedAt 刻意分开：
+     * 退款不代表「订单被关闭」，资金动作必须有独立时间戳，
+     * 否则对账时无法区分「没付过款」和「付了又退了」。
+     */
+    private LocalDateTime refundedAt;
     private String closeReason;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -85,6 +91,8 @@ public class OrderEntity {
     public void setFinishedAt(LocalDateTime finishedAt) { this.finishedAt = finishedAt; }
     public LocalDateTime getClosedAt() { return closedAt; }
     public void setClosedAt(LocalDateTime closedAt) { this.closedAt = closedAt; }
+    public LocalDateTime getRefundedAt() { return refundedAt; }
+    public void setRefundedAt(LocalDateTime refundedAt) { this.refundedAt = refundedAt; }
     public String getCloseReason() { return closeReason; }
     public void setCloseReason(String closeReason) { this.closeReason = closeReason; }
     public LocalDateTime getCreatedAt() { return createdAt; }

@@ -4,8 +4,9 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-17** — 交易域推进到「下单 → 库存冻结 → 支付 → 发货 → 收货 → 超时关单」全链路打通；
-四套端到端冒烟共 **288 项断言全绿**。详见文末「变更记录」。
+**最近更新：2026-09-17** — 交易域推进到 **C2C 担保交易**：买家付款后资金进平台托管，确认收货后放款给卖家，
+退款原路退回买家，并支持「发货满 N 天自动确认收货放款」。五套端到端冒烟共 **413 项断言全绿**。
+下一步是买家端（Web 商城 + 微信小程序）与**真实微信/支付宝扫码支付**接入。详见文末「变更记录」。
 
 ---
 
@@ -25,8 +26,8 @@ docker ps                     # 期望：7 个容器全是 healthy
 | `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 4 个服务** |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
-| `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / 库存主数据 |
-| `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 |
+| `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
+| `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / **C2C 担保交易** |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -48,19 +49,21 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（四套，共 288 项断言）
+### 端到端冒烟（五套，共 413 项断言）
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1          # 54 项：用户域 + 商品域
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1    # 87 项：购物车
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1    # 76 项：下单拆单 + 库存冻结
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1  # 71 项：支付幂等 + 状态机 + 超时关单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1             # 54 项：用户域 + 商品域
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1       # 87 项：购物车
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1       # 76 项：下单拆单 + 库存冻结
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1     # 71 项：支付幂等 + 状态机 + 超时关单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1  # 125 项：担保交易 + 资金托管 + 退款
 ```
 
-四套脚本的共同约定（踩过坑才有的）：
+五套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
-- 夹具（价格、库存）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
+- 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
+- 跨轮次的断言按「本次测试开始时间」**限定范围**，不被功能上线前的历史数据误伤；
 - 前两套加 `-SkipDbCheck` 可跳过改库段落，只跑接口断言。
 
 ### 降级方案：不开 Docker
@@ -81,16 +84,16 @@ duoduo-pet-mall-java/
 ├── maven/                      项目专用 Maven 配置（阿里云镜像）与本地环境变量脚本
 ├── docs/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
-│   ├── PLAN.md                 开发看板：里程碑 / 任务 / 问题与协助区 / 命令速查
+│   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库）
-├── scripts/                    一键启动、冒烟测试（4 套）
+├── scripts/                    一键启动、冒烟测试（5 套）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
 ├── duoduo-user/                用户服务
 ├── duoduo-product/             商品服务（含库存主数据）
-└── duoduo-trade/               交易服务（购物车 / 订单 / 支付）
+└── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付 / 资金托管）
 ```
 
 **分层纪律**：Controller 不写业务逻辑；Service 不依赖 `HttpServletRequest`；
@@ -126,7 +129,7 @@ duoduo-pet-mall-java/
 | GET | `/api/products` | 商品检索（参数见下表） | 免 |
 | GET | `/api/products/{spuId}` | 商品详情：SKU、适用属性聚合、同类推荐 | 免 |
 | GET | `/api/products/skus/batch?ids=2001,2002` | **批量 SKU 采购视图**（供交易服务调用；一次取几十个，避免 N 次跨服务调用） | 免 |
-| POST | `/api/products/skus/stock/{freeze,release,deduct}` | **库存写接口**（冻结 / 释放 / 扣减），见下 | **内部凭据** |
+| POST | `/api/products/skus/stock/{freeze,release,deduct,restock}` | **库存写接口**（冻结 / 释放 / 扣减 / 退货入库），见下 | **内部凭据** |
 | GET | `/api/listings` · `/{id}` | C2C 闲置列表（只返回已审核通过）/ 详情 + 同款全新推荐 | 免 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
 
@@ -154,30 +157,65 @@ duoduo-pet-mall-java/
 | PATCH | `/api/cart/items/{skuId}/selection` | 勾选 / 取消勾选 | 需登录 |
 | DELETE | `/api/cart/items/{skuId}` · `/api/cart/selected` | 删除一条 / 清空已勾选 | 需登录 |
 | POST | `/api/orders` | **下单**（按卖家拆单 + 明细快照 + 冻结库存），必须带 `idempotentKey` | 需登录 |
-| GET | `/api/orders` | 我的订单列表（可按 `status` 过滤） | 需登录 |
-| GET | `/api/orders/{orderNo}` | 订单详情（含明细快照） | 需登录 |
-| POST | `/api/orders/{orderNo}/pay` | **支付**（模拟渠道，必须带 `idempotentKey`），重复回调只入账一次 | 需登录 |
+| GET | `/api/orders` | 我的订单列表（可按 `status` 过滤，**每条内嵌资金托管信息**） | 需登录 |
+| GET | `/api/orders/{orderNo}` | 订单详情（含明细快照 + 内嵌托管信息） | 需登录 |
+| GET | `/api/orders/{orderNo}/settlement` | **查询该订单的资金托管状态**（托管中 / 已放款 / 已退回买家） | 需登录 |
+| POST | `/api/orders/{orderNo}/pay` | **支付**（当前为模拟渠道，必须带 `idempotentKey`），重复回调只入账一次 | 需登录 |
 | POST | `/api/orders/{orderNo}/cancel` | 取消（**仅待付款可取消**），并释放冻结 | 需登录 |
-| POST | `/api/orders/{orderNo}/confirm` | 确认收货（已发货 → 已完成） | 需登录 |
+| POST | `/api/orders/{orderNo}/confirm` | **确认收货**（已发货 → 已完成），并**放款给卖家** | 需登录 |
+| POST | `/api/orders/{orderNo}/refund` | **买家自助退款**（仅「已付款且未发货」），资金退回买家 | 需登录 |
 | POST | `/api/orders/{orderNo}/ship` | 发货（已付款 → 已发货） | **内部凭据** |
-| POST | `/api/orders/internal/sweep` | 手动触发一轮超时关单补偿调度（运维排障 / 自动化测试用） | **内部凭据** |
+| POST | `/api/orders/internal/{orderNo}/refund` | **运营侧退款**（售后审核通过后执行，已付款 / 已发货均可） | **内部凭据** |
+| POST | `/api/orders/internal/sweep` | 手动触发一轮补偿调度（超时关单 / 释放冻结 / 自动确认收货 / 入库补偿） | **内部凭据** |
 
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
 **失效条目不计入结算金额** —— 否则结算页金额与订单金额会对不上。
 
-订单状态机：`待付款 → 已付款 → 已发货 → 已完成`，分支 `已关闭`（用户取消或超时未支付）。
-每次流转都写 `t_order_status_log`（只增不改），出问题时能查清「谁在什么时候改的」。
+---
+
+## 四、C2C 担保交易（资金托管）
+
+```
+下单 ──冻结库存──→ 待付款
+                    │ 支付成功
+                    ▼
+                 已付款 ──资金进平台托管（CUSTODY）──→ 已发货
+                                                        │ 买家确认收货 / 发货满 N 天自动确认
+                                                        ▼
+                                                     已完成 ──资金放款给卖家（RELEASED）
+   分支：待付款 ──取消/超时──→ 已关闭（钱从未收过，或已释放冻结）
+         已付款/已发货 ──退款──→ 已退款（REFUNDED，钱原路退回买家）
+```
+
+**订单状态与资金状态是两条时间线**：订单状态回答「货走到哪了」，托管状态
+（`t_settlement`）回答「钱现在在谁手里」。分开记之后，「这笔钱到底在谁手里」永远只有一个答案。
+
+| 概念 | 位置 | 说明 |
+|---|---|---|
+| 订单状态 | `t_order.status` | `PENDING_PAYMENT` / `PAID` / `SHIPPED` / `COMPLETED` / `REFUNDED` / `CLOSED` |
+| 托管状态 | `t_settlement.status` | `CUSTODY`（托管中）/ `RELEASED`（已放款）/ `REFUNDED`（已退回买家） |
+| 冻结台账 | `t_stock_freeze.status` | `FROZEN` → `DEDUCTED` → `RESTOCK_PENDING` → `RESTOCKED`；或 `FROZEN` → `RELEASED` |
+| 平台佣金 | `t_settlement.platform_fee` | 按 `duoduo.trade.platform-fee-bps`（默认 100 bp = 1%）计，**结算当刻的口径落库留档** |
+
+几条刻意的规则：
+
+- **资金状态迁移一律用 CAS**（`status = 'CUSTODY'` 写进 WHERE）：定时任务与买家请求可能同一秒到达，
+  数据库保证同一笔钱只能出去一次，因此「重复确认收货」「重复退款」天然无副作用；
+- **已放款的订单不能直接退款**：钱已到卖家手里，需走追偿或平台垫付（属另一条流程，见 `docs/PLAN.md` 的已知边界）；
+- **退款界限在服务端强制**：已付款未发货才允许买家自助退款；已发货必须走售后（货在买家手上，系统无从判断有没有退回来）；
+- **退款不阻塞入库**：钱该退就退，货回库是仓库侧的后续动作，由台账 `RESTOCK_PENDING → RESTOCKED` 与补偿调度兜住；
+- **发货不等于放款**：买家没见到货之前，钱一直留在托管里。
 
 ### 内部接口的凭据
 
-库存写接口与发货/补偿调度属于**服务间或运营侧**调用，要求请求头 `X-Internal-Token`，
+库存写接口、发货、运营侧退款与补偿调度属于**服务间或运营侧**调用，要求请求头 `X-Internal-Token`，
 由 `InternalTokenFilter` 校验（**默认开启、失败关闭**）。密钥来自环境变量 `INTERNAL_TOKEN`，
 compose 里提供开发默认值，**生产必须注入真实值**。
 
 ---
 
-## 四、已落地的工程约束
+## 五、已落地的工程约束
 
 - **认证**：JWT 短时效 access（15 min）+ 服务端 refresh（7 d）。refresh 只存 SHA-256 哈希并轮转，
   即使库被拖走也无法直接冒用；令牌只走 httpOnly Cookie，**禁止写入 localStorage 或 URL 参数**。
@@ -189,44 +227,86 @@ compose 里提供开发默认值，**生产必须注入真实值**。
 - **链路追踪基础**：每请求生成 `X-Request-Id`，写入响应头与日志 MDC，跨服务透传；日志为结构化 JSON。
 - **分布式 ID**：雪花算法（含时钟回拨保护），各服务使用不同 worker-id（用户 1 / 商品 2 / 交易 3）。
   订单号不对外暴露雪花 ID，而是 `时间戳 + 随机 + 校验位`（雪花 ID 的规律性会暴露业务量）。
-- **幂等靠唯一索引，不靠分布式锁**：
-  下单 `uk_order_user_idem(user_id, idempotent_key)`、支付 `uk_pay_channel_idem(channel, idempotent_key)`、
-  加购 `uk_cart_user_sku`、冻结 `uk_freeze_sku_order`。锁只用来减少冲突，正确性由数据库保证。
-- **库存原子性**：冻结 / 释放 / 扣减都是**条件 UPDATE**（判断写进 WHERE），
+- **幂等靠唯一索引或 CAS，不靠分布式锁**：
+  下单 `uk_order_user_idem`、支付 `uk_pay_channel_idem`、加购 `uk_cart_user_sku`、冻结 `uk_freeze_sku_order`、
+  托管 `uk_settle_order`；放款与退款用条件 UPDATE 保证「同一笔钱只出去一次」。
+- **库存原子性**：冻结 / 释放 / 扣减 / 入库都是**条件 UPDATE**（判断写进 WHERE），
   由数据库行级原子性防超卖；单次请求内的整批 SKU 在同一本地事务里**要么全成、要么全不成**。
-- **跨服务副作用的处理**：库存冻结/扣减发生在商品服务，**不受交易服务事务保护**，
-  因此下单失败时会显式补偿释放；同时保留「超时关单补偿调度」作为最终兜底（可重入）。
+- **跨服务副作用的处理**：库存变更发生在商品服务，**不受交易服务事务保护**，
+  因此下单失败时会按逐项结果**精确补偿**；跨服务调用**不放在事务里发**（退款入库走事务提交后的事件），
+  避免「远程已生效、本地回滚」造成对不上账；补偿调度作为最终兜底（可重入）。
 - **状态机集中在枚举**：合法流转写在一处，非法流转一处拒绝；各接口再收窄自己的合法起点
-  （例如「已付款 → 已关闭」只属于退款流程，不开放给用户自助取消）。
+  （例如已付款订单不允许买家自助取消，退款走独立的 `REFUNDED` 终态而不是复用「已关闭」）。
 - **业务规则**：宠物档案的「出生日期 vs 生命阶段」矛盾时拒绝写入并要求确认（对应 PRD PET-05）。
 
 ---
 
-## 五、后续阶段（按 docs/ARCHITECTURE.md 的路线推进）
+## 六、后续阶段：端形态与支付渠道
+
+### 端形态（用户端两端口，商家与平台都是 Web）
+
+| 端 | 形态 | 面向谁 | 支付方式 |
+|---|---|---|---|
+| 买家端 | **微信小程序** | 买家 | 微信 JSAPI（小程序内拉起） |
+| 买家端 | **响应式网页** | 买家 | PC 上**扫码支付**（微信 Native 二维码 / 支付宝电脑网站支付） |
+| 商家端 | Web（商家服务平台） | 商家 / 卖家 | 商品、订单、发货、售后、结算对账 |
+| 平台管理后台 | Web | 平台运营 | 类目品牌、内容审核、订单干预、资金对账、报表 |
+
+### 支付渠道（真实微信 / 支付宝扫码收款）
+
+当前支付是**模拟渠道**（`channel=MOCK`，即时成功），资金链路（冻结 → 入账 → 托管 → 放款 / 退款）已全部打通并可测。
+接入真实收款分三步，**第一步不依赖任何资质**：
+
+1. **渠道抽象**：抽出 `PaymentChannel` 接口（预下单 / 查询 / 退款 / 回调验签），MOCK 是其中一个实现 ——
+   切换渠道不改订单与账本代码；
+2. **真实渠道接入**：微信支付 Native（PC 扫码）+ JSAPI（小程序）+ 退款 API（APIv3 + 平台证书 + 回调验签）；
+   支付宝电脑网站支付 / 当面付 + 退款。回调先落库再处理，靠已有唯一索引保证幂等；
+3. **出账与对账**：退款走渠道退款接口（与账本 `REFUNDED` 同源）；卖家提现打款；每日对账比对渠道流水与 `t_payment` / `t_settlement`。
+
+> ⚠️ 第 2 步的瓶颈在**资质**而非代码：微信支付商户号需营业执照（个人主体申请不到），
+> 支付宝需企业实名认证，回调还需可公网访问的 HTTPS 域名。所需材料清单见 `docs/PLAN.md` 协助区 I-12。
+
+### 阶段路线
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 完成（54 项冒烟） |
 | **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（7 容器 healthy） |
-| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结与释放 ✅ / 订单状态机 ✅ / 支付幂等 ✅ / **C2C 担保交易 + 卖家中心 ⏳** | 🔄 进行中 |
-| **P1-c** | 前端接入（复用 Node 版 17 个页面，接口指向网关 :8080） | ⏳ |
+| **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结与释放 ✅ / 订单状态机 ✅ / 支付幂等 ✅ / **C2C 担保交易 ✅** / 卖家中心 ⏳ | 🔄 进行中 |
+| **P1-c** | 买家端 **Web 商城**（复用 Node 版 17 个页面，接口指向网关 :8080） | ⏳ |
+| **P1-d** | 买家端 **微信小程序** | ⏳ |
+| **P1-e** | **真实支付渠道**（微信 Native/JSAPI + 支付宝）+ 真实退款 + 对账 | ⏳ 需商户资质 |
+| **P1-f** | 商家端 Web（商家服务平台）+ 平台管理后台 Web | ⏳ |
 | **P2** | 履约服务（物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
 | **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
-前端（React 18 + Vite）沿用此前实现的 17 个页面，接口契约调整后即可对接。
-
 ---
 
-## 六、变更记录
+## 七、变更记录
 
-### 2026-09-17
+### 2026-09-17（第二轮）
+- **C2C 担保交易（M5-8）**：买家付款后资金进平台托管（`t_settlement`，`uk_settle_order` 一单一条）；
+  确认收货放款给卖家；退款原路退回买家；**发货满 N 天自动确认收货并放款**（补偿调度的一部分）。
+  资金状态迁移全部用 CAS 条件更新，重复放款 / 重复退款天然无副作用。
+- **订单状态机新增终态 `REFUNDED`**，并移除历史上那条被误用的 `PAID → CLOSED` 边
+  （它既是售后退款通路，也就等于把「用户自助取消已付款订单」的口子一起打开了）。
+- **退款两个入口**：买家自助（仅已付款未发货）/ 运营侧（已付款、已发货，走 `X-Internal-Token`）；
+  已放款订单的退款被明确拒绝（需追偿或平台垫付）。
+- **退货入库**：商品服务新增 `restock` 与 `POST /api/products/skus/stock/restock`；
+  退款后货回库走台账 `RESTOCK_PENDING → RESTOCKED`，失败由补偿调度重试 —— **退款不因入库失败而回滚**。
+- **`t_order` 增加 `refunded_at`**（退款不是「订单关闭」，资金动作需要独立时间戳）与
+  `idx_order_auto_receipt`（自动收货扫描）索引。
+- **五套端到端冒烟共 413 项断言全绿**：54 / 87 / 76 / 71 / **125（新增担保交易）**。
+- 修复自测暴露的问题：① 退货入库端点编译通过但运行时 404（新增端点无内部引用，编译发现不了，
+  必须实调一次验证）；② 自测脚本里佣金取整用了 PowerShell 的「四舍五入」而非 Java 的整数除；
+  ③ 跨轮次断言未按时间范围限定，被历史数据误伤。
+
+### 2026-09-17（第一轮）
 - **交易域全链路打通**：购物车（7 接口）→ 下单拆单（含明细快照与库存冻结）→ 支付（幂等）→ 发货 → 确认收货 → 超时关单。
 - **商品服务新增库存写接口**：`/api/products/skus/stock/{freeze,release,deduct}`，原子条件更新 + 内部凭据保护。
 - **可售口径统一**为 `stock − frozen_stock`（原「只看 stock>0」会把已被他人下单锁定的商品仍显示有货）。
-- **四套端到端冒烟共 288 项断言全绿**：54（用户+商品）/ 87（购物车）/ 76（下单冻结）/ 71（支付状态机）。
-- 修复自测暴露的三个真实缺陷：① 已付款订单可被用户自助取消（状态机边被误用）；
-  ② 超时关单释放依据错用「台账自身的过期时间」（与订单过期时间形成两份真相），改为以订单状态为准；
+- 修复自测暴露的三个真实缺陷：① 已付款订单可被用户自助取消；② 超时关单释放依据错用「台账自身的过期时间」；
   ③ 并发释放时「冻结量不足」被当作失败，导致台账永远卡在 FROZEN（改为冲正为 RELEASED 并留审计日志）。
 
 ### 更早

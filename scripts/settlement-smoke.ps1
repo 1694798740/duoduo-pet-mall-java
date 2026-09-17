@@ -1,0 +1,442 @@
+﻿# 交易服务 · C2C 担保交易（资金托管 / 放款 / 退款 / 自动确认收货）端到端冒烟（Windows PowerShell 5.1）
+# 用法： powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
+#
+# 前置：容器全部 healthy（docker compose up -d），且已 mvn package + docker compose build 出最新镜像。
+#
+# 设计原则（沿用前几套脚本的教训）：
+#   1. 夹具从接口动态取，不硬编码价格/库存/佣金；佣金用与 Java 完全相同的整数公式算出来再比对；
+#   2. 凡改库必先记录原值，结尾自证「库内数据已复原」；
+#   3. 已付款订单会真实扣减库存、退款会真实回补，所以结尾会把测试消耗的库存显式复原，
+#      保证脚本可反复执行（仅测试夹具使用，生产当然没有这种操作）；
+#   4. 只改本脚本自己创建的订单，绝不碰种子数据与历史订单；
+#   5. 跨轮次的断言一律按「本次测试开始时间」限定范围 ——
+#      否则会被功能上线前留下的历史数据误伤，那是断言范围没划清，不是服务有问题。
+param(
+    [string]$Gateway = 'http://127.0.0.1:8080',
+    # 直连交易服务端口：用来验证「内部接口被外部直连」时会被服务自身拒绝
+    [string]$Trade = 'http://127.0.0.1:8083',
+    [string]$Password = 'duoduo123',
+    [string]$InternalToken = 'duoduo-local-dev-internal-token',
+    # 必须与交易服务配置的 duoduo.trade.platform-fee-bps 一致（默认 100 = 1%）
+    [int]$PlatformFeeBps = 100,
+    [switch]$SkipDbCheck
+)
+
+$ErrorActionPreference = 'Continue'
+$pass = 0
+$fail = 0
+$failures = @()
+
+function Check([string]$name, [bool]$ok, $extra) {
+    if ($ok) {
+        $script:pass++
+        Write-Host "  [PASS] $name"
+    } else {
+        $script:fail++
+        $script:failures += $name
+        if ($null -ne $extra) { Write-Host "  [FAIL] $name  -> $extra" } else { Write-Host "  [FAIL] $name" }
+    }
+}
+
+function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
+    $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
+    if ($session) { $params.WebSession = $session }
+    if ($headers) { $params.Headers = $headers }
+    if ($null -ne $bodyObj) {
+        $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
+        $params.ContentType = 'application/json; charset=utf-8'
+    }
+    try {
+        $r = Invoke-WebRequest @params
+        return @{ status = [int]$r.StatusCode; body = ($r.Content | ConvertFrom-Json) }
+    } catch {
+        $code = 0; $body = $null
+        try { $code = [int]$_.Exception.Response.StatusCode.value__ } catch { }
+        try { if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $body = $_.ErrorDetails.Message | ConvertFrom-Json } } catch { }
+        if ($null -eq $body) {
+            try {
+                $st = $_.Exception.Response.GetResponseStream()
+                if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd(); if ($t) { $body = $t | ConvertFrom-Json } }
+            } catch { }
+        }
+        return @{ status = $code; body = $body }
+    }
+}
+
+function Register([string]$phone, [string]$nickname) {
+    $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
+    if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
+    return @{ session = $s; result = $r }
+}
+
+function Sql([string]$db, [string]$sql) {
+    $env:PATH = 'C:\Program Files\Docker\Docker\resources\bin;' + $env:PATH
+    if (-not $env:DOCKER_CONFIG) { $env:DOCKER_CONFIG = 'D:\duoduo-infra\docker-nocreds' }
+    $out = & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B --default-character-set=utf8mb4 -D $db -e $sql 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ((@($out) | Where-Object { "$_" -notmatch 'Warning' }) -join "`n").Trim()
+}
+
+# 与 SettlementService.platformFeeOf 完全相同的算法： fee = floor((amount * bps + 5000) / 10000)
+# 必须走 [math]::Floor：PowerShell 的 [long] 强制转换是**四舍五入**，
+# 直接用 [long]($a/10000) 会在 .5 处与 Java 的整数除法结果不同（曾经的断言误报就出在这里）。
+function FeeOf([long]$amount, [int]$bps) {
+    if ($amount -le 0 -or $bps -le 0) { return [long]0 }
+    return [long][math]::Floor(([double]$amount * $bps + 5000) / 10000)
+}
+
+function NewKey { return [guid]::NewGuid().ToString() }
+$H_INTERNAL = @{ 'X-Internal-Token' = $InternalToken }
+
+$phoneA = '139' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+$phoneB = '138' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+$SKU_A = 2001
+$SKU_B = 2002
+$addr = '上海市浦东新区张江路 1 号'
+$recv = @{ receiverName = '小林'; receiverPhone = '13900000000'; receiverAddress = $addr }
+
+# 把「加购 → 下单 → 支付」打包成可复用动作，避免五段场景重复写三遍
+function PlaceAndPay($session, $skuA, $qtyA, $skuB, $qtyB, $label) {
+    if ($qtyA -gt 0) { Call 'Post' "$Gateway/api/cart/items" $session @{ skuId = $skuA; quantity = $qtyA } | Out-Null }
+    if ($qtyB -gt 0) { Call 'Post' "$Gateway/api/cart/items" $session @{ skuId = $skuB; quantity = $qtyB } | Out-Null }
+    $o = Call 'Post' "$Gateway/api/orders" $session ($recv + @{ idempotentKey = (NewKey) })
+    if ($o.status -ne 200) { return @{ ok = $false; orderNo = $null; order = $null; pay = $null; step = "下单 $label" } }
+    $order = @($o.body.data.orders)[0]
+    $p = Call 'Post' "$Gateway/api/orders/$($order.orderNo)/pay" $session @{ channel = 'MOCK'; idempotentKey = (NewKey) }
+    if ($p.status -ne 200) { return @{ ok = $false; orderNo = $order.orderNo; order = $order; pay = $null; step = "支付 $label" } }
+    return @{ ok = $true; orderNo = $order.orderNo; order = $order; pay = $p.body.data; step = $null }
+}
+
+Write-Host ""
+Write-Host "=== 多多宠物商店 · 交易服务（担保交易 / 资金托管）冒烟 @ $Gateway ==="
+Write-Host "用户 A = $phoneA ｜ 佣金费率 = $PlatformFeeBps bp"
+Write-Host ""
+
+# ---------- 0. 网关就绪 ----------
+Write-Host "> 网关就绪"
+$ready = $false
+for ($i = 0; $i -lt 40; $i++) {
+    try {
+        $h = Invoke-WebRequest -Uri "$Gateway/actuator/health" -UseBasicParsing -TimeoutSec 5
+        if ($h.StatusCode -eq 200) { $ready = $true; break }
+    } catch { Start-Sleep -Seconds 1 }
+}
+Check "网关 /actuator/health 就绪" $ready
+if (-not $ready) { Write-Host "网关未就绪，终止"; exit 1 }
+
+# ---------- 1. 内部接口保护（分两层验证） ----------
+Write-Host ""
+Write-Host "> 内部接口访问控制"
+$r = Call 'Post' "$Trade/api/orders/internal/ANYORDER/refund" $null @{ reason = 'x' }
+Check "直连交易服务、无凭据调用运营侧退款被拒绝（403）" ($r.status -eq 403) $r.status
+Check "拒绝响应为规范化错误结构（code=FORBIDDEN）" ($r.body.code -eq 'FORBIDDEN') $r.body.code
+$r = Call 'Post' "$Trade/api/orders/internal/ANYORDER/refund" $null @{ reason = 'x' } @{ 'X-Internal-Token' = 'wrong-token' }
+Check "直连交易服务、错误凭据被拒绝（403）" ($r.status -eq 403) $r.status
+$r = Call 'Post' "$Gateway/api/orders/internal/sweep" $null $null
+Check "经网关未登录触发补偿调度返回 401（网关先拦一层）" ($r.status -eq 401) $r.status
+
+# ---------- 2. 夹具 ----------
+Write-Host ""
+Write-Host "> 夹具"
+$batch = Call 'Get' "$Gateway/api/products/skus/batch?ids=$SKU_A,$SKU_B" $null $null
+$skus = @{}
+foreach ($x in @($batch.body.data)) { $skus["$($x.skuId)"] = $x }
+$P1 = [long]$skus["$SKU_A"].price
+$P2 = [long]$skus["$SKU_B"].price
+$S1 = [int]$skus["$SKU_A"].availableStock
+$S2 = [int]$skus["$SKU_B"].availableStock
+Write-Host "  2001 单价 $P1 可售 $S1 ｜ 2002 单价 $P2 可售 $S2"
+if ($P1 -le 0 -or $P2 -le 0 -or $S1 -lt 12) {
+    Write-Host "夹具前提不满足，终止本次测试，不执行任何写操作。"
+    Check "夹具前提：价格与库存均从接口正确读到" $false "P1=$P1 P2=$P2 S1=$S1 S2=$S2"
+    Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
+    exit 1
+}
+Check "夹具前提：2001 可售 ≥ 12（够本脚本消耗）" ($S1 -ge 12) $S1
+
+$dbS1 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;")
+$dbS2 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_B;")
+Check "（前置）库内 2001 库存与接口一致（$S1）" ($dbS1 -eq $S1) $dbS1
+Check "（前置）库内 2002 库存与接口一致（$S2）" ($dbS2 -eq $S2) $dbS2
+Check "（前置）2001 冻结量为 0" ((Sql 'duoduo_product' "SELECT COALESCE(frozen_stock,0) FROM t_sku WHERE id = $SKU_A;") -eq '0')
+
+# 本次测试的时间起点（用库时钟，与 created_at 同一时区口径）。
+# 后面的不变式按它划范围：功能上线前的历史订单本就没有托管单，
+# 拿它们去断言「已付款订单必有托管单」会一直失败 —— 那是范围没划清，不是服务错。
+$testStart = Sql 'duoduo_trade' "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s');"
+Check "（前置）已取得本次测试的库时间起点" (-not [string]::IsNullOrEmpty($testStart)) $testStart
+Check "（前置）该时间点之后尚无已付款订单（范围干净）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE created_at >= '$testStart' AND status IN ('PAID','SHIPPED','COMPLETED','REFUNDED');") -eq '0')
+
+# ---------- 3. 认证 ----------
+Write-Host ""
+Write-Host "> 认证"
+$regA = Register $phoneA '结算测试甲'
+Check "用户 A 注册/登录成功（200）" ($regA.result.status -eq 200) $regA.result.status
+$sessA = $regA.session
+$anon = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$r = Call 'Get' "$Gateway/api/orders/ANY/settlement" $anon $null
+Check "未登录查询资金托管返回 401" ($r.status -eq 401) $r.status
+$r = Call 'Post' "$Gateway/api/orders/ANY/refund" $anon @{ reason = 'x' }
+Check "未登录申请退款返回 401" ($r.status -eq 401) $r.status
+
+# ---------- 4. 场景一：托管 → 发货 → 确认收货 → 放款 ----------
+Write-Host ""
+Write-Host "> 场景一：托管 → 发货 → 确认收货 → 放款"
+$c1 = PlaceAndPay $sessA $SKU_A 2 $SKU_B 1 '场景一'
+Check "场景一：下单并支付成功（200）" $c1.ok $c1.step
+$on1 = $c1.orderNo
+$pay1 = [long]$c1.pay.amount
+$fee1 = FeeOf $pay1 $PlatformFeeBps
+
+$r = Call 'Get' "$Gateway/api/orders/$on1" $sessA $null
+Check "支付后订单详情内嵌托管信息（非空）" ($null -ne $r.body.data.settlement)
+Check "托管金额 = 订单实付（$pay1 分）" ([long]$r.body.data.settlement.amount -eq $pay1) $r.body.data.settlement.amount
+Check "平台佣金按 $PlatformFeeBps bp 计算正确（$fee1 分）" ([long]$r.body.data.settlement.platformFee -eq $fee1) $r.body.data.settlement.platformFee
+Check "卖家可得 = 托管金额 − 佣金（$($pay1 - $fee1) 分）" ([long]$r.body.data.settlement.sellerAmount -eq ($pay1 - $fee1)) $r.body.data.settlement.sellerAmount
+Check "托管状态为 CUSTODY（资金在平台）" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
+Check "托管文案为「托管中」" ($r.body.data.settlement.statusLabel -eq '托管中') $r.body.data.settlement.statusLabel
+Check "未放款时 releasedAt 为空" ([string]::IsNullOrEmpty($r.body.data.settlement.releasedAt)) $r.body.data.settlement.releasedAt
+
+$r = Call 'Get' "$Gateway/api/orders/$on1/settlement" $sessA $null
+Check "单独查询托管状态返回 200" ($r.status -eq 200) $r.status
+Check "单独查询：金额与订单一致" ([long]$r.body.data.amount -eq $pay1) $r.body.data.amount
+Check "单独查询：orderNo 回填正确" ($r.body.data.orderNo -eq $on1) $r.body.data.orderNo
+
+$r = Call 'Get' "$Gateway/api/orders?pageSize=5" $sessA $null
+$foundInList = @($r.body.data.items | Where-Object { $_.orderNo -eq $on1 })
+Check "订单列表也带托管信息（避免前端逐单再查）" ($foundInList.Count -eq 1 -and $null -ne $foundInList[0].settlement) $foundInList.Count
+
+if (-not $SkipDbCheck) {
+    Check "★ 交易库托管单 1 行且为 CUSTODY" ((Sql 'duoduo_trade' "SELECT CONCAT(COUNT(*),'/',COALESCE(MAX(status),'-')) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq '1/CUSTODY')
+    Check "托管金额落库 = $pay1 分" ((Sql 'duoduo_trade' "SELECT amount FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq "$pay1")
+    Check "佣金落库 = $fee1 分" ((Sql 'duoduo_trade' "SELECT platform_fee FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq "$fee1")
+}
+
+# 支付幂等重放不应产生第二条托管单（uk_settle_order）
+$r = Call 'Post' "$Gateway/api/orders/$on1/pay" $sessA @{ channel = 'MOCK'; idempotentKey = (NewKey) }
+Check "已付款订单换键重复支付被拒（422）" ($r.status -eq 422) $r.status
+if (-not $SkipDbCheck) {
+    Check "支付被拒后托管单仍只有 1 行（未被复制）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq '1')
+}
+
+# 未发货不能确认收货
+$r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
+Check "未发货不能确认收货（422）" ($r.status -eq 422) $r.status
+
+# 发货：钱仍应在托管里
+$r = Call 'Post' "$Gateway/api/orders/$on1/ship" $sessA $null $H_INTERNAL
+Check "带内部凭据发货成功（200）" ($r.status -eq 200) $r.status
+Check "发货后订单为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
+Check "★ 发货不等于放款：托管仍为 CUSTODY" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
+
+# 确认收货 → 放款
+$r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
+Check "确认收货返回 200" ($r.status -eq 200) $r.status
+Check "订单转为 COMPLETED" ($r.body.data.status -eq 'COMPLETED') $r.body.data.status
+Check "★ 确认收货后资金已放款给卖家（RELEASED）" ($r.body.data.settlement.status -eq 'RELEASED') $r.body.data.settlement.status
+Check "放款文案为「已放款」" ($r.body.data.settlement.statusLabel -eq '已放款') $r.body.data.settlement.statusLabel
+Check "放款时间非空" (-not [string]::IsNullOrEmpty($r.body.data.settlement.releasedAt)) $r.body.data.settlement.releasedAt
+Check "放款后金额不变（$pay1 分）" ([long]$r.body.data.settlement.amount -eq $pay1) $r.body.data.settlement.amount
+$releasedAt1 = $r.body.data.settlement.releasedAt
+
+$r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
+Check "重复确认收货被拒（422）" ($r.status -eq 422) $r.status
+$r = Call 'Get' "$Gateway/api/orders/$on1/settlement" $sessA $null
+Check "重复确认收货未二次放款（releasedAt 未被改写）" ($r.body.data.releasedAt -eq $releasedAt1) $r.body.data.releasedAt
+if (-not $SkipDbCheck) {
+    Check "托管单仍只有 1 行、状态 RELEASED" ((Sql 'duoduo_trade' "SELECT CONCAT(COUNT(*),'/',COALESCE(MAX(status),'-')) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq '1/RELEASED')
+    Check "released_at 已落库" ((Sql 'duoduo_trade' "SELECT CASE WHEN released_at IS NULL THEN 'null' ELSE 'set' END FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq 'set')
+}
+
+# 已放款的订单不能再退款（钱已到卖家手里，需走追偿）
+$r = Call 'Post' "$Gateway/api/orders/internal/$on1/refund" $sessA @{ reason = '已放款后尝试退款' } $H_INTERNAL
+Check "★ 已放款订单退款被拒（422）" ($r.status -eq 422) $r.status
+Check "拒绝原因说明需走追偿/垫付" ($r.body.message -match '追偿|垫付') $r.body.message
+$r = Call 'Get' "$Gateway/api/orders/$on1/settlement" $sessA $null
+Check "被拒后托管仍为 RELEASED（未被改写为 REFUNDED）" ($r.body.data.status -eq 'RELEASED') $r.body.data.status
+
+# ---------- 5. 场景二：买家自助退款（已付款 · 未发货） ----------
+Write-Host ""
+Write-Host "> 场景二：买家自助退款（已付款 · 未发货）"
+$before2 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;")
+$c2 = PlaceAndPay $sessA $SKU_A 1 0 0 '场景二'
+Check "场景二：下单并支付成功（200）" $c2.ok $c2.step
+$on2 = $c2.orderNo
+$pay2 = [long]$c2.pay.amount
+$after2 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;")
+Check "支付后库存真实扣减 1 件（$before2 → $after2）" ($after2 -eq ($before2 - 1)) "$before2 -> $after2"
+Check "支付后 2001 冻结量归零" ((Sql 'duoduo_product' "SELECT COALESCE(frozen_stock,0) FROM t_sku WHERE id = $SKU_A;") -eq '0')
+
+$r = Call 'Post' "$Gateway/api/orders/$on2/cancel" $sessA @{ reason = '反悔' }
+Check "已付款订单不能自行取消（422，回归 I-11①）" ($r.status -eq 422) $r.status
+
+$r = Call 'Post' "$Gateway/api/orders/$on2/refund" $anon @{ reason = 'x' }
+Check "未登录退款返回 401" ($r.status -eq 401) $r.status
+$regB = Register $phoneB '结算测试乙'
+Check "用户 B 注册/登录成功（200）" ($regB.result.status -eq 200) $regB.result.status
+$r = Call 'Post' "$Gateway/api/orders/$on2/refund" $regB.session @{ reason = '越权尝试' }
+Check "用户 B 退款 A 的订单返回 404" ($r.status -eq 404) $r.status
+$r = Call 'Get' "$Gateway/api/orders/$on2/settlement" $regB.session $null
+Check "用户 B 查询 A 的托管信息返回 404" ($r.status -eq 404) $r.status
+
+$r = Call 'Post' "$Gateway/api/orders/$on2/refund" $sessA @{ reason = '不想要了' }
+Check "买家自助退款返回 200" ($r.status -eq 200) $r.status
+Check "订单转为 REFUNDED" ($r.body.data.orderStatus -eq 'REFUNDED') $r.body.data.orderStatus
+Check "退款文案为「已退款」" ($r.body.data.orderStatusLabel -eq '已退款') $r.body.data.orderStatusLabel
+Check "退款金额 = 实付金额（$pay2 分）" ([long]$r.body.data.refundAmount -eq $pay2) $r.body.data.refundAmount
+Check "★ 资金已退回买家（fundsRefunded=true）" ($r.body.data.fundsRefunded -eq $true) $r.body.data.fundsRefunded
+Check "托管状态为 REFUNDED" ($r.body.data.settlementStatus -eq 'REFUNDED') $r.body.data.settlementStatus
+Check "托管文案为「已退回买家」" ($r.body.data.settlementStatusLabel -eq '已退回买家') $r.body.data.settlementStatusLabel
+Check "响应如实告知「货待回库」（restockPending=true）" ($r.body.data.restockPending -eq $true) $r.body.data.restockPending
+Check "退款时间非空" (-not [string]::IsNullOrEmpty($r.body.data.refundedAt)) $r.body.data.refundedAt
+
+$r = Call 'Get' "$Gateway/api/orders/$on2" $sessA $null
+Check "订单详情状态为 REFUNDED" ($r.body.data.status -eq 'REFUNDED') $r.body.data.status
+Check "订单详情 refundedAt 非空" (-not [string]::IsNullOrEmpty($r.body.data.refundedAt)) $r.body.data.refundedAt
+Check "订单详情托管状态 REFUNDED" ($r.body.data.settlement.status -eq 'REFUNDED') $r.body.data.settlement.status
+
+if (-not $SkipDbCheck) {
+    Check "托管单状态落库为 REFUNDED" ((Sql 'duoduo_trade' "SELECT status FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on2');") -eq 'REFUNDED')
+    Check "订单 refunded_at 已落库" ((Sql 'duoduo_trade' "SELECT CASE WHEN refunded_at IS NULL THEN 'null' ELSE 'set' END FROM t_order WHERE order_no='$on2';") -eq 'set')
+    Check "订单明细已标记退款（refund_status=REFUNDED）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_item WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on2') AND refund_status='REFUNDED';") -eq '1')
+    Check "★ 台账已从 DEDUCTED 迁出（不再是已扣减）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on2') AND status='DEDUCTED';") -eq '0')
+    Check "状态日志含 REFUNDED 流转" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on2') AND to_status='REFUNDED';") -eq '1')
+
+    # 触发补偿调度：确认入库回补最终完成（退款后它会异步做，也可能已被事务提交后的监听器做完）
+    $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
+    Check "带内部凭据触发补偿调度返回 200" ($r.status -eq 200) $r.status
+    Check "★ 台账已置 RESTOCKED（货已回库）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on2') AND status='RESTOCKED';") -eq '1')
+    $afterRestock = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;")
+    Check "★ 退款后库存已回补（$after2 → $afterRestock，回到 $before2）" ($afterRestock -eq $before2) "$after2 -> $afterRestock"
+    $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
+    Check "重复触发补偿调度不报错（200，可重入）" ($r.status -eq 200) $r.status
+    Check "重复调度未重复入库（库存仍为 $before2）" ((Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;") -eq "$before2")
+}
+
+$r = Call 'Post' "$Gateway/api/orders/$on2/refund" $sessA @{ reason = '再退一次' }
+Check "重复退款被拒（422）" ($r.status -eq 422) $r.status
+$r = Call 'Post' "$Gateway/api/orders/internal/$on2/refund" $sessA @{ reason = '运营侧重复退' } $H_INTERNAL
+Check "运营侧重复退款同样被拒（422）" ($r.status -eq 422) $r.status
+# 退款路径先做订单状态检查（已退款 → 直接拒绝），再到资金状态检查，
+# 因此提示语是「订单当前状态（已退款）不允许退款」—— 这些表述都算正确，不作过细约束。
+Check "拒绝原因说明当前状态" ($r.body.message -match '已退款|不允许退款|不能重复退款') $r.body.message
+
+# 未付款订单不应该能退款
+Write-Host ""
+Write-Host "> 场景二补充：未付款订单不可退款"
+$r = Call 'Post' "$Gateway/api/cart/items" $sessA @{ skuId = $SKU_A; quantity = 1 }
+Check "（准备）加购 2001 × 1" ($r.status -eq 200) $r.status
+$r = Call 'Post' "$Gateway/api/orders" $sessA ($recv + @{ idempotentKey = (NewKey) })
+Check "（准备）再下一单（待付款）" ($r.status -eq 200) $r.status
+$on3 = @($r.body.data.orders)[0].orderNo
+$r = Call 'Post' "$Gateway/api/orders/$on3/refund" $sessA @{ reason = '不想买了' }
+Check "未付款订单自助退款被拒（422）" ($r.status -eq 422) $r.status
+Check "拒绝原因提示直接取消订单" ($r.body.message -match '尚未支付') $r.body.message
+$r = Call 'Post' "$Gateway/api/orders/$on3/cancel" $sessA @{ reason = '改主意了' }
+Check "未付款订单可正常取消（200）" ($r.status -eq 200) $r.status
+$r = Call 'Post' "$Gateway/api/orders/$on3/refund" $sessA @{ reason = '取消后再退' }
+Check "已取消订单退款被拒（422）" ($r.status -eq 422) $r.status
+
+# ---------- 6. 场景三：已发货订单买家不能自助退，运营侧可退 ----------
+Write-Host ""
+Write-Host "> 场景三：已发货订单的退款边界"
+$before3 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;")
+$c3 = PlaceAndPay $sessA $SKU_A 1 0 0 '场景三'
+Check "场景三：下单并支付成功（200）" $c3.ok $c3.step
+$on4 = $c3.orderNo
+$r = Call 'Post' "$Gateway/api/orders/$on4/ship" $sessA $null $H_INTERNAL
+Check "（准备）发货成功" ($r.status -eq 200) $r.status
+Check "（准备）订单为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
+
+$r = Call 'Post' "$Gateway/api/orders/$on4/refund" $sessA @{ reason = '不想要了' }
+Check "★ 已发货订单买家自助退款被拒（422）" ($r.status -eq 422) $r.status
+Check "拒绝原因提示走售后" ($r.body.message -match '售后') $r.body.message
+$r = Call 'Post' "$Trade/api/orders/internal/$on4/refund" $null @{ reason = 'x' }
+Check "直连交易服务、无凭据的运营侧退款被拒（403）" ($r.status -eq 403) $r.status
+
+$r = Call 'Post' "$Gateway/api/orders/internal/$on4/refund" $sessA @{ reason = '卖家已收到退货，同意退款' } $H_INTERNAL
+Check "运营侧退款（售后）返回 200" ($r.status -eq 200) $r.status
+Check "订单转为 REFUNDED" ($r.body.data.orderStatus -eq 'REFUNDED') $r.body.data.orderStatus
+Check "资金已退回买家" ($r.body.data.fundsRefunded -eq $true) $r.body.data.fundsRefunded
+if (-not $SkipDbCheck) {
+    Check "（售后）托管单状态 REFUNDED" ((Sql 'duoduo_trade' "SELECT status FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on4');") -eq 'REFUNDED')
+    Check "（售后）状态日志操作者为 SELLER" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on4') AND to_status='REFUNDED' AND operator_type='SELLER';") -eq '1')
+    $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
+    Check "（售后）入库回补完成（RESTOCKED）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on4') AND status='RESTOCKED';") -eq '1')
+    Check "（售后）库存已回补" ((Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;") -eq "$before3")
+}
+
+# ---------- 7. 场景四：自动确认收货并放款 ----------
+Write-Host ""
+Write-Host "> 场景四：发货满 N 天自动确认收货并放款"
+$c4 = PlaceAndPay $sessA $SKU_A 1 0 0 '场景四'
+Check "场景四：下单并支付成功（200）" $c4.ok $c4.step
+$on5 = $c4.orderNo
+$r = Call 'Post' "$Gateway/api/orders/$on5/ship" $sessA $null $H_INTERNAL
+Check "（准备）发货成功（SHIPPED）" ($r.status -eq 200) $r.status
+$r = Call 'Get' "$Gateway/api/orders/$on5/settlement" $sessA $null
+Check "（准备）自动收货前资金仍在托管（CUSTODY）" ($r.body.data.status -eq 'CUSTODY') $r.body.data.status
+
+if (-not $SkipDbCheck) {
+    # 测试夹具：把发货时间往前挪 8 天（只改本脚本自己创建的订单），触发「发货满 7 天自动收货」
+    Sql 'duoduo_trade' "UPDATE t_order SET shipped_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 8 DAY) WHERE order_no = '$on5';" | Out-Null
+    Check "（准备）发货时间已置为 8 天前" ((Sql 'duoduo_trade' "SELECT CASE WHEN shipped_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY) THEN 'yes' ELSE 'no' END FROM t_order WHERE order_no='$on5';") -eq 'yes')
+
+    $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
+    Check "带内部凭据触发补偿调度返回 200" ($r.status -eq 200) $r.status
+    Check "调度报告自动收货 ≥ 1 单" ([int]$r.body.data.autoCompleted -ge 1) $r.body.data.autoCompleted
+    Check "调度报告放款 ≥ 1 笔" ([int]$r.body.data.fundsReleased -ge 1) $r.body.data.fundsReleased
+
+    $r = Call 'Get' "$Gateway/api/orders/$on5" $sessA $null
+    Check "★ 超期订单已自动确认收货（COMPLETED）" ($r.body.data.status -eq 'COMPLETED') $r.body.data.status
+    Check "★ 自动收货同时放款给卖家（RELEASED）" ($r.body.data.settlement.status -eq 'RELEASED') $r.body.data.settlement.status
+    Check "自动收货写入完成时间" (-not [string]::IsNullOrEmpty($r.body.data.finishedAt)) $r.body.data.finishedAt
+    $finished1 = $r.body.data.finishedAt
+    Check "自动收货的状态日志操作者为 SYSTEM" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on5') AND to_status='COMPLETED' AND operator_type='SYSTEM';") -eq '1')
+    Check "日志原因标明自动确认收货" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on5') AND reason LIKE '%自动确认收货%';") -eq '1')
+
+    $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
+    Check "重复调度不报错（200）" ($r.status -eq 200) $r.status
+    $r = Call 'Get' "$Gateway/api/orders/$on5" $sessA $null
+    Check "重复调度未改写完成时间（可重入）" ($r.body.data.finishedAt -eq $finished1) $r.body.data.finishedAt
+    Check "重复调度未二次放款（released 仍为 1 行 RELEASED）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on5') AND status='RELEASED';") -eq '1')
+}
+
+# ---------- 8. 资金与订单的交叉不变式（限定本次测试范围） ----------
+Write-Host ""
+Write-Host "> 不变式（范围：本次测试创建的订单）"
+Check "本次测试的已付款及以后订单全部有托管单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o LEFT JOIN t_settlement s ON s.order_id=o.id WHERE o.created_at >= '$testStart' AND o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') AND s.id IS NULL;") -eq '0')
+# 刻意不写死条数：条数取决于脚本里场景的增删，写死了每次改脚本都要跟着改，
+# 而真正要守的不变式是**一一对应**（一单一条托管单，既不多也不少）。
+$rangeOrders = [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE created_at >= '$testStart' AND status IN ('PAID','SHIPPED','COMPLETED','REFUNDED');")
+$rangeSettles = [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement s JOIN t_order o ON o.id=s.order_id WHERE o.created_at >= '$testStart';")
+Check "本次测试产生 ≥ 4 张已支付订单（脚本场景数下限）" ($rangeOrders -ge 4) $rangeOrders
+Check "订单数与托管单数一一对应（$rangeOrders 单 / $rangeSettles 条）" ($rangeOrders -eq $rangeSettles) "$rangeOrders vs $rangeSettles"
+Check "不存在「订单已终结但资金仍托管中」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE s.status='CUSTODY' AND o.status IN ('COMPLETED','REFUNDED','CLOSED');") -eq '0')
+Check "不存在「已退款但托管仍 RELEASED」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE o.status='REFUNDED' AND s.status<>'REFUNDED';") -eq '0')
+Check "已关闭订单无残留 FROZEN 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='FROZEN' AND o.status='CLOSED';") -eq '0')
+Check "已退款订单无残留 RESTOCK_PENDING 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='RESTOCK_PENDING' AND o.status='REFUNDED';") -eq '0')
+
+# ---------- 9. 复原测试消耗的库存 ----------
+Write-Host ""
+Write-Host "> 复原测试消耗的库存（仅测试夹具用）"
+if ($SkipDbCheck) {
+    Write-Host "  [SKIP] 已指定 -SkipDbCheck"
+} else {
+    Sql 'duoduo_product' "UPDATE t_sku SET stock = $S1, frozen_stock = 0 WHERE id = $SKU_A;" | Out-Null
+    Sql 'duoduo_product' "UPDATE t_sku SET stock = $S2, frozen_stock = 0 WHERE id = $SKU_B;" | Out-Null
+    Check "2001 库存已复原为 $S1" ((Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A;") -eq "$S1")
+    Check "2002 库存已复原为 $S2" ((Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_B;") -eq "$S2")
+    Check "两个 SKU 冻结量均为 0" ((Sql 'duoduo_product' "SELECT COALESCE(SUM(frozen_stock),0) FROM t_sku WHERE id IN ($SKU_A,$SKU_B);") -eq '0')
+}
+
+# ---------- 汇总 ----------
+Write-Host ""
+Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
+if ($fail -gt 0) {
+    Write-Host "失败项："
+    foreach ($f in $failures) { Write-Host "  - $f" }
+    exit 1
+}
+exit 0

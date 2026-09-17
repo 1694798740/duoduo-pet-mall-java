@@ -21,7 +21,8 @@ import java.io.IOException;
  *       发货本该由卖家执行，但卖家账号体系要到卖家中心（M5-9）才落地。
  *       在那之前用内部凭据保护：既让整条链路（支付 → 发货 → 收货）现在就能测，
  *       又不至于把「任何人登录后都能替别人发货」这个口子留着。</li>
- *   <li>{@code /api/orders/internal/**} —— 补偿调度的手动触发（便于测试与运维排障）。</li>
+ *   <li>{@code /api/orders/internal/**} —— 运营侧动作与补偿调度：
+ *       售后退款（{@code /internal/{orderNo}/refund}）与手动触发补偿调度（{@code /internal/sweep}）。</li>
  * </ul>
  *
  * <p>设计取舍同商品服务：<b>默认开启、失败关闭</b>，配置项带开发默认值以便本地容器直接跑通，

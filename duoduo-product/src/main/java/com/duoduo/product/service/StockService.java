@@ -20,19 +20,32 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 库存变更服务（冻结 / 释放 / 扣减），供交易服务内部调用。
+ * 库存变更服务（冻结 / 释放 / 扣减 / 入库），供交易服务内部调用。
  *
  * <p>职责边界：<b>库存的主数据在商品服务</b>，交易服务只持有「冻结台账」。
  * 因此交易服务下单时必须回调本服务把冻结量落到 SKU 上，
  * 这样「可售余量 = stock - frozen_stock」这个口径只有一处定义，不会两个服务各算一套。
  *
- * <p>并发安全：三个操作都是原子条件更新（见 {@link SkuMapper}），
+ * <p>四个操作各自的语义与条件：
+ * <ul>
+ *   <li>{@code freeze}（下单）：可售余量足够才冻，要求 SKU 在售；</li>
+ *   <li>{@code release}（取消 / 超时关单）：冻结量足够才放，不要求 SKU 在售（下架了也要能放）；</li>
+ *   <li>{@code deduct}（支付成功）：库存与冻结量**同时**减少，避免「库存扣了冻结没减」；</li>
+ *   <li>{@code restock}（退款入库）：库存加回，<b>不校验在售状态</b>（库存是物理事实）。</li>
+ * </ul>
+ *
+ * <p>并发安全：四个操作都是原子条件更新（见 {@link SkuMapper}），
  * 靠数据库的行级原子性防超卖，<b>不需要分布式锁</b>。
  *
  * <p>关于原子性：本接口对<b>单次请求内的整批 SKU 是原子的</b>（同一本地事务），
  * 任意一项失败则整批回滚，并照常返回逐项结果供调用方定位原因。
  * 这样调用方拿到失败时，远端状态一定是「什么都没改」，不需要再依赖跨服务补偿 ——
  * 补偿调用本身也可能失败，那才是真正难查的库存残留。
+ *
+ * <p><b>关于 restock 的重复调用</b>：它不像 freeze/release 那样自带「幂等护栏」
+ * （冻结量足够才成功、冻结量不足即重复），重复入库会真的多加库存。
+ * 因此调用方（交易服务）必须用台账把「入库」做成一次性的、可重试的状态迁移，
+ * 而不是依赖本接口自身幂等。详见交易侧 {@code StockFreezeEntity} 的状态说明。
  */
 @Service
 public class StockService {
@@ -40,6 +53,7 @@ public class StockService {
     public static final String ACTION_FREEZE = "freeze";
     public static final String ACTION_RELEASE = "release";
     public static final String ACTION_DEDUCT = "deduct";
+    public static final String ACTION_RESTOCK = "restock";
 
     /** 单次请求最多处理多少个 SKU，防止一次把库压住 */
     private static final int MAX_ITEMS = 50;
@@ -82,6 +96,7 @@ public class StockService {
                 case ACTION_FREEZE -> skuMapper.freezeStock(item.skuId(), item.quantity(), now);
                 case ACTION_RELEASE -> skuMapper.releaseStock(item.skuId(), item.quantity(), now);
                 case ACTION_DEDUCT -> skuMapper.deductStock(item.skuId(), item.quantity(), now);
+                case ACTION_RESTOCK -> skuMapper.restockStock(item.skuId(), item.quantity(), now);
                 default -> throw BizException.validation("不支持的库存操作：" + action);
             };
             if (affected == 1) {
@@ -117,6 +132,11 @@ public class StockService {
         SkuEntity sku = skuMapper.selectById(skuId);
         if (sku == null) {
             return Reason.SKU_NOT_FOUND;
+        }
+        // 入库的 WHERE 里没有 status 条件，因此「已下架」不是入库失败的原因；
+        // 走到这里说明是别的异常（例如并发删除了该 SKU），单独给一个原因码便于排查。
+        if (ACTION_RESTOCK.equals(action)) {
+            return Reason.RESTOCK_FAILED;
         }
         if (!SKU_ACTIVE.equals(sku.getStatus())) {
             return Reason.SKU_INACTIVE;

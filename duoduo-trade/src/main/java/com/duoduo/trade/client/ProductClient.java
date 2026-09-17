@@ -22,7 +22,7 @@ import java.util.List;
  * 两端的集合参数编码规则（重复 query vs 逗号分隔）在不同 Feign 版本下有过变化，
  * 固定成单值字符串后两端行为完全确定。
  *
- * <p>库存写接口（freeze / release / deduct）由 {@link com.duoduo.trade.config.InternalCallConfig}
+ * <p>库存写接口（freeze / release / deduct / restock）由 {@link com.duoduo.trade.config.InternalCallConfig}
  * 统一加上 {@code X-Internal-Token} 请求头，服务端会校验。
  */
 @FeignClient(name = "duoduo-product", path = "/api/products")
@@ -43,4 +43,8 @@ public interface ProductClient {
     /** 扣减库存（支付成功时调用） */
     @PostMapping("/skus/stock/deduct")
     ApiResponse<StockChangeOutcome> deductStock(@RequestBody StockChangePayload payload);
+
+    /** 退货入库（退款成功后调用，把货补回库存） */
+    @PostMapping("/skus/stock/restock")
+    ApiResponse<StockChangeOutcome> restockStock(@RequestBody StockChangePayload payload);
 }

@@ -71,6 +71,11 @@ duoduo:
     max-items-per-order: ${MAX_ITEMS_PER_ORDER:50}
     # 单个 SKU 单次最多购买数量
     max-quantity-per-sku: ${MAX_QTY_PER_SKU:200}
+    # 平台佣金费率（基点，1 bp = 万分之一）。100 bp = 1%；配 0 即免佣。
+    # 佣金从托管金额里扣，余下打给卖家；历史单据保留结算当刻的口径，不随费率调整而变。
+    platform-fee-bps: ${PLATFORM_FEE_BPS:100}
+    # 发货后多少天自动确认收货并放款给卖家；配 0 或负数即关闭（仅手动确认收货）
+    auto-receipt-days: ${AUTO_RECEIPT_DAYS:7}
 
 management:
   endpoints:

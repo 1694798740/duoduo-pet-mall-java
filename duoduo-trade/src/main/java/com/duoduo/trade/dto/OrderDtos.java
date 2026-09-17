@@ -1,5 +1,6 @@
 package com.duoduo.trade.dto;
 
+import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -70,12 +71,16 @@ public final class OrderDtos {
             String receiverAddress,
             String remark,
             List<OrderItemView> items,
+            /** 资金托管信息（未支付时为 null）；买家详情页据此显示「资金托管中 / 已放款」 */
+            SettlementView settlement,
             String createdAt,
             String expireAt,
             String paidAt,
             String shippedAt,
             String finishedAt,
             String closedAt,
+            /** 退款时间（钱退回买家的时刻）；未退款为 null */
+            String refundedAt,
             String closeReason
     ) {
     }
@@ -128,8 +133,8 @@ public final class OrderDtos {
     }
 
     /**
-     * 超时关单（补偿调度）的执行结果。
-     * 运维排障与自测都靠它把「扫了多少、关了多少、释放失败多少」说清楚。
+     * 超时关单 / 自动确认收货（补偿调度）的执行结果。
+     * 运维排障与自测都靠它把「扫了多少、关了多少、放款多少」说清楚。
      */
     public record SweepResult(
             /** 本轮扫描到的超时待付款订单数 */
@@ -139,7 +144,49 @@ public final class OrderDtos {
             /** 关单后成功释放冻结的条数 */
             int released,
             /** 释放失败、仍留在 FROZEN 台账待下次重试的条数 */
-            int releaseFailed
+            int releaseFailed,
+            /** 本轮因「发货满 N 天」自动确认收货的订单数 */
+            int autoCompleted,
+            /** 自动确认收货时成功放款给卖家的笔数 */
+            int fundsReleased,
+            /** 本轮成功入库回补（退款后的货回库）的条数 */
+            int restocked,
+            /** 入库回补失败、留在 RESTOCK_PENDING 待下轮重试的条数 */
+            int restockFailed
+    ) {
+    }
+
+    /**
+     * 退款请求。
+     *
+     * <p>买家自助退款只允许「已付款且卖家未发货」的订单；
+     * 已发货之后要走售后流程（由运营侧入口执行），因为货在买家手里，
+     * 系统无从判断货有没有退回来 —— 这一点必须在接口层挡住，
+     * 而不是指望前端只显示正确的按钮。
+     */
+    public record RefundRequest(
+            @Size(max = 100, message = "退款原因过长") String reason
+    ) {
+    }
+
+    /**
+     * 退款结果。
+     *
+     * <p>{@code fundsRefunded} 表示资金是否真的从托管退回买家；
+     * {@code restockPending} 表示货的回库是否还需要后台补偿 ——
+     * 这两个刻意分开表达：「钱退了、货还没回库」是完全正常的一种中间状态，
+     * 用一个布尔量糊在一起，前端就没法给出准确提示。
+     */
+    public record RefundResult(
+            String orderNo,
+            String orderStatus,
+            String orderStatusLabel,
+            long refundAmount,
+            boolean fundsRefunded,
+            String settlementStatus,
+            String settlementStatusLabel,
+            boolean restockPending,
+            String refundedAt
     ) {
     }
 }

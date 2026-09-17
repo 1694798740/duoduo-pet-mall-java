@@ -64,4 +64,23 @@ public interface SkuMapper extends BaseMapper<SkuEntity> {
     int deductStock(@Param("skuId") Long skuId,
                     @Param("quantity") int quantity,
                     @Param("updatedAt") LocalDateTime updatedAt);
+
+    /**
+     * 退货入库（退款成功后调用）：真实库存回补。
+     *
+     * <p>与前三个操作不同，这里<b>刻意不加 {@code status = 'ACTIVE'} 条件</b>：
+     * 库存是**物理事实**。商品在下架期间发生退货，货照样要回到仓库，
+     * 如果因为「已下架」就拒绝入库，系统里就看不见这批货，对账时凭空多出一笔差额，
+     * 而且没人知道差在哪。下架只应影响「能不能卖」，不该影响「能不能入库」。
+     *
+     * <p>唯一的失败原因是 SKU 不存在 —— 那属于数据异常，需要人工核对。
+     *
+     * @return 受影响行数；1 = 入库成功，0 = SKU 不存在
+     */
+    @Update("UPDATE t_sku SET stock = stock + #{quantity}, "
+            + "updated_at = #{updatedAt} "
+            + "WHERE id = #{skuId}")
+    int restockStock(@Param("skuId") Long skuId,
+                     @Param("quantity") int quantity,
+                     @Param("updatedAt") LocalDateTime updatedAt);
 }

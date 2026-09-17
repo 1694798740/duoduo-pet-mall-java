@@ -8,7 +8,10 @@ import com.duoduo.trade.dto.OrderDtos.PayRequest;
 import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.RefundRequest;
+import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
+import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.service.OrderService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -107,10 +110,50 @@ public class OrderController {
     }
 
     /**
-     * 手动触发一次超时关单补偿调度（<b>内部接口</b>，同样需要内部凭据）。
+     * 申请退款（买家自助）。
      *
-     * <p>定时任务每 {@code duoduo.trade.sweep-interval-ms} 自动跑一次；
-     * 这个入口是给运维排障与自动化测试用的 —— 否则「等 30 分钟」既不可测也不好排查。
+     * <p>只允许「已付款且卖家未发货」的订单：未发货时钱退回去、卖家不发货，两清；
+     * 一旦发货，货在买家手上，必须走售后流程（运营侧凭内部凭据执行退款）。
+     * 这条界限在服务端强制，前端只显示正确按钮是挡不住直接调接口的。
+     */
+    @PostMapping("/{orderNo}/refund")
+    public ApiResponse<RefundResult> refund(@PathVariable String orderNo,
+                                            @Valid @RequestBody(required = false) RefundRequest request) {
+        String reason = request == null ? null : request.reason();
+        return ApiResponse.ok(orderService.refundByBuyer(orderNo, reason));
+    }
+
+    /**
+     * 运营侧退款（售后审核通过后执行），已付款 / 已发货的订单都可。
+     *
+     * <p><b>内部接口</b>：路径以 {@code /internal/} 开头，由 {@code InternalTokenFilter}
+     * 校验 {@code X-Internal-Token}。卖家账号体系落地后，这里会再加一层
+     * 「调用者是否为该订单的卖家」的校验。
+     */
+    @PostMapping("/internal/{orderNo}/refund")
+    public ApiResponse<RefundResult> refundByOperator(@PathVariable String orderNo,
+                                                      @Valid @RequestBody(required = false) RefundRequest request) {
+        String reason = request == null ? null : request.reason();
+        return ApiResponse.ok(orderService.refundByOperator(orderNo, reason));
+    }
+
+    /**
+     * 查询订单的资金托管状态（仅本人可见）。
+     *
+     * <p>买家详情页据此显示「资金托管中 / 已放款给卖家 / 已退回买家」——
+     * C2C 担保交易里，买家最关心的就是「我的钱现在在哪」，这个必须能查到。
+     */
+    @GetMapping("/{orderNo}/settlement")
+    public ApiResponse<SettlementView> settlement(@PathVariable String orderNo) {
+        return ApiResponse.ok(orderService.settlementOf(orderNo));
+    }
+
+    /**
+     * 手动触发一次补偿调度（超时关单 + 释放冻结 + 自动确认收货 + 入库补偿）。
+     *
+     * <p><b>内部接口</b>，同样需要内部凭据。
+     * 定时任务每 {@code duoduo.trade.sweep-interval-ms} 自动跑一次；
+     * 这个入口是给运维排障与自动化测试用的 —— 否则「等 7 天看自动收货」既不可测也不好排查。
      */
     @PostMapping("/internal/sweep")
     public ApiResponse<SweepResult> sweep() {

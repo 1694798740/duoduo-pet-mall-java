@@ -18,12 +18,15 @@ import com.duoduo.trade.dto.OrderDtos.PayRequest;
 import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
+import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.entity.CartItemEntity;
 import com.duoduo.trade.entity.OrderEntity;
 import com.duoduo.trade.entity.OrderItemEntity;
 import com.duoduo.trade.entity.OrderStatusLogEntity;
 import com.duoduo.trade.entity.PaymentEntity;
+import com.duoduo.trade.entity.SettlementEntity;
 import com.duoduo.trade.entity.StockFreezeEntity;
 import com.duoduo.trade.mapper.CartItemMapper;
 import com.duoduo.trade.mapper.OrderItemMapper;
@@ -33,13 +36,17 @@ import com.duoduo.trade.mapper.PaymentMapper;
 import com.duoduo.trade.mapper.StockFreezeMapper;
 import com.duoduo.trade.support.OrderNoGenerator;
 import com.duoduo.trade.support.OrderStatus;
+import com.duoduo.trade.support.SettlementStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -52,9 +59,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 订单服务：下单（含拆单）与取消（含库存释放）。
+ * 订单服务：下单（含拆单）、取消（含库存释放）、支付、发货收货、退款与补偿调度。
  *
- * <p>五个刻意的工程决策：
+ * <p>七个刻意的工程决策：
  * <ol>
  *   <li><b>幂等靠唯一索引</b>：{@code uk_order_user_idem(user_id, idempotent_key)}。
  *       先查一次是为了快速返回（常规重复提交走这条路），
@@ -69,6 +76,11 @@ import java.util.stream.Collectors;
  *       光靠 {@code @Transactional} 回滚会留下「订单没建成、库存却被冻着」的幽灵占用。</li>
  *   <li><b>取消可重入</b>：释放只处理 {@code FROZEN} 状态的台账行并逐条落状态，
  *       因此「部分失败后重试」是安全的（已释放的不会被重复释放，重复释放会被商品服务拒绝）。</li>
+ *   <li><b>钱与订单分开记</b>：资金去向写在 {@code t_settlement}，由
+ *       {@link SettlementService} 用 CAS 维护。订单状态回答「货走到哪了」，
+ *       托管状态回答「钱现在在谁手里」—— 两条时间线分开，出问题时才答得上来。</li>
+ *   <li><b>退款不阻塞入库</b>：买家的钱该退就退，货回库是仓库侧的后续动作，
+ *       失败由台账 {@code RESTOCK_PENDING} 与补偿调度兜住，不拿仓库的抖动卡住买家。</li>
  * </ol>
  */
 @Service
@@ -92,6 +104,8 @@ public class OrderService {
     private static final int SELECTED = 1;
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
+    /** 订单明细的退款标记（下单时初始为 NONE） */
+    private static final String REFUND_STATUS_REFUNDED = "REFUNDED";
 
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
@@ -100,8 +114,10 @@ public class OrderService {
     private final PaymentMapper paymentMapper;
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
+    private final SettlementService settlementService;
     private final SnowflakeIdGenerator idGenerator;
     private final OrderNoGenerator orderNoGenerator;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${duoduo.trade.order-expire-minutes:30}")
     private int orderExpireMinutes;
@@ -113,6 +129,14 @@ public class OrderService {
     @Value("${duoduo.trade.sweep-batch-size:200}")
     private int sweepBatchSize;
 
+    /**
+     * 发货后多少天自动确认收货（并放款给卖家）。配 0 或负数即关闭该行为。
+     * 这是主流电商的标配：不能指望买家每次都主动点「确认收货」，
+     * 否则卖家的钱会被无限期占在托管里。
+     */
+    @Value("${duoduo.trade.auto-receipt-days:7}")
+    private int autoReceiptDays;
+
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
                         OrderStatusLogMapper statusLogMapper,
@@ -120,8 +144,10 @@ public class OrderService {
                         PaymentMapper paymentMapper,
                         CartItemMapper cartItemMapper,
                         ProductGateway productGateway,
+                        SettlementService settlementService,
                         SnowflakeIdGenerator idGenerator,
-                        OrderNoGenerator orderNoGenerator) {
+                        OrderNoGenerator orderNoGenerator,
+                        ApplicationEventPublisher eventPublisher) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -129,8 +155,10 @@ public class OrderService {
         this.paymentMapper = paymentMapper;
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
+        this.settlementService = settlementService;
         this.idGenerator = idGenerator;
         this.orderNoGenerator = orderNoGenerator;
+        this.eventPublisher = eventPublisher;
     }
 
     // ---------------- 下单 ----------------
@@ -530,6 +558,11 @@ public class OrderService {
                 "支付成功（渠道 " + payment.getChannel() + "）", now);
         markFreezeDeducted(order.getId(), now);
 
+        // 钱进平台托管（C2C 担保交易的核心语义）：
+        // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
+        // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
+        settlementService.openCustody(order.getId(), order.getSellerId(), nz(order.getPayAmount()), now);
+
         return new PayResult(order.getOrderNo(), payment.getPayNo(), payment.getChannel(),
                 nz(payment.getAmount()), payment.getStatus(), order.getStatus(),
                 OrderStatus.labelOf(order.getStatus()), false);
@@ -562,10 +595,20 @@ public class OrderService {
         orderMapper.updateById(order);
         writeStatusLog(order.getId(), current.name(), OrderStatus.SHIPPED.name(),
                 OPERATOR_SELLER, order.getSellerId(), "卖家发货", now);
+
+        // 资金仍在托管中：发货不等于钱该给卖家 —— 买家还没见到货。
+        // 这一句日志是为了在排查「钱为什么还没到账」时能直接看到答案。
+        SettlementEntity settlement = settlementService.findByOrderId(order.getId());
+        if (settlement == null) {
+            log.error("订单 {} 已发货但缺少资金托管记录，放款时会失败，需人工核对", order.getOrderNo());
+        } else {
+            log.info("订单 {} 已发货，资金仍在托管中（{} 分），待买家确认收货后放款",
+                    order.getOrderNo(), nz(settlement.getAmount()));
+        }
         return toViews(List.of(order)).get(0);
     }
 
-    /** 确认收货（已发货 → 已完成）。完成后订单流程终结。 */
+    /** 确认收货（已发货 → 已完成）。完成后订单流程终结，且**资金放款给卖家**。 */
     @Transactional
     public OrderView confirmReceipt(String orderNo) {
         Long userId = UserContext.requireUserId();
@@ -584,22 +627,297 @@ public class OrderService {
         order.setUpdatedAt(now);
         orderMapper.updateById(order);
         writeStatusLog(order.getId(), current.name(), OrderStatus.COMPLETED.name(), OPERATOR_USER, userId, "买家确认收货", now);
+        releaseFunds(order, now, "买家确认收货");
         return toViews(List.of(order)).get(0);
     }
 
-    // ---------------- 超时关单（补偿调度） ----------------
+    /**
+     * 把托管中的资金放款给卖家，返回是否**本次真的放款了**。
+     *
+     * <p>放款失败<b>不抛异常</b>：确认收货是买家的权利，
+     * 不该因为资金侧的问题让买家「点了没反应」。失败只记 ERROR/WARN，
+     * 由对账与运营侧跟进 —— 钱仍留在托管中，不会凭空消失。
+     *
+     * <p>可重入：CAS 只让第一次成功，第二次影响 0 行，
+     * 于是「买家点确认收货」和「定时任务自动确认收货」同一秒到达也不会放款两次。
+     */
+    private boolean releaseFunds(OrderEntity order, LocalDateTime now, String scene) {
+        if (settlementService.release(order.getId(), now)) {
+            log.info("订单 {} {} 完成，资金已放款给卖家 {}（托管单已置 RELEASED）",
+                    order.getOrderNo(), scene, order.getSellerId());
+            return true;
+        }
+        SettlementEntity settlement = settlementService.findByOrderId(order.getId());
+        if (settlement == null) {
+            log.error("订单 {} {} 完成，但缺少资金托管记录，无法放款，需人工核对", order.getOrderNo(), scene);
+        } else {
+            log.warn("订单 {} {} 完成，但托管单已是 {} 状态，跳过放款（可重入）",
+                    order.getOrderNo(), scene, settlement.getStatus());
+        }
+        return false;
+    }
+
+    // ---------------- 退款（资金退回买家） ----------------
 
     /**
-     * 超时关单调度：定时把「待付款且已过期」的订单关掉，并释放其冻结库存。
+     * 买家自助退款：<b>仅「已付款、卖家未发货」</b>的订单。
      *
-     * <p>两个刻意的设计：
-     * <ul>
-     *   <li><b>可重入</b>：关单只处理仍为「待付款」的订单；释放只处理仍为 FROZEN 的台账行。
-     *       重复执行不会有副作用，因此不需要「恰好执行一次」这种做不到的保证。</li>
-     *   <li><b>自愈</b>：第二步「释放所有已过期且仍 FROZEN 的台账」不只处理本轮关掉的单，
-     *       也覆盖「上几轮关单成功、但释放时商品服务挂了」的遗留。
-     *       这条路径是库存不会永久冻住的最终保障。</li>
-     * </ul>
+     * <p>为什么把界限画在「未发货」：
+     * 未发货时，货还在卖家手里，退款不会造成任何纠纷 —— 钱退回去，卖家不发货，两清。
+     * 一旦发货，货在买家手上，系统无从判断货有没有退回来，
+     * 此时让买家一键退款就等于平台单方面承担了全部风险。
+     * 所以已发货之后的退款必须走售后流程，由运营侧凭内部凭据执行（即
+     * {@link #refundByOperator(String, String)}），前提是卖家已确认收到退货。
+     *
+     * <p>这条界限必须落在**服务端**：前端只显示正确的按钮是挡不住直接调接口的。
+     */
+    @Transactional
+    public RefundResult refundByBuyer(String orderNo, String reason) {
+        Long userId = UserContext.requireUserId();
+        OrderEntity order = findByOrderNo(userId, orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current != OrderStatus.PAID) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL, buyerRefundRejection(order.getStatus()));
+        }
+        return doRefund(order, reason, OPERATOR_USER, userId, "买家申请退款（未发货）", nowUtc());
+    }
+
+    /**
+     * 运营侧退款（售后审核通过后执行）：已付款 / 已发货的订单都可以。
+     * 由 {@code InternalTokenFilter} 校验内部凭据，属于卖家/运营侧动作。
+     */
+    @Transactional
+    public RefundResult refundByOperator(String orderNo, String reason) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current != OrderStatus.PAID && current != OrderStatus.SHIPPED) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    current == OrderStatus.COMPLETED
+                            ? "订单已完成、款项已放款给卖家，无法直接退款；需走追责或平台垫付（售后追偿尚未实现）"
+                            : "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许退款");
+        }
+        return doRefund(order, reason, OPERATOR_SELLER, order.getSellerId(), "运营侧退款（售后处理）", nowUtc());
+    }
+
+    /** 买家自助退款被拒时，按状态给出**可操作**的提示，而不是一句「不允许」 */
+    private static String buyerRefundRejection(String status) {
+        OrderStatus current = OrderStatus.of(status);
+        if (current == OrderStatus.PENDING_PAYMENT) {
+            return "订单尚未支付，无需退款；请直接取消订单";
+        }
+        if (current == OrderStatus.SHIPPED) {
+            return "订单已发货，未发货前的自助退款通道已关闭；请在售后入口申请退货退款";
+        }
+        if (current == OrderStatus.COMPLETED) {
+            return "订单已完成、款项已放款给卖家；请在售后入口申请售后，由平台介入处理";
+        }
+        return "订单当前状态（" + OrderStatus.labelOf(status) + "）不支持自助退款";
+    }
+
+    /**
+     * 退款的共同路径。
+     *
+     * <p>顺序刻意如此（每一步都有原因）：
+     * <ol>
+     *   <li><b>先动钱</b>：CAS 把托管从 CUSTODY 改为 REFUNDED。这一步是整笔退款的
+     *       「唯一真相」—— 它成功才说明钱真的能退；已经放款或已退过的会返回 0 行，
+     *       直接拒绝，不会出现「订单标了退款但钱没退」；</li>
+     *   <li>再改订单与明细，写状态日志；</li>
+     *   <li>最后把台账从 DEDUCTED 改为 {@code RESTOCK_PENDING}（货待回库），
+     *       并发出退款事件 —— 真正的入库在**事务提交之后**异步做。</li>
+     * </ol>
+     *
+     * <p><b>为什么入库不放在事务里</b>：
+     * 入库是一次跨服务远程调用。放在事务里，一旦对方响应慢，
+     * 本地的订单行锁就被一直持着，买家的其他操作会跟着卡住；
+     * 更要命的是「远程已生效、本地事务回滚」这种情况会让库存与台账对不上。
+     * 拆成「事务内只写台账状态 + 事务提交后异步入库」之后，
+     * 退款不再依赖商品服务的可用性，失败也有 {@code RESTOCK_PENDING} 这个可见落点。
+     */
+    private RefundResult doRefund(OrderEntity order, String reason, String operatorType, Long operatorId,
+                                  String defaultReason, LocalDateTime now) {
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.REFUNDED)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许退款");
+        }
+        String refundReason = (reason == null || reason.isBlank()) ? defaultReason : reason.trim();
+        long refundAmount = nz(order.getPayAmount());
+
+        // 1) 资金：托管中才能退回买家
+        if (!settlementService.refund(order.getId(), now)) {
+            SettlementEntity settlement = settlementService.findByOrderId(order.getId());
+            if (settlement == null) {
+                throw new BizException(ErrorCode.BUSINESS_RULE,
+                        "订单缺少资金托管记录，无法退款，请联系客服处理");
+            }
+            throw new BizException(ErrorCode.CONFLICT,
+                    "该订单资金已是「" + SettlementStatus.labelOf(settlement.getStatus()) + "」状态，不能重复退款");
+        }
+
+        // 2) 订单与明细
+        order.setStatus(OrderStatus.REFUNDED.name());
+        order.setRefundedAt(now);
+        order.setCloseReason(refundReason);
+        order.setUpdatedAt(now);
+        orderMapper.updateById(order);
+
+        List<OrderItemEntity> items = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItemEntity>()
+                .eq(OrderItemEntity::getOrderId, order.getId()));
+        for (OrderItemEntity item : items) {
+            item.setRefundStatus(REFUND_STATUS_REFUNDED);
+            orderItemMapper.updateById(item);
+        }
+
+        // 3) 台账：已扣减 → 待回库
+        List<StockFreezeEntity> deducted = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getOrderId, order.getId())
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_DEDUCTED));
+        for (StockFreezeEntity freeze : deducted) {
+            freeze.setStatus(StockFreezeEntity.STATUS_RESTOCK_PENDING);
+            freeze.setUpdatedAt(now);
+            stockFreezeMapper.updateById(freeze);
+        }
+
+        writeStatusLog(order.getId(), current.name(), OrderStatus.REFUNDED.name(),
+                operatorType, operatorId, refundReason, now);
+
+        // 4) 立刻响应里如实说明「货还没回库」（入库在事务提交后做，见 onOrderRefunded）
+        boolean pending = !deducted.isEmpty();
+        eventPublisher.publishEvent(new OrderRefundedEvent(order.getId()));
+
+        log.info("订单 {} 已退款 {} 分（操作方 {}，原因：{}），待回库 SKU {} 个",
+                order.getOrderNo(), refundAmount, operatorType, refundReason, deducted.size());
+        return new RefundResult(
+                order.getOrderNo(),
+                order.getStatus(),
+                OrderStatus.labelOf(order.getStatus()),
+                refundAmount,
+                true,
+                SettlementEntity.STATUS_REFUNDED,
+                SettlementStatus.labelOf(SettlementEntity.STATUS_REFUNDED),
+                pending,
+                isoTs(now));
+    }
+
+    /** 查询某订单的资金托管状态（仅本人可见） */
+    public SettlementView settlementOf(String orderNo) {
+        Long userId = UserContext.requireUserId();
+        OrderEntity order = findByOrderNo(userId, orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        SettlementEntity settlement = settlementService.findByOrderId(order.getId());
+        if (settlement == null) {
+            throw BizException.notFound("资金托管记录");
+        }
+        return settlementService.toView(settlement, order.getOrderNo());
+    }
+
+    /**
+     * 退款已提交的领域事件（订单 ID）。
+     *
+     * <p>用事件而不是直接调用，是为了让入库发生在<b>事务提交之后</b>：
+     * 见 {@link #doRefund} 的注释。
+     */
+    public record OrderRefundedEvent(Long orderId) {
+    }
+
+    /**
+     * 退款提交后回补库存（退货入库）。
+     *
+     * <p>{@code AFTER_COMMIT} 是刻意的：对外的效果是「退款先成立，货再回库」。
+     * 入库失败不会把退款回滚掉（钱该退就退），只把台账留在
+     * {@code RESTOCK_PENDING}，由 {@link #sweepExpiredOrders()} 重试，
+     * 因此不存在「货没回库、系统里也查不到哪一单」的情况。
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderRefunded(OrderRefundedEvent event) {
+        try {
+            restockPending(event.orderId());
+        } catch (RuntimeException e) {
+            log.error("订单 {} 退款后入库回补异常，台账保持 RESTOCK_PENDING 待补偿调度重试", event.orderId(), e);
+        }
+    }
+
+    /** 把某订单仍处于 RESTOCK_PENDING 的台账逐条入库回补 */
+    private int[] restockPending(Long orderId) {
+        List<StockFreezeEntity> pendings = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getOrderId, orderId)
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_RESTOCK_PENDING));
+        return restockRows(pendings);
+    }
+
+    /**
+     * 执行入库回补，返回 {@code [成功条数, 失败条数]}。
+     *
+     * <p>幂等性来自**调用方只挑 RESTOCK_PENDING 的行**：成功即置 RESTOCKED，
+     * 下一轮不会再被选中。商品侧的入库接口本身没有幂等护栏（不像冻结量不足那样能自证重复），
+     * 所以「只调一次」这件事必须由台账状态来保证。
+     */
+    private int[] restockRows(List<StockFreezeEntity> pendings) {
+        if (pendings == null || pendings.isEmpty()) {
+            return new int[]{0, 0};
+        }
+        Long orderId = pendings.get(0).getOrderId();
+        List<StockChangeItem> items = pendings.stream()
+                .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
+                .toList();
+        StockChangeOutcome outcome;
+        try {
+            outcome = productGateway.restock(orderId, items);
+        } catch (RuntimeException e) {
+            log.error("退货入库调用失败（订单 {}），台账保持 RESTOCK_PENDING，待补偿调度重试", orderId, e);
+            return new int[]{0, pendings.size()};
+        }
+        Set<Long> succeeded = succeededSkuIds(outcome);
+        LocalDateTime now = nowUtc();
+        int done = 0;
+        for (StockFreezeEntity freeze : pendings) {
+            if (succeeded.contains(freeze.getSkuId())) {
+                freeze.setStatus(StockFreezeEntity.STATUS_RESTOCKED);
+                freeze.setUpdatedAt(now);
+                stockFreezeMapper.updateById(freeze);
+                done++;
+            }
+        }
+        if (done < pendings.size()) {
+            log.error("退货入库 {}/{} 条成功（订单 {}），其余留在 RESTOCK_PENDING 待重试",
+                    done, pendings.size(), orderId);
+        } else {
+            log.info("订单 {} 退货入库完成，{} 个 SKU 已回补", orderId, done);
+        }
+        return new int[]{done, pendings.size() - done};
+    }
+
+    // ---------------- 补偿调度（超时关单 / 自动收货 / 入库补偿） ----------------
+
+    /**
+     * 补偿调度：把「时间到了该发生、但没有外部触发」的事做掉。
+     *
+     * <p>四个步骤，全部**可重入**：
+     * <ol>
+     *   <li><b>超时关单</b>：待付款且已过期的订单 → CLOSED；</li>
+     *   <li><b>释放冻结</b>：已关闭订单仍 FROZEN 的台账 → RELEASED。
+     *       这一步不只处理本轮关掉的单，也覆盖「上几轮关单成功、但释放时商品服务挂了」的遗留 ——
+     *       它是「库存不会永久冻住」的最终保障；</li>
+     *   <li><b>自动确认收货</b>：已发货且超过 N 天的订单 → COMPLETED，并把托管资金**放款给卖家**。
+     *       没有这一步，买家不点确认收货就能把卖家的钱无限期占在托管里；</li>
+     *   <li><b>入库补偿</b>：退款时写入的 RESTOCK_PENDING 台账 → 重试入库回补。</li>
+     * </ol>
+     *
+     * <p>可重入不是靠「恰好执行一次」（做不到），而是靠每一步的状态判据：
+     * 关单只认「待付款」、释放只认 FROZEN、自动收货只认「已发货且超期」、
+     * 入库只认 RESTOCK_PENDING。重复执行天然无副作用，因此不需要分布式锁，
+     * 也不需要担心调度重复触发。
      *
      * <p>单实例开发环境用 {@code @Scheduled} 足够；生产多实例必须交给 XXL-Job 之类的
      * 分布式调度（否则每个实例都会扫一遍 —— 虽然可重入不会错，但会浪费与放大压力）。
@@ -610,18 +928,21 @@ public class OrderService {
     public void scheduledSweep() {
         try {
             SweepResult result = sweepExpiredOrders();
-            if (result.scanned() > 0 || result.released() > 0 || result.releaseFailed() > 0) {
-                log.info("超时关单调度：扫描 {} 单，关闭 {} 单，释放 {} 条冻结，释放失败 {} 条",
-                        result.scanned(), result.closed(), result.released(), result.releaseFailed());
+            if (result.scanned() > 0 || result.closed() > 0 || result.released() > 0 || result.releaseFailed() > 0
+                    || result.autoCompleted() > 0 || result.restocked() > 0 || result.restockFailed() > 0) {
+                log.info("补偿调度：扫描 {} 单，关闭 {} 单，释放 {} 条冻结（失败 {}），"
+                                + "自动收货 {} 单（放款 {} 笔），入库回补 {} 条（失败 {}）",
+                        result.scanned(), result.closed(), result.released(), result.releaseFailed(),
+                        result.autoCompleted(), result.fundsReleased(), result.restocked(), result.restockFailed());
             }
         } catch (RuntimeException e) {
             // 调度线程里必须吞掉异常，否则一次异常会让后续调度静默停摆
-            log.error("超时关单调度执行异常", e);
+            log.error("补偿调度执行异常", e);
         }
     }
 
     /**
-     * 真正执行一轮关单与释放。
+     * 真正执行一轮补偿调度（关单 / 释放 / 自动收货 / 入库补偿）。
      *
      * <p>注意：{@code @Transactional} 加在<b>本方法</b>上是刻意的 ——
      * 调度入口 {@link #scheduledSweep()} 内部调用本方法属于「自调用」，
@@ -684,10 +1005,61 @@ public class OrderService {
             releaseFailed += result[1];
         }
         if (releaseFailed > 0) {
-            log.error("超时关单调度：{} 条冻结未能释放，台账保持 FROZEN，下轮重试（常见成因：商品服务不可用，"
+            log.error("补偿调度：{} 条冻结未能释放，台账保持 FROZEN，下轮重试（常见成因：商品服务不可用，"
                     + "或该 SKU 冻结量已被并发释放且原因码非 FREEZE_NOT_ENOUGH，需人工核对）", releaseFailed);
         }
-        return new SweepResult(expired.size(), closed, released, releaseFailed);
+
+        // 3) 自动确认收货：发货已满 N 天，视为买家默认收货，并放款给卖家。
+        //    判据是「已发货 + shipped_at 超期」，同样是幂等的：完成后状态变 COMPLETED，下轮不会再被扫到。
+        //    这一步是「卖家的钱不会被无限期占在托管里」的保障。
+        int autoCompleted = 0;
+        int fundsReleased = 0;
+        if (autoReceiptDays > 0) {
+            LocalDateTime deadline = now.minusDays(autoReceiptDays);
+            List<OrderEntity> overdue = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                    .eq(OrderEntity::getStatus, OrderStatus.SHIPPED.name())
+                    .le(OrderEntity::getShippedAt, deadline)
+                    .orderByAsc(OrderEntity::getShippedAt)
+                    .last("LIMIT " + Math.max(1, sweepBatchSize)));
+            for (OrderEntity order : overdue) {
+                String reason = "发货满 " + autoReceiptDays + " 天，系统自动确认收货";
+                order.setStatus(OrderStatus.COMPLETED.name());
+                order.setFinishedAt(now);
+                order.setUpdatedAt(now);
+                orderMapper.updateById(order);
+                writeStatusLog(order.getId(), OrderStatus.SHIPPED.name(), OrderStatus.COMPLETED.name(),
+                        OPERATOR_SYSTEM, null, reason, now);
+                autoCompleted++;
+                if (releaseFunds(order, now, "自动确认收货")) {
+                    fundsReleased++;
+                }
+            }
+        }
+
+        // 4) 入库补偿：退款时写入的 RESTOCK_PENDING 台账，重试把货补回库存。
+        //    退款不因入库失败而回滚（钱该退就退），所以这里必须有兜底重试，
+        //    否则「钱退了、货没回库」就成了系统里看不见的差额。
+        List<StockFreezeEntity> pendingRestocks = stockFreezeMapper.selectList(
+                new LambdaQueryWrapper<StockFreezeEntity>()
+                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_RESTOCK_PENDING)
+                        .orderByAsc(StockFreezeEntity::getCreatedAt)
+                        .last("LIMIT " + (Math.max(1, sweepBatchSize) * 4)));
+        Map<Long, List<StockFreezeEntity>> restockByOrder = pendingRestocks.stream()
+                .collect(Collectors.groupingBy(StockFreezeEntity::getOrderId,
+                        LinkedHashMap::new, Collectors.toList()));
+        int restocked = 0;
+        int restockFailed = 0;
+        for (List<StockFreezeEntity> rows : restockByOrder.values()) {
+            int[] result = restockRows(rows);
+            restocked += result[0];
+            restockFailed += result[1];
+        }
+        if (restockFailed > 0) {
+            log.error("补偿调度：{} 条退货入库未能完成，台账保持 RESTOCK_PENDING，下轮重试", restockFailed);
+        }
+
+        return new SweepResult(expired.size(), closed, released, releaseFailed,
+                autoCompleted, fundsReleased, restocked, restockFailed);
     }
 
     // ---------------- 内部实现 ----------------
@@ -750,7 +1122,7 @@ public class OrderService {
         statusLogMapper.insert(entity);
     }
 
-    /** 批量装配订单视图（明细一次查回，避免逐单查询） */
+    /** 批量装配订单视图（明细与托管单都一次查回，避免逐单查询造成 N+1） */
     private List<OrderView> toViews(List<OrderEntity> orders) {
         if (orders == null || orders.isEmpty()) {
             return List.of();
@@ -762,6 +1134,7 @@ public class OrderService {
                                 .orderByAsc(OrderItemEntity::getId))
                 .stream()
                 .collect(Collectors.groupingBy(OrderItemEntity::getOrderId));
+        Map<Long, SettlementEntity> settlements = settlementService.mapByOrderIds(orderIds);
 
         List<OrderView> views = new ArrayList<>(orders.size());
         for (OrderEntity order : orders) {
@@ -787,12 +1160,14 @@ public class OrderService {
                     order.getReceiverAddress(),
                     order.getRemark(),
                     items,
+                    settlementService.toView(settlements.get(order.getId()), order.getOrderNo()),
                     isoTs(order.getCreatedAt()),
                     isoTs(order.getExpireAt()),
                     isoTs(order.getPaidAt()),
                     isoTs(order.getShippedAt()),
                     isoTs(order.getFinishedAt()),
                     isoTs(order.getClosedAt()),
+                    isoTs(order.getRefundedAt()),
                     order.getCloseReason()));
         }
         return views;

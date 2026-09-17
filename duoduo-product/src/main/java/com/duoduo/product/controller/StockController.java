@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 库存写接口（内部接口，只供交易服务调用）。
  *
- * <p><b>安全</b>：这三个接口会改变商品库存，属于写操作，因此由
+ * <p><b>安全</b>：这四个接口会改变商品库存，属于写操作，因此由
  * {@code InternalTokenFilter} 强制校验 {@code X-Internal-Token} 请求头，
  * 校验不过直接 403。校验是**默认开启**的（配置项有开发默认值，生产必须用环境变量覆盖），
  * 避免「忘了配就没保护」这种失败方向错误的设计。
@@ -46,5 +46,11 @@ public class StockController {
     @PostMapping("/deduct")
     public ApiResponse<StockChangeResponse> deduct(@RequestBody StockChangeRequest request) {
         return ApiResponse.ok(stockService.apply(StockService.ACTION_DEDUCT, request));
+    }
+
+    /** 退货入库（退款成功后调用）：库存加回，不校验在售状态 */
+    @PostMapping("/restock")
+    public ApiResponse<StockChangeResponse> restock(@RequestBody StockChangeRequest request) {
+        return ApiResponse.ok(stockService.apply(StockService.ACTION_RESTOCK, request));
     }
 }
