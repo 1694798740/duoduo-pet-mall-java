@@ -18,6 +18,7 @@
     <module>duoduo-gateway</module>
     <module>duoduo-user</module>
     <module>duoduo-product</module>
+    <module>duoduo-trade</module>
   </modules>
 
   <properties>

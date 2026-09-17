@@ -16,6 +16,8 @@ CREATE DATABASE IF NOT EXISTS `duoduo_user`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS `duoduo_product`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS `duoduo_trade`
+    DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS `nacos`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -23,4 +25,5 @@ CREATE DATABASE IF NOT EXISTS `nacos`
 CREATE USER IF NOT EXISTS 'duoduo'@'%' IDENTIFIED BY 'duoduo';
 GRANT ALL PRIVILEGES ON `duoduo_user`.*    TO 'duoduo'@'%';
 GRANT ALL PRIVILEGES ON `duoduo_product`.* TO 'duoduo'@'%';
+GRANT ALL PRIVILEGES ON `duoduo_trade`.*   TO 'duoduo'@'%';
 FLUSH PRIVILEGES;

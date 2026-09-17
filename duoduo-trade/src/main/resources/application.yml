@@ -1,0 +1,84 @@
+server:
+  # 注意：不要用 TRADE_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_TRADE_PORT:8083}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 400
+      min-spare: 50
+    accept-count: 1000
+    max-connections: 10000
+
+spring:
+  application:
+    name: duoduo-trade
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_trade?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 20
+      maximum-pool-size: 100
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: duoduo-trade-pool
+  sql:
+    init:
+      # 表结构由 DDL 统一管理（docs/sql/03-duoduo-trade.sql 或 db/schema.sql），
+      # 绝不能在启动时自动执行 —— schema.sql 内有 DROP TABLE。
+      mode: never
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+duoduo:
+  id:
+    datacenter-id: ${ID_DATACENTER:1}
+    worker-id: ${ID_WORKER:3}
+  trade:
+    # 待付款订单多久自动关单（分钟）。生产按业务口径核定，这里取 30 分钟。
+    order-expire-minutes: ${ORDER_EXPIRE_MINUTES:30}
+    # 关单扫描与库存冻结释放的调度间隔（毫秒）；单实例开发环境用默认值，
+    # 生产由 XXL-Job 接管，避免多实例重复执行。
+    sweep-interval-ms: ${SWEEP_INTERVAL_MS:60000}
+    # 单次扫描最多处理多少条，防止一次拉太多把库压住
+    sweep-batch-size: ${SWEEP_BATCH_SIZE:200}
+    # 每个订单最多包含多少种商品，防止恶意大单
+    max-items-per-order: ${MAX_ITEMS_PER_ORDER:50}
+    # 单个 SKU 单次最多购买数量
+    max-quantity-per-sku: ${MAX_QTY_PER_SKU:200}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-trade","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'

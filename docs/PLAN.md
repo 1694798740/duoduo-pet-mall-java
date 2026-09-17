@@ -51,12 +51,15 @@
 | **Nacos 服务发现接入** | 网关改用 `lb://` 负载均衡；Nacos 已注册 `duoduo-user` / `duoduo-product` / `duoduo-gateway` 三服务实例，全部 healthy |
 | **容器化模式跑通 54 项冒烟** | `scripts/smoke.ps1` → **54 通过 / 0 失败**（2026-09-17 复跑，exit 0） |
 | **中文双重编码缺陷修复** | 见 I-08；`SET NAMES utf8mb4` 已写入 3 个初始化脚本，从零重建数据卷复验通过 |
+| **M5-1 `duoduo-trade` 模块骨架** | 模块已建并接入父 POM（6 模块反应堆）；`TradeApplication`（`@EnableScheduling` + `@MapperScan`）、`TradeServiceConfig`（分页插件 + 雪花 worker-id=3）、`application.yml` / `-local`（H2）/ `-mysql` 三档；**`MVN_EXIT=0`、BUILD SUCCESS、产出 fat jar 42.5 MB** |
+| **M5-1 交易库 DDL** | 7 张表：`t_cart_item` / `t_order` / `t_order_item` / `t_order_status_log` / `t_stock_freeze` / `t_payment` / `t_settlement`；已在容器 MySQL 实际执行（exit 0）并校验表、唯一索引、字符集 |
 
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| **M5-1 `duoduo-trade` 模块骨架 + 交易库 DDL** | 下一步动作：建模块、写 DDL、接进父 POM 与 compose |
+| **M5-2 交易服务容器接入** | 下一步：compose 增加 `duoduo-trade-app`（:8083）、构建镜像、验证注册进 Nacos、交易库初始化纳入 `docs/sql/03` |
+| **M5-3 购物车实现** | 待 M5-2 完成后开始（合并加购、改数量、勾选、失效校验） |
 
 ### 未开始（P1-b 交易服务，既定范围）
 
@@ -94,12 +97,17 @@
 
 | 文件 | 变更 |
 |---|---|
-| `docs/sql/00-init-databases-and-user.sql` | 开头新增 `SET NAMES utf8mb4`（附原因注释） |
-| `docs/sql/01-duoduo-user.sql` | 同上 |
-| `docs/sql/02-duoduo-product.sql` | 同上 |
-| `docs/PLAN.md` | 本文件；M3/M4 标记完成，新增 I-08 |
-| `Dockerfile` / `.dockerignore` | 上一轮新增，本轮首次全程验证通过 |
-| `duoduo-gateway/pom.xml` | 上一轮加 `spring-cloud-starter-loadbalancer`，本轮验证 `lb://` 生效 |
+| `docs/sql/00-init-databases-and-user.sql` | 开头新增 `SET NAMES utf8mb4`（附原因注释）；新增 `duoduo_trade` 库与授权 |
+| `docs/sql/01-duoduo-user.sql` | 开头新增 `SET NAMES utf8mb4` |
+| `docs/sql/02-duoduo-product.sql` | 开头新增 `SET NAMES utf8mb4` |
+| `docs/sql/03-duoduo-trade.sql` | **新增**：交易库建库建表（由模块内 `db/schema.sql` 拼装，7 张表） |
+| `pom.xml` | 父 POM 增加 `<module>duoduo-trade</module>` |
+| `duoduo-trade/pom.xml` | **新增**：依赖 common / common-web / web / validation / actuator / nacos-discovery / mybatis-plus / H2 / MySQL |
+| `duoduo-trade/.../TradeApplication.java` | **新增**：`@SpringBootApplication` + `@EnableDiscoveryClient` + `@EnableScheduling` + `@MapperScan` |
+| `duoduo-trade/.../config/TradeServiceConfig.java` | **新增**：MyBatis-Plus 分页插件（上限 100）+ 雪花 ID（worker-id=3，与用户 1 / 商品 2 区分） |
+| `duoduo-trade/.../resources/application*.yml` | **新增** 三档：默认（MySQL + Nacos）/ local（H2，启动重建表）/ mysql（覆盖数据源） |
+| `duoduo-trade/.../resources/db/schema.sql` | **新增**：交易域 7 张表（H2/MySQL 双兼容，索引单独 CREATE INDEX） |
+| `Dockerfile` / `.dockerignore` / `duoduo-gateway/pom.xml` | 上一轮新增，本轮首次全程验证通过 |
 
 ---
 
@@ -120,7 +128,19 @@ docker compose down -v; docker compose up -d
 # 沙箱内调用 docker 必须带这两行（凭据助手不在 PATH）
 $env:PATH = 'C:\Program Files\Docker\Docker\resources\bin;' + $env:PATH
 $env:DOCKER_CONFIG = 'D:\duoduo-infra\docker-nocreds'
+
+# 构建（沙箱里 cmd.exe 被禁，不能用 mvn.cmd —— 必须用 java 驱动 Maven launcher）
+$J='D:\智能体项目\duoduo-pet-mall-java'; $M='D:\devsoft\apache-maven-3.9.4'
+& "$J\..\..\jdk\jdk21\bin\java.exe" "-Dclassworlds.conf=$M\bin\m2.conf" "-Dmaven.home=$M" `
+  "-Dmaven.multiModuleProjectDirectory=$J" -classpath "$M\boot\plexus-classworlds-2.7.0.jar" `
+  org.codehaus.plexus.classworlds.launcher.Launcher -gs maven/settings.xml -B -DskipTests package
+
+# 只往容器里补执行某个初始化脚本（不用重建数据卷）
+docker cp <ascii目录>\03-duoduo-trade.sql duoduo-mysql:/tmp/03.sql
+docker exec duoduo-mysql sh -c 'mysql --default-character-set=utf8mb4 -uroot -pduoduo_root < /tmp/03.sql'
 ```
+
+> 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**（未接入 compose）。
 
 ---
 

@@ -1,0 +1,28 @@
+# 本地零依赖运行配置（H2 内存库 + 关闭 Nacos）：
+#   java -jar duoduo-trade.jar --spring.profiles.active=local
+# 表结构每次启动重建（交易库无种子数据，购物车与订单由接口产生），保证演示环境可重复。
+spring:
+  datasource:
+    url: jdbc:h2:mem:duoduo_trade;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ''
+    driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+logging:
+  level:
+    com.duoduo: DEBUG
