@@ -35,6 +35,10 @@ public class GatewaySecurityProperties {
             "/api/listings/**",
             "/api/meta/**",
             "/api/coupons/**",
+            // 商品评价是「公开可见的购物决策信息」：未登录也能看（否则首次访问者无法判断口碑）。
+            // 白名单按路径而非方法匹配，因此这里**只放行只读的 /product/** 子路径**：
+            // 发表评价 / 我的评价 / 追评都在 /api/reviews 与本路径之外，仍由网关强制登录。
+            "/api/reviews/product/**",
             "/api/duoduo/chat",
             "/api/duoduo/capabilities",
             // 渠道回调来自渠道服务器，没有我们的登录态；安全靠验签 + 金额核对 + CAS 幂等

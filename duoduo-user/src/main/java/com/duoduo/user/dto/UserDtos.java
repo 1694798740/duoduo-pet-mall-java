@@ -103,6 +103,21 @@ public final class UserDtos {
 
     // ---------------- 响应 ----------------
 
+    /**
+     * 用户公开资料（服务间只读视图）。
+     *
+     * <p>刻意只含「展示所需的三个字段」：id / 昵称 / 头像。
+     * 手机号、实名信息、角色、信用分一律不返回 ——
+     * 跨域接口应当按调用方真正需要什么裁剪，拿整份 {@link UserView} 图省事的代价，
+     * 是把隐私字段扩散到每个调用方的日志与内存里。
+     */
+    public record UserBrief(
+            Long id,
+            String nickname,
+            String avatar
+    ) {
+    }
+
     public record UserView(
             Long id,
             String phoneMasked,

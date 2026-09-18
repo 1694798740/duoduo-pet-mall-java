@@ -9,8 +9,8 @@
 
 import React, { useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { orderApi } from '../api/endpoints';
-import type { OrderView, PageResult } from '../api/types';
+import { orderApi, reviewApi } from '../api/endpoints';
+import type { OrderView, PageResult, ReviewedOrders } from '../api/types';
 import { useAsync } from '../components/hooks';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice } from '../components/ui';
 
@@ -30,12 +30,29 @@ function num(value: string | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** 每条订单卡片的动作区：按状态给出可执行操作 */
-const OrderActions: React.FC<{ order: OrderView }> = ({ order }) => (
+/**
+ * 每条订单卡片的动作区：按状态给出可执行操作。
+ *
+ * 「已完成」的订单要显示去评价 / 已评价 —— 评价入口只在订单域出现一次，
+ * 比在导航里加一个「评价中心」更符合用户心智（评价总是从「我买过的那单」出发）。
+ * 是否已评价由父组件批量查询后传入，避免每条卡片各发一次请求。
+ */
+const OrderActions: React.FC<{ order: OrderView; reviewed?: boolean }> = ({ order, reviewed }) => (
   <div className="row row-wrap">
     <Link className="btn btn-ghost btn-sm" to={`/orders/${order.orderNo}`}>
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
     </Link>
+    {order.status === 'COMPLETED' ? (
+      reviewed ? (
+        <Link className="btn btn-ghost btn-sm" to="/reviews/mine">
+          已评价
+        </Link>
+      ) : (
+        <Link className="btn btn-primary btn-sm" to={`/reviews/new?orderNo=${order.orderNo}`}>
+          去评价
+        </Link>
+      )
+    ) : null}
     {order.status === 'PENDING_PAYMENT' ? (
       <span className="small muted" style={{ alignSelf: 'center' }}>
         剩余 {order.expireAt ? formatDate(order.expireAt) : '—'} 前支付
@@ -73,6 +90,27 @@ export const OrdersPage: React.FC = () => {
     status,
     page,
   ]);
+
+  /**
+   * 「已完成」订单里我评过哪些 —— 一次批量查，避免每张卡片各发一次请求。
+   * 依赖用 orderNos 拼出的字符串而不是数组：数组每次渲染都是新引用，
+   * 会让下面的 useAsync 每轮都重发请求（数组当依赖的经典坑）。
+   */
+  const completedNos = useMemo(
+    () => (data?.items ?? []).filter((o) => o.status === 'COMPLETED').map((o) => o.orderNo),
+    [data],
+  );
+  const completedKey = completedNos.join(',');
+  const reviewed = useAsync<ReviewedOrders>(
+    useCallback(
+      () => (completedNos.length ? reviewApi.reviewed(completedNos) : Promise.resolve({ orderNos: [] })),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [completedKey],
+    ),
+    completedNos.length > 0,
+    [completedKey],
+  );
+  const reviewedSet = useMemo(() => new Set(reviewed.data?.orderNos ?? []), [reviewed.data]);
 
   const setStatus = (value: string) => {
     const next = new URLSearchParams(params);
@@ -180,7 +218,7 @@ export const OrdersPage: React.FC = () => {
                 </div>
 
                 <div className="divider" />
-                <OrderActions order={order} />
+                <OrderActions order={order} reviewed={reviewedSet.has(order.orderNo)} />
               </div>
             ))}
           </div>

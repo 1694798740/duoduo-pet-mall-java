@@ -243,6 +243,9 @@ export const MePage: React.FC = () => {
               <Link className="btn btn-ghost btn-sm" to="/orders">
                 我的订单
               </Link>
+              <Link className="btn btn-ghost btn-sm" to="/reviews/mine">
+                我的评价
+              </Link>
               <Link className="btn btn-ghost btn-sm" to="/cart">
                 购物车
               </Link>

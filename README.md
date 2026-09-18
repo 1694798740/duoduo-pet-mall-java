@@ -50,7 +50,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（八套 606 项接口断言 + 一套 29 项真实浏览器 UI 断言）
+### 端到端冒烟（九套 665 项接口断言 + 两套真实浏览器 UI 断言 49 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -61,13 +61,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 84 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
 cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
 cd .. && node scripts/e2e/seller-ui-check.mjs
+
+# 评价与晒单的真实浏览器 UI 自测（20 项；同样需 dev server 与 localhost:5173）
+node scripts/e2e/review-ui-check.mjs
 ```
 
-八套脚本的共同约定（踩过坑才有的）：
+九套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -88,20 +92,21 @@ cd .. && node scripts/e2e/seller-ui-check.mjs
 duoduo-pet-mall-java/
 ├── pom.xml                     聚合父 POM：统一版本、编译参数（release 21）、插件管理
 ├── Dockerfile                  业务服务共用镜像（temurin:21-jre-alpine，非 root 运行）
-├── docker-compose.yml          7 容器编排（中间件 + 4 个业务服务）
+├── docker-compose.yml          8 容器编排（中间件 + 5 个业务服务）
 ├── maven/                      项目专用 Maven 配置（阿里云镜像）与本地环境变量脚本
 ├── docs/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
-│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库）
-├── scripts/                    一键启动、冒烟测试（6 套）
+│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库）
+├── scripts/                    一键启动、冒烟测试（9 套接口断言 + 2 套真实浏览器 UI 断言）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
 ├── duoduo-user/                用户服务
 ├── duoduo-product/             商品服务（含库存主数据）
 ├── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
+├── duoduo-fulfilment/          履约服务（评价与晒单；后续：物流轨迹 / 售后仲裁 / 信用分）
 └── frontend/                   买家端 Web 商城（React 18 + TS + Vite，见第七节）
 ```
 
@@ -232,6 +237,34 @@ duoduo-pet-mall-java/
 **权限模型**：统一 `OperatorGuard.requireOperator()`（OPERATOR / ADMIN，忽略大小写）；
 网关层 `/api/admin/**` 不进白名单（未登录 401），服务层校验角色（非运营 403）——两层各挡一种流量。
 已付款 / 已发货订单**不开**后台干预口子，一律走退款 / 售后的合法流转。
+
+### 履约域：评价与晒单（`duoduo-fulfilment` `/api/reviews`，M11/P2-1）
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/reviews/product/{spuId}` | 商品评价分页（`rating` 星级过滤 / `hasImage` 只看带图） | **免登录** |
+| GET | `/api/reviews/product/{spuId}/summary` | 评分汇总：平均分 / 星级分布 / 好评率 / 带图数 / 追评数（SQL 聚合） | **免登录** |
+| POST | `/api/reviews` | 提交评价：`{orderNo, anonymous, items:[{spuId, skuId?, rating, content?, images?}]}`，一次可提交订单里多件 | 需登录 |
+| POST | `/api/reviews/{id}/append` | 追评（每条评价一次，受追评窗口限制） | 仅本人 |
+| GET | `/api/reviews/mine` | 我的评价（分页） | 需登录 |
+| GET | `/api/reviews/order/{orderNo}` | 某订单下我的评价（详情页判断「还能补评哪几件」） | 需登录 |
+| GET | `/api/reviews/reviewed?orderNos=a,b` | 我在这批订单里已评价过的订单号（订单列表页**一次**判断） | 需登录 |
+
+**业务规则（写死在服务层，前端不重复实现）**：
+
+- **只有本人已完成的订单能评价**：订单事实来自交易域内部接口 `GET /api/orders/internal/{orderNo}/fact`，
+  返回**不含收货人姓名/电话/地址**（服务间最小必要字段）；请求体里没有任何 `userId` 可供伪造。
+- **评的是订单里的商品**：`spuId` 必须出现在该订单明细中，否则 422 —— 挡住「拿 A 单给 B 商品刷好评」。
+- **一单一商品一评**：唯一索引 `(order_id, user_id, spu_id)` 兜底，并发撞键转 **409**（不是 500）。
+  刻意不是「一单一评」：一个订单常含多件商品，强迫写一条会把对 A 的好评与对 B 的差评挤进同一段文字。
+- **图片只收 http/https 直链**（最多 9 张）：放开 `javascript:` / `data:` 等于把 XSS 入口交给任何能发评价的人。
+- **匿名只影响展示**：昵称替换为「匿名用户」、头像置空，但真实 `user_id` 始终保留（信用分与风控需要真实主体）。
+
+> 网关白名单**只放行只读的 `/api/reviews/product/**`**：未登录访客能看口碑（购物决策需要），
+> 但提交 / 追评 / 我的评价一律强制登录。白名单按路径匹配，因此**不要把需登录的接口挪进 `product/` 子路径**。
+>
+> 跨域只读依赖两处（都是内部凭据保护，且都裁剪了字段）：交易域订单事实、
+> 用户域 `GET /api/users/internal/briefs?ids=`（批量昵称头像，**只回 id/昵称/头像三个字段**）。
 
 ---
 
@@ -453,7 +486,32 @@ npm run build      # tsc --noEmit && vite build
 审核通过 / 驳回留痕且被驳回内容公开不可见，强关全链含冻结释放与重复强关被拒，夹具自建自毁、账号用完降权）；
 前端 `tsc --noEmit` 零错误、`vite build` 通过。
 
-## 十、后续阶段：端形态与支付口径
+## 十、评价与晒单（`frontend/src/`，M11/P2-1）
+
+| 路由 / 位置 | 内容 |
+|---|---|
+| 商品详情页评价区（`components/ReviewSection.tsx`） | 评分汇总（平均分 / 五星分布条 / 好评率 / 带图 / 追评）+ 星级与「有图」筛选 + 分页；匿名评价显示为「匿名用户」 |
+| `/reviews/new?orderNo=…` | 按订单逐件评价：**已评过的商品不再出现在表单**，只列还差哪几件；大星号打分、内容、图片直链、匿名勾选 |
+| `/reviews/mine` | 我的评价 + 追评弹窗（可否追评由服务端 `appendable` 决定，前端不自己算窗口期） |
+| 订单列表（`/orders`） | 「已完成」订单显示**去评价 / 已评价**；已评状态由 `/api/reviews/reviewed` **一次批量**查回，不是每张卡片各发一次请求 |
+| 「我的」页快捷入口 | 我的评价 |
+
+**关键实现决策**：
+
+- **评价入口只挂在订单上**，不在导航里另开「评价中心」：评价总是从「我买过的那单」出发，
+  这与用户的真实心智一致（也是主流电商的形态）。
+- **依赖数组用 `orderNos.join(',')` 而不是数组**：数组每次渲染都是新引用，
+  会让 `useAsync` 每轮重发请求 —— 这是 React 里最容易被忽略的性能坑之一。
+- **降级而非硬失败**：用户服务不可用时评价仍可看（昵称兜底为「用户 1234」）；
+  图片 JSON 脏数据按无图处理，不让整页 500。
+
+自测记录：`scripts/review-smoke.ps1` **59 项断言全绿**；
+真实浏览器 `scripts/e2e/review-ui-check.mjs` **20 项断言全绿**（截图 `frontend/docs/screenshots/rev_*.png`）：
+备一笔已完成订单 → 订单列表看到「去评价」→ 评价页打分提交 → 我的评价看到内容与匿名标记 → 商品详情公开评价区看到该条。
+
+---
+
+## 十一、后续阶段：端形态与支付口径
 
 ### 端形态（用户端两端口，商家与平台都是 Web）
 
@@ -481,13 +539,30 @@ npm run build      # tsc --noEmit && vite build
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
 | **P1-e** | ~~真实支付渠道~~ → **沙箱支付渠道**（已完成；真实渠道为可选后续） | ✅ |
 | **P1-f** | **商家端 Web ✅ + 平台管理后台 Web ✅（M10：报表/对账/审核/类目品牌/订单干预）** | ✅ 完成 |
-| **P2** | 履约服务（物流/售后/仲裁）+ 评价 + 营销（优惠券）+ XXL-Job 分布式任务 | ⏳ |
+| **P2** | 履约服务（**评价与晒单 ✅** / 物流轨迹 / 售后仲裁 / 信用分）+ 营销（优惠券）+ XXL-Job 分布式任务 | 🔄 评价已上线 |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
 | **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
 ---
 
-## 十一、变更记录
+## 十二、变更记录
+
+### 2026-09-18（第六轮 · 履约服务 M11/P2-1：评价与晒单）
+
+- **新增服务**：`duoduo-fulfilment`（:8084）—— 按架构文档的拆分落位（发货 / 物流 / 售后 / 仲裁 / 评价 / 信用分同域），
+  本轮先落地「评价与晒单」纵切；compose 第 8 个容器，网关路由 `/api/reviews/**`（白名单只放行只读 `product/**`）。
+- **跨域只读**：交易域新增 `GET /api/orders/internal/{orderNo}/fact`（订单事实，**裁剪掉收货人信息**）；
+  用户域新增 `GET /api/users/internal/briefs`（批量昵称头像，**只回三字段**）+ `InternalTokenFilter`。
+- **评价规则**：仅本人已完成订单可评、`spuId` 须在订单明细、一单一商品一评（唯一索引 + 409）、
+  图片 http/https 白名单、追评一次 + 窗口期、匿名只脱敏不删真实主体。
+- **前端**：商品详情评价区、`/reviews/new` 逐件评价、`/reviews/mine` 追评、订单列表去评价入口。
+- **自测**：`scripts/review-smoke.ps1` **59/0**；`scripts/e2e/review-ui-check.mjs` **20/0**；`tsc` 零错误、`vite build` 通过。
+- **自测暴露并修复**：① 内部接口断言打错服务端口（无路由 500 被误读为过滤器故障）；
+  ② **PowerShell 把 `$SPU?page=1` 整体当变量名**（`?` 是合法变量名字符）→ 一律写 `${SPU}?`；
+  ③ 19 位雪花主键经 `ConvertFrom-Json` 丢精度导致假失败 → 断言改用业务键/原始文本提取；
+  ④「商品不在该订单中」由 400 归位为 422（业务规则，不是参数格式错）。
+
+（以下为历史轮次）
 
 ### 2026-09-18（第五轮 · 平台管理后台 M10）
 

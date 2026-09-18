@@ -58,4 +58,26 @@ public class UserController {
     public ApiResponse<UserView> applyMerchant() {
         return ApiResponse.ok(authService.applyMerchant(UserContext.requireUserId()));
     }
+
+    /**
+     * 服务间只读：批量取用户公开资料（昵称 / 头像）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}，
+     * 因此即便有人带着登录态经网关访问，也会被服务自身拒绝（403）。
+     * 参数用「逗号分隔字符串」而不是 {@code List<Long>}：两端的集合参数编码规则
+     * （重复 query vs 逗号分隔）在不同 Feign 版本下有过变化，固定成单值后行为完全确定。
+     *
+     * <p>返回裁剪过的 {@link com.duoduo.user.dto.UserDtos.UserBrief}：只有 id / 昵称 / 头像，
+     * 不含手机号、实名信息与角色。
+     */
+    @GetMapping("/internal/briefs")
+    public ApiResponse<java.util.List<com.duoduo.user.dto.UserDtos.UserBrief>> briefs(
+            @org.springframework.web.bind.annotation.RequestParam("ids") String ids) {
+        java.util.List<Long> userIds = java.util.Arrays.stream(ids.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Long::valueOf)
+                .toList();
+        return ApiResponse.ok(authService.userBriefs(userIds));
+    }
 }

@@ -479,6 +479,65 @@ export interface ForceCloseRequest {
   reason?: string;
 }
 
+// ---------- 评价与晒单（/api/reviews，履约域） ----------
+
+export interface ReviewView {
+  id: number;
+  orderNo: string;
+  spuId: number;
+  skuId: number | null;
+  /** 商品快照标题（下单时的商品名，商品改名不影响历史评价） */
+  productTitle: string;
+  productImage: string | null;
+  rating: number;
+  content: string | null;
+  images: string[];
+  anonymous: boolean;
+  /** 匿名评价此处为脱敏昵称 */
+  nickname: string;
+  avatar: string | null;
+  appendContent: string | null;
+  appendAt: string | null;
+  createdAt: string;
+  /** 是否还在可追评窗口内（前端据此决定显示追评入口） */
+  appendable: boolean;
+}
+
+export interface ReviewSummary {
+  spuId: number;
+  total: number;
+  avgRating: string;
+  goodRate: string;
+  /** 下标 0 = 1 星 … 下标 4 = 5 星（顺序固化进契约，前端不必自己排序） */
+  starCounts: number[];
+  imageCount: number;
+  appendCount: number;
+}
+
+/** 单件商品的评价内容（一次可提交订单里多件） */
+export interface ReviewItemRequest {
+  spuId: number;
+  skuId?: number | null;
+  rating: number;
+  content?: string;
+  images?: string[];
+}
+
+export interface ReviewCreateRequest {
+  orderNo: string;
+  anonymous?: boolean;
+  items: ReviewItemRequest[];
+}
+
+export interface ReviewCreateResult {
+  created: number;
+  reviews: ReviewView[];
+}
+
+export interface ReviewedOrders {
+  orderNos: string[];
+}
+
 // ---------- 通用 ----------
 
 export interface PageResult<T> {

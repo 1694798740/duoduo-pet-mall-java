@@ -55,6 +55,25 @@ public final class OrderDtos {
     ) {
     }
 
+    /**
+     * 订单事实（服务间只读视图）。
+     *
+     * <p>与 {@link OrderView} 的关键差别：<b>不含收货人信息</b>。
+     * 履约域校验「这单能不能评价」只需要知道「归属谁、是否已完成、买了什么」；
+     * 顺手把收货人姓名 / 电话 / 地址也返回，等于把一份隐私数据多复制进一个不需要它的服务 ——
+     * 服务间接口应当按「调用方真正需要什么」裁剪字段，而不是图省事返回整份视图。
+     */
+    public record OrderFactView(
+            String orderNo,
+            Long userId,
+            Long sellerId,
+            String status,
+            String statusLabel,
+            String finishedAt,
+            List<OrderItemView> items
+    ) {
+    }
+
     public record OrderView(
             String orderNo,
             Long sellerId,

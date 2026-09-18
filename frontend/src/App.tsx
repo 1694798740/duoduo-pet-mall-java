@@ -33,6 +33,8 @@ import { OrderDetailPage } from './pages/OrderDetail';
 import { OrdersPage } from './pages/Orders';
 import { PetsPage } from './pages/Pets';
 import { ProductDetailPage } from './pages/ProductDetail';
+import { ReviewNewPage } from './pages/ReviewNew';
+import { MyReviewsPage } from './pages/MyReviews';
 import { SearchPage } from './pages/Search';
 import { SellerDashboardPage } from './pages/seller/Dashboard';
 import { SellerOrderDetailPage } from './pages/seller/OrderDetail';
@@ -157,6 +159,24 @@ export const App: React.FC = () => (
         element={
           <RequireAuth>
             <MePage />
+          </RequireAuth>
+        }
+      />
+
+      {/* ---------- 评价与晒单（M11/P2-1，履约域 duoduo-fulfilment） ---------- */}
+      <Route
+        path="/reviews/new"
+        element={
+          <RequireAuth>
+            <ReviewNewPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reviews/mine"
+        element={
+          <RequireAuth>
+            <MyReviewsPage />
           </RequireAuth>
         }
       />

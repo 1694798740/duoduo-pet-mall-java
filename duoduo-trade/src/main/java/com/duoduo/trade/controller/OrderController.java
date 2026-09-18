@@ -159,4 +159,16 @@ public class OrderController {
     public ApiResponse<SweepResult> sweep() {
         return ApiResponse.ok(orderService.sweepExpiredOrders());
     }
+
+    /**
+     * 服务间只读：按订单号取订单事实（供履约域校验「能否评价」）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。
+     * 返回的是裁剪过的 {@link com.duoduo.trade.dto.OrderDtos.OrderFactView}：
+     * 只有归属 / 状态 / 时间 / 商品明细，<b>不含收货人信息</b>。
+     */
+    @GetMapping("/internal/{orderNo}/fact")
+    public ApiResponse<com.duoduo.trade.dto.OrderDtos.OrderFactView> internalFact(@PathVariable String orderNo) {
+        return ApiResponse.ok(orderService.internalOrderFact(orderNo));
+    }
 }

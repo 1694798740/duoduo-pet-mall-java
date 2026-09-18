@@ -18,12 +18,15 @@ CREATE DATABASE IF NOT EXISTS `duoduo_product`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS `duoduo_trade`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS `duoduo_fulfilment`
+    DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS `nacos`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 应用账号：只授予业务库权限，不给 nacos 库
 CREATE USER IF NOT EXISTS 'duoduo'@'%' IDENTIFIED BY 'duoduo';
-GRANT ALL PRIVILEGES ON `duoduo_user`.*    TO 'duoduo'@'%';
-GRANT ALL PRIVILEGES ON `duoduo_product`.* TO 'duoduo'@'%';
-GRANT ALL PRIVILEGES ON `duoduo_trade`.*   TO 'duoduo'@'%';
+GRANT ALL PRIVILEGES ON `duoduo_user`.*       TO 'duoduo'@'%';
+GRANT ALL PRIVILEGES ON `duoduo_product`.*    TO 'duoduo'@'%';
+GRANT ALL PRIVILEGES ON `duoduo_trade`.*      TO 'duoduo'@'%';
+GRANT ALL PRIVILEGES ON `duoduo_fulfilment`.* TO 'duoduo'@'%';
 FLUSH PRIVILEGES;

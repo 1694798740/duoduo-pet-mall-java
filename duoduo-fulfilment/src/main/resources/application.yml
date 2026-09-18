@@ -1,0 +1,82 @@
+server:
+  # 不要用 FULFIL_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_FULFILMENT_PORT:8084}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 30
+    accept-count: 500
+    max-connections: 5000
+
+spring:
+  application:
+    name: duoduo-fulfilment
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_fulfilment?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: duoduo-fulfilment-pool
+  sql:
+    init:
+      # 表结构由 DDL 统一管理（docs/sql/04-duoduo-fulfilment.sql 或 db/schema.sql），
+      # 绝不能在启动时自动执行 —— schema.sql 里有 DROP TABLE。
+      mode: never
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+duoduo:
+  id:
+    datacenter-id: ${ID_DATACENTER:1}
+    worker-id: ${ID_WORKER:4}
+  internal:
+    # 服务间调用共享密钥（调交易域的内部订单查询接口）
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+  review:
+    # 评价内容最大长度（与 DDL 的 VARCHAR(1000) 对齐）
+    max-content-length: ${REVIEW_MAX_CONTENT:1000}
+    # 单条评价最多几张图
+    max-images: ${REVIEW_MAX_IMAGES:9}
+    # 追评窗口：确认收货后多少天内可追评（0 表示不限期）
+    append-window-days: ${REVIEW_APPEND_DAYS:30}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-fulfilment","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'

@@ -19,6 +19,7 @@
     <module>duoduo-user</module>
     <module>duoduo-product</module>
     <module>duoduo-trade</module>
+    <module>duoduo-fulfilment</module>
   </modules>
 
   <properties>

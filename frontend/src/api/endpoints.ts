@@ -37,6 +37,11 @@ import type {
   PageResult,
   PayResult,
   PetUpsertRequest,
+  ReviewCreateRequest,
+  ReviewCreateResult,
+  ReviewSummary,
+  ReviewView,
+  ReviewedOrders,
   PetView,
   PlaceOrderRequest,
   PlaceOrderResult,
@@ -313,4 +318,41 @@ export const paymentApi = {
    * 前端在「本机模拟支付」场景下调用它，省去第二台设备。
    */
   sandboxPay: (payNo: string) => api.post<PayResult>(`/api/payments/sandbox/${payNo}`),
+};
+
+// ---------- 评价与晒单（/api/reviews，履约域） ----------
+
+/**
+ * 评价接口。
+ *
+ * 公开读（商品评价与评分汇总，未登录也能看）与登录写（提交 / 追评 / 我的评价）
+ * 混在同一个前缀下，网关只放行 `/api/reviews/product/**` 这一段 ——
+ * 因此**不要**把需要登录的接口挪进 `product/` 子路径。
+ */
+export const reviewApi = {
+  /** 商品评价分页（公开） */
+  byProduct: (
+    spuId: number,
+    query?: { rating?: number; hasImage?: boolean; page?: number; pageSize?: number },
+  ) => api.get<PageResult<ReviewView>>(`/api/reviews/product/${spuId}`, { query }),
+
+  /** 商品评分汇总（公开） */
+  summary: (spuId: number) => api.get<ReviewSummary>(`/api/reviews/product/${spuId}/summary`),
+
+  /** 提交评价：一次可提交订单里多件商品 */
+  create: (body: ReviewCreateRequest) => api.post<ReviewCreateResult>('/api/reviews', body),
+
+  /** 追评（每条评价一次） */
+  append: (id: number, content: string) => api.post<ReviewView>(`/api/reviews/${id}/append`, { content }),
+
+  /** 我的评价（分页） */
+  mine: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<ReviewView>>('/api/reviews/mine', { query }),
+
+  /** 某订单下我的评价 */
+  byOrder: (orderNo: string) => api.get<ReviewView[]>(`/api/reviews/order/${orderNo}`),
+
+  /** 我在这批订单里已评价过的订单号（订单列表页一次判断） */
+  reviewed: (orderNos: string[]) =>
+    api.get<ReviewedOrders>('/api/reviews/reviewed', { query: { orderNos: orderNos.join(',') } }),
 };

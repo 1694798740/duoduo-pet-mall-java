@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | ⬜ 未开始 | 更后期 |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **P2-1 评价与晒单已落地**（新建 `duoduo-fulfilment`，自测 59 项 + UI 20 项全绿）；余下：物流轨迹 / 售后仲裁 / 信用分 / 优惠券 / AI / ES |
 
 ---
 
@@ -116,19 +116,21 @@
 | **M9 商家端 Web（前端）** | `frontend/src/pages/seller/` 4 页（Dashboard / Orders / OrderDetail / Settlements）+ `shared.tsx`；`sellerApi` 端点层；`RequireSeller` 路由守卫（只校验登录，真正的权限边界仍在后端 403）；Layout 与「我的」页按角色显示入口；`tsc --noEmit` 零错误、`vite build` 通过（60 模块）；**真实浏览器 UI 自测 29 项全绿**（截图见 `frontend/docs/screenshots/sel_*.png`） |
 | **M10 平台管理后台** | 后端：`/api/admin/**` 13 个接口 —— 运营报表（GMV/订单量/退款率/转化率）、资金对账（托管汇总 + 异常挂账 LEFT JOIN 排查）、类目/品牌增改删+启停用（后台列表含停用项，公开接口仍只暴露 ACTIVE）、闲置审核（通过/驳回留痕：原因+时间，公开只可见 APPROVED）、订单干预（全平台列表/详情 + 仅待付款可强关，冻结释放、支付单作废、状态日志记 OPERATOR）；`OperatorGuard`（user-common，`isOperator()` 与登录态同口径）；网关 `/api/admin/**` 路由（不进白名单）；`t_listing` 补 `audit_reason` / `audit_at` 追溯列。前端：`pages/admin/` 5 页（运营概览含对账 / 内容审核 / 类目 / 品牌 / 订单干预）+ `AdminTabs` + `RequireOperator`；Layout 按角色显示「管理后台」入口。**自测 `scripts/admin-smoke.ps1` 49 通过 / 0 失败**（覆盖 401/403 边界、审核留痕、强关状态机拒绝、夹具自建自毁）；`tsc` 零错误、`vite build` 通过 |
 
+| **M11 / P2-1 评价与晒单（履约域）** | **新建 `duoduo-fulfilment`（8084）** 服务：POM 入父反应堆、三档配置、雪花 worker-id=4、compose 第 8 个容器、网关路由 `/api/reviews/**`（**只放行只读 `/product/**`**）。评价接口 7 个：商品评价分页（星级/有图过滤）、评分汇总（平均分/星级分布/好评率/带图/追评计数，SQL 聚合）、提交评价（一单可多件商品）、追评（一次 + 窗口期）、我的评价、按订单查我的评价、已评价订单集合（订单列表页批量判断）。**规则**：只有本人**已完成**订单可评（订单事实由交易域内部接口提供，**不含收货人信息**）；`spuId` 必须在该订单明细中；唯一索引 `(order_id,user_id,spu_id)` 兜底一单一商品一评（并发撞键转 409）；图片只收 http/https（挡 XSS scheme）；匿名只影响展示、真实 user_id 保留。**用户域**新增内部只读接口 `/api/users/internal/briefs`（批量昵称头像，凭据保护）+ 新建 `InternalTokenFilter`。**交易域**新增 `/api/orders/internal/{orderNo}/fact`（裁剪字段的订单事实）。前端：商品详情页评价区（汇总 + 筛选 + 分页 + 匿名脱敏）、`/reviews/new` 按订单逐件打分（已评过的不再出现）、`/reviews/mine` 含追评弹窗、订单列表「去评价 / 已评价」批量判断。**自测 `scripts/review-smoke.ps1` 59 通过 / 0 失败** + **`scripts/e2e/review-ui-check.mjs` 真实 Chromium 20 通过 / 0 失败**（截图 `rev_*.png`） |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| _（本轮已收口，暂无进行中任务）_ | 下一步建议：M7 小程序，或 M11 营销/AI/ES；也可先做运营账号管理页（提权目前靠 SQL） |
+| M11 剩余块：物流轨迹 / 售后仲裁 / 信用分（`duoduo-fulfilment` 同域内扩展） | 评价已落地，同域下一步最省；信用分已于评价域埋好数据（真实 user_id 始终保留） |
+| M11 其他：优惠券营销（`duoduo-marketing`）/ AI 导购 / ES 检索 / RocketMQ / Sentinel / 压测 | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
 
 ### 未开始（按你确认的端形态排期）
 
 | # | 任务 | 依赖 | 说明 |
 |---|---|---|---|
 | M7 | 买家端 微信小程序 | M6 的接口封装 + 小程序 AppID | 登录接 `code2Session`；支付复用同一套预下单 + 轮询接口 |
-| M11 | 营销 / AI 导购「多多」/ 履约售后 / ES 检索 / RocketMQ 削峰 / Sentinel / 压测 | 全部后期 | — |
-| M10+ | 运营账号管理页（提权目前靠 SQL） | M10 ✅ | 后台可视化开通/停用运营账号 |
+| M11+ | 运营账号管理页（提权目前靠 SQL） | M10 ✅ | 后台可视化开通/停用运营账号 |
 
 ---
 
@@ -154,6 +156,7 @@
 | I-14 | **历史订单缺托管单**（M5-8 上线前的订单没有 `t_settlement` 记录） | **待办（数据迁移）** | 无需你操作 | 影响：这些订单确认收货时「放款」会找不到托管单（只记 ERROR，不影响买家收货）。处理：写一次性回补脚本按订单状态推断资金状态；当前开发库可清空重建，**生产上线前必须回补** |
 | I-16 | 客户端发错 `Content-Type`（如 POST 无 body 时带 `x-www-form-urlencoded`）落到兜底 handler → 返回 **500** | **已自愈**（2026-09-18） | 无需操作 | 客户端错误不应是 5xx，会污染告警。修法：新增 `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 `handleUnsupportedMediaType`，返回 **415**；由卖家冒烟断言固定 |
 | I-15 | 支付渠道首轮自测暴露**三处缺陷**（M8-1 实现期） | **已自愈**（2026-09-18） | 无需操作 | ① **未知渠道 / MOCK 回调拒绝用了 400**（应为 422 业务错误，注册表 javadoc 与实现不一致）→ 补错误码 `PAYMENT_CHANNEL_UNKNOWN` 并改用之；② **二维码内容默认指向交易服务 8083 直连地址**——扫码设备不可达，且网关缺 `/sandbox/pay` 路由 → 改为网关 8080 + 补路由与白名单；③ **订单取消 / 关单不作废未支付支付单**——`markClosedByOrder` 在 Mapper 里定义了却从未被调用，订单已取消、二维码还能扫出钱来 → 在取消与调度关单两条路径都接上。三处均已由 62 项自测断言固定 |
+| I-17 | 履约域（M11/P2-1）自测暴露**三个工具层隐患** | **已自愈**（2026-09-18） | 无需操作 | ① 内部接口断言**打错服务端口**（连履约 8084 打用户域路径 → 无路由 500，看着像过滤器坏了）；② **PowerShell 把 `$SPU?page=1` 整体当变量名**（`?` 是合法的变量名字符），展开成 `=1&pageSize=50`，服务端收到 `spuId="=1&pageSize=50"` → 必须写 `${SPU}?`；③ **19 位雪花主键经 `ConvertFrom-Json` 丢精度**，出现「数据在库里、断言找不到」的假失败 → 断言改用业务键，需要主键时从**原始响应文本**正则提取 |
 
 <details>
 <summary><b>附：真实渠道备查（当前不需要你提供，将来要接真实收款时再取）</b></summary>
@@ -168,6 +171,46 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-18（第六轮 · 履约域 M11/P2-1：评价与晒单）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-fulfilment/`（**新增整个模块**） | POM 入父反应堆；`FulfilmentApplication`（`@EnableFeignClients` + `@MapperScan`）；`FulfilmentServiceConfig`（分页 + 雪花 **worker-id=4**）；`application.yml` / `-local` / `-mysql` 三档；复用同一份 `Dockerfile` |
+| `duoduo-fulfilment/.../entity/ReviewEntity.java`、`mapper/ReviewMapper.java` | 评价实体（含追评列、审核位）；聚合 SQL（`aggregateBySpu` / `starDistribution`）+ 批量查询（`reviewedOrderNos` / `reviewedSpuIds`） |
+| `duoduo-fulfilment/.../service/ReviewService.java` | 核心规则：订单事实校验（归属 / 已完成）、`spuId` 必须在订单明细、评分 1-5、图片 http/https 白名单 ≤9 张、追评一次 + 窗口期、匿名脱敏、碰撞唯一键转 409、用户服务不可用时**降级**为无昵称而非整页失败 |
+| `duoduo-fulfilment/.../controller/ReviewController.java`、`dto/ReviewDtos.java` | 7 个接口；请求体**无 userId**；响应时间统一 ISO-8601 UTC |
+| `duoduo-fulfilment/.../client/OrderClient.java`、`UserClient.java`、`config/InternalCallConfig.java` | 服务间只读调用（Nacos + Feign，不经网关），统一注入 `X-Internal-Token` |
+| `duoduo-fulfilment/src/main/resources/db/schema.sql`、`docs/sql/04-duoduo-fulfilment.sql`（**新增**） | `t_review`：唯一键 `(order_id,user_id,spu_id)`（**一单一商品一评**，不是一单一评）；`order_id` 由订单号派生稳定哈希（不把本域主键绑在对方字符串格式上） |
+| `docs/sql/00-init-databases-and-user.sql` | 新增 `duoduo_fulfilment` 库与授权 |
+| `duoduo-user/.../support/InternalTokenFilter.java`（**新增**）、`AuthService`、`UserController`、`UserDtos.UserBrief` | 内部只读接口 `GET /api/users/internal/briefs?ids=`（批量昵称头像，**只回三字段**）；批量而非逐条，避免跨进程 N+1 |
+| `duoduo-trade/.../dto/OrderDtos.OrderFactView`、`OrderService.internalOrderFact`、`OrderController` | 内部只读接口 `GET /api/orders/internal/{orderNo}/fact`：**裁剪掉收货人信息**的订单事实 |
+| `duoduo-gateway/.../config/GatewaySecurityProperties.java` | 白名单新增 `/api/reviews/product/**`（**只放行只读子路径**，写接口仍强制登录） |
+| `docker-compose.yml` | 第 8 个容器 `duoduo-fulfilment-app`（:8084）；用户容器补 `INTERNAL_TOKEN`；网关依赖加履约 |
+| `frontend/src/components/ReviewSection.tsx`（**新增**） | 商品评价区：汇总（平均分 / 星级分布条 / 好评率 / 带图 / 追评）+ 星级与有图筛选 + 分页 + 匿名脱敏展示 |
+| `frontend/src/pages/ReviewNew.tsx`（**新增**） | 按订单逐件评价：**已评过的商品不再出现在表单**，只列待评项；星级大按钮；图片直链输入；匿名勾选 |
+| `frontend/src/pages/MyReviews.tsx`（**新增**） | 我的评价 + 追评弹窗；可否追评由服务端 `appendable` 决定（前端不自己算窗口期） |
+| `frontend/src/pages/Orders.tsx`、`ProductDetail.tsx`、`Me.tsx`、`App.tsx`、`api/types.ts`、`api/endpoints.ts` | 已完成订单显示「去评价 / 已评价」（**一次批量查** `reviewed`）；详情页挂评价区；「我的」加快捷入口；两条新路由；`reviewApi` + 类型 |
+| `scripts/review-smoke.ps1`（**新增**） | **59 项断言**：内部接口保护与字段裁剪、公开读/登录写边界、评价资格（未完成 422 / 他人订单 403 / 不在订单 422）、参数边界、幂等 409、匿名脱敏、追评一次、聚合口径、夹具自建自毁 |
+| `scripts/e2e/review-ui-check.mjs`（**新增**） | 真实 Chromium **20 项断言**：订单列表入口 → 评价页打分提交 → 我的评价 → 商品详情公开评价区（含匿名展示），4 张截图 `rev_*.png` |
+
+**自测结论**：8 容器全 healthy（新增履约服务）；`scripts/review-smoke.ps1` **59 通过 / 0 失败**；
+`scripts/e2e/review-ui-check.mjs` **20 通过 / 0 失败**；前端 `tsc --noEmit` 零错误、`vite build` 通过。
+
+**自测暴露并修复的缺陷**：
+
+1. **断言失败其实打错了服务**：内部接口保护断言直连履约服务 8084 却打用户域的路径，
+   拿到的是「无此路由」的 500，看起来像过滤器坏了 → 修正为直连对端服务（8081）。
+   教训与 I-13 同源：**断言失败先确认打的是哪个服务**。
+2. **PowerShell 把 `$SPU?page=1&pageSize=50` 整体当成变量名**（`?` 允许出现在变量名中），
+   展开成 `=1&pageSize=50`，服务端收到 `spuId = "=1&pageSize=50"` 报类型转换错。
+   修法：一律写 `${SPU}?`。这是继「中文 BOM」「雪花 ID 精度」之后的第三个 PowerShell 隐形坑。
+3. **19 位雪花主键经 `ConvertFrom-Json` 丢精度**（与前端 `JSON.parse` 同类），
+   导致「数据明明在库里、断言却找不到」→ 断言一律改用**业务键**（订单号），
+   需要主键时从**原始响应文本**正则提取。
+4. **`商品不在该订单中` 的语义归位**：原用 `validation`（400）返回，
+   但它其实是业务规则不满足 → 改 `businessRule`（422）。400 与 422 的区别直接决定
+   前端提示策略与告警口径，混用会让真正的参数 bug 淹没在业务分支里。
 
 ### 2026-09-18（第五轮 · 平台管理后台 M10）
 
@@ -336,10 +379,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
 # 平台管理后台：权限边界、报表对账、类目品牌、内容审核、订单强关（49 项，夹具自建自毁）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1
 
+# 履约域：评价与晒单（59 项；含内部接口保护、字段裁剪、匿名脱敏、追评与聚合口径）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1
+
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server，必须走 localhost:5173）
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
 node node_modules/vite/bin/vite.js --port 5173            # 另开一个终端
 cd .. && node scripts/e2e/seller-ui-check.mjs
+
+# 评价与晒单的真实浏览器 UI 自测（20 项；同样需 dev server 与 localhost:5173）
+node scripts/e2e/review-ui-check.mjs
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

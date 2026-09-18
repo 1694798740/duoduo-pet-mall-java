@@ -6,6 +6,7 @@ import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
+import com.duoduo.user.dto.UserDtos;
 import com.duoduo.user.dto.UserDtos.LoginRequest;
 import com.duoduo.user.dto.UserDtos.LoginResponse;
 import com.duoduo.user.dto.UserDtos.RealNameRequest;
@@ -28,7 +29,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -160,6 +163,25 @@ public class AuthService {
             throw BizException.notFound("用户");
         }
         return toView(entity);
+    }
+
+    /**
+     * 服务间只读：批量取用户公开资料（昵称 / 头像）。
+     *
+     * <p>供履约域在评价列表里补全展示信息。**一次批量**而不是逐条调用：
+     * 评价列表一页 20 条，逐条调用户服务就是 20 次跨服务往返（N+1 的跨进程版本），
+     * 页面一慢就会被怀疑是「评价服务不行」，而根因在调用姿势。
+     *
+     * <p>查不到的 id 直接**跳过**而不是抛异常：用户被注销 / 数据不一致时，
+     * 评价列表应当降级显示（前端用「已注销用户」兜底），而不是整页 500。
+     */
+    public List<UserDtos.UserBrief> userBriefs(Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return List.of();
+        }
+        return userMapper.selectBatchIds(userIds).stream()
+                .map(u -> new UserDtos.UserBrief(u.getId(), u.getNickname(), u.getAvatar()))
+                .toList();
     }
 
     @Transactional

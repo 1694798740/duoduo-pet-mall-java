@@ -130,6 +130,8 @@ services:
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
       DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
+      # 内部接口凭据（/api/users/internal/**：批量取昵称头像，供履约域评价列表补全展示）
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
     ports:
       - '8081:8081'
     depends_on:
@@ -196,6 +198,37 @@ services:
       nacos:
         condition: service_healthy
 
+  # 履约服务（M11/P2-1）：评价与晒单。读订单事实靠内部凭据调交易服务，故依赖 trade 健康。
+  duoduo-fulfilment-app:
+    container_name: duoduo-app-fulfilment
+    image: duoduo/duoduo-fulfilment:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-fulfilment/target/duoduo-fulfilment-1.0.0.jar
+        APP_PORT: '8084'
+    restart: unless-stopped
+    environment:
+      DUODUO_FULFILMENT_PORT: '8084'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_fulfilment?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+    ports:
+      - '8084:8084'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      duoduo-trade-app:
+        condition: service_healthy
+
   duoduo-gateway-app:
     container_name: duoduo-app-gateway
     image: duoduo/duoduo-gateway:1.0.0
@@ -222,6 +255,8 @@ services:
       duoduo-product-app:
         condition: service_healthy
       duoduo-trade-app:
+        condition: service_healthy
+      duoduo-fulfilment-app:
         condition: service_healthy
 
 volumes:

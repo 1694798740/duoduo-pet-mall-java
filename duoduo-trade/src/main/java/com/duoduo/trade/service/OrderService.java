@@ -12,6 +12,7 @@ import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeItem;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeOutcome;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeResult;
+import com.duoduo.trade.dto.OrderDtos.OrderFactView;
 import com.duoduo.trade.dto.OrderDtos.OrderItemView;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.PayRequest;
@@ -406,6 +407,29 @@ public class OrderService {
             throw BizException.notFound("订单");
         }
         return toViews(List.of(order)).get(0);
+    }
+
+    /**
+     * 服务间只读：按订单号取<b>订单事实</b>（供履约域校验评价资格）。
+     *
+     * <p>不做归属校验 —— 准入由内部凭据（{@code X-Internal-Token}）把关，
+     * 归属判断由调用方拿 {@code userId} 与**自己收到的登录态**比对完成。
+     * 刻意返回裁剪过的 {@link OrderFactView} 而非完整 {@code OrderView}：见该 DTO 注释。
+     */
+    public OrderFactView internalOrderFact(String orderNo) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        List<OrderItemView> items = toViews(List.of(order)).get(0).items();
+        return new OrderFactView(
+                order.getOrderNo(),
+                order.getUserId(),
+                order.getSellerId(),
+                order.getStatus(),
+                OrderStatus.labelOf(order.getStatus()),
+                isoTs(order.getFinishedAt()),
+                items);
     }
 
     // ---------------- 取消（含释放冻结） ----------------

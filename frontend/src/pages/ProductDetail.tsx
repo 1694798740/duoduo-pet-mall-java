@@ -18,6 +18,7 @@ import { toFriendlyMessage } from '../api/client';
 import { cartApi, productApi } from '../api/endpoints';
 import type { ProductDetail } from '../api/types';
 import { useAsync } from '../components/hooks';
+import { ReviewSection } from '../components/ReviewSection';
 import {
   Alert,
   LoadingBlock,
@@ -340,6 +341,9 @@ export const ProductDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 商品评价（公开可见，未登录也能看）：紧跟主体内容，属于决策信息而非补充信息 */}
+      <ReviewSection spuId={data.card.id} />
 
       {data.sameCategory.length ? (
         <section className="section" style={{ marginTop: 28 }}>
