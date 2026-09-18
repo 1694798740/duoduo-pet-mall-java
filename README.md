@@ -84,6 +84,10 @@ node scripts/e2e/review-ui-check.mjs
 数据库表结构 / 接口契约 / 前端手册 / 测试证据 / 风险与接手建议。
 `manifest.json` 记录每篇在腾讯文档与乐享知识库的 id 与链接；云端两处已同步。
 
+**AI Agent 接管包**（给 AI 读，与上面的人读版互补）：仓库根 `AGENTS.md` + `docs/agent/00~08`
+（接管指令与硬规矩 / 领域模型 / 代码地图 / 架构不变式 / 接口契约全集 / 开发任务手册 /
+测试门禁 / 待办与验收标准 / 环境与踩坑）。
+
 ### 降级方案：不开 Docker
 
 中间件也可用免安装版跑（`scripts/start-infra.ps1` 起 MySQL/Redis，`scripts/start-local.ps1 -Mysql` 起三进程），

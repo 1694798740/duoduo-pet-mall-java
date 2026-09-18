@@ -6,6 +6,10 @@
   必然超限。本脚本 `sys.path.insert` 技能目录后**在进程内**调用 `tencentdocs.call_tool`，
   参数不经过命令行，长度不再是问题（这是本项目已验证可行的模式，见 sync_ledger.py）。
 
+用法：
+  python publish_handover.py                                   # 默认发布 docs/handover（人读交接包）
+  python publish_handover.py --src docs/agent --sub-title "2026-09-18 AI Agent 接管包"
+
 执行顺序（幂等，可重复跑）：
   1. 根目录「多多宠物商店 · 项目资产（按时间归档）」不存在则建；
   2. 其下「2026-09-18 交接包」不存在则建；
@@ -13,6 +17,7 @@
   4. 回写 docs/handover/manifest.json（title / file_id / url / bytes / 大纲节数）。
 """
 
+import argparse
 import base64
 import json
 import os
@@ -21,11 +26,20 @@ import sys
 
 SKILL_DIR = r"C:/Users/16947/.workbuddy/plugins/cache/workbuddy-builtin/tencent-docs-plugin/5.5.6-wb.38337834.g5f969292.h4918b5ced607/skills/tencent-docs"
 ROOT = r"D:/智能体项目/duoduo-pet-mall-java"
-HANDOVER = os.path.join(ROOT, "docs", "handover")
-MANIFEST = os.path.join(HANDOVER, "manifest.json")
 
-FOLDER_TITLE = "多多宠物商店 · 项目资产（按时间归档）"
-SUB_TITLE = "2026-09-18 交接包"
+# 默认值 = 人读交接包（保持原行为）；另一套用命令行覆盖为 docs/agent（AI 接管包）
+parser = argparse.ArgumentParser(description="把本地 Markdown 文档集发布到腾讯文档目录（幂等）")
+parser.add_argument("--src", default=os.path.join(ROOT, "docs", "handover"), help="本地 md 目录")
+parser.add_argument("--manifest", default=None, help="manifest.json 输出路径（默认 <src>/manifest.json）")
+parser.add_argument("--folder-title", default="多多宠物商店 · 项目资产（按时间归档）", help="云端根目录名")
+parser.add_argument("--sub-title", default="2026-09-18 交接包", help="云端子目录名")
+args, _ = parser.parse_known_args()
+
+HANDOVER = args.src
+MANIFEST = args.manifest or os.path.join(HANDOVER, "manifest.json")
+FOLDER_TITLE = args.folder_title
+SUB_TITLE = args.sub_title
+MANIFEST_KIND = "ai-agent" if os.path.basename(HANDOVER.rstrip("/\\")) == "agent" else "human-handover"
 
 sys.path.insert(0, SKILL_DIR)
 import tencentdocs  # noqa: E402
@@ -206,15 +220,15 @@ def main() -> None:
         b64 = base64.b64encode(html_doc.encode("utf-8")).decode("ascii")
 
         file_id = find_doc(title, sub_id)
-        if not file_id:
+        is_new = file_id is None
+        if is_new:
             created = call("manage.create_file", {"title": title, "file_type": "doc", "parent_id": sub_id})
             file_id = created.get("file_id") or created.get("id")
-        before = file_id
 
         written = call_doc("overwrite_doc_with_html", {"file_id": file_id, "base64_html_text": b64})
         outline = call_doc("get_outline", {"file_id": file_id})
         sections = len((outline.get("outlines") or []))
-        print(f"  [{title}] file_id={file_id} html={len(html_doc)}B 大纲节数={sections} ({'新建' if not before else '复用'})")
+        print(f"  [{title}] file_id={file_id} html={len(html_doc)}B 大纲节数={sections} ({'新建' if is_new else '复用'})")
         manifest.append({
             "title": title,
             "file_id": file_id,
@@ -226,6 +240,8 @@ def main() -> None:
         })
 
     payload = {
+        "kind": MANIFEST_KIND,
+        "source_dir": HANDOVER.replace("\\", "/"),
         "generated_at": "2026-09-18",
         "tencent_folder": {"title": FOLDER_TITLE, "folder_id": root_id},
         "tencent_subfolder": {"title": SUB_TITLE, "folder_id": sub_id},
