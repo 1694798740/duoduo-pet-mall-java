@@ -217,6 +217,11 @@
 - `docker exec mysql` 的告警行会被 PowerShell 当成 `NativeCommandError` 混进 stdout，
   `Sql` 辅助函数按 `Warning` 过滤的做法要继续保持。
 
+**推送状态**：本轮提交 `9d0abc8` 已正常 `git push`（`28119c7..9d0abc8  main -> main`）。
+I-18 记录的「`github.com` git 端点 502」本轮**未复现**，且 REST API 推送造成的
+**本地 / 远端 SHA 分叉已消除**（远端与本地同为 `9d0abc8`，无需再 `git fetch && git reset --hard`）。
+`git push` 仍失败时按 I-18 走 `.workbuddy/tools/push_via_api.py` 备用通道。
+
 ### 2026-09-18（第六轮 · 履约域 M11/P2-1：评价与晒单）
 
 | 文件 | 变更 |
