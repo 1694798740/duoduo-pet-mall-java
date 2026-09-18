@@ -16,7 +16,8 @@ import com.duoduo.fulfilment.dto.ReviewDtos.ReviewSummary;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
 import com.duoduo.fulfilment.entity.ReviewEntity;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.duoduo.fulfilment.support.ImageUrls;
+import com.duoduo.fulfilment.support.OrderRefs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,7 +116,7 @@ public class ReviewService {
         requireOwnOrder(fact, userId);
         requireCompleted(fact);
 
-        Long orderId = orderIdOf(fact.orderNo());
+        Long orderId = OrderRefs.orderIdOf(fact.orderNo());
         Map<Long, OrderFact.Item> itemsBySpu = indexItemsBySpu(fact);
         Set<Long> alreadyReviewed = Set.copyOf(reviewMapper.reviewedSpuIds(orderId, userId));
 
@@ -143,7 +144,7 @@ public class ReviewService {
             }
             validateRating(item.rating());
             String content = normalizeContent(item.content());
-            List<String> images = validateImages(item.images());
+            List<String> images = ImageUrls.validate(item.images(), maxImages);
 
             ReviewEntity entity = new ReviewEntity();
             entity.setId(idGenerator.nextId());
@@ -157,7 +158,7 @@ public class ReviewService {
             entity.setProductImage(orderItem.mainImage());
             entity.setRating(item.rating());
             entity.setContent(content);
-            entity.setImages(writeImages(images));
+            entity.setImages(ImageUrls.toJson(objectMapper, images));
             entity.setAnonymous(anonymous ? 1 : 0);
             entity.setAuditStatus(AUDIT_APPROVED);
             entity.setCreatedAt(now);
@@ -409,57 +410,9 @@ public class ReviewService {
         return trimmed;
     }
 
-    /**
-     * 图片校验：只接受 http/https 直链。
-     *
-     * <p>为什么不在这里做图片转存：图片存储是对象存储的职责，
-     * 本服务只保存 URL；但**协议白名单必须有** —— 放开 {@code javascript:} / {@code data:}
-     * 之类的 scheme，等于把 XSS 入口交给任何一个能发评价的人。
-     */
-    private List<String> validateImages(List<String> images) {
-        if (images == null || images.isEmpty()) {
-            return List.of();
-        }
-        List<String> cleaned = images.stream()
-                .filter(url -> url != null && !url.isBlank())
-                .map(String::trim)
-                .peek(url -> {
-                    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                        throw BizException.validation("图片地址必须是 http/https 直链：" + url);
-                    }
-                })
-                .distinct()
-                .toList();
-        if (cleaned.size() > maxImages) {
-            throw BizException.validation("最多上传 " + maxImages + " 张图片");
-        }
-        return cleaned;
-    }
-
-    private String writeImages(List<String> images) {
-        if (images == null || images.isEmpty()) {
-            return null;
-        }
-        try {
-            return objectMapper.writeValueAsString(images);
-        } catch (Exception e) {
-            throw BizException.validation("图片列表格式不正确");
-        }
-    }
-
-    private List<String> readImages(String json) {
-        if (json == null || json.isBlank()) {
-            return List.of();
-        }
-        try {
-            return objectMapper.readValue(json, new TypeReference<List<String>>() {
-            });
-        } catch (Exception e) {
-            // 数据脏了不该让整页 500：评价正文仍然可看，图丢了就丢了
-            log.warn("评价图片字段解析失败，按无图处理：{}", json);
-            return List.of();
-        }
-    }
+    // 图片直链的校验与 JSON 读写已抽到 support/ImageUrls：
+    // 售后举证图（A3）用的是同一条安全规则（只收 http/https、脏数据宽容读）。
+    // 这类「同一规则两处实现」的东西一旦漂移，就是安全缺口 —— 比如某天只在一处补了协议白名单。
 
     /**
      * 批量取昵称头像。
@@ -505,7 +458,7 @@ public class ReviewService {
                 entity.getProductImage(),
                 entity.getRating() == null ? 0 : entity.getRating(),
                 entity.getContent(),
-                readImages(entity.getImages()),
+                ImageUrls.fromJson(objectMapper, entity.getImages()),
                 anonymous,
                 nickname,
                 avatar,
@@ -524,22 +477,6 @@ public class ReviewService {
             return true;
         }
         return !entity.getCreatedAt().plusDays(appendWindowDays).isBefore(now);
-    }
-
-    /**
-     * 由订单号派生稳定的订单标识。
-     *
-     * <p>为什么不直接用订单号做唯一键：订单号是字符串，索引体积大、比较慢，
-     * 而且它是交易域的**对外标识**，将来对方若调整生成规则（加前缀 / 换长度），
-     * 本域的唯一键跟着漂移。用订单号派生一个稳定 bigint（哈希），
-     * 既保证「同一订单」判定稳定，也不把本域的键绑在对方的字符串格式上。
-     */
-    private Long orderIdOf(String orderNo) {
-        long hash = 1125899906842597L; // 质数种子，避免低位规律
-        for (int i = 0; i < orderNo.length(); i++) {
-            hash = 31 * hash + orderNo.charAt(i);
-        }
-        return Math.abs(hash);
     }
 
     private String iso(LocalDateTime time) {

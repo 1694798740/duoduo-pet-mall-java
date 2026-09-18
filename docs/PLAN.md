@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-18 19:10（第八轮：A1 托管单回补 + 文档口径收敛）
+> 更新时间：2026-09-18 20:05（第九轮：A3 售后仲裁工单）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -120,11 +120,13 @@
 
 | **A1 · 历史订单托管单回补（I-14）** | **新增 `duoduo-trade` 的 `POST /api/admin/settlements/backfill?dryRun=`**（运营，幂等）：扫描「已有资金事实、却没有账本」的订单，按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`），金额取 `pay_amount`，放款时间取订单**真实的 `finished_at`**；`?dryRun=true` 只出计划一行不写库；幂等靠 `uk_settle_order`；只碰 `s.id IS NULL` 的订单、不给 `PENDING_PAYMENT`/`CLOSED` 补账；逐条独立提交。**实测效果**：回补前 3 笔 `COMPLETED` 挂账 → 回补后 `abnormal` 返回空、退款单缺口同样清零。**自测 `scripts/backfill-smoke.ps1` 88 通过 / 0 失败**；回归 `settlement-smoke 125/0`、`payment-smoke 71/0`、`admin-smoke 49/0` |
 
+| **A3 · 售后仲裁工单** | **新建 `t_after_sale`（履约库）+ 8 个端点**：买家立案（仅本人订单、仅已发货/已完成）、我的售后、店铺售后、详情、卖家处理（AGREE 即退款 / REJECT 必填说明）、买家申请平台仲裁、运营全平台列表、运营裁定（APPROVE_REFUND 会真的退款 / REJECT，**说明必填**）。**钱不在这张表里**：裁定通过调交易域既有的运营侧退款入口，退款金额回填；**先让钱动再改状态**；状态迁移全部 CAS 条件更新；唯一键 `(order_id, type)`。**B-01 边界**：已完成订单（钱已放款）裁定退款被交易域拒 422 并提示走追偿，售后单保持原状态。**重构**：评价域私有的「订单号哈希」与「图片校验/JSON 读写」抽到 `support/OrderRefs` + `support/ImageUrls` 共用。**自测 `scripts/aftersale-smoke.ps1` 101 通过 / 0 失败**；回归 `review-smoke 59/0`、`settlement-smoke 125/0`。**遗留**：三端售后页面未开工 |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| M11 剩余块：物流轨迹（A2）/ 售后仲裁（A3）/ 信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价已落地、**A1 托管单回补已完成**，同域下一步最省 |
+| M11 剩余块：物流轨迹（A2）/ 信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价、**售后仲裁（A3）已落地**；**售后三端页面（买家/卖家/运营）是紧接着的下一步增量** |
 | M11 其他：优惠券营销（A5，`duoduo-marketing`）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
 | **A9 AI 导购「多多」（已排期）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**密钥暂未提供** → 接口与降级链路可先做，联调需等凭据 |
 | **A13 买家端微信小程序（已排期）** | 用户 2026-09-18 拍板：**排期，AppID 暂不提供但允许先开始编码** → 可先用开发者工具测试号开工，真机预览等 AppID |
@@ -176,6 +178,44 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-18（第九轮 · A3 售后仲裁工单）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-fulfilment/.../entity/AfterSaleEntity.java`、`mapper/AfterSaleMapper.java`（**新增**） | 售后单实体（诉求 / 举证图 / 卖家说明 / 仲裁结论与说明 / 裁定人 / 退款金额）；Mapper 5 个 **CAS 条件更新**（卖家同意退款、运营裁定退款、卖家拒绝、买家申请仲裁、运营驳回） |
+| `duoduo-fulfilment/.../support/AfterSaleStatus.java`（**新增**） | 状态机单一事实来源：状态常量 + 中文文案 + 类型常量与文案 + 终态判定。**不设「已驳回再改判」的边**（要改判只能新立案，留痕不会自相矛盾） |
+| `duoduo-fulfilment/.../support/OrderRefs.java`、`support/ImageUrls.java`（**新增**） | 从评价域抽出的共用件：订单号→稳定内部标识的哈希、图片直链校验与 JSON 读写。抽出的理由是**一致性**——同一订单在两个子域必须得到同一个 id，同一安全规则只应有一处实现 |
+| `duoduo-fulfilment/.../service/AfterSaleService.java`（**新增**） | 核心规则：归属与订单状态取自订单事实；仅 `SHIPPED`/`COMPLETED` 可立案（422）；唯一键撞键 409；卖家只能处理自己店铺（403）；拒绝必填说明（422）；买家可从 `PENDING`/`SELLER_REJECTED` 申请仲裁（**对 07 草案的补全**：草案没写「卖家拒绝后买家怎么办」）；运营裁定说明必填（422）；**先让钱动再改状态**；Feign 三类失败分别映射 404 / 422（透传对端原话）/ 503 |
+| `duoduo-fulfilment/.../controller/AfterSaleController.java`、`AdminAfterSaleController.java`、`dto/AfterSaleDtos.java`（**新增**） | 6 个用户端端点 + 2 个运营端端点；请求体**无** buyerId/sellerId/status；视图**不含** `arbitratedBy`（裁定人属平台内部信息） |
+| `duoduo-fulfilment/.../client/OrderClient.java`、`client/dto/{RefundRequest,RefundResult}.java` | 新增跨服务调用：复用交易域**既有的**运营侧退款入口（不新开资金通路）；契约副本按 R3 约定手写，不共享 jar |
+| `duoduo-fulfilment/.../service/ReviewService.java` | 重构：删掉私有的 `orderIdOf` / `validateImages` / `writeImages` / `readImages`，改用 `support/OrderRefs` 与 `support/ImageUrls` |
+| `duoduo-fulfilment/src/main/resources/db/schema.sql`、`docs/sql/04-duoduo-fulfilment.sql` | 新增 `t_after_sale` + 4 条索引；容器已实际执行 DDL（`t_review` 数据保留） |
+| `duoduo-fulfilment/src/main/resources/application.yml` | 新增 `duoduo.aftersale.max-images`（默认 6，**刻意少于评价的 9**：举证要的是关键几张，不是图集） |
+| `duoduo-gateway/src/main/resources/application.yml` | 履约域路由补 `/api/admin/aftersales/**`（**必须显式列举**：product/trade 是按具体子路径列的，不是 `/api/admin/**` 兜底；漏了不报错、只 404）；两段都不进白名单 |
+| `scripts/aftersale-smoke.ps1`（**新增**） | **101 项断言**：A3 六条验收标准 + 卖家拒绝→买家升级→运营裁定闭环 + 卖家「同意即退款」独立资金路径 + 同单不同类型可各自立案 + 越权 403 + 列表准入与状态过滤 + **已完成订单裁定退款被拒（B-01）** + 归属夹具复原与库存复原 |
+| `README.md`、`docs/agent/02·03·04·06·07` | 接口清单与章节（新增「履约域：售后仲裁工单」）、代码地图、跨服务调用矩阵、契约全集（端点 + DTO + 枚举 + 业务规则）、门禁表（改履约域 → review + aftersale 两套）、待办 A3 标记完成 |
+| `docs/待协助问题.md` | 留档新增 S-03（A3 已交付）；待你处理项不变（百炼 API Key、小程序 AppID、信用分权重口径） |
+
+**自测结论**：后端 `BUILD SUCCESS`；重建 fulfilment / gateway 镜像并重启（**8 容器 healthy**）；
+新增 `scripts/aftersale-smoke.ps1` **101 通过 / 0 失败**；回归 `review-smoke.ps1` **59/0**、
+`settlement-smoke.ps1` **125/0**。十一套接口冒烟合计 **856 项**。前端本轮无改动（未跑 `tsc`/`build`）。
+
+**本轮暴露与修复**
+
+1. **编译期抓到的重构遗漏**：抽出 `ImageUrls` 后漏改 `ReviewService.toView()` 里的一处 `readImages(...)` 调用 →
+   `找不到符号: 方法 readImages(String)`。类内私有方法替换靠编译器兜住，这正是「每改一个模块做一次编译检查」的价值。
+2. **网关路由是「显式列举」而非前缀兜底**：`/api/admin/**` 并不存在统一路由（product / trade 各自列出具体子路径），
+   所以运营侧售后工作台必须显式加进履约域路由，否则**不报错、只 404** —— 新增端点后先用匿名请求确认拿到 401 而不是 404，
+   这一步比等冒烟更早发现问题。
+3. **19 位雪花 id 精度坑的第二次踩点预防**：售后单 id 一律从**原始响应文本**正则提取后拼 URL，
+   买家 id 断言改为「库内两边读字符串再比」，而不是拿 JSON 反序列化出来的数字去比 —— 后者会恒不等（假失败）。
+
+**对 07 篇 A3 草案的两处工程化修正（实现为准）**
+- 补 `POST /api/aftersales/{id}/escalate`（买家申请平台仲裁）：草案只有「卖家处理」与「运营裁定」，
+  没有「卖家拒绝后买家怎么办」这一步，缺了它流程就断了。
+- 「缺说明」判 **422** 而不是用 `@NotBlank` 判 400：这是**流程要求**（这个动作不允许这样提交），
+  不是字段格式错。立案的 `reason` 则走注解判 400（字段级必填）。两档分界的理由写在 `AfterSaleDtos` 的类注释里。
 
 ### 2026-09-18（第八轮 · A1 历史订单托管单回补 I-14 + 文档口径收敛）
 
@@ -435,6 +475,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1
 # 历史订单托管单回补（88 项；权限三层 / dryRun 预演不写库 / 幂等 / 挂账清零 / 控制组 / REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1
 
+# 售后仲裁工单（101 项；立案 / 卖家处理 / 买家申请仲裁 / 运营裁定退款 / 已放款边界 B-01 / 越权）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1
+
 # 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
 # curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
 
@@ -547,5 +590,5 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | B-06 | ~~历史订单缺托管单（见 I-14）~~ **已解决（2026-09-18 A1）** | 已提供幂等回补接口 `POST /api/admin/settlements/backfill`，开发库缺口已清零 | 生产上线时在真实数据上执行一次（先 `dryRun=true` 核对计划） |
 | B-07 | **支付走沙箱渠道，不是真实资金渠道**（不入账、不结算到银行卡） | 你的决定：真实渠道资质门槛过高，先用沙箱把工程链路做实 | **上线真实收款前**：实现 `PaymentChannel` 的微信 / 支付宝版本，材料清单见协助区折叠附件 |
 | B-08 | **角色升级后需重新登录才生效**（角色快照写在 access token 内，15 分钟） | 避免每次请求回源查角色；前端已在入驻成功提示里写明 | 若要即时生效：网关每次回源查角色，或入驻成功后服务端主动使旧 refresh 失效并强制重登 |
-| B-09 | **售后只有「卖家直接退款」一种形态**，没有独立的售后单（申请-审核-退货物流） | 售后单是独立领域模型，与担保交易主链路分开做 | 接入完整售后体系时 |
+| B-09 | **售后已有独立的售后单（立案-卖家处理-平台仲裁，A3 已落地）**；仍缺**退货物流**（退货退款的货怎么寄回、怎么签收） | 退货物流是独立的物流域模型（面单、轨迹、签收），与争议裁定分开做更清晰 | 接物流轨迹（A2）时一并做 |
 | B-10 | 旧的内部凭据端点 `/api/orders/{no}/ship` 与 `/internal/**` **保留** | 现有 6 套冒烟脚本依赖它们 | 清理脚本依赖后可收敛为卖家端单一入口 |

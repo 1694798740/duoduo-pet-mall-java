@@ -63,6 +63,10 @@ duoduo:
     max-images: ${REVIEW_MAX_IMAGES:9}
     # 追评窗口：确认收货后多少天内可追评（0 表示不限期）
     append-window-days: ${REVIEW_APPEND_DAYS:30}
+  aftersale:
+    # 售后举证图最多几张。刻意少于评价的 9 张：举证要的是「看得清问题」的关键几张，
+    # 不是图集。放开到 9 张只会让运营的裁定工作台变成图片墙。
+    max-images: ${AFTERSALE_MAX_IMAGES:6}
 
 management:
   endpoints:

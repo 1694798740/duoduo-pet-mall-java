@@ -4,12 +4,12 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-18（第八轮）** — **历史订单托管单回补（A1 / I-14）完成 + 文档口径收敛**：
-新增 `POST /api/admin/settlements/backfill?dryRun=` （运营，幂等，预演/执行两态），
-把「已付款却缺账本」的历史订单一键补齐 —— 开发库里 **3 笔 `COMPLETED` 挂账已清零**
-（`GET /api/admin/settlements/abnormal` 现在返回空）；新增 `scripts/backfill-smoke.ps1`（**88 项断言**）。
-同时修正本文件此前的口径偏差：容器 **8 个**（此前表里只有 7 行，漏了履约服务）、业务库 **4 个**、
-Nacos 注册 **5 个服务**、冒烟 **10 套 755 项**。详见「变更记录」。
+**最近更新：2026-09-18（第九轮）** — **售后仲裁工单（A3）完成**：履约域新增 `t_after_sale` 与
+`/api/aftersales/**`（买家立案 / 卖家处理 / 买家申请仲裁）+ `/api/admin/aftersales/**`（运营裁定）共 8 个端点。
+争议从此可立案、可留证、可裁定：卖家拒绝后买家能申请平台仲裁，运营裁定退款会**真的执行退款**
+（复用交易域既有的运营侧退款入口，不新开资金通路）。**已完成订单（钱已放款给卖家）的裁定退款会被拒 422**
+并提示走追偿 —— 这是刻意的边界，不是缺陷。新增 `scripts/aftersale-smoke.ps1`（**101 项断言**），
+冒烟合计 **11 套 856 项**。详见「十二、变更记录」。
 
 ---
 
@@ -53,7 +53,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十套 755 项接口断言 + 两套真实浏览器 UI 断言 49 项）
+### 端到端冒烟（十一套 856 项接口断言 + 两套真实浏览器 UI 断言 49 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -66,6 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
 cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
@@ -75,7 +76,7 @@ cd .. && node scripts/e2e/seller-ui-check.mjs
 node scripts/e2e/review-ui-check.mjs
 ```
 
-十套脚本的共同约定（踩过坑才有的）：
+十一套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -280,6 +281,46 @@ duoduo-pet-mall-java/
 >
 > 跨域只读依赖两处（都是内部凭据保护，且都裁剪了字段）：交易域订单事实、
 > 用户域 `GET /api/users/internal/briefs?ids=`（批量昵称头像，**只回 id/昵称/头像三个字段**）。
+
+### 履约域：售后仲裁工单（`duoduo-fulfilment` `/api/aftersales`，A3）
+
+在此之前，退款只有「卖家一键退」一种形态：买家想退款只能先私下沟通，卖家不同意就在系统里**无路可走**，
+平台手里也没有任何可裁定的凭据（诉求是什么、何时提的、卖家怎么答的）。售后单把争议变成一条可查、可留痕、可裁定的记录。
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| POST | `/api/aftersales` | **买家立案**：`{orderNo, type, reason, images?}`。仅本人订单、仅「已发货 / 已完成」 | 需登录 |
+| GET | `/api/aftersales/mine` | 我提起的售后（`status` 过滤 + 分页） | 需登录 |
+| GET | `/api/aftersales/seller` | 我店铺的售后（可见范围由登录态推导，**不接受 `sellerId` 参数**） | 卖家 / 运营 |
+| GET | `/api/aftersales/{id}` | 售后单详情（当事人或运营） | 需登录 |
+| POST | `/api/aftersales/{id}/reply` | **卖家处理**：`{action: AGREE\|REJECT, reply?}`；`AGREE` **即执行退款**，`REJECT` 必填说明 | 该单卖家 |
+| POST | `/api/aftersales/{id}/escalate` | **买家申请平台仲裁**（`PENDING` 或 `SELLER_REJECTED` 时可进入） | 该单买家 |
+| GET | `/api/admin/aftersales` | 运营：全平台售后列表（`status` 过滤 + 分页） | 运营 |
+| POST | `/api/admin/aftersales/{id}/arbitrate` | 运营裁定：`{result: APPROVE_REFUND\|REJECT, note}`，**`note` 必填**；`APPROVE_REFUND` 会真的执行退款 | 运营 |
+
+**状态机**：`PENDING`（待卖家处理）→ 卖家 `AGREE` 执行退款 / `REJECT` → `SELLER_REJECTED`；
+买家可从 `PENDING` 或 `SELLER_REJECTED` `escalate` → `ARBITRATING`；运营裁定 → `REFUNDED` 或 `CLOSED`（两者都是终态）。
+**不设「已驳回再改判」的边** —— 要改判只能新立案，这样每条售后单的结论永远只有一次，留痕不会自相矛盾。
+
+几条刻意的规则：
+
+- **钱不在这张表里**。裁定通过时调交易域**既有的**运营侧退款入口
+  （`POST /api/orders/internal/{orderNo}/refund`），退款金额由那边回填 ——
+  退款的状态机、托管 CAS、退货入库补偿在交易域只有一份实现，这里再写一条「售后专用退款」等于给自己造第二个事实来源。
+- **顺序是先让钱动、再改售后单状态**。反过来会得到「售后单显示已退款、钱其实没退」这类最难查的账目分歧。
+- **已完成订单（钱已放款给卖家）的裁定退款会被拒 422**，并把交易域的原话（需走追偿 / 平台垫付）透传给运营。
+  这是项目已知边界 B-01，不是缺陷 —— 买家诉求该被受理，所以**立案**放行；但系统退不了这笔钱，只能走人工追偿。
+- **状态迁移一律 CAS 条件更新**（把「当前必须是 X」写进 WHERE）：卖家点「同意」与运营点「裁定」同时到达时，
+  数据库只让一个生效；钱那一侧的托管 CAS 会挡住第二次扣款。
+- **唯一键是 `(order_id, type)`**，不是 `order_id` —— 同一订单「仅退款」被拒后，仍可另立「退货退款」。
+
+自测记录：`scripts/aftersale-smoke.ps1` **101 项断言全绿**，覆盖 07 篇 A3 的六条验收标准
+（非当事人 403 / 未发货 422 / 重复立案 409 / 裁定后订单与托管同步 REFUNDED / 缺裁定说明 422 / 全流程可查有留痕），
+外加卖家拒绝→买家升级→运营裁定的完整闭环、卖家「同意即退款」这条独立资金路径、
+同单不同类型可各自立案、越权读详情 403、卖家与运营列表准入与状态过滤，以及**已完成订单裁定退款被拒**的边界。
+回归 `review-smoke.ps1` 59/0、`settlement-smoke.ps1` 125/0。
+
+> 前端三个页面（买家申请售后 / 卖家处理 / 运营仲裁台）尚未开工，是紧接着的下一步（见「十二、变更记录」的遗留）。
 
 ---
 
@@ -561,6 +602,32 @@ npm run build      # tsc --noEmit && vite build
 ---
 
 ## 十二、变更记录
+
+### 2026-09-18（第九轮 · A3 售后仲裁工单）
+
+- **新增表** `t_after_sale`（履约库）：售后单含诉求、举证图、卖家处理说明、仲裁结论与说明、退款金额；
+  唯一键 `(order_id, type)`，所有状态迁移走 CAS 条件更新。
+- **新增 8 个端点**：`/api/aftersales`（立案）、`/mine`、`/seller`、`/{id}`、`/{id}/reply`、`/{id}/escalate`、
+  `/api/admin/aftersales`、`/api/admin/aftersales/{id}/arbitrate`。两段前缀都**不进网关白名单**。
+- **网关**：`/api/admin/aftersales/**` 加入履约域路由 —— 这是**必须显式列举**的一段
+  （product / trade 的路由是按具体子路径列的，不是 `/api/admin/**` 兜底），漏了它不会报错，只会 404。
+- **跨域**：售后裁定通过时调交易域**既有的**运营侧退款入口，不新开资金通路；
+  `03` 篇服务间调用矩阵已登记。**先让钱动、再改售后单状态**。
+- **资金边界（B-01）**：已完成订单的钱已放款给卖家，裁定退款会被交易域拒 **422** 并提示走追偿 / 垫付；
+  售后单**保持原状态**，不落半个状态。立案仍然放行（买家诉求该被受理）。
+- **买家求助路径**：卖家一直不处理时，买家可从 `PENDING` 直接 `escalate` 申请平台仲裁 ——
+  否则售后就成了「卖家单方面决定要不要理你」。（这是对 `07` 篇草案的补全：草案只有卖家处理与运营裁定，
+  没有「卖家拒绝后买家怎么办」这一步。）
+- **重构（消重）**：把评价域私有的「订单号→内部标识哈希」与「图片直链校验/JSON 读写」抽到
+  `support/OrderRefs` 与 `support/ImageUrls`，两个子域共用 ——
+  同一规则两处实现一旦漂移（比如只在一处补协议白名单）就是安全缺口。
+- **自测**：新增 `scripts/aftersale-smoke.ps1` **101 项断言全绿**；回归 `review-smoke 59/0`、`settlement-smoke 125/0`。
+  后端 `BUILD SUCCESS`、8 容器 healthy。接口冒烟合计 **11 套 856 项**。
+- **编译期暴露的问题**：重构 `ReviewService` 时漏改 `toView` 里的一处调用点，编译报
+  `找不到符号: 方法 readImages(String)` —— 类内私有方法重命名靠编译器兜住，这正是保留编译检查的价值。
+- **遗留**：买家 / 卖家 / 运营三端的售后页面尚未开工（本轮交付为后端 + 端到端断言），是下一个增量。
+
+（以下为历史轮次）
 
 ### 2026-09-18（第八轮 · A1 历史订单托管单回补 I-14 + 文档口径收敛）
 

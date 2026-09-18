@@ -59,7 +59,12 @@ spring:
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:
-            - Path=/api/aftersales/**,/api/reviews/**
+            # /api/aftersales/** = 售后立案 / 卖家处理 / 买家申请仲裁（A3）。
+            # /api/admin/aftersales/** = 运营仲裁工作台（A3）—— 数据在履约库，
+            #   必须显式列在这里：product / trade 的路由是按具体子路径列举的（不是 /api/admin/** 兜底），
+            #   漏了这一段会被路由到 404，而不是报错，最不容易被发现。
+            # 两段都不进白名单：售后单含买家诉求与证据，「不登录就看得到」本身就是缺陷。
+            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**
         - id: duoduo-marketing
           uri: lb://duoduo-marketing
           predicates:
