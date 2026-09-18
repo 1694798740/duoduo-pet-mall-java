@@ -1,0 +1,86 @@
+{
+  "kind": "ai-agent",
+  "generated_at": "2026-09-18",
+  "source_dir": "docs/agent",
+  "description": "AI Agent 接管包：仓库根 AGENTS.md + docs/agent/00~08 + 本目录的启动提示词。逐篇在乐享知识库的 entry_id 见下（人读交接包见 docs/handover/manifest.json）。",
+  "lexiang_space": {
+    "name": "多多宠物商店知识库",
+    "space_id": "357ee062253b4f4c911a4f1d30322e72",
+    "root_entry_id": "36a6883c71ab40258986787a8e10b062",
+    "kind": "team",
+    "team": "多多宠物商店"
+  },
+  "docs": [
+    {
+      "local": "AGENTS.md",
+      "name": "AGENTS · 仓库入口（AI 必读）",
+      "purpose": "AI 入口：三分钟自检、必读顺序、十条硬规矩、交付清单",
+      "lexiang_entry_id": "a4cab61ca5e8402691b58e8a4718edd8"
+    },
+    {
+      "local": "docs/agent/PROMPT-新AI接手指令.md",
+      "name": "PROMPT · 新 AI 接手指令",
+      "purpose": "可直接粘贴给下一个 AI 的启动提示词（先理解→给计划→提问题→再编码）",
+      "lexiang_entry_id": "3d552204b86649999814f31b741ba05f"
+    },
+    {
+      "local": "docs/agent/00-AGENT-接管指令.md",
+      "name": "A00 · AGENT 接管指令",
+      "purpose": "硬规矩 C1~C10、工作循环、完成定义 DoD",
+      "lexiang_entry_id": "d69f19ed24f1442c8ffe456ec6e95a5b"
+    },
+    {
+      "local": "docs/agent/01-项目目标与领域模型.md",
+      "name": "A01 · 项目目标与领域模型",
+      "purpose": "业务目标、参与者、领域对象、主流程、术语表",
+      "lexiang_entry_id": "c8b2ef5dbba24364919be44e10c5d434"
+    },
+    {
+      "local": "docs/agent/02-代码地图与现状.md",
+      "name": "A02 · 代码地图与现状",
+      "purpose": "文件级索引 + 基线状态（容器/模块/库/断言数）",
+      "lexiang_entry_id": "21b52bc6ee8c4cbd8e6357beac1d04d0"
+    },
+    {
+      "local": "docs/agent/03-架构与不变式.md",
+      "name": "A03 · 架构与不变式",
+      "purpose": "INV-1~15 硬约束 + 工程约定 + 改架构的注意",
+      "lexiang_entry_id": "bfb8011a71e44689bdc899826a36c172"
+    },
+    {
+      "local": "docs/agent/04-接口契约全集.md",
+      "name": "A04 · 接口契约全集",
+      "purpose": "端点×认证×DTO 字段×枚举×错误码（机械抽取自源码）",
+      "lexiang_entry_id": "51dd838a4f64432eaea3fcfb034473a4"
+    },
+    {
+      "local": "docs/agent/05-开发任务手册.md",
+      "name": "A05 · 开发任务手册",
+      "purpose": "R1~R6 配方与代码骨架",
+      "lexiang_entry_id": "6be1a1b364ef4401a9f501ecfca9e279"
+    },
+    {
+      "local": "docs/agent/06-测试与验收门禁.md",
+      "name": "A06 · 测试与验收门禁",
+      "purpose": "按改动类型选必跑脚本 + 断言写法约定 + 排障顺序",
+      "lexiang_entry_id": "4862d4ded6424cc7b67ecc11dad72540"
+    },
+    {
+      "local": "docs/agent/07-待办事项与验收标准.md",
+      "name": "A07 · 待办事项与验收标准",
+      "purpose": "A1~A13 待办：目标/涉及文件/接口草案/验收标准/风险",
+      "lexiang_entry_id": "c1d890e731a94f51986ca4b00c8f6698"
+    },
+    {
+      "local": "docs/agent/08-环境运维与踩坑禁忌.md",
+      "name": "A08 · 环境运维与踩坑禁忌",
+      "purpose": "T-01~T-24 症状→根因→做法、10 条禁忌、外部依赖边界",
+      "lexiang_entry_id": "7cad455269074ba3820c6722b9037f68"
+    }
+  ],
+  "notes": [
+    "乐享知识库根节点当前共 20 篇：9 篇人读（00 ·~08 ·）+ 11 篇 AI（AGENTS / PROMPT / A00~A08）。",
+    "08 篇在乐享副本中的开发默认口令与内部凭据为占位符（<口令> / <内部凭据>），本地文件已同步为同一口径。",
+    "乐享 MCP 无建库能力：知识库需由人在乐享网页端创建后提供 space_id。"
+  ]
+}

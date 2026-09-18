@@ -38,6 +38,9 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 | 8 | `docs/agent/06-测试与验收门禁.md` | 提交前 | 该跑哪些命令、断言怎么写 |
 | 9 | `docs/agent/08-环境运维与踩坑禁忌.md` | 报错时 | 症状→根因→正确做法 |
 
+> 换会话/换 AI 的启动提示词（可直接粘贴给下一个 AI）：`docs/agent/PROMPT-新AI接手指令.md`
+> —— 它要求新的 AI **先理解、给计划、提问题，经确认后才编码**，并明确「代码工作空间是 `D:\智能体项目`」。
+
 ## 2. 十条硬规矩（违反其一即为不合格交付）
 
 1. **不动基线**：`docker compose ps` 非 8 healthy、或编译不通过时，先修基线。
