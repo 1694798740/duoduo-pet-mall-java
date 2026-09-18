@@ -1,6 +1,6 @@
 # 多多宠物商店 · Java 微服务架构设计（v1.0）
 
-> 技术底座：**Java 17 + Spring Boot 3.2 + Spring Cloud 2023 + Spring Cloud Alibaba 2023**
+> 技术底座：**Java 21 + Spring Boot 3.2 + Spring Cloud 2023 + Spring Cloud Alibaba 2023**（v1.0 设计时为 17，实际构建用 21）
 > 目标形态：参考 闲鱼 / 淘宝 的 B2C + C2C 双供给电商架构，可水平扩容至百万级在线用户。
 > 与旧版关系：旧版（Node/Express + SQLite）仅作原型验证，**本设计为正式交付形态**。
 
@@ -97,7 +97,7 @@
 
 | 层次 | 选型 | 版本 | 说明 |
 |---|---|---|---|
-| JDK | OpenJDK | 17 LTS（虚拟线程可升 21） | Spring Boot 3 要求 ≥17 |
+| JDK | OpenJDK | **21 LTS**（虚拟线程可用） | 实际 `pom.xml`/运行镜像为 21；Spring Boot 3 要求 ≥17 |
 | 框架 | Spring Boot | 3.2.x | 原生镜像、可观测性内建 |
 | 微服务 | Spring Cloud | 2023.0.x | Gateway / OpenFeign / LoadBalancer |
 | 微服务 | Spring Cloud Alibaba | 2023.0.x | Nacos / Sentinel / Seata |
@@ -287,7 +287,7 @@ CDN → 网关(缓存 60s) → 商品服务 L1 Caffeine → L2 Redis → MySQL �
 
 | 项 | 旧版（已交付） | 本设计（Java 版） |
 |---|---|---|
-| 后端 | Node.js + Express + SQLite | Java 17 + Spring Boot 3 + Spring Cloud |
+| 后端 | Node.js + Express + SQLite | Java 21 + Spring Boot 3 + Spring Cloud |
 | 架构 | 三层单体 | 8 业务服务 + 4 基础服务（微服务） |
 | 数据库 | SQLite（单机） | MySQL 分库分表 + Redis + ES |
 | 并发能力 | 单机（百级） | 峰值 5–10 万 QPS（集群） |

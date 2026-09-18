@@ -16,8 +16,8 @@
 中间件与业务服务**全部容器化**，一条命令起全套：
 
 ```bash
-docker compose up -d          # 起 7 个容器
-docker ps                     # 期望：7 个容器全是 healthy
+docker compose up -d          # 起 8 个容器
+docker ps                     # 期望：8 个容器全是 healthy
 ```
 
 | 容器 | 镜像 | 端口 | 说明 |
@@ -50,7 +50,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（九套 665 项接口断言 + 两套真实浏览器 UI 断言 49 项）
+### 端到端冒烟（九套 667 项接口断言 + 两套真实浏览器 UI 断言 49 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -77,6 +77,12 @@ node scripts/e2e/review-ui-check.mjs
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
 - 跨轮次的断言按「本次测试开始时间」**限定范围**，不被功能上线前的历史数据误伤；
 - 部分脚本加 `-SkipDbCheck` 可跳过改库段落，只跑接口断言。
+
+### 交接资料（换人/换账号接管先看这里）
+
+`docs/handover/` 下 9 篇：**00 交接总纲**（10 分钟接管）+ 上手环境 / 架构导航 / 环境变量与密钥（脱敏）/
+数据库表结构 / 接口契约 / 前端手册 / 测试证据 / 风险与接手建议。
+`manifest.json` 记录每篇在腾讯文档与乐享知识库的 id 与链接；云端两处已同步。
 
 ### 降级方案：不开 Docker
 
@@ -381,7 +387,7 @@ React 18.3 · react-router-dom 6.28 · TypeScript 5.6（strict + noUncheckedInde
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173，需后端 7 容器在跑（网关 :8080）
+npm run dev        # http://localhost:5173，需后端 8 容器在跑（网关 :8080）
 npm run build      # tsc --noEmit && vite build
 ```
 
@@ -533,7 +539,7 @@ npm run build      # tsc --noEmit && vite build
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 完成（54 项冒烟） |
-| **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（7 容器 healthy） |
+| **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（现已 8 容器 healthy，含履约服务） |
 | **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结 ✅ / 状态机 ✅ / 支付幂等 ✅ / C2C 担保交易 ✅ / 沙箱支付渠道 ✅ / **卖家中心 ✅** | ✅ 完成 |
 | **P1-c** | 买家端 **Web 商城**（主交易闭环 10 页，接口指向网关 :8080） | ✅ 完成 |
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
@@ -595,7 +601,7 @@ npm run build      # tsc --noEmit && vite build
   买家与卖家详情页都显示 —— 此前只写进状态日志，卖家发货后在详情页看不到自己填的单号。
 - **商家端 Web 4 页**（`/seller` · `/seller/orders` · `/seller/orders/:orderNo` · `/seller/settlements`），
   Layout 与「我的」页按角色显示入口；补 favicon，消除 `/favicon.ico` 404。
-- **自测**：后端 6 模块 `BUILD SUCCESS`，4 个业务镜像重建、7 容器 healthy；
+- **自测**：后端 6 模块 `BUILD SUCCESS`，4 个业务镜像重建、当时 7 容器 healthy；
   新增 `scripts/seller-smoke.ps1` **84 项断言全绿**；真实浏览器
   `scripts/e2e/seller-ui-check.mjs` **29 项断言全绿**（含截图）；
   前端 `tsc --noEmit` 零错误、`vite build` 通过。七套接口冒烟合计 **557 项**。
@@ -660,7 +666,7 @@ npm run build      # tsc --noEmit && vite build
   ③ 并发释放时「冻结量不足」被当作失败，导致台账永远卡在 FROZEN（改为冲正为 RELEASED 并留审计日志）。
 
 ### 更早
-- 容器化开发环境：7 容器全 healthy、Nacos 注册 4 服务、网关 `lb://` 生效、`down -v` 从零重建可复现。
+- 容器化开发环境：当时 7 容器全 healthy、Nacos 注册 4 服务、网关 `lb://` 生效、`down -v` 从零重建可复现。
 - 修复中文「双重编码」缺陷：初始化 SQL 一律以 `SET NAMES utf8mb4;` 开头，
   否则中文会以 latin1 入库，表现为「数据看似存在、但中文关键词检索永远 0 命中」。
 - 商品域：类目树 / 品牌 / SPU-SKU 检索（6 种排序）/ 价格区间区间相交语义 / 物种与生命阶段筛选 /

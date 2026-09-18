@@ -1,0 +1,178 @@
+{
+  "generated_at": "2026-09-18",
+  "tencent_folder": {
+    "title": "多多宠物商店 · 项目资产（按时间归档）",
+    "folder_id": "LkBrjMQJKzlg"
+  },
+  "tencent_subfolder": {
+    "title": "2026-09-18 交接包",
+    "folder_id": "LTgUEhkTROQV"
+  },
+  "docs": [
+    {
+      "title": "00-交接总纲",
+      "file_id": "LmJPbOivtYXT",
+      "url": "https://docs.qq.com/doc/LmJPbOivtYXT",
+      "md_bytes": 6429,
+      "html_bytes": 8077,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "30e97d0f346ddb98101fcda8fc216814"
+        },
+        "trace_id": "30e97d0f346ddb98101fcda8fc216814"
+      },
+      "lexiang_entry_id": "af5375c9216b421e90cd2a02e4400ab5",
+      "lexiang_name": "00 · 交接总纲"
+    },
+    {
+      "title": "01-上手与环境搭建",
+      "file_id": "LsHxfXBvvfOS",
+      "url": "https://docs.qq.com/doc/LsHxfXBvvfOS",
+      "md_bytes": 6653,
+      "html_bytes": 8450,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "3b3941cbbd54dec1d6a0ce17410df5a8"
+        },
+        "trace_id": "3b3941cbbd54dec1d6a0ce17410df5a8"
+      },
+      "lexiang_entry_id": "8e5337918a244e14bd1fd99a21f69367",
+      "lexiang_name": "01 · 上手与环境搭建"
+    },
+    {
+      "title": "02-架构与模块导航",
+      "file_id": "LshkuBXmntKx",
+      "url": "https://docs.qq.com/doc/LshkuBXmntKx",
+      "md_bytes": 6346,
+      "html_bytes": 8118,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "1f2a0da46c118fff404fc5bf46db424e"
+        },
+        "trace_id": "1f2a0da46c118fff404fc5bf46db424e"
+      },
+      "lexiang_entry_id": "d7681bb7cdbd45e1a814c00e20d218bf",
+      "lexiang_name": "02 · 架构与模块导航"
+    },
+    {
+      "title": "03-环境变量与密钥（脱敏）",
+      "file_id": "LuSwQVQNLChf",
+      "url": "https://docs.qq.com/doc/LuSwQVQNLChf",
+      "md_bytes": 5006,
+      "html_bytes": 7298,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "6ca9b5760904d46de9288613f4f986ed"
+        },
+        "trace_id": "6ca9b5760904d46de9288613f4f986ed"
+      },
+      "lexiang_entry_id": "11948a26634e400aa7b60efe54a3da96",
+      "lexiang_name": "03 · 环境变量与密钥（脱敏）"
+    },
+    {
+      "title": "04-数据库与表结构",
+      "file_id": "LEWJDmKFLvrw",
+      "url": "https://docs.qq.com/doc/LEWJDmKFLvrw",
+      "md_bytes": 7472,
+      "html_bytes": 11738,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "481ac185189e8d1f7ad99c8a25a4dde2"
+        },
+        "trace_id": "481ac185189e8d1f7ad99c8a25a4dde2"
+      },
+      "lexiang_entry_id": "13f70d11bcc2414bbb672216a29ef893",
+      "lexiang_name": "04 · 数据库与表结构"
+    },
+    {
+      "title": "05-接口清单与契约",
+      "file_id": "LpgFqtUXOxzO",
+      "url": "https://docs.qq.com/doc/LpgFqtUXOxzO",
+      "md_bytes": 7110,
+      "html_bytes": 10689,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "3cc1b3e680c6eb4053b19b5301cb9dca"
+        },
+        "trace_id": "3cc1b3e680c6eb4053b19b5301cb9dca"
+      },
+      "lexiang_entry_id": "a86c910077be418f945c27cfa1369d6c",
+      "lexiang_name": "05 · 接口清单与契约"
+    },
+    {
+      "title": "06-前端开发手册",
+      "file_id": "LcclVEPeCMlw",
+      "url": "https://docs.qq.com/doc/LcclVEPeCMlw",
+      "md_bytes": 4774,
+      "html_bytes": 6911,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "9285f85f890161151cf45328a9d6487f"
+        },
+        "trace_id": "9285f85f890161151cf45328a9d6487f"
+      },
+      "lexiang_entry_id": "0d0a3944a6514c54a84c956525a7e518",
+      "lexiang_name": "06 · 前端开发手册"
+    },
+    {
+      "title": "07-测试与验收证据",
+      "file_id": "LlgNpIeSHGci",
+      "url": "https://docs.qq.com/doc/LlgNpIeSHGci",
+      "md_bytes": 5218,
+      "html_bytes": 6590,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "62e63ec010715e127e330fbb3d903534"
+        },
+        "trace_id": "62e63ec010715e127e330fbb3d903534"
+      },
+      "lexiang_entry_id": "fc5d53fc4ec34db884b953e6f1a71f7f",
+      "lexiang_name": "07 · 测试与验收证据"
+    },
+    {
+      "title": "08-风险、已知边界与接手建议",
+      "file_id": "LXhoAVOGYJjg",
+      "url": "https://docs.qq.com/doc/LXhoAVOGYJjg",
+      "md_bytes": 6572,
+      "html_bytes": 8594,
+      "outline_sections": 1,
+      "written": {
+        "edit_result": {
+          "new_version": "1",
+          "trace_id": "b0a288c35fada3237d72ad55fb97fe13"
+        },
+        "trace_id": "b0a288c35fada3237d72ad55fb97fe13"
+      },
+      "lexiang_entry_id": "fb7bb764e9a34c9796a0e2eddc0d50eb",
+      "lexiang_name": "08 · 风险、已知边界与接手建议"
+    }
+  ],
+  "lexiang_space": {
+    "name": "多多宠物商店知识库",
+    "space_id": "357ee062253b4f4c911a4f1d30322e72",
+    "root_entry_id": "36a6883c71ab40258986787a8e10b062",
+    "kind": "team",
+    "team": "多多宠物商店"
+  },
+  "ledger_doc": {
+    "title": "多多宠物商店 · 开发计划与执行台账",
+    "file_id": "LwirGvLSSAVG",
+    "url": "https://docs.qq.com/doc/DTHdpckd2TFNTQVZH"
+  }
+}
