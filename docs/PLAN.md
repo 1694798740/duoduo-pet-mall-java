@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-18 18:20
+> 更新时间：2026-09-18 19:10（第八轮：A1 托管单回补 + 文档口径收敛）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -118,12 +118,16 @@
 
 | **M11 / P2-1 评价与晒单（履约域）** | **新建 `duoduo-fulfilment`（8084）** 服务：POM 入父反应堆、三档配置、雪花 worker-id=4、compose 第 8 个容器、网关路由 `/api/reviews/**`（**只放行只读 `/product/**`**）。评价接口 7 个：商品评价分页（星级/有图过滤）、评分汇总（平均分/星级分布/好评率/带图/追评计数，SQL 聚合）、提交评价（一单可多件商品）、追评（一次 + 窗口期）、我的评价、按订单查我的评价、已评价订单集合（订单列表页批量判断）。**规则**：只有本人**已完成**订单可评（订单事实由交易域内部接口提供，**不含收货人信息**）；`spuId` 必须在该订单明细中；唯一索引 `(order_id,user_id,spu_id)` 兜底一单一商品一评（并发撞键转 409）；图片只收 http/https（挡 XSS scheme）；匿名只影响展示、真实 user_id 保留。**用户域**新增内部只读接口 `/api/users/internal/briefs`（批量昵称头像，凭据保护）+ 新建 `InternalTokenFilter`。**交易域**新增 `/api/orders/internal/{orderNo}/fact`（裁剪字段的订单事实）。前端：商品详情页评价区（汇总 + 筛选 + 分页 + 匿名脱敏）、`/reviews/new` 按订单逐件打分（已评过的不再出现）、`/reviews/mine` 含追评弹窗、订单列表「去评价 / 已评价」批量判断。**自测 `scripts/review-smoke.ps1` 59 通过 / 0 失败** + **`scripts/e2e/review-ui-check.mjs` 真实 Chromium 20 通过 / 0 失败**（截图 `rev_*.png`） |
 
+| **A1 · 历史订单托管单回补（I-14）** | **新增 `duoduo-trade` 的 `POST /api/admin/settlements/backfill?dryRun=`**（运营，幂等）：扫描「已有资金事实、却没有账本」的订单，按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`），金额取 `pay_amount`，放款时间取订单**真实的 `finished_at`**；`?dryRun=true` 只出计划一行不写库；幂等靠 `uk_settle_order`；只碰 `s.id IS NULL` 的订单、不给 `PENDING_PAYMENT`/`CLOSED` 补账；逐条独立提交。**实测效果**：回补前 3 笔 `COMPLETED` 挂账 → 回补后 `abnormal` 返回空、退款单缺口同样清零。**自测 `scripts/backfill-smoke.ps1` 88 通过 / 0 失败**；回归 `settlement-smoke 125/0`、`payment-smoke 71/0`、`admin-smoke 49/0` |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| M11 剩余块：物流轨迹 / 售后仲裁 / 信用分（`duoduo-fulfilment` 同域内扩展） | 评价已落地，同域下一步最省；信用分已于评价域埋好数据（真实 user_id 始终保留） |
-| M11 其他：优惠券营销（`duoduo-marketing`）/ AI 导购 / ES 检索 / RocketMQ / Sentinel / 压测 | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
+| M11 剩余块：物流轨迹（A2）/ 售后仲裁（A3）/ 信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价已落地、**A1 托管单回补已完成**，同域下一步最省 |
+| M11 其他：优惠券营销（A5，`duoduo-marketing`）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
+| **A9 AI 导购「多多」（已排期）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**密钥暂未提供** → 接口与降级链路可先做，联调需等凭据 |
+| **A13 买家端微信小程序（已排期）** | 用户 2026-09-18 拍板：**排期，AppID 暂不提供但允许先开始编码** → 可先用开发者工具测试号开工，真机预览等 AppID |
 
 ### 未开始（按你确认的端形态排期）
 
@@ -153,7 +157,7 @@
 | I-11 | 订单生命周期三处真实缺陷（已付款可自助取消 / 超时关单不释放冻结 / 并发释放被记成失败） | **已自愈**（2026-09-17） | 无需操作 | 三处均由自测暴露并修复，且用断言固定住。`PAID → CLOSED` 那条被误用的边已在 M5-8 移除，退款改为独立终态 `REFUNDED` |
 | I-12 | 真实微信 / 支付宝扫码支付需要商户资质与密钥 | **已协助**（2026-09-17 你决定改用**沙箱支付**，资质不再需要） | **无需操作**。材料清单仍留在下方折叠区，将来要接真实收款时再取 | 沙箱支付链路已按真实渠道的形态实现并自测通过：预下单返回二维码内容 → 收银台确认支付 → **签名回调** → 幂等入账 → 订单转已付款 → 资金进托管。将来把 `SANDBOX` 换成真实实现即可 |
 | I-13 | 退货入库端点**编译通过但运行时 404**（新增端点无内部引用，编译期发现不了） | **已自愈**（2026-09-17） | 无需操作 | 现象：`NoResourceFoundException`，退款后入库一直失败、台账卡在 `RESTOCK_PENDING`。根因：源码里 `/restock` 路由在编辑过程中丢失，而它没有任何内部调用方。修法：补回路由 + 重建镜像；复验：调度 `restocked=2`，台账迁移到 `RESTOCKED`。**教训**：新增对外端点必须实调一次 |
-| I-14 | **历史订单缺托管单**（M5-8 上线前的订单没有 `t_settlement` 记录） | **待办（数据迁移）** | 无需你操作 | 影响：这些订单确认收货时「放款」会找不到托管单（只记 ERROR，不影响买家收货）。处理：写一次性回补脚本按订单状态推断资金状态；当前开发库可清空重建，**生产上线前必须回补** |
+| I-14 | **历史订单缺托管单**（M5-8 上线前的订单没有 `t_settlement` 记录） | **已自愈（2026-09-18，A1 完成）** | 无需你操作 | 影响：这些订单确认收货时「放款」会找不到托管单（只记 ERROR，不影响买家收货）。**修法**：新增 `POST /api/admin/settlements/backfill?dryRun=`（运营、幂等）按订单状态推断资金状态。**实测复验**：回补前开发库有 3 笔 `COMPLETED` 缺账本，执行后 `GET /api/admin/settlements/abnormal` 返回**空**；`scripts/backfill-smoke.ps1` 88 项断言全绿（含幂等、控制组、REFUNDED 盲区）。⚠️ 生产上线时**仍需在真实数据上跑一次**（先 `dryRun=true` 核对计划） |
 | I-16 | 客户端发错 `Content-Type`（如 POST 无 body 时带 `x-www-form-urlencoded`）落到兜底 handler → 返回 **500** | **已自愈**（2026-09-18） | 无需操作 | 客户端错误不应是 5xx，会污染告警。修法：新增 `ErrorCode.UNSUPPORTED_MEDIA_TYPE` 与 `handleUnsupportedMediaType`，返回 **415**；由卖家冒烟断言固定 |
 | I-15 | 支付渠道首轮自测暴露**三处缺陷**（M8-1 实现期） | **已自愈**（2026-09-18） | 无需操作 | ① **未知渠道 / MOCK 回调拒绝用了 400**（应为 422 业务错误，注册表 javadoc 与实现不一致）→ 补错误码 `PAYMENT_CHANNEL_UNKNOWN` 并改用之；② **二维码内容默认指向交易服务 8083 直连地址**——扫码设备不可达，且网关缺 `/sandbox/pay` 路由 → 改为网关 8080 + 补路由与白名单；③ **订单取消 / 关单不作废未支付支付单**——`markClosedByOrder` 在 Mapper 里定义了却从未被调用，订单已取消、二维码还能扫出钱来 → 在取消与调度关单两条路径都接上。三处均已由 62 项自测断言固定 |
 | I-17 | 履约域（M11/P2-1）自测暴露**三个工具层隐患** | **已自愈**（2026-09-18） | 无需操作 | ① 内部接口断言**打错服务端口**（连履约 8084 打用户域路径 → 无路由 500，看着像过滤器坏了）；② **PowerShell 把 `$SPU?page=1` 整体当变量名**（`?` 是合法的变量名字符），展开成 `=1&pageSize=50`，服务端收到 `spuId="=1&pageSize=50"` → 必须写 `${SPU}?`；③ **19 位雪花主键经 `ConvertFrom-Json` 丢精度**，出现「数据在库里、断言找不到」的假失败 → 断言改用业务键，需要主键时从**原始响应文本**正则提取 |
@@ -172,6 +176,46 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-18（第八轮 · A1 历史订单托管单回补 I-14 + 文档口径收敛）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-trade/.../service/SettlementBackfillService.java`（**新增**） | 回补核心：按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`）；金额取 `pay_amount`；放款时间取订单**真实 `finished_at`**；只碰 `s.id IS NULL`；不给 `PENDING_PAYMENT`/`CLOSED` 补账；**逐条独立提交**（补了 80 条后第 81 条出错不回滚前 80 条）；幂等靠 `uk_settle_order`，撞键记 `skipped` 而非抛错 |
+| `duoduo-trade/.../mapper/OrderMapper.java` | 新增 `findOrdersNeedingSettlementBackfill()`：比 `findOrdersWithoutSettlement()` 多覆盖 `REFUNDED`、不 LIMIT、带出 `finished_at`（异常列表给人看，回补要一次补齐）；只取少数字段返回 `Map`，不让收货人信息进内存 |
+| `duoduo-trade/.../dto/AdminDtos.java` | 新增 `BackfillItem` / `BackfillResult`（含审计字段 `commissionBps` / `commissionNote`：历史费率不可还原，口径必须随结果说清） |
+| `duoduo-trade/.../controller/AdminSettlementController.java` | 新增 `POST /api/admin/settlements/backfill`；**参数走查询串 `?dryRun=` 而非请求体**（见下方缺陷 ①） |
+| `duoduo-trade/.../service/SettlementService.java` | 新增 `platformFeeBps()` 访问器：费率只留一个事实来源，避免回补服务自己再 `@Value` 一遍导致静默不一致 |
+| `scripts/backfill-smoke.ps1`（**新增**） | **88 项断言**：权限三层（网关 401 / 直连服务 401 / 普通用户 403）、dryRun 不写库、三组金额与笔数**精确增量**、幂等重复执行不增行、挂账清零、控制组逐字段未变、**REFUNDED 盲区单独断言**、放款时间 = 订单 `finishedAt`、夹具自建自毁 |
+| `README.md` | 容器表补 `duoduo-app-fulfilment`（7 → **8** 行）、库数 3 → **4**、Nacos 注册 4 → **5** 服务、冒烟 9 套 667 项 → **10 套 755 项**；§三 补回补接口；新增本轮变更记录 |
+| `docs/PLAN.md` | 本文件：更新时间、§4 任务清单补 A1、§4 进行中补 A9/A13 排期口径、I-14 改「已自愈」、§7 命令速查修正容器数与端口、新增本轮变更记录 |
+| `docs/agent/02`、`docs/agent/04`、`docs/agent/07` | 代码地图补新文件、契约补新端点与 DTO、待办 A1 标记完成 |
+
+**自测结论**：后端 `BUILD SUCCESS`；重建 trade 镜像并重启（**8 容器 healthy**）；
+新增 `scripts/backfill-smoke.ps1` **88 通过 / 0 失败**；回归 `settlement-smoke.ps1` **125/0**、
+`payment-smoke.ps1` **71/0**、`admin-smoke.ps1` **49/0**；前端本轮无改动（未跑 `tsc`/`build`）。
+十套接口冒烟合计 **755 项**。
+
+**自测暴露并修复的缺陷（三条，都值钱）**
+
+1. **API 健壮性缺陷**：回补接口原用 `@RequestBody(required = false)`，
+   客户端「无请求体 + 默认 `Content-Type`」调用时返回 **415** ——
+   而运营用 curl 直接调这个运维接口正是最常见姿势。修法：参数改走查询串 `?dryRun=`，
+   与既有 `?active=false` 写法一致，彻底消除 Content-Type 这个变量。
+2. **断言基准取得太远 → 同时产生假失败与假通过**：dryRun 的「金额一分未动」原先拿「创建夹具之前」的汇总做基准：
+   控制组 D 自己确认收货造成的放款增量被算到 dryRun 头上（**假失败**），
+   而 A/B/C 三条托管单被删造成的托管额下降恰好把同类偏差抵消（**假通过**）。
+   修法：基准**紧贴被测操作**取（`$sumBeforeDry` / `$sumBeforeReal`）。
+   教训：跨越多步副作用的断言，基准必须贴着断言点，否则偶合会伪装成正确。
+3. **0 值断言被空响应骗过**：步骤 2 的 415 使得 `data` 为 `null`，
+   `[int]$null -eq 0` 判定为真 → 「重复执行扫描到 0 条」**假通过**，
+   掩盖了「请求根本没成功」这个事实。修法：所有 0 值断言加 `$null -ne $body.data` 前置条件。
+
+**本期踩坑新增（待并入 `docs/agent/08`）**
+- **内部接口不能经网关调用**：`/api/orders/internal/sweep` 走 8080 会被网关按「未登录」拦成 401，
+  必须**直连交易服务 8083** 并带 `X-Internal-Token`（与 I-13 同源：先确认打的是哪个服务）。
+- `docker exec mysql` 的告警行会被 PowerShell 当成 `NativeCommandError` 混进 stdout，
+  `Sql` 辅助函数按 `Warning` 过滤的做法要继续保持。
 
 ### 2026-09-18（第六轮 · 履约域 M11/P2-1：评价与晒单）
 
@@ -354,7 +398,7 @@ JavaScript 里 `JSON.parse` 会把它改成另一个数，拿去写 `seller_id` 
 # 起全部中间件 + 业务服务（Docker 优先）
 cd D:\智能体项目\duoduo-pet-mall-java
 docker compose up -d
-docker ps                                  # 7 个容器应全为 healthy
+docker ps                                  # 8 个容器应全为 healthy
 
 # 端到端冒烟（54 项，网关 + 用户域 + 商品域）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
@@ -382,6 +426,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1
 
 # 履约域：评价与晒单（59 项；含内部接口保护、字段裁剪、匿名脱敏、追评与聚合口径）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1
+
+# 历史订单托管单回补（88 项；权限三层 / dryRun 预演不写库 / 幂等 / 挂账清零 / 控制组 / REFUNDED 盲区）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1
+
+# 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
+# curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server，必须走 localhost:5173）
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
@@ -419,7 +469,7 @@ docker exec duoduo-mysql sh -c 'mysql --default-character-set=utf8mb4 -uroot -pd
 curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-Token: duoduo-local-dev-internal-token"
 ```
 
-> 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**。
+> 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**、履约 **8084**。
 
 ---
 
@@ -489,7 +539,7 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | B-03 | 服务间凭据用**共享密钥** `X-Internal-Token` | 开发阶段简单可靠；生产应换 mTLS / 服务网格授权 | 上生产前 |
 | B-04 | **商品域 SPU / SKU 仍无 `seller_id`**——所以「商家管理自己的商品」本轮不做；订单归属靠 `t_order.seller_id` 校验 | 卖家中心先做订单侧（发货 / 售后 / 结算），商品侧要改商品域模型 | 做「商家上下架商品」前必须先补字段 |
 | B-05 | 补偿调度用 `@Scheduled`（单实例） | 开发环境单实例足够；生产多实例需 XXL-Job 之类保证只跑一份 | 上生产前 |
-| B-06 | 历史订单缺托管单（见 I-14） | 当前库里的都是早期测试数据，可清空重建 | 生产上线前必须回补 |
+| B-06 | ~~历史订单缺托管单（见 I-14）~~ **已解决（2026-09-18 A1）** | 已提供幂等回补接口 `POST /api/admin/settlements/backfill`，开发库缺口已清零 | 生产上线时在真实数据上执行一次（先 `dryRun=true` 核对计划） |
 | B-07 | **支付走沙箱渠道，不是真实资金渠道**（不入账、不结算到银行卡） | 你的决定：真实渠道资质门槛过高，先用沙箱把工程链路做实 | **上线真实收款前**：实现 `PaymentChannel` 的微信 / 支付宝版本，材料清单见协助区折叠附件 |
 | B-08 | **角色升级后需重新登录才生效**（角色快照写在 access token 内，15 分钟） | 避免每次请求回源查角色；前端已在入驻成功提示里写明 | 若要即时生效：网关每次回源查角色，或入驻成功后服务端主动使旧 refresh 失效并强制重登 |
 | B-09 | **售后只有「卖家直接退款」一种形态**，没有独立的售后单（申请-审核-退货物流） | 售后单是独立领域模型，与担保交易主链路分开做 | 接入完整售后体系时 |

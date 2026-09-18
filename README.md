@@ -4,10 +4,12 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-17（第三轮）** — **买家端 Web 商城（M6 / P1-c）完成**：新建 `frontend/`
-（React 18 + TypeScript + Vite），10 页覆盖「注册登录 → 检索 → 详情 → 购物车 → 结算 → 下单 →
-扫码支付（二维码 + 3 秒轮询）→ 资金托管明细」全闭环；已在真实 Chromium 中逐页验证，
-`tsc --noEmit` 零错误、`vite build` 通过。详见「七、买家端 Web 商城」与文末「变更记录」。
+**最近更新：2026-09-18（第八轮）** — **历史订单托管单回补（A1 / I-14）完成 + 文档口径收敛**：
+新增 `POST /api/admin/settlements/backfill?dryRun=` （运营，幂等，预演/执行两态），
+把「已付款却缺账本」的历史订单一键补齐 —— 开发库里 **3 笔 `COMPLETED` 挂账已清零**
+（`GET /api/admin/settlements/abnormal` 现在返回空）；新增 `scripts/backfill-smoke.ps1`（**88 项断言**）。
+同时修正本文件此前的口径偏差：容器 **8 个**（此前表里只有 7 行，漏了履约服务）、业务库 **4 个**、
+Nacos 注册 **5 个服务**、冒烟 **10 套 755 项**。详见「变更记录」。
 
 ---
 
@@ -22,13 +24,14 @@ docker ps                     # 期望：8 个容器全是 healthy
 
 | 容器 | 镜像 | 端口 | 说明 |
 |---|---|---|---|
-| `duoduo-mysql` | mysql:8.0.36 | 3306 | 三个库：`duoduo_user` / `duoduo_product` / `duoduo_trade`（`nacos` 库由 Nacos 自建） |
+| `duoduo-mysql` | mysql:8.0.36 | 3306 | **四个库**：`duoduo_user` / `duoduo_product` / `duoduo_trade` / `duoduo_fulfilment`（`nacos` 库由 Nacos 自建） |
 | `duoduo-redis` | redis:7.2-alpine | 6379 | 缓存与分布式能力预留 |
-| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 4 个服务** |
+| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 5 个服务**（网关 + 4 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
+| `duoduo-app-fulfilment` | duoduo/duoduo-fulfilment:1.0.0 | 8084 | 履约域：**评价与晒单**（后续：物流轨迹 / 售后仲裁 / 信用分） |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -50,7 +53,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（九套 667 项接口断言 + 两套真实浏览器 UI 断言 49 项）
+### 端到端冒烟（十套 755 项接口断言 + 两套真实浏览器 UI 断言 49 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -62,6 +65,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 84 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 
 # 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
 cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
@@ -71,7 +75,7 @@ cd .. && node scripts/e2e/seller-ui-check.mjs
 node scripts/e2e/review-ui-check.mjs
 ```
 
-九套脚本的共同约定（踩过坑才有的）：
+十套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -237,6 +241,7 @@ duoduo-pet-mall-java/
 | GET | `/api/admin/reports/overview` | 运营报表：GMV / 总订单 / 已付款 / 退款率 / 转化率（全平台口径，SQL 聚合） | 运营 |
 | GET | `/api/admin/settlements/summary` | 资金对账：托管中 / 已放款 / 已退回三组金额与笔数、佣金 | 运营 |
 | GET | `/api/admin/settlements/abnormal` | 异常挂账：已付款却缺托管单的订单（`LEFT JOIN` 排查） | 运营 |
+| POST | `/api/admin/settlements/backfill?dryRun=` | **历史订单托管单回补**（A1 / I-14）：按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`），金额取 `pay_amount`、佣金按当前 `PLATFORM_FEE_BPS` 重算并回传口径说明；`?dryRun=true` **只出计划、一行都不写库**；不带参数即执行；幂等靠 `uk_settle_order`（重复执行不产生重复单）；**不触碰已有托管单的订单**，也不给 `PENDING_PAYMENT`/`CLOSED` 补账（钱从未收过） | 运营 |
 | GET/POST/PUT/DELETE | `/api/admin/categories`、`/{id}`、`/{id}/status` | 类目增改删 + 启停用；**后台列表含停用项**（可重新启用），公开接口仍只暴露 ACTIVE | 运营 |
 | GET/POST/PUT/DELETE | `/api/admin/brands`、`/{id}`、`/{id}/status` | 品牌同上 | 运营 |
 | GET | `/api/admin/listings` | 闲置审核工作台列表（含待审 / 已驳回，按 `auditStatus` 过滤） | 运营 |
@@ -556,6 +561,44 @@ npm run build      # tsc --noEmit && vite build
 ---
 
 ## 十二、变更记录
+
+### 2026-09-18（第八轮 · A1 历史订单托管单回补 I-14 + 文档口径收敛）
+
+- **新增接口**：`POST /api/admin/settlements/backfill?dryRun=`（运营，幂等）。扫描「已有资金事实、却没有账本」的订单，
+  按订单状态推断资金状态：`PAID`/`SHIPPED` → `CUSTODY`、`COMPLETED` → `RELEASED`、`REFUNDED` → `REFUNDED`；
+  金额取 `pay_amount`，放款时间取订单**真实的 `finished_at`**（而不是脚本执行时刻 —— 回补的意义是与历史对得上）。
+- **参数走查询串而不是请求体**：首轮自测暴露真问题 —— 用 `@RequestBody` 时「无请求体 + 客户端默认 Content-Type」
+  会被判成 **415**，运营用 curl 直接调这个运维接口就会踩到；查询串没有这个歧义，
+  也与既有的 `?active=false` 写法一致。
+- **审计口径**：返回结果带 `commissionBps` 与 `commissionNote` —— 历史单据没有留档结算当刻的费率，
+  本次只能用当前 `PLATFORM_FEE_BPS` 重算，这个假设必须随结果一起说清楚。
+- **实测影响面（回补前后）**：回补前交易库有 **3 笔 `COMPLETED` 订单缺托管单**（确认收货时放款找不到账本，
+  只记了一行 ERROR）；回补后 `GET /api/admin/settlements/abnormal` **返回空**，退款单的缺口同样清零。
+- **安全边界**：只碰 `s.id IS NULL` 的订单（已有托管单的原样不动）；不给 `PENDING_PAYMENT`/`CLOSED` 补账；
+  逐条独立提交（补了 80 条后第 81 条出错不会回滚前 80 条）。
+- **自测**：新增 `scripts/backfill-smoke.ps1` **88 项断言全绿**（权限三层 401/401/403、dryRun 不写库、
+  三组金额与笔数精确增量、幂等重复执行、挂账清零、控制组逐字段未变、REFUNDED 盲区单独断言、夹具自建自毁）；
+  回归 `settlement-smoke 125/0`、`payment-smoke 71/0`、`admin-smoke 49/0`。后端 `BUILD SUCCESS`、8 容器 healthy。
+- **自测暴露并修复的缺陷**：
+  ① **API 健壮性**：「无请求体 + 默认 Content-Type」调用回补返回 **415** → 参数改走查询串；
+  ② **断言基准过远（同时报假失败与假通过）**：dryRun 的「金额一分未动」原先拿「创建夹具之前」的汇总做基准，
+  把控制组自身确认收货的放款增量算到了 dryRun 头上（假失败），又恰好被删掉的三条托管单抵消（假通过）→
+  改为**紧贴被测操作**取基准；
+  ③ **0 值断言被空响应骗过**：`415` 时 `data` 为 null，`[int]$null -eq 0` 让「扫描到 0 条」假通过 →
+  所有 0 值断言加 `$null -ne $body.data` 前置。
+- **文档口径收敛**（本轮实测 vs 旧文）：容器 7 → **8**（补 `duoduo-app-fulfilment` 行）、
+  业务库 3 → **4**、Nacos 注册 4 → **5** 个服务、冒烟 9 套 667 项 → **10 套 755 项**。
+
+（以下为历史轮次）
+
+### 2026-09-18（第七轮 · AI Agent 接管包 + 交接资料双渠道归档）
+
+- 仓库根新增 `AGENTS.md`（AI 编码工具默认入口：三分钟自检 / 必读顺序 / 十条硬规矩 / 交付动作清单）。
+- 新增 `docs/agent/00~08`（接管指令与硬规矩 C1–C10 · 领域模型 · 代码地图 · 架构不变式 INV-1~15 ·
+  接口契约全集 · 开发任务手册 R1–R6 · 测试门禁 · 待办 A1–A13 · 环境与踩坑 T-01~T-24），
+  并同步到乐享知识库「多多宠物商店知识库」（现共 20 篇）。
+- 新增 `docs/agent/PROMPT-新AI接手指令.md`：换 AI 接手时的启动提示词（先理解、给计划、经确认再编码）。
+- `docs/handover/` 9 篇双渠道归档（腾讯文档项目资产 + 乐享知识库），`manifest.json` 记录全部云端 id。
 
 ### 2026-09-18（第六轮 · 履约服务 M11/P2-1：评价与晒单）
 

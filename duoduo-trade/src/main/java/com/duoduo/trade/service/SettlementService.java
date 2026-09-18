@@ -113,6 +113,17 @@ public class SettlementService {
     }
 
     /**
+     * 当前生效的佣金费率（基点）。
+     *
+     * <p>暴露给回补服务用：它必须把「用了什么费率」写进审计信息里，
+     * 而费率只应有一个事实来源 —— 让它自己再 {@code @Value} 一遍，
+     * 就会出现「换个配置项名字、一边改了另一边没改」的静默不一致。
+     */
+    public int platformFeeBps() {
+        return platformFeeBps;
+    }
+
+    /**
      * 放款给卖家（确认收货 / 自动确认收货时调用）。
      *
      * @return true = 本次真的放款了；false = 已经不是托管中（已放款或已退款）

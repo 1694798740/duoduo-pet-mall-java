@@ -51,4 +51,28 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
             + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED') AND s.id IS NULL "
             + "ORDER BY o.id DESC LIMIT 100")
     List<Map<String, Object>> findOrdersWithoutSettlement();
+
+    /**
+     * 托管单回补扫描（A1 / I-14）：找出「已有资金事实、却没有账本」的**全部**订单。
+     *
+     * <p>与 {@link #findOrdersWithoutSettlement()} 的三点刻意差异，都是踩过才知道的：
+     * <ol>
+     *   <li><b>范围多一类</b>：额外覆盖 {@code REFUNDED}。退款终态的订单同样需要回答「这笔钱现在在谁手里」，
+     *       只是它不出现在异常列表里（{@code abnormal} 的定义是「已付款却缺托管单」，
+     *       退款的单已经被处理过了，不算挂账）；</li>
+     *   <li><b>不 LIMIT</b>：异常列表给人看，限 100 条足够；回补要一次补齐，只取 100 条会导致
+     *       「跑完一遍 abnormal 还不为空」这种看起来像没修好的现象；</li>
+     *   <li><b>带出时间戳</b>：补 {@code COMPLETED} 时要用该订单真实的 {@code finished_at} 当放款时间 ——
+     *       回补的意义是与历史对账对得上，用「脚本执行那一刻」会让对账差异无法解释。</li>
+     * </ol>
+     *
+     * <p>返回 {@code Map} 而非实体：这里只需要少数字段，走实体会把收货人信息一起捞进内存，
+     * 而回补是运营侧批量操作，没有理由让这些隐私字段参与其中。
+     */
+    @Select("SELECT o.id AS id, o.order_no AS orderNo, o.seller_id AS sellerId, o.status AS orderStatus, "
+            + "o.pay_amount AS payAmount, o.paid_at AS paidAt, o.finished_at AS finishedAt "
+            + "FROM t_order o LEFT JOIN t_settlement s ON s.order_id = o.id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') AND s.id IS NULL "
+            + "ORDER BY o.id ASC")
+    List<Map<String, Object>> findOrdersNeedingSettlementBackfill();
 }
