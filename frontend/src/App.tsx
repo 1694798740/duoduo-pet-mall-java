@@ -6,6 +6,8 @@
  *     / 购物车 / 结算 / 订单列表 / 订单详情（含资金托管）/ 宠物档案 / 我的
  *   商家端 4 页（M5-9 / M9）—— 概览 / 卖出订单 / 订单详情（履约）/ 资金对账
  *   平台管理后台 5 页（M10）—— 运营概览（含资金对账）/ 内容审核 / 类目 / 品牌 / 订单干预
+ *   售后仲裁 5 页（A3）—— 买家：我的售后 / 申请售后 / 售后详情；
+ *     卖家：售后服务；运营：售后仲裁工作台
  *
  * 需登录的页面统一由 RequireAuth 包裹：
  *  · 会话校验期间渲染加载态，避免「先闪一下登录页再跳回来」
@@ -46,6 +48,11 @@ import { AdminAuditsPage } from './pages/admin/Audits';
 import { AdminCategoriesPage } from './pages/admin/Categories';
 import { AdminBrandsPage } from './pages/admin/Brands';
 import { AdminOrdersPage } from './pages/admin/Orders';
+import { AdminAfterSalesPage } from './pages/admin/AfterSales';
+import { AfterSalesPage } from './pages/AfterSales';
+import { AfterSaleNewPage } from './pages/AfterSaleNew';
+import { AfterSaleDetailPage } from './pages/AfterSaleDetail';
+import { SellerAfterSalesPage } from './pages/seller/AfterSales';
 
 export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -181,6 +188,32 @@ export const App: React.FC = () => (
         }
       />
 
+      {/* ---------- 售后仲裁（A3，履约域 duoduo-fulfilment） ---------- */}
+      <Route
+        path="/after-sales"
+        element={
+          <RequireAuth>
+            <AfterSalesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/after-sales/new"
+        element={
+          <RequireAuth>
+            <AfterSaleNewPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/after-sales/:id"
+        element={
+          <RequireAuth>
+            <AfterSaleDetailPage />
+          </RequireAuth>
+        }
+      />
+
       {/* ---------- 商家端（M5-9 / M9，需登录；非卖家由页面引导入驻） ---------- */}
       <Route
         path="/seller"
@@ -223,6 +256,14 @@ export const App: React.FC = () => (
           </RequireSeller>
         }
       />
+      <Route
+        path="/seller/after-sales"
+        element={
+          <RequireSeller>
+            <SellerAfterSalesPage />
+          </RequireSeller>
+        }
+      />
 
       {/* ---------- 平台管理后台（M10，需登录；非运营由页面渲染 AdminDenied） ---------- */}
       <Route
@@ -262,6 +303,14 @@ export const App: React.FC = () => (
         element={
           <RequireOperator>
             <AdminOrdersPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/after-sales"
+        element={
+          <RequireOperator>
+            <AdminAfterSalesPage />
           </RequireOperator>
         }
       />

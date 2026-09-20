@@ -445,7 +445,9 @@ public class AfterSaleService {
 
     private AfterSaleView toView(AfterSaleEntity entity) {
         return new AfterSaleView(
-                entity.getId(),
+                // 18 位雪花 id 必须以字符串出网：前端 JSON.parse 会把它四舍五入成另一个整数，
+                // 拿它拼 URL 就会打到不存在的单子上（见 AfterSaleView 的注释）
+                String.valueOf(entity.getId()),
                 entity.getOrderNo(),
                 entity.getBuyerId(),
                 entity.getSellerId(),

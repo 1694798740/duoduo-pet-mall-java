@@ -182,6 +182,9 @@ export const SellerDashboardPage: React.FC = () => {
                 <Link className="btn btn-ghost btn-sm" to="/seller/settlements">
                   资金对账
                 </Link>
+                <Link className="btn btn-ghost btn-sm" to="/seller/after-sales">
+                  售后处理
+                </Link>
                 <Link className="btn btn-ghost btn-sm" to="/seller/products">
                   商品管理
                 </Link>

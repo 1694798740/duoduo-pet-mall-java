@@ -36,12 +36,20 @@ function num(value: string | null): number | undefined {
  * 「已完成」的订单要显示去评价 / 已评价 —— 评价入口只在订单域出现一次，
  * 比在导航里加一个「评价中心」更符合用户心智（评价总是从「我买过的那单」出发）。
  * 是否已评价由父组件批量查询后传入，避免每条卡片各发一次请求。
+ *
+ * 售后（A3）同理，只在订单上开入口：已发货 / 已完成的订单显示「申请售后」。
+ * 未发货的订单不显示 —— 那种情况买家本来就能在详情页自助退款，走售后反而绕远。
  */
 const OrderActions: React.FC<{ order: OrderView; reviewed?: boolean }> = ({ order, reviewed }) => (
   <div className="row row-wrap">
     <Link className="btn btn-ghost btn-sm" to={`/orders/${order.orderNo}`}>
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
     </Link>
+    {order.status === 'SHIPPED' || order.status === 'COMPLETED' ? (
+      <Link className="btn btn-ghost btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
+        申请售后
+      </Link>
+    ) : null}
     {order.status === 'COMPLETED' ? (
       reviewed ? (
         <Link className="btn btn-ghost btn-sm" to="/reviews/mine">

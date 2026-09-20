@@ -68,9 +68,17 @@ public final class AfterSaleDtos {
      *
      * <p>刻意<b>不返回</b> {@code arbitratedBy}（运营人员 id）：对买卖双方而言
      * 「是谁裁定的」属于平台内部信息，需要时由运营侧台账查，不该扩散到用户端。
+     *
+     * <p><b>{@code id} 为什么是 String 而不是 Long</b>：主键是 18 位雪花值
+     * （如 {@code 359291401479008256}），远超 JS 的 {@code Number.MAX_SAFE_INTEGER}
+     * （9007199254740991）。序列化成 JSON 数字后，前端 {@code JSON.parse} 会把它
+     * **静默四舍五入到另一个整数**，于是「前端拿列表里的 id 去调详情 / 回复 / 申请仲裁」
+     * 会打到一条不存在的单子上，报 404 而看不出原因。
+     * 64 位标识对外一律以字符串传输，是这类系统的标准做法 ——
+     * 服务端入参仍是 {@code Long}，前端原样回传字符串即可（不经任何数值运算）。
      */
     public record AfterSaleView(
-            Long id,
+            String id,
             String orderNo,
             Long buyerId,
             Long sellerId,

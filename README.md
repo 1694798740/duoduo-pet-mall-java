@@ -4,12 +4,15 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-18（第九轮）** — **售后仲裁工单（A3）完成**：履约域新增 `t_after_sale` 与
-`/api/aftersales/**`（买家立案 / 卖家处理 / 买家申请仲裁）+ `/api/admin/aftersales/**`（运营裁定）共 8 个端点。
-争议从此可立案、可留证、可裁定：卖家拒绝后买家能申请平台仲裁，运营裁定退款会**真的执行退款**
-（复用交易域既有的运营侧退款入口，不新开资金通路）。**已完成订单（钱已放款给卖家）的裁定退款会被拒 422**
-并提示走追偿 —— 这是刻意的边界，不是缺陷。新增 `scripts/aftersale-smoke.ps1`（**101 项断言**），
-冒烟合计 **11 套 856 项**。详见「十二、变更记录」。
+**最近更新：2026-09-20（第十轮）** — **售后三端页面完成**：买家 `/after-sales`（申请 / 我的 / 详情 + 申请平台仲裁）、
+卖家 `/seller/after-sales`（同意即退款 / 拒绝必填原因）、运营 `/admin/after-sales`（裁定，说明必填）。
+至此 A3 从接口到入口全链路打通 —— 上一轮交付的后端「可立案、可留证、可裁定」现在**用户在页面上真的走得到**。
+新增真实浏览器自测 `scripts/e2e/aftersale-ui-check.mjs`（**44 项断言**，走完买家→卖家→运营整条链并回接口层确认钱真的退了）。
+接口冒烟仍是 **11 套 856 项**，浏览器 UI 断言累计 **3 套 93 项**。详见「十二、变更记录」。
+
+**上一轮（第九轮）** — 售后仲裁工单后端：履约域 `t_after_sale` + 8 个端点；卖家拒绝后买家可申请平台仲裁，
+运营裁定退款会**真的执行退款**；**已完成订单（钱已放款给卖家）的裁定退款被拒 422** 并提示走追偿（刻意边界，非缺陷）。
+`scripts/aftersale-smoke.ps1` **101 项断言**。
 
 ---
 
@@ -53,7 +56,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十一套 856 项接口断言 + 两套真实浏览器 UI 断言 49 项）
+### 端到端冒烟（十一套 856 项接口断言 + 三套真实浏览器 UI 断言 93 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -68,12 +71,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 
-# 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server）
-cd frontend && node node_modules/vite/bin/vite.js --port 5173    # 另开终端，必须走 localhost:5173
-cd .. && node scripts/e2e/seller-ui-check.mjs
-
-# 评价与晒单的真实浏览器 UI 自测（20 项；同样需 dev server 与 localhost:5173）
-node scripts/e2e/review-ui-check.mjs
+# 三套 UI 自测都需先起前端 dev server。
+# 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
+# 报 `listen EACCES`）。改用 3000 即可 —— 它已在网关 CORS_ORIGINS 默认白名单里，不用改任何配置：
+cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开终端
+# 注意必须走 localhost，不能是 127.0.0.1（不在 CORS 白名单）
+cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs        # 商家端 29 项
+UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs                # 评价与晒单 20 项
+UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项（买家→卖家→运营整条链）
 ```
 
 十一套脚本的共同约定（踩过坑才有的）：
@@ -114,7 +119,7 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库）
-├── scripts/                    一键启动、冒烟测试（9 套接口断言 + 2 套真实浏览器 UI 断言）
+├── scripts/                    一键启动、冒烟测试（9 套接口断言 + 3 套真实浏览器 UI 断言）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
@@ -320,7 +325,34 @@ duoduo-pet-mall-java/
 同单不同类型可各自立案、越权读详情 403、卖家与运营列表准入与状态过滤，以及**已完成订单裁定退款被拒**的边界。
 回归 `review-smoke.ps1` 59/0、`settlement-smoke.ps1` 125/0。
 
-> 前端三个页面（买家申请售后 / 卖家处理 / 运营仲裁台）尚未开工，是紧接着的下一步（见「十二、变更记录」的遗留）。
+### 售后三端页面（`frontend/src/pages/`，A3 配套）
+
+| 路由 / 位置 | 角色 | 内容 |
+|---|---|---|
+| `/after-sales/new?orderNo=…` | 买家 | 申请售后：类型（仅退款 / 退货退款，hint 写清两者区别）、诉求、举证图直链 |
+| `/after-sales/:id` | 买家 | 详情：状态步骤条、卖家说明、裁定说明、退款金额；`PENDING`/`SELLER_REJECTED` 时可**申请平台仲裁** |
+| `/after-sales` | 买家 | 我的售后（状态页签过滤 + 分页） |
+| 订单列表 / 「我的」页 | 买家 | 「申请售后」只在**已发货 / 已完成**的订单上出现；未发货时买家本就能自助退款，走售后反而绕远 |
+| `/seller/after-sales` | 卖家 | 店铺售后列表 + 处理弹窗：同意**立刻退款** / 拒绝**必填原因** |
+| `/admin/after-sales` | 运营 | 全平台售后列表 + 裁定弹窗：支持退款（真的执行）/ 驳回，**说明必填** |
+
+**关键实现决策**：
+
+- **售后单 `id` 对外以字符串传输**。它是 18 位雪花值，远超 JS 安全整数上限（`9007199254740991`），
+  `JSON.parse` 会静默改写成另一个数 —— 拿它拼 URL 必然打到不存在的单子。
+  后端 `AfterSaleView.id` 类型是 `String`，前端从路由参数原样取用、**不做任何数值转换**。
+- **弹窗默认结论是「驳回」而不是「支持退款」**：误点一下不会直接把钱退出去。
+- **三端共用一份状态文案与配色**（`pages/afterSaleShared.tsx`）：各写一份必然漂移，
+  而「同一状态在两个页面显示成两种说法」在用户眼里就是系统坏了。文案本身仍以服务端下发的 `statusLabel` 为准。
+- **步骤条不按状态一一对应**：`SELLER_REJECTED` 是「卖家已处理完」而不是独立一阶段，硬映射会画出一条现实中不存在的路径。
+
+自测记录：`scripts/e2e/aftersale-ui-check.mjs` **44 项断言全绿**（截图 `frontend/docs/screenshots/as_*.png`），
+用真实 Chromium 走完整一条链：买家下单 → 申请售后 → 卖家拒绝（先验证空原因被拦）→ 买家申请平台仲裁
+→ 运营裁定（先验证空说明被拦）→ 支持退款并执行 → 回到接口层确认**订单与托管同步 REFUNDED、退款金额等于实付**。
+
+> ⚠️ 踩坑：前端路由是 `after-sales`（连字符），接口路径是 `/api/aftersales`（无连字符），两者**刻意不同**。
+> 卖家端与运营端的入口链接曾写成 `/seller/aftersales`，命不中路由直接落到「页面不存在」——
+> 这类问题 `tsc` 与 `vite build` 都发现不了，只有真实浏览器会现形。
 
 ---
 
@@ -603,6 +635,38 @@ npm run build      # tsc --noEmit && vite build
 
 ## 十二、变更记录
 
+### 2026-09-20（第十轮 · A3 售后三端页面）
+
+- **买家端 3 页**：`/after-sales`（我的售后 + 状态页签）/ `/after-sales/new?orderNo=`（申请：类型 + 诉求 + 举证图）
+  / `/after-sales/:id`（详情：步骤条、卖家说明、裁定说明、退款金额 + 申请平台仲裁）。
+  入口挂在**订单上**（已发货 / 已完成才显示）与「我的」页 —— 售后总是从「我买过的那单」出发，
+  未发货时买家本就能自助退款，走售后反而绕远。
+- **卖家端 1 页** `/seller/after-sales`：店铺售后列表 + 处理弹窗，`AGREE` 立刻退款 / `REJECT` 必填原因。
+- **运营端 1 页** `/admin/after-sales`：全平台列表 + 裁定弹窗，支持退款（真的执行） / 驳回，**说明必填**。
+- **契约修正：售后单 `id` 改为字符串传输**。它是 18 位雪花值，超过 `Number.MAX_SAFE_INTEGER`，
+  `JSON.parse` 会静默改写；前端从路由参数原样取用、不做数值转换。
+  后端 `AfterSaleView.id` 类型 `Long` → `String`，冒烟脚本同步改为正则提取。
+- **三端共用件** `pages/afterSaleShared.tsx`：状态页签、类型文案、状态配色、进度步骤条 ——
+  避免「同一状态在两个页面显示成两种说法」。
+- **自测**：新增 `scripts/e2e/aftersale-ui-check.mjs` **44 项断言全绿**（真实 Chromium，
+  买家→卖家→运营整条链，最后回接口层确认订单与托管同步 `REFUNDED`、退款金额等于实付）；
+  前端 `tsc --noEmit` 零错误、`vite build` 通过；本轮改到了订单页 / 「我的」页 / 卖家端与后台共用件，
+  故**三套 UI 自测全跑**（`review-ui-check` / `seller-ui-check` 均 `exit=0`）；
+  回归 `aftersale-smoke 101/0`、`review-smoke 59/0`、`settlement-smoke 125/0`。
+- **环境坑（本轮新踩 → 08 篇 T-27）**：dev server 报 `listen EACCES: permission denied 127.0.0.1:5173`，
+  **不是端口被占、也不是沙箱拦的** —— 是 Windows **排除端口段**：Docker Desktop 启动后 WinNAT 保留
+  `5149-5248`，5173 正在其中。查 `netsh int ipv4 show excludedportrange protocol=tcp`；
+  改 `--port 3000` + `UI_BASE=http://localhost:3000` 即可（3000 本就在网关 `CORS_ORIGINS` 白名单里）。
+- **本轮暴露并修复的 4 个问题**（全部是 `tsc` 与 `vite build` 发现不了的）：
+  1. 前端路由是 `after-sales` 而入口链接写成 `/seller/aftersales` → 落到「页面不存在」。
+     接口路径 `/api/aftersales` 与前端路由命名**刻意不同**，链接必须照路由写。
+  2. `getByRole('button', { name: '处理' })` 是**子串匹配**，先命中页签「待卖家处理」，
+     弹窗根本没打开 → 改成行内 `exact: true` 定位。
+  3. 用「页面里还有没有『申请平台仲裁』几个字」判断按钮消失，被**成功 toast 的文案**误命中 → 改判按钮计数。
+  4. 裁定弹窗默认结论是「驳回」（保守默认值），按钮名是「确认驳回」而不是「支持退款并执行」。
+- **数据清理**：清掉前几轮崩溃遗留的 2 条 `PENDING` 售后挂单、4 个未降权的运营账号，
+  并把 34 笔被测试改过归属的订单 `seller_id` 归还平台自营。
+
 ### 2026-09-18（第九轮 · A3 售后仲裁工单）
 
 - **新增表** `t_after_sale`（履约库）：售后单含诉求、举证图、卖家处理说明、仲裁结论与说明、退款金额；
@@ -625,7 +689,7 @@ npm run build      # tsc --noEmit && vite build
   后端 `BUILD SUCCESS`、8 容器 healthy。接口冒烟合计 **11 套 856 项**。
 - **编译期暴露的问题**：重构 `ReviewService` 时漏改 `toView` 里的一处调用点，编译报
   `找不到符号: 方法 readImages(String)` —— 类内私有方法重命名靠编译器兜住，这正是保留编译检查的价值。
-- **遗留**：买家 / 卖家 / 运营三端的售后页面尚未开工（本轮交付为后端 + 端到端断言），是下一个增量。
+- **遗留（已在本轮后的第十轮补齐）**：三端页面当时未开工（第九轮交付为后端 + 端到端断言）。
 
 （以下为历史轮次）
 

@@ -11,7 +11,8 @@
  *      /reviews/mine 看到评价 → /product/{spuId} 看到公开评价区；
  *   3. 每步截图 + 断言真实文案，并收集 console 错误与非预期 HTTP 错误。
  *
- * 前置：8 容器在跑（网关 :8080）、frontend dev server 在跑（:5173）
+ * 前置：8 容器在跑（网关 :8080）、frontend dev server 在跑（:5173；若本机报 EACCES 见 08 篇 T-27，
+ *       改用 --port 3000 并设 UI_BASE=http://localhost:3000，3000 已在 CORS 白名单内）
  *
  * ⚠️ 必须用 http://localhost:5173，不能用 127.0.0.1 —— 网关 CORS 白名单只认 localhost。
  *

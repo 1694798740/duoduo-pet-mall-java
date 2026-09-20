@@ -161,7 +161,14 @@ export const SellerOrdersPage: React.FC = () => {
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
         <h2 className="section-title">卖出订单</h2>
-        <span className="section-sub">{data ? `共 ${data.total} 笔` : ''}</span>
+        <div className="row row-wrap">
+          <span className="section-sub">{data ? `共 ${data.total} 笔` : ''}</span>
+          {/* 售后入口挂在订单页顶部而非订单卡片里：一个订单只有一笔售后，
+              卡片内放按钮会让「已在处理中」的订单看起来还能再点一次 */}
+          <Link className="btn btn-ghost btn-sm" to="/seller/after-sales">
+            售后处理
+          </Link>
+        </div>
       </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>

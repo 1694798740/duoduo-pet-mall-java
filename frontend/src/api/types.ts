@@ -538,6 +538,69 @@ export interface ReviewedOrders {
   orderNos: string[];
 }
 
+// ---------- 售后仲裁（/api/aftersales，履约域 A3） ----------
+
+export type AfterSaleStatus =
+  | 'PENDING'
+  | 'SELLER_REJECTED'
+  | 'ARBITRATING'
+  | 'REFUNDED'
+  | 'CLOSED';
+
+export type AfterSaleType = 'REFUND_ONLY' | 'RETURN_REFUND';
+
+/** 卖家处理动作：AGREE 会**立刻执行退款**，REJECT 必须填说明 */
+export type AfterSaleReplyAction = 'AGREE' | 'REJECT';
+
+/** 运营裁定结论：APPROVE_REFUND 会**立刻执行退款** */
+export type AfterSaleArbitrateResult = 'APPROVE_REFUND' | 'REJECT';
+
+/**
+ * 售后单。
+ *
+ * ⚠️ `id` 是 **string** 而不是 number：主键是 18 位雪花值（如 359291401479008256），
+ * 超过 JS 的 Number.MAX_SAFE_INTEGER，序列化成数字会被 JSON.parse 静默改写，
+ * 拿它拼 URL 就会打到一条不存在的单子上（表现为莫名的 404）。
+ * 服务端刻意以字符串下发，这里原样透传即可 —— **绝不**做任何数值运算。
+ */
+export interface AfterSaleView {
+  id: string;
+  orderNo: string;
+  buyerId: number;
+  sellerId: number;
+  type: AfterSaleType | string;
+  typeLabel: string;
+  reason: string;
+  images: string[];
+  status: AfterSaleStatus | string;
+  statusLabel: string;
+  sellerReply: string | null;
+  arbitrateResult: AfterSaleArbitrateResult | string | null;
+  arbitrateNote: string | null;
+  /** 实际退款金额（分），由交易域退款结果回填；未退款时为 null */
+  refundAmount: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AfterSaleCreateRequest {
+  orderNo: string;
+  type: AfterSaleType;
+  reason: string;
+  /** 举证图直链（只收 http/https，最多 6 张，服务端校验） */
+  images?: string[];
+}
+
+export interface AfterSaleReplyRequest {
+  action: AfterSaleReplyAction;
+  reply?: string;
+}
+
+export interface AfterSaleArbitrateRequest {
+  result: AfterSaleArbitrateResult;
+  note: string;
+}
+
 // ---------- 通用 ----------
 
 export interface PageResult<T> {

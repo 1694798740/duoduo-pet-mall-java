@@ -93,11 +93,11 @@ function Sql([string]$db, [string]$sql) {
     return ((@($out) | Where-Object { "$_" -notmatch 'Warning' }) -join "`n").Trim()
 }
 
-# 19 位雪花主键经 ConvertFrom-Json 会丢精度（与 JS JSON.parse 同类坑），
-# 需要主键时一律从原始响应文本里正则提取，绝不走 JSON 反序列化。
+# 售后单 id 在响应里是**字符串**（服务端刻意如此：18 位雪花值超过 JS 安全整数上限，
+# 序列化成数字会被 JSON.parse 静默改写）。这里直接从原始响应文本取，不经任何数值转换。
 function IdOf($r) {
     if (-not $r -or -not $r.raw) { return $null }
-    $m = [regex]::Match($r.raw, '"id":(\d+)')
+    $m = [regex]::Match($r.raw, '"id":"(\d+)"')
     if ($m.Success) { return $m.Groups[1].Value }
     return $null
 }

@@ -10,7 +10,8 @@
  *   2. 用真实 Chromium 登录，逐页走 /seller、/seller/orders、详情页、/seller/settlements
  *   3. 每一步都截图 + 断言页面真的出了预期内容，并把 console error 全部收集出来
  *
- * 前置：后端 7 容器在跑（网关 :8080）、frontend dev server 在跑（:5173）
+ * 前置：后端 7 容器在跑（网关 :8080）、frontend dev server 在跑（:5173；若本机报 EACCES 见 08 篇 T-27，
+ *       改用 --port 3000 并设 UI_BASE=http://localhost:3000，3000 已在 CORS 白名单内）
  *
  * ⚠️ 必须用 http://localhost:5173 访问，不能用 http://127.0.0.1:5173：
  *    网关的 CORS_ORIGINS 白名单只认 `localhost:5173`，带 127.0.0.1 的 Origin 会被

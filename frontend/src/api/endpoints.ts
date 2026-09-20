@@ -21,6 +21,10 @@ import type {
   AbnormalSettlement,
   AdminReport,
   AdminSettlementSummary,
+  AfterSaleArbitrateRequest,
+  AfterSaleCreateRequest,
+  AfterSaleReplyRequest,
+  AfterSaleView,
   BrandSaveRequest,
   BrandView,
   CartItemView,
@@ -303,6 +307,20 @@ export const adminApi = {
     api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
   auditListing: (id: number, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
+
+  // ---- 售后仲裁工作台（A3，落在 duoduo-fulfilment） ----
+
+  /** 全平台售后列表（按状态过滤） */
+  afterSales: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AfterSaleView>>('/api/admin/aftersales', { query }),
+
+  /**
+   * 裁定。`APPROVE_REFUND` 会**真的执行退款**（调交易域既有的运营侧退款入口）。
+   * 一种会失败的情况必须在前端讲清楚：订单已完成且钱已放款给卖家时，交易域返回 422
+   * 「需向卖家追偿 / 平台垫付」——那是资金边界 B-01，系统退不了，只能人工处理。
+   */
+  arbitrateAfterSale: (id: string, body: AfterSaleArbitrateRequest) =>
+    api.post<AfterSaleView>(`/api/admin/aftersales/${id}/arbitrate`, body),
 };
 
 // ---------- 支付（/api/payments） ----------
@@ -355,4 +373,38 @@ export const reviewApi = {
   /** 我在这批订单里已评价过的订单号（订单列表页一次判断） */
   reviewed: (orderNos: string[]) =>
     api.get<ReviewedOrders>('/api/reviews/reviewed', { query: { orderNos: orderNos.join(',') } }),
+};
+
+// ---------- 售后仲裁（/api/aftersales，履约域 A3） ----------
+
+/**
+ * 售后接口。
+ *
+ * 与卖家中心同一条纪律：**参数里没有 buyerId / sellerId** ——
+ * 归属完全由登录态推导，服务端逐单校验（不是你的单返回 403，单不存在返回 404，刻意区分）。
+ *
+ * ⚠️ 所有 `{id}` 都是**字符串**（18 位雪花值），从列表里原样回传即可；
+ * 千万不要 `Number(id)` 或做任何运算，那会把它悄悄改成一个不存在的单号。
+ */
+export const afterSaleApi = {
+  /** 买家立案：仅本人订单、仅「已发货 / 已完成」订单（否则 422） */
+  create: (body: AfterSaleCreateRequest) => api.post<AfterSaleView>('/api/aftersales', body),
+
+  /** 我提起的售后（买家视角） */
+  mine: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AfterSaleView>>('/api/aftersales/mine', { query }),
+
+  /** 我店铺的售后（卖家 / 运营视角；非卖家返回 403） */
+  seller: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AfterSaleView>>('/api/aftersales/seller', { query }),
+
+  /** 详情（当事人或运营） */
+  detail: (id: string) => api.get<AfterSaleView>(`/api/aftersales/${id}`),
+
+  /** 卖家处理：AGREE 立刻退款 / REJECT 必须填说明（缺说明 422） */
+  reply: (id: string, body: AfterSaleReplyRequest) =>
+    api.post<AfterSaleView>(`/api/aftersales/${id}/reply`, body),
+
+  /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 时可进入） */
+  escalate: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/escalate`),
 };
