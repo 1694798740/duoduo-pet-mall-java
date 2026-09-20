@@ -39,6 +39,10 @@ public class GatewaySecurityProperties {
             // 白名单按路径而非方法匹配，因此这里**只放行只读的 /product/** 子路径**：
             // 发表评价 / 我的评价 / 追评都在 /api/reviews 与本路径之外，仍由网关强制登录。
             "/api/reviews/product/**",
+            // 卖家信用分（A4）：同样是「购物决策信息」——买家下单前要看卖家靠不靠谱，
+            // 与商品评价同性质，未登录访客也应看得到。只放行这条精确路径（读接口，无副作用）；
+            // 刷新回写走 /api/reviews/internal/**，不经网关，且由履约域 InternalTokenFilter 校验凭据。
+            "/api/reviews/seller/*/credit",
             "/api/duoduo/chat",
             "/api/duoduo/capabilities",
             // 渠道回调来自渠道服务器，没有我们的登录态；安全靠验签 + 金额核对 + CAS 幂等

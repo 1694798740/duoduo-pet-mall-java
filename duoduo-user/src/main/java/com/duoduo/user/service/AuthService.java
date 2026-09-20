@@ -19,6 +19,7 @@ import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -56,17 +57,28 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final SnowflakeIdGenerator idGenerator;
+    /**
+     * 新用户初始信用分（= 信用分模型的基础分，默认 60）。
+     *
+     * <p>必须与履约域 {@code CreditModel} 的 base 权重一致，否则会出现
+     * 「资料页显示 100、信用分页显示 60」这种谁也说不清哪个对的分裂。
+     * 两个服务各自持有这个常量（没有共享模块），一致性由冒烟测试守住：
+     * 断言「新注册用户的库内分数 == 信用分接口给出的基础分」。
+     */
+    private final int creditDefault;
 
     public AuthService(UserMapper userMapper,
                        RefreshTokenMapper refreshTokenMapper,
                        PasswordEncoder passwordEncoder,
                        JwtTokenService jwtTokenService,
-                       SnowflakeIdGenerator idGenerator) {
+                       SnowflakeIdGenerator idGenerator,
+                       @Value("${duoduo.user.credit-default:60}") int creditDefault) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.idGenerator = idGenerator;
+        this.creditDefault = creditDefault;
     }
 
     @Transactional
@@ -81,7 +93,10 @@ public class AuthService {
                 : request.nickname().trim());
         entity.setStatus(STATUS_ACTIVE);
         entity.setRole("USER");
-        entity.setCreditScore(100);
+        // 初始信用分 = 信用分模型的基础分（默认 60），不是「满分 100」：
+        // 信用分体现的是「已积累的履约表现」，刚注册的人还没有可评价的行为，
+        // 给满分等于让空账号显示得比老卖家还可信。详见履约域 CreditModel 的权重表。
+        entity.setCreditScore(creditDefault);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
 
@@ -245,6 +260,33 @@ public class AuthService {
             log.info("用户升级为卖家 userId={}", userId);
         }
         return toView(entity);
+    }
+
+    /**
+     * 服务间写：回写信用分（A4）。
+     *
+     * <p><b>幂等</b>：分数与库里一致时**不写库**（不推 {@code updated_at}、不产生无谓写放大），
+     * 直接返回 {@code changed=false}。刷新任务因此可以放心重放 ——
+     * 「重放不改变结果」是这类回写任务唯一可靠的安全保证。
+     *
+     * <p>分数上限 100 由请求侧 {@code @Min/@Max} 挡住；服务层不再复验，
+     * 避免第二份口径（算法归履约域一处维护）。
+     */
+    @Transactional
+    public UserDtos.CreditUpdateResult updateCreditScore(Long userId, int score, String source) {
+        UserEntity entity = userMapper.selectById(userId);
+        if (entity == null) {
+            throw BizException.notFound("用户");
+        }
+        Integer previous = entity.getCreditScore();
+        if (previous != null && previous == score) {
+            return new UserDtos.CreditUpdateResult(userId, previous, score, false);
+        }
+        entity.setCreditScore(score);
+        entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        userMapper.updateById(entity);
+        log.info("信用分回写 userId={} {} -> {} source={}", userId, previous, score, source);
+        return new UserDtos.CreditUpdateResult(userId, previous, score, true);
     }
 
     // ---------------- 内部方法 ----------------

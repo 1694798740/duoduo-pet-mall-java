@@ -2,6 +2,8 @@ package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.user.dto.UserDtos.CreditUpdateRequest;
+import com.duoduo.user.dto.UserDtos.CreditUpdateResult;
 import com.duoduo.user.dto.UserDtos.RealNameRequest;
 import com.duoduo.user.dto.UserDtos.UpdateProfileRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
@@ -9,6 +11,7 @@ import com.duoduo.user.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -79,5 +82,22 @@ public class UserController {
                 .map(Long::valueOf)
                 .toList();
         return ApiResponse.ok(authService.userBriefs(userIds));
+    }
+
+    /**
+     * 服务间写：回写信用分（A4）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token} ——
+     * 与 {@code /internal/briefs} 同一道门。调用方是履约域的信用分刷新任务，
+     * 分数由它按权重表算出；用户域只负责存，不做算法。
+     *
+     * <p>为什么路径参数是 {@code userId} 而不是从登录态取：这是**服务间**调用，
+     * 没有「当前登录用户」这个概念，被写的对象就是参数本身。
+     * 用户侧能改的资料（昵称 / 头像）仍走 {@code /api/users/me}，身份一律取自登录态（INV-8）。
+     */
+    @PostMapping("/internal/{userId}/credit")
+    public ApiResponse<CreditUpdateResult> updateCredit(@PathVariable Long userId,
+                                                       @Valid @RequestBody CreditUpdateRequest request) {
+        return ApiResponse.ok(authService.updateCreditScore(userId, request.score(), request.source()));
     }
 }

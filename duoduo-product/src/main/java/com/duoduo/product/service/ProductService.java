@@ -354,7 +354,8 @@ public class ProductService {
                         spu.getSalesCount() == null ? 0 : spu.getSalesCount(),
                         spu.getRating() == null ? 0d : spu.getRating().doubleValue(),
                         spu.getRatingCount() == null ? 0 : spu.getRatingCount(),
-                        Boolean.TRUE.equals(inStock.get(spu.getId()))))
+                        Boolean.TRUE.equals(inStock.get(spu.getId())),
+                        spu.getSellerId() == null ? 0L : spu.getSellerId()))
                 .toList();
     }
 

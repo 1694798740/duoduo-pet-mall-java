@@ -4,6 +4,7 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.client.dto.RefundRequest;
 import com.duoduo.fulfilment.client.dto.RefundResult;
+import com.duoduo.fulfilment.client.dto.SellerOrderStats;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -48,4 +49,14 @@ public interface OrderClient {
     @PostMapping("/internal/{orderNo}/refund")
     ApiResponse<RefundResult> refund(@PathVariable("orderNo") String orderNo,
                                      @RequestBody RefundRequest request);
+
+    /**
+     * 服务间只读：某卖家的订单状态计数（信用分的「履约完成率」因子）。
+     *
+     * <p>刻意**不做**流式分页或明细拉取：要的只是几个整数。
+     * 对端不可用时由调用方（{@code CreditService}）映射成 503，而不是当成「0 单」——
+     * 把依赖故障算成「这个卖家没有完成过订单」，会凭空压低别人的信用分。
+     */
+    @GetMapping("/internal/seller/{sellerId}/stats")
+    ApiResponse<SellerOrderStats> sellerStats(@PathVariable("sellerId") Long sellerId);
 }

@@ -171,4 +171,16 @@ public class OrderController {
     public ApiResponse<com.duoduo.trade.dto.OrderDtos.OrderFactView> internalFact(@PathVariable String orderNo) {
         return ApiResponse.ok(orderService.internalOrderFact(orderNo));
     }
+
+    /**
+     * 服务间只读：某卖家的订单状态计数（供履约域算信用分的「履约完成率」因子）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。
+     * 只回计数，不回订单 —— 不把收货人信息带进不需要它的服务（INV-9）。
+     */
+    @GetMapping("/internal/seller/{sellerId}/stats")
+    public ApiResponse<com.duoduo.trade.dto.OrderDtos.SellerOrderStats> internalSellerStats(
+            @PathVariable Long sellerId) {
+        return ApiResponse.ok(orderService.internalSellerStats(sellerId));
+    }
 }

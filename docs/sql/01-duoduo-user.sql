@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     `role`            VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT 'USER/OPERATOR/ADMIN',
     `real_name`       VARCHAR(50)           DEFAULT NULL,
     `id_card_masked`  VARCHAR(30)           DEFAULT NULL COMMENT '仅存掩码，完整号码不落库',
-    `credit_score`    INT          NOT NULL DEFAULT 100,
+    `credit_score`    INT          NOT NULL DEFAULT 60 COMMENT '信用分（A4），默认 = CreditModel 基础分，与「无数据用户得基础分」对齐',
     `last_login_at`   TIMESTAMP             DEFAULT NULL,
     `created_at`      TIMESTAMP    NOT NULL,
     `updated_at`      TIMESTAMP    NOT NULL,

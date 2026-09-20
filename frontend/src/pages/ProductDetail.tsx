@@ -18,6 +18,7 @@ import { toFriendlyMessage } from '../api/client';
 import { cartApi, productApi } from '../api/endpoints';
 import type { ProductDetail } from '../api/types';
 import { useAsync } from '../components/hooks';
+import { CreditBadge } from '../components/CreditBadge';
 import { ReviewSection } from '../components/ReviewSection';
 import {
   Alert,
@@ -210,7 +211,17 @@ export const ProductDetailPage: React.FC = () => {
         <div>
           <div className="pd-price-block">
             <div className="row-between row-wrap">
-              <SupplyTag supplyType={card.supplyType} />
+              <span className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+                <SupplyTag supplyType={card.supplyType} />
+                {/* 信用分是「卖家」的可信度：放在下单决策最显眼的位置（价格区），而不是塞进规格表底部。
+                    supplyType=self 的商品归属平台自营（sellerId=0），标签随之改成「平台自营信用」。 */}
+                {card.sellerId != null && Number.isFinite(card.sellerId) ? (
+                  <CreditBadge
+                    sellerId={card.sellerId}
+                    label={card.supplyType === 'self' ? '平台自营信用' : '卖家信用'}
+                  />
+                ) : null}
+              </span>
               <span className="small muted">
                 已售 {card.salesCount} ·{' '}
                 {selectedSku ? `可售 ${selectedSku.stock}` : card.inStock ? '有货' : '已售罄'}

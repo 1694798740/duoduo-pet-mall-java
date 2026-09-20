@@ -21,6 +21,7 @@ import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
+import com.duoduo.trade.dto.OrderDtos.SellerOrderStats;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.entity.CartItemEntity;
@@ -434,6 +435,38 @@ public class OrderService {
                 OrderStatus.labelOf(order.getStatus()),
                 isoTs(order.getFinishedAt()),
                 items);
+    }
+
+    /**
+     * 服务间只读：某卖家的订单状态计数（供履约域算信用分的「履约完成率」因子）。
+     *
+     * <p>不做归属校验 —— 准入由内部凭据（{@code X-Internal-Token}）把关。
+     * 结果是**客观计数快照**，不随调用方变化：同一个卖家在同一时刻只应有一个计数，
+     * 否则「信用分」就变成了「谁问谁说了算」。
+     *
+     * <p>sellerId=0 表示平台自营，同样支持（返回平台自营的计数）。
+     */
+    public SellerOrderStats internalSellerStats(Long sellerId) {
+        if (sellerId == null) {
+            throw BizException.validation("卖家标识不能为空");
+        }
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Map<String, Object> row : orderMapper.countBySellerAndStatus(List.of(sellerId))) {
+            Object status = row.get("status");
+            if (status == null) {
+                continue;
+            }
+            Object cnt = row.get("cnt");
+            counts.put(status.toString(), cnt == null ? 0 : ((Number) cnt).intValue());
+        }
+        int pending = counts.getOrDefault(OrderStatus.PENDING_PAYMENT.name(), 0);
+        int paid = counts.getOrDefault(OrderStatus.PAID.name(), 0);
+        int shipped = counts.getOrDefault(OrderStatus.SHIPPED.name(), 0);
+        int completed = counts.getOrDefault(OrderStatus.COMPLETED.name(), 0);
+        int closed = counts.getOrDefault(OrderStatus.CLOSED.name(), 0);
+        int refunded = counts.getOrDefault(OrderStatus.REFUNDED.name(), 0);
+        int total = pending + paid + shipped + completed + closed + refunded;
+        return new SellerOrderStats(sellerId, pending, paid, shipped, completed, closed, refunded, total);
     }
 
     // ---------------- 取消（含释放冻结） ----------------

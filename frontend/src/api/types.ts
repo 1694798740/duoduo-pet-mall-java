@@ -126,6 +126,13 @@ export interface ProductCard {
   rating: number;
   ratingCount: number;
   inStock: boolean;
+  /**
+   * 卖家归属（0 = 平台自营）。商品详情页据此展示卖家信用分。
+   *
+   * 声明为可选：老版本后端不下发该字段时，前端按「未知卖家」处理（不展示信用），
+   * 而不是把它当成自营（那会把第三方商家的商品错标成平台自营的信用）。
+   */
+  sellerId?: number | null;
 }
 
 export interface Suitability {
@@ -638,6 +645,60 @@ export interface TrackListView {
   orderNo: string;
   total: number;
   tracks: TrackView[];
+}
+
+// ---------- 信用分（/api/reviews/seller/{sellerId}/credit，履约域 A4） ----------
+
+/** 信用等级编码。中文文案由服务端下发，前端不维护第二份映射。 */
+export type CreditLevel = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
+
+/**
+ * 单个因子明细。
+ *
+ * `weight` 是该因子满分（权重表的一项），`points` 是本次得分，
+ * **四项 points 之和恒等于总分** —— 这是服务端在模型层保证的结构不变式，
+ * 前端因此可以直接把明细当成「分数的拆解」展示，不必担心对不上。
+ */
+export interface CreditFactor {
+  code: string;
+  label: string;
+  weight: number;
+  /** 人类可读的原始值，如「100%（完成 4 / 已了结 4）」 */
+  rawValue: string;
+  points: number;
+}
+
+/** 计算所用的原始输入。只有计数与评分，**不含任何身份字段**（手机号 / 昵称 / 收货人）。 */
+export interface CreditInputs {
+  completedOrders: number;
+  closedOrders: number;
+  refundedOrders: number;
+  totalOrders: number;
+  reviewCount: number;
+  /** 平均评分，两位小数字符串（如 "4.00"），避免浮点噪声 */
+  avgRating: string;
+  adverseAfterSales: number;
+}
+
+/**
+ * 卖家信用分（公开只读）。
+ *
+ * 未登录访客也能读（网关白名单放行）：信用分是「购物决策信息」，
+ * 与商品评价同性质 —— 看不见口碑就没法决定买不买。
+ *
+ * 无交易/评价记录的用户得分即**基础分**（不是 0、也不是 null），
+ * 因此这里 `score` 恒为数字，前端不必写空态兜底。
+ */
+export interface CreditView {
+  userId: number;
+  score: number;
+  level: CreditLevel | string;
+  /** 等级中文文案（优秀 / 良好 / 一般 / 待提升） */
+  levelLabel: string;
+  factors: CreditFactor[];
+  inputs: CreditInputs;
+  /** 服务端计算时刻（ISO-8601 UTC） */
+  generatedAt: string;
 }
 
 // ---------- 通用 ----------

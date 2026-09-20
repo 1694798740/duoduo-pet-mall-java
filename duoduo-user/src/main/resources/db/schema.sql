@@ -18,7 +18,10 @@ CREATE TABLE t_user (
     role            VARCHAR(20)  NOT NULL DEFAULT 'USER',
     real_name       VARCHAR(50),
     id_card_masked  VARCHAR(30),
-    credit_score    INT          NOT NULL DEFAULT 100,
+    -- 信用分（A4）：默认值 = 信用分模型的基础分（CreditModel 的 base，60）。
+    -- 与「无数据用户得基础分」对齐 —— 新注册用户的库内值与实时计算的信用分必须一致，
+    -- 否则会变成「资料页显示 100、信用分页显示 60」这种谁也不知道哪个对的分裂。
+    credit_score    INT          NOT NULL DEFAULT 60,
     last_login_at   TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL,
     updated_at      TIMESTAMP    NOT NULL,

@@ -67,6 +67,20 @@ duoduo:
     # 售后举证图最多几张。刻意少于评价的 9 张：举证要的是「看得清问题」的关键几张，
     # 不是图集。放开到 9 张只会让运营的裁定工作台变成图片墙。
     max-images: ${AFTERSALE_MAX_IMAGES:6}
+  credit:
+    # ---- 信用分权重表（A4）----
+    # 四个数之和必须 == 100，否则服务启动即失败（明细与总分必须自洽，见 CreditModel）。
+    # 有效取值区间为 [base, 100]：因子非负且满和 100，故默认落在 60~100。
+    base: ${CREDIT_BASE:60}
+    weight-completion: ${CREDIT_W_COMPLETION:18}
+    weight-review: ${CREDIT_W_REVIEW:16}
+    weight-aftersale: ${CREDIT_W_AFTERSALE:6}
+    # ---- 定时回写（默认关闭）----
+    # 它会把分数写进用户库，属后台写操作；开发/自测期间开着会让断言时好时坏。
+    # 需要时设 CREDIT_REFRESH_ENABLED=true 打开，再按需调间隔。
+    refresh-enabled: ${CREDIT_REFRESH_ENABLED:false}
+    refresh-interval-ms: ${CREDIT_REFRESH_INTERVAL_MS:900000}
+    refresh-initial-delay-ms: ${CREDIT_REFRESH_INITIAL_DELAY_MS:120000}
 
 management:
   endpoints:

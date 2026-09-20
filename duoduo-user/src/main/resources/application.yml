@@ -63,6 +63,12 @@ duoduo:
     # 服务间调用共享密钥。用户域的内部接口只有「批量取昵称/头像」这类只读能力，
     # 但仍然必须凭据保护：昵称头像同样是用户数据，不能因为「不敏感」就裸奔。
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+  user:
+    # 新用户初始信用分（A4）= 履约域信用分模型的基础分。
+    # 两处各自持有这个常量（无共享模块），一致性由 credit-smoke 守住：
+    # 「新注册用户库内分数 == 信用分接口给出的基础分」。
+    # 改这里必须同步改履约域的 duoduo.credit.base，否则新用户会立刻出现分数分裂。
+    credit-default: ${USER_CREDIT_DEFAULT:60}
 
 management:
   endpoints:

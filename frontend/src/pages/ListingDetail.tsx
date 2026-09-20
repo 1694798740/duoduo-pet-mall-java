@@ -14,6 +14,7 @@ import { Link, useParams } from 'react-router-dom';
 import { productApi } from '../api/endpoints';
 import type { ListingDetail } from '../api/types';
 import { useAsync } from '../components/hooks';
+import { CreditBadge } from '../components/CreditBadge';
 import { Alert, LoadingBlock, ProductGrid, conditionLabelOf, formatPrice } from '../components/ui';
 
 export const ListingDetailPage: React.FC = () => {
@@ -124,6 +125,15 @@ export const ListingDetailPage: React.FC = () => {
               </dd>
               <dt>品种</dt>
               <dd>{card.breed ?? '未标注'}</dd>
+              {/* C2C 是一对一交易，卖家可不可信比「成色」更影响决策 —— 放在规格表里最显眼 */}
+              <dt>卖家信用</dt>
+              <dd>
+                {card.sellerId != null && Number.isFinite(card.sellerId) ? (
+                  <CreditBadge sellerId={card.sellerId} label="卖家信用" />
+                ) : (
+                  <span className="muted">暂无</span>
+                )}
+              </dd>
             </dl>
           </div>
 

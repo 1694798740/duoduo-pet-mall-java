@@ -14,6 +14,7 @@ import { toFriendlyMessage } from '../api/client';
 import { userApi } from '../api/endpoints';
 import { formatDate } from '../api/client';
 import { Alert, Field, LoadingBlock, useToast } from '../components/ui';
+import { CreditPanel } from '../components/CreditBadge';
 import { canAccessSellerConsole } from './seller/shared';
 import { useAuth } from '../store/auth';
 
@@ -158,8 +159,6 @@ export const MePage: React.FC = () => {
               <dd>{roleLabelOf(user.role)}</dd>
               <dt>账号状态</dt>
               <dd>{user.status === 'ACTIVE' ? '正常' : user.status}</dd>
-              <dt>信用分</dt>
-              <dd>{user.creditScore ?? '—'}</dd>
               <dt>注册时间</dt>
               <dd>{formatDate(user.createdAt)}</dd>
               <dt>宠物档案</dt>
@@ -181,6 +180,14 @@ export const MePage: React.FC = () => {
                 )}
               </dd>
             </dl>
+          </div>
+
+          <div className="card card-pad" style={{ marginTop: 16 }}>
+            <h3 style={{ marginBottom: 10 }}>信用分</h3>
+            {/* 这里刻意**不**用 user.creditScore：那是用户库里的一份副本（定时任务回写），
+                可能落后于履约域的实时计算值。同一页面上放两个来源的同一指标，
+                迟早会出现「上面 100、下面 60」—— 所以只留这一个权威来源。 */}
+            <CreditPanel userId={user.id} />
           </div>
 
           <div className="card card-pad" style={{ marginTop: 16 }}>

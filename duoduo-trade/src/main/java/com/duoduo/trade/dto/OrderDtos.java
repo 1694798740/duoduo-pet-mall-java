@@ -74,6 +74,29 @@ public final class OrderDtos {
     ) {
     }
 
+    /**
+     * 某卖家的订单状态计数（服务间只读，供履约域算信用分的「履约完成率」因子）。
+     *
+     * <p>只回**计数**不回订单：算一个比率只需要几个整数，
+     * 拉回订单列表既浪费带宽，又会把收货人姓名 / 电话 / 地址带进一个根本不需要它们的服务。
+     * 这与 {@link OrderFactView} 的裁剪原则是同一条（INV-9）。
+     *
+     * <p>为什么把六个状态都列出来而不是只给「完成 / 未完成」：
+     * 信用分口径将来若从「完成率」改成「净完成率」（扣掉退款）或引入加权，
+     * 调用方不必再让交易域改接口 —— 把原始事实交给调用方，口径留在调用方一处演进。
+     */
+    public record SellerOrderStats(
+            Long sellerId,
+            int pendingPaymentOrders,
+            int paidOrders,
+            int shippedOrders,
+            int completedOrders,
+            int closedOrders,
+            int refundedOrders,
+            int totalOrders
+    ) {
+    }
+
     public record OrderView(
             String orderNo,
             Long sellerId,

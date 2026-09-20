@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.duoduo.fulfilment.entity.AfterSaleEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 售后单数据访问。
@@ -93,4 +95,23 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
                                 @Param("note") String note,
                                 @Param("operatorId") Long operatorId,
                                 @Param("at") LocalDateTime at);
+
+    // ---------------- 信用分（A4） ----------------
+
+    /**
+     * 某卖家「被平台裁定支持买家」的售后单数（信用分的「售后诚信」因子）。
+     *
+     * <p>口径只说一件事：<b>运营裁定支持退款</b>（{@code arbitrate_result = 'APPROVE_REFUND'}）才算败诉。
+     * 刻意<b>不</b>把「卖家主动同意退款」算进来 —— 主动同意是配合处理，
+     * 把它当污点会反过来教卖家「拖着别同意」，与产品目标相反。
+     *
+     * <p>卖家拒绝后被运营裁定驳回（{@code CLOSED}）同样不计：那是卖家守住了规矩。
+     */
+    @Select("SELECT COUNT(*) FROM t_after_sale "
+            + "WHERE seller_id = #{sellerId} AND arbitrate_result = 'APPROVE_REFUND'")
+    int countAdverseBySeller(@Param("sellerId") Long sellerId);
+
+    /** 本域已知的卖家标识（售后表里出现过的 seller_id，去重）—— 与评价表那份互补 */
+    @Select("SELECT DISTINCT seller_id FROM t_after_sale WHERE seller_id IS NOT NULL")
+    List<Long> distinctSellerIds();
 }

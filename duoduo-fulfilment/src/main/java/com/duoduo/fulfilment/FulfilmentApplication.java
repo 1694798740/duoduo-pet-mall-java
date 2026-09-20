@@ -5,6 +5,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 多多宠物商店 · 履约服务。
@@ -27,11 +28,15 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  *   <li>评价权限只认「登录态 + 订单归属」，接口不接受 userId 参数；</li>
  *   <li>匿名评价在**读取时**脱敏，原始 user_id 保留（信用分与风控需要），不落「匿名副本」。</li>
  * </ul>
+ *
+ * <p>{@code @EnableScheduling} 是为 A4 的信用分回写任务准备的（默认关闭，见 {@code CreditRefreshJob}）：
+ * 它把「实时计算」的信用分定期同步到 {@code t_user.credit_score} 这个副本上。
  */
 @SpringBootApplication
 @EnableDiscoveryClient
 @EnableFeignClients(basePackages = "com.duoduo.fulfilment.client")
 @MapperScan("com.duoduo.fulfilment.mapper")
+@EnableScheduling
 public class FulfilmentApplication {
 
     public static void main(String[] args) {

@@ -177,7 +177,15 @@ public final class ProductDtos {
             int salesCount,
             double rating,
             int ratingCount,
-            boolean inStock
+            boolean inStock,
+            /**
+             * 卖家归属（t_user.id；0 = 平台自营）。
+             *
+             * <p>商品详情页据此展示「卖家信用分」——买家看的是**卖家**的可信度，
+             * 而不是商品的属性，因此必须随卡片带出来；缺了它前端只能一律按自营展示，
+             * 第三方商家的信用就永远露不出来。
+             */
+            Long sellerId
     ) {
     }
 

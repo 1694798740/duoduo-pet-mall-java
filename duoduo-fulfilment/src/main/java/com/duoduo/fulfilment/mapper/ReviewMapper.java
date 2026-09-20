@@ -49,4 +49,26 @@ public interface ReviewMapper extends BaseMapper<ReviewEntity> {
     /** 某订单已评价的 SPU（用于「还差哪几件没评」的判断） */
     @Select("SELECT spu_id FROM t_review WHERE order_id = #{orderId} AND user_id = #{userId}")
     List<Long> reviewedSpuIds(@Param("orderId") Long orderId, @Param("userId") Long userId);
+
+    /**
+     * 某卖家收到的评价聚合：条数 + 平均分（信用分的「评价质量」因子）。
+     *
+     * <p>走 SQL 聚合而不是把评价捞回来在内存里算 —— 与 {@link #aggregateBySpu} 同一理由：
+     * 信用分要展示在商品页，是高频读路径，而评价条数会随销量单调增长。
+     *
+     * @return 形如 {@code {total: 12, avgRating: 4.5833}}；无数据时 total=0、avgRating=0
+     */
+    @Select("SELECT COUNT(*) AS total, COALESCE(AVG(rating), 0) AS avgRating "
+            + "FROM t_review WHERE seller_id = #{sellerId} AND audit_status = 'APPROVED'")
+    Map<String, Object> aggregateBySeller(@Param("sellerId") Long sellerId);
+
+    /**
+     * 本域已知的卖家标识（评价表里出现过的 seller_id，去重）。
+     *
+     * <p>信用分刷新任务用它枚举「有评价记录、值得重算」的卖家。
+     * 只覆盖有评价的卖家是**刻意的**：没有交易/评价痕迹的用户分数恒为基础分，
+     * 每次全量重算也只会得到同一个数，没必要也不该由本域凭空枚举全站用户。
+     */
+    @Select("SELECT DISTINCT seller_id FROM t_review WHERE seller_id IS NOT NULL")
+    List<Long> distinctSellerIds();
 }

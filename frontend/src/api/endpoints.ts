@@ -34,6 +34,7 @@ import type {
   CartView,
   CategoryNode,
   CategorySaveRequest,
+  CreditView,
   DictItem,
   HomeView,
   ListingAuditRequest,
@@ -431,4 +432,26 @@ export const afterSaleApi = {
 export const logisticsApi = {
   tracks: (orderNo: string, options?: { signal?: AbortSignal }) =>
     api.get<TrackListView>(`/api/logistics/orders/${encodeURIComponent(orderNo)}/tracks`, options),
+};
+
+// ---------- 信用分（/api/reviews/seller/{sellerId}/credit，履约域 A4） ----------
+
+/**
+ * 信用分查询。
+ *
+ * 挂在 `/api/reviews` 前缀之下而不是另起一段：信用分的两类事实（评价、售后）
+ * 本来就属于评价 / 履约语义，同一个前缀让网关路由与白名单都不用新增规则段。
+ * 网关只放行 `seller/*&#47;credit` 这一条**精确路径**（公开只读），
+ * 发表评价、刷新回写等仍在白名单之外 —— 不要把需要登录的接口挪进这个子路径。
+ *
+ * 语义要点：
+ *   · 分数体现的是该用户**作为卖方**的可信度（商品 / 闲置页展示的就是卖家信用），
+ *     因此「我的信用」也复用同一端点（传自己的 userId）；
+ *   · 未登录也能读（公开只读）；
+ *   · 无数据用户得基础分，不返回 null —— 前端无需写「暂无信用」的空态。
+ */
+export const creditApi = {
+  /** 某卖家（用户）的信用分与构成明细（公开，未登录可读） */
+  seller: (sellerId: number, options?: { signal?: AbortSignal }) =>
+    api.get<CreditView>(`/api/reviews/seller/${sellerId}/credit`, options),
 };

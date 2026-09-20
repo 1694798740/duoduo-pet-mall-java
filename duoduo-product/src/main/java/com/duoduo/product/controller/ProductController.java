@@ -66,6 +66,14 @@ public class ProductController {
      * 现在 {@code /api/products/internal/**} 由 {@code InternalTokenFilter} 校验
      * {@code X-Internal-Token}（外部直接调用返回 403），交易侧的 Feign 客户端
      * 由 {@code InternalCallConfig} 统一带上该请求头。
+     *
+     * <p><b>A4 例外（已明确记录，非疏漏）</b>：{@link ProductCard} 新增了 {@code sellerId}，
+     * 而 {@code /api/products} 是公开路由。理由是「买家要看卖家信用」——
+     * 信用分是**卖家**的可信度，商品详情页要展示它就必须知道卖家是谁，
+     * 而商品域的 {@code ListingCard}（闲置卡片，同属公开 C 端视图）本来就带 {@code sellerId}，
+     * 硬性禁止只会让两处口径不一致。该字段的用途**仅限展示卖家公开信用**，
+     * 不构成任何内部标识泄露：它就是一个面向买家的公开身份。
+     * 反向的、真正属于服务间口径的**采购视图**（{@code SkuPurchaseView}）仍严格留在内部路由。
      */
     @GetMapping("/internal/skus/batch")
     public ApiResponse<List<SkuPurchaseView>> batchSkus(@RequestParam("ids") List<Long> ids) {

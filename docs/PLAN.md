@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-20（第十一轮：A2 物流轨迹 —— 履约域新表 + 2 端点 + 买卖双方时间线；接口冒烟 12 套 935 项、UI 断言 4 套 137 项）
+> 更新时间：2026-09-20（第十二轮：A4 信用分 —— 履约域权重模型 + 3 端点 + 前端两处展示；接口冒烟 13 套 1034 项、UI 断言 4 套 137 项）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域三块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**；余下：信用分 / 优惠券 / AI / ES |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；余下：优惠券 / AI / ES |
 
 ---
 
@@ -130,7 +130,7 @@
 
 | 任务 | 当前进展 |
 |---|---|
-| M11 剩余块：信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价、售后仲裁（A3，含三端页面）、**物流轨迹（A2，含买卖双方时间线）均已落地**；同域内下一个最省的是 **A4 信用分** |
+| ✅ **M11 剩余块：信用分（A4）已交付**（2026-09-20，第十二轮） | 履约域**四块已全部落地**：评价与晒单、售后仲裁（A3，含三端页面）、物流轨迹（A2，含买卖双方时间线）、**信用分（A4）** —— 同域内已无低成本可做项，下一项须新起服务或中间件 |
 | M11 其他：优惠券营销（A5，`duoduo-marketing`）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
 | **A9 AI 导购「多多」（已排期）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**密钥暂未提供** → 接口与降级链路可先做，联调需等凭据 |
 | **A13 买家端微信小程序（已排期）** | 用户 2026-09-18 拍板：**排期，AppID 暂不提供但允许先开始编码** → 可先用开发者工具测试号开工，真机预览等 AppID |
@@ -168,6 +168,7 @@
 | I-15 | 支付渠道首轮自测暴露**三处缺陷**（M8-1 实现期） | **已自愈**（2026-09-18） | 无需操作 | ① **未知渠道 / MOCK 回调拒绝用了 400**（应为 422 业务错误，注册表 javadoc 与实现不一致）→ 补错误码 `PAYMENT_CHANNEL_UNKNOWN` 并改用之；② **二维码内容默认指向交易服务 8083 直连地址**——扫码设备不可达，且网关缺 `/sandbox/pay` 路由 → 改为网关 8080 + 补路由与白名单；③ **订单取消 / 关单不作废未支付支付单**——`markClosedByOrder` 在 Mapper 里定义了却从未被调用，订单已取消、二维码还能扫出钱来 → 在取消与调度关单两条路径都接上。三处均已由 62 项自测断言固定 |
 | I-17 | 履约域（M11/P2-1）自测暴露**三个工具层隐患** | **已自愈**（2026-09-18） | 无需操作 | ① 内部接口断言**打错服务端口**（连履约 8084 打用户域路径 → 无路由 500，看着像过滤器坏了）；② **PowerShell 把 `$SPU?page=1` 整体当变量名**（`?` 是合法的变量名字符），展开成 `=1&pageSize=50`，服务端收到 `spuId="=1&pageSize=50"` → 必须写 `${SPU}?`；③ **19 位雪花主键经 `ConvertFrom-Json` 丢精度**，出现「数据在库里、断言找不到」的假失败 → 断言改用业务键，需要主键时从**原始响应文本**正则提取 |
 | I-18 | **`git push` 通道受阻**：`github.com` 的 git 端点报 `CONNECT tunnel failed, response 502` / `Empty reply from server`（代理只放通 `api.github.com`） | **已自愈**（2026-09-18） | 无需操作 | 改走 **REST Git Data API** 推送成功（远端 `main = af28bba`）；工具 `.workbuddy/tools/push_via_api.py`（令牌取自 git 凭据管理器，不落盘、不回显）。注意：本地与远端 **SHA 分叉但内容一致**，网络恢复后执行 `git fetch origin main && git reset --hard origin/main` 对齐即可 |
+| I-19 | 信用分（A4）自测暴露**四个工具层隐患 + 两个实现问题** | **已自愈**（2026-09-20） | 无需操作 | **工具层**：① 冒烟辅助函数少取一层 `.body`（响应包络是 `{status,body,…}`，数据在 `body.data` 下）→ 一批断言假失败；② 跨库 `INSERT…SELECT` 未写库限定名（`FROM t_order` 打到不存在的表）→ **插 0 行且不报错**，改 `FROM duoduo_trade.t_order`；③ 前端 TS `noUncheckedIndexedAccess` 下 `Record` 取值可空，`?? FALLBACK` 压不住 → 用**独立声明的非空常量**兜底；④ **`trade-smoke.ps1` 的 `Call` 少声明 `$headers` 参数**，调用处多传的实参被 PowerShell 静默丢弃 → 内部凭据头从未发出、内部批量 SKU 接口恒 403（7 条断言连带失败）→ 补齐参数后 87/0。**实现层**：⑤ 注册默认分硬编码 `100`，与 `CreditModel` 基础分 60 不一致 → 改可配置 `credit-default`（默认 60）并同步 DDL；⑥ `AfterSaleMapper` 漏 `@Select` import（编译期即失败），顺带把 `parseIds` 的 `NumberFormatException` 转 400。以上均已由 82 项冒烟 + **回归 13 套全绿**固定（详见 `08` 篇 **T-33 ~ T-36**）；顺带修正 `seller-smoke` 旧口径 84 → **101**（累计 935/1017 → **1034**） |
 
 <details>
 <summary><b>附：真实渠道备查（当前不需要你提供，将来要接真实收款时再取）</b></summary>
@@ -182,6 +183,55 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-20（第十二轮 · A4 信用分）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-fulfilment/.../support/CreditModel.java`（**新增**） | **信用分权重模型（单一事实来源）**：纯函数，输入事实 + 权重 → 分数与因子明细，不碰 DB / HTTP。权重表 `base 60 + 完成率 18 + 评价 16 + 售后 6 = 100`，启动校验和（架构错直接 fail-fast）；三条硬约定：**因子和 == 总分**、**无数据 = 基础分**、**单调可解释**（不设负分项） |
+| `duoduo-fulfilment/.../service/CreditService.java`（**新增**） | 取数编排：交易域订单计数（Feign）+ 本域评价聚合 + 售后污点计数 → `CreditModel` 算分 → 回写用户域；**实时计算不读 `t_user` 副本**；交易域不可用抛 `ErrorCode.DEGRADED` 503（不按 0 单算） |
+| `duoduo-fulfilment/.../service/CreditRefreshJob.java`（**新增**） | 定时兜底刷新（枚举已知卖家 → 逐个重算回写），后台任务独立、幂等、失败仅跳过并记日志 |
+| `duoduo-fulfilment/.../controller/CreditController.java`（**新增**） | `GET /api/reviews/seller/{sellerId}/credit`（**公开只读**：分数 + 分级文案 + 因子明细 + 原始输入）；`sellerId=0` 表示平台自营 |
+| `duoduo-fulfilment/.../controller/CreditInternalController.java`（**新增**） | `POST /api/reviews/internal/credits/refresh?userIds=&limit=`（`X-Internal-Token`；不传 `userIds` 刷全部已知卖家）；**没有「直接设分」入口**（分数只能由权重算出）；`userIds` 非法 → 400（不落成 500） |
+| `duoduo-fulfilment/.../dto/CreditDtos.java`（**新增**） | `CreditView` / `CreditFactor` / `CreditInputs` / `CreditRefreshResult`（读接口只暴露「分数 + 可解释输入」，不含任何身份字段） |
+| `duoduo-fulfilment/.../client/dto/{SellerOrderStats,CreditWriteRequest,CreditWriteResult}.java`（**新增**） | 跨域契约副本（交易域订单计数入参 / 用户域回写入参结果） |
+| `duoduo-fulfilment/.../client/{OrderClient,UserClient}.java`、`mapper/{ReviewMapper,AfterSaleMapper}.java`、`support/InternalTokenFilter.java`、`resources/application.yml`（**改**） | OrderClient 加 `sellerStats`；UserClient 加 `writeCredit`；Mapper 加 `aggregateBySeller` / `countAdverseBySeller` / `distinctSellerIds`；Filter 放行内部信用分路径；权重走环境变量（默认和为 100） |
+| `duoduo-trade/.../controller/OrderController.java`、`dto/OrderDtos.java`、`service/OrderService.java`（**改**） | 新增 **`GET /api/orders/internal/seller/{sellerId}/stats`**（内部凭据）：只回**订单计数**（完成/关闭/退款/总数），**不含收货人信息**（INV-9） |
+| `duoduo-user/.../controller/UserController.java`、`dto/UserDtos.java`、`service/AuthService.java`（**改**） | 新增 `POST /api/users/internal/{userId}/credit`（`X-Internal-Token`，**同值不写库**，回 `changed` / `previousScore`）；注册默认分由硬编码 `100` 改为可配置 `duoduo.user.credit-default`（默认 60） |
+| `duoduo-user/.../resources/application.yml`、`resources/db/schema.sql`、`docs/sql/01-duoduo-user.sql`（**改**） | `credit_score` 默认值 `100 → 60`（与 `CreditModel` 基础分对齐，杜绝「库里 100、信用分页 60」的分裂） |
+| `duoduo-gateway/.../config/GatewaySecurityProperties.java`（**改**） | 白名单加精确路径 `/api/reviews/seller/*/credit`（`*` 单段通配；写接口仍在白名单之外，INV-14） |
+| `duoduo-product/.../{dto/ProductDtos.java,service/ProductService.java,controller/ProductController.java}`（**改**） | `ProductCard` 增 `Long sellerId`（**显式公开例外**：商品/闲置详情页展示卖家信用所必需，与公开 `ListingCard.sellerId` 一致） |
+| `frontend/src/components/CreditBadge.tsx`（**新增**） | `CreditBadge`（行内徽标，失败回 `null` 不打断页面）+ `CreditPanel`（「我的」页完整面板：大号分数 + 因子进度条 + 原始输入 + 计算时刻） |
+| `frontend/src/api/{types,endpoints}.ts`、`pages/{ProductDetail,ListingDetail,Me}.tsx`（**改**） | `CreditView` 等类型 + `creditApi.seller(sellerId)`；商品页价格区挂徽标、闲置页规格表加「卖家信用」行、「我的」页改用实时计算的 `CreditPanel`（移除静态 `user.creditScore` 展示） |
+| `scripts/credit-smoke.ps1`（**新增**） | **82 项断言**：A4 四条验收标准（无数据得基础分 / 区间 0~100 / 单调可解释 / 因子和=总分）+ 公开只读与凭据边界 + 售后只计 `APPROVE_REFUND` + 回写幂等 + 批量刷新 + 夹具复原；含★**断言总数守卫** |
+| `README.md`、`docs/agent/02·03·04·06·07·08`、`docs/PLAN.md` | 接口章节（新增「履约域：信用分」）、代码地图、跨服务调用矩阵（2 条新调用）、不变式（INV-17）、契约全集（3 端点 + DTO + 权重表 + 业务规则）、门禁表（改信用分 → `credit-smoke.ps1`）、待办 A4 标记完成、踩坑 T-33~T-35 |
+
+**自测**：
+- `scripts/credit-smoke.ps1` **82 通过 / 0 失败**（守卫确认无静默跳过）；
+- 前端 `tsc --noEmit` 零错误、`vite build` 通过；
+- 全量编译 **8 模块 BUILD SUCCESS**；重建 `user/trade/fulfilment/gateway/product` 容器后 **8 容器 healthy**；
+- 回归 7 套全绿：`smoke 54/0`、`review-smoke 59/0`、`aftersale-smoke 101/0`、`logistics-smoke 79/0`、`settlement-smoke 125/0`、`admin-smoke 49/0`、`seller-smoke 101/0`。
+- 接口冒烟累计 **13 套 1034 项**，浏览器 UI 断言累计 **4 套 137 项**。
+  （本轮回归顺带**修正一处旧口径**：`seller-smoke.ps1` 实为 **101 项**，此前文档误记为 84 项，
+  累计总量随之由 1017 修正为 **1034**。）
+
+> ⚠️ **四条新踩的坑（第十二轮，已入 `08` 篇 T-33~T-36）**：
+> 1. **冒烟辅助函数少取一层 `.body`**：响应是 `{status, body, …}`，业务数据在 `body.data` 下；把取值抽成函数后
+>    写成 `$resp.data.x` 恒为空，导致一批断言假失败（原始响应无此错，**重构成函数后才暴露**）。
+> 2. **跨库 `INSERT … SELECT` 未写库限定名**：连接默认库是履约库，`FROM t_order` 打到不存在的表 → 插 0 行且不报错。
+>    改 `FROM duoduo_trade.t_order`，并养成「造完夹具先 `COUNT(*)`」的习惯。
+> 3. **TS `noUncheckedIndexedAccess` 下 `Record` 取值可空**：`?? FALLBACK` 若在同一 `Record` 里取，仍判可空 →
+>    改用**独立声明的非空常量**兜底。
+> 4. **函数签名与调用处参数个数不符时，PowerShell 会静默丢弃多余实参**（不报错，也不进 `$args` 报错）：
+>    `trade-smoke.ps1` 的 `Call` 只声明了 4 个参数，第 5 个 headers 被静默吞掉 → 内部凭据头从未发出，
+>    内部批量 SKU 接口恒 **403**（7 条断言连带失败）。**修法**：`Call` 补 `[hashtable]$headers` 参数
+>    （其余 12 套脚本本就都有）；修复后 **87 通过 / 0 失败**。
+
+**第十二轮暴露并修复的 2 个实现问题**（非脚本问题）：
+1. **注册默认分与新模型冲突**：`AuthService` 硬编码 `creditScore=100`，与 `CreditModel` 基础分 60 不一致 →
+   改为可配置 `credit-default`（默认 60），DDL 默认值同步为 60。
+2. **`AfterSaleMapper` 漏 `@Select` import**：编译期即失败，已补；顺带把 `parseIds` 的 `NumberFormatException`
+   转成 400（非法 `userIds` 不再以 500 示人）。
 
 ### 2026-09-20（第十一轮 · A2 物流轨迹）
 
@@ -541,7 +591,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 # 沙箱支付渠道 / 预下单 / 回调验签 端到端自测
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1
 
-# 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（84 项，会临时改夹具并自动复原）
+# 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（101 项，会临时改夹具并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
 
 # 平台管理后台：权限边界、报表对账、类目品牌、内容审核、订单强关（49 项，夹具自建自毁）

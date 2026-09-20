@@ -101,6 +101,25 @@ public final class UserDtos {
     ) {
     }
 
+    /**
+     * 信用分回写请求（服务间内部接口，A4）。
+     *
+     * <p>分数不是随便给的：它由履约域按权重表算出（{@code CreditModel}），
+     * 用户域只负责「存下来」。因此这里**只校验范围**，不校验算法 ——
+     * 算法归履约域一处维护，用户域再验一遍只会制造第二份口径。
+     *
+     * @param score  信用分，0~100
+     * @param source 来源标记（如 SCHEDULED_REFRESH / MANUAL_REFRESH），仅用于留痕
+     */
+    public record CreditUpdateRequest(
+            @jakarta.validation.constraints.Min(value = 0, message = "信用分不能小于 0")
+            @jakarta.validation.constraints.Max(value = 100, message = "信用分不能大于 100")
+            int score,
+            @Size(max = 40, message = "来源标记最多 40 个字符")
+            String source
+    ) {
+    }
+
     // ---------------- 响应 ----------------
 
     /**
@@ -115,6 +134,20 @@ public final class UserDtos {
             Long id,
             String nickname,
             String avatar
+    ) {
+    }
+
+    /**
+     * 信用分回写结果（服务间内部接口，A4）。
+     *
+     * @param previousScore 回写前的分数（用户不存在时为 null）
+     * @param changed       本次是否真的改了库 —— 分数相同时为 false，是幂等的可见证据
+     */
+    public record CreditUpdateResult(
+            Long userId,
+            Integer previousScore,
+            int score,
+            boolean changed
     ) {
     }
 

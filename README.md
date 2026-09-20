@@ -4,21 +4,31 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-20（第十一轮）** — **物流轨迹（A2）完成**：履约域新增 `t_logistics_track`，
+**最近更新：2026-09-20（第十二轮）** — **信用分（A4）完成**：履约域新增 `support/CreditModel`
+（纯函数模型，权重表 **基础 60 + 履约完成率 18 + 评价质量 16 + 售后诚信 6 = 100**，启动即校验），
+`GET /api/reviews/seller/{sellerId}/credit`（**公开只读**：分数 + 构成明细 + 原始输入）+
+`POST /api/reviews/internal/credits/refresh`（内部凭据，批量重算回写）。
+**交易域补一个只回计数的内部接口**（`/api/orders/internal/seller/{id}/stats`，不含收货人信息）；
+**用户域补内部回写入口**（`/api/users/internal/{userId}/credit`，幂等靠「同值不写库」）。
+三条刻意的取舍：**读接口实时计算**（不读 `t_user` 的副本，避免「库里 100、页面 82」的分裂）、
+**交易域不可用一律 503 而非算成 0 单**、**因子得分之和恒等于总分**（结构上不可能对不上）。
+定时回写任务**默认关闭**（后台写别的库会污染自测）。前端新增共用的 `CreditBadge` / `CreditPanel`，
+挂在商品详情、闲置详情与「我的」三处；商品卡片补出 `sellerId`（记录为对旧约定的**显式例外**）。
+新增 `scripts/credit-smoke.ps1`（**82 项断言**）。
+接口冒烟累计 **13 套 1034 项**，浏览器 UI 断言累计 **4 套 137 项**。详见「十二、变更记录」。
+
+**上一轮（第十一轮）** — 物流轨迹（A2）：履约域新增 `t_logistics_track`，
 `POST /api/logistics/internal/{orderNo}/tracks`（内部凭据批量摄入，幂等靠唯一索引）+
 `GET /api/logistics/orders/{orderNo}/tracks`（买家 / 卖家 / 运营，按发生时间正序）。
 **交易域发货事务提交后补推「已揽收」**（`AFTER_COMMIT` 事件 + best-effort，通知失败绝不影响发货）。
-买家与卖家订单详情页各挂**共用的时间线组件**：乱序入库也按发生时间正序排列，
-头部常驻「当前：××」提示；未发货给说明性空态而非错误态；**确认收货后轨迹仍在**。
-新增 `scripts/logistics-smoke.ps1`（**79 项断言**，含「断言总数守卫」）与
-`scripts/e2e/logistics-ui-check.mjs`（**44 项真实 Chromium 断言**）。
-接口冒烟累计 **12 套 935 项**，浏览器 UI 断言累计 **4 套 137 项**。详见「十二、变更记录」。
+买家与卖家订单详情页各挂**共用的时间线组件**。`scripts/logistics-smoke.ps1` 79 项 +
+`scripts/e2e/logistics-ui-check.mjs` 44 项真实 Chromium 断言。
 
-**上一轮（第十轮）** — 售后三端页面：买家 `/after-sales`（申请 / 我的 / 详情 + 申请平台仲裁）、
+**上上轮（第十轮）** — 售后三端页面：买家 `/after-sales`（申请 / 我的 / 详情 + 申请平台仲裁）、
 卖家 `/seller/after-sales`（同意即退款 / 拒绝必填原因）、运营 `/admin/after-sales`（裁定，说明必填）。
 至此 A3 从接口到入口全链路打通。`scripts/e2e/aftersale-ui-check.mjs` 44 项断言。
 
-**上上轮（第九轮）** — 售后仲裁工单后端：履约域 `t_after_sale` + 8 个端点；卖家拒绝后买家可申请平台仲裁，
+**第九轮** — 售后仲裁工单后端：履约域 `t_after_sale` + 8 个端点；卖家拒绝后买家可申请平台仲裁，
 运营裁定退款会**真的执行退款**；**已完成订单（钱已放款给卖家）的裁定退款被拒 422** 并提示走追偿（刻意边界，非缺陷）。
 `scripts/aftersale-smoke.ps1` **101 项断言**。
 
@@ -42,7 +52,7 @@ docker ps                     # 期望：8 个容器全是 healthy
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
-| `duoduo-app-fulfilment` | duoduo/duoduo-fulfilment:1.0.0 | 8084 | 履约域：**评价与晒单**（后续：物流轨迹 / 售后仲裁 / 信用分） |
+| `duoduo-app-fulfilment` | duoduo/duoduo-fulfilment:1.0.0 | 8084 | 履约域：**评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分** |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -64,7 +74,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十二套 935 项接口断言 + 四套真实浏览器 UI 断言 137 项）
+### 端到端冒烟（十三套 1034 项接口断言 + 四套真实浏览器 UI 断言 137 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -73,12 +83,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1     
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 84 项：卖家中心（准入/归属隔离/发货/售后/结算）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\credit-smoke.ps1       # 82 项：信用分（基础分/权重表/因子和=总分/单调性/售后因子/回写幂等/凭据边界）
 
 # 四套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
@@ -91,7 +102,7 @@ UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs           
 UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 ```
 
-十二套脚本的共同约定（踩过坑才有的）：
+十三套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -129,14 +140,14 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库）
-├── scripts/                    一键启动、冒烟测试（12 套接口断言 + 4 套真实浏览器 UI 断言）
+├── scripts/                    一键启动、冒烟测试（13 套接口断言 + 4 套真实浏览器 UI 断言）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
 ├── duoduo-user/                用户服务
 ├── duoduo-product/             商品服务（含库存主数据）
 ├── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
-├── duoduo-fulfilment/          履约服务（评价与晒单；后续：物流轨迹 / 售后仲裁 / 信用分）
+├── duoduo-fulfilment/          履约服务（评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分）
 └── frontend/                   买家端 Web 商城（React 18 + TS + Vite，见第七节）
 ```
 
@@ -675,13 +686,43 @@ npm run build      # tsc --noEmit && vite build
 | **P1-d** | 买家端 **微信小程序** | ⏳ |
 | **P1-e** | ~~真实支付渠道~~ → **沙箱支付渠道**（已完成；真实渠道为可选后续） | ✅ |
 | **P1-f** | **商家端 Web ✅ + 平台管理后台 Web ✅（M10：报表/对账/审核/类目品牌/订单干预）** | ✅ 完成 |
-| **P2** | 履约服务（**评价与晒单 ✅** / 物流轨迹 / 售后仲裁 / 信用分）+ 营销（优惠券）+ XXL-Job 分布式任务 | 🔄 评价已上线 |
+| **P2** | 履约服务（**评价与晒单 ✅ / 物流轨迹 ✅ / 售后仲裁 ✅ / 信用分 ✅**）+ 营销（优惠券）+ XXL-Job 分布式任务 | 🔄 履约四块已上线，营销待做 |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
 | **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
 
 ---
 
 ## 十二、变更记录
+
+### 2026-09-20（第十二轮 · A4 信用分）
+
+- **履约域新增信用分模型 `support/CreditModel`**（单一事实来源）：纯函数，输入事实 + 权重 → 分数与因子明细，
+  不碰 DB / HTTP。权重表 **基础 60 + 履约完成率 18 + 评价质量 16 + 售后诚信 6 = 100**，全部可环境变量覆盖，
+  **启动即校验和为 100**（配错直接 fail-fast）。三条硬约定：**因子得分之和 == 总分**（结构上不可能对不上）、
+  **无数据 = 基础分**（分母为 0 记 0 分，故无交易用户得 60，不返回 null）、**单调可解释**（不设负分项）。
+- **三个端点**：`GET /api/reviews/seller/{sellerId}/credit`（**公开只读**：分数 + 分级文案 + 因子明细 + 原始输入，
+  网关白名单精确放行 `/api/reviews/seller/*/credit`）+ `POST /api/reviews/internal/credits/refresh`
+  （内部凭据，批量重算回写）+ 用户域 `POST /api/users/internal/{userId}/credit`（内部凭据回写，**同值不写库**）。
+- **交易域补一个只回计数的内部接口** `/api/orders/internal/seller/{id}/stats`（完成 / 关闭 / 退款 / 总数，
+  **不含收货人信息**）；**读接口实时计算**，不读 `t_user` 的副本，杜绝「库里 100、页面 82」的分裂。
+- **两条刻意的取舍**：**交易域不可用一律 `DEGRADED` 503 而非算成 0 单**（「拿不到」≠「真的 0 单」）；
+  **售后诚信只计 `arbitrate_result='APPROVE_REFUND'`**（卖家主动同意退款不算污点）。
+- **前端两处展示**：`components/CreditBadge.tsx`（徽标 + `CreditPanel` 完整面板）；商品详情价格区、闲置详情规格表、
+  「我的」页（移除静态 `user.creditScore`，改用实时面板）。
+- **顺带收口**：用户域注册默认分由硬编码 `100` 改为可配置 `duoduo.user.credit-default`（默认 60），
+  DDL `credit_score` 默认值同步为 60。
+- **自测**：新增 `scripts/credit-smoke.ps1` **82 项**（基础分 / 权重表 / 因子和=总分 / 单调性 / 售后因子 /
+  回写幂等 / 凭据边界 / 批量刷新，含断言总数守卫）；前端 `tsc --noEmit` 零错误、`vite build` 通过；
+  全量编译 8 模块 BUILD SUCCESS，8 容器 healthy；**回归 13 套全绿**。
+  接口冒烟累计 **13 套 1034 项**，UI 断言累计 **4 套 137 项**。
+  （本轮回归顺带**修正一处旧口径**：`seller-smoke.ps1` 实为 **101 项**，此前文档误记为 84 项，
+  累计总量随之由 1017 修正为 **1034**。）
+- **四条新踩的坑**（详见 `08` 篇 T-33~T-36）：冒烟辅助函数少取一层 `.body`（数据在 `body.data` 下）；
+  跨库 `INSERT…SELECT` 未写库限定名 → 插 0 行且不报错；TS `noUncheckedIndexedAccess` 下 `Record` 取值可空，
+  `?? FALLBACK` 压不住，需用独立非空常量兜底；**函数签名与调用处参数个数不符时，PowerShell 会静默丢弃多余的
+  实参**（`trade-smoke.ps1` 的 `Call` 少声明了 `$headers`，导致内部凭据头从未发出 → 内部批量 SKU 接口恒 403）。
+- **顺带修复一个既有脚本缺陷**：`scripts/trade-smoke.ps1` 的 `Call` 函数补上 `[hashtable]$headers` 参数
+  （其余 12 套脚本都已有），内部凭据头得以正确发送 —— 修复后 **87 通过 / 0 失败**（修复前 1/7）。
 
 ### 2026-09-20（第十一轮 · A2 物流轨迹）
 

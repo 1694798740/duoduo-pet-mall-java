@@ -33,7 +33,7 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 # 统一请求：返回 @{ status=..; body=.. }，非 2xx 不抛异常
-function Call([string]$method, [string]$uri, $session, $bodyObj) {
+function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{
         Uri             = $uri
         Method          = $method
@@ -41,6 +41,7 @@ function Call([string]$method, [string]$uri, $session, $bodyObj) {
         TimeoutSec      = 20
     }
     if ($session) { $params.WebSession = $session }
+    if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress)
         $params.ContentType = 'application/json; charset=utf-8'
