@@ -4,13 +4,21 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-20（第十轮）** — **售后三端页面完成**：买家 `/after-sales`（申请 / 我的 / 详情 + 申请平台仲裁）、
-卖家 `/seller/after-sales`（同意即退款 / 拒绝必填原因）、运营 `/admin/after-sales`（裁定，说明必填）。
-至此 A3 从接口到入口全链路打通 —— 上一轮交付的后端「可立案、可留证、可裁定」现在**用户在页面上真的走得到**。
-新增真实浏览器自测 `scripts/e2e/aftersale-ui-check.mjs`（**44 项断言**，走完买家→卖家→运营整条链并回接口层确认钱真的退了）。
-接口冒烟仍是 **11 套 856 项**，浏览器 UI 断言累计 **3 套 93 项**。详见「十二、变更记录」。
+**最近更新：2026-09-20（第十一轮）** — **物流轨迹（A2）完成**：履约域新增 `t_logistics_track`，
+`POST /api/logistics/internal/{orderNo}/tracks`（内部凭据批量摄入，幂等靠唯一索引）+
+`GET /api/logistics/orders/{orderNo}/tracks`（买家 / 卖家 / 运营，按发生时间正序）。
+**交易域发货事务提交后补推「已揽收」**（`AFTER_COMMIT` 事件 + best-effort，通知失败绝不影响发货）。
+买家与卖家订单详情页各挂**共用的时间线组件**：乱序入库也按发生时间正序排列，
+头部常驻「当前：××」提示；未发货给说明性空态而非错误态；**确认收货后轨迹仍在**。
+新增 `scripts/logistics-smoke.ps1`（**79 项断言**，含「断言总数守卫」）与
+`scripts/e2e/logistics-ui-check.mjs`（**44 项真实 Chromium 断言**）。
+接口冒烟累计 **12 套 935 项**，浏览器 UI 断言累计 **4 套 137 项**。详见「十二、变更记录」。
 
-**上一轮（第九轮）** — 售后仲裁工单后端：履约域 `t_after_sale` + 8 个端点；卖家拒绝后买家可申请平台仲裁，
+**上一轮（第十轮）** — 售后三端页面：买家 `/after-sales`（申请 / 我的 / 详情 + 申请平台仲裁）、
+卖家 `/seller/after-sales`（同意即退款 / 拒绝必填原因）、运营 `/admin/after-sales`（裁定，说明必填）。
+至此 A3 从接口到入口全链路打通。`scripts/e2e/aftersale-ui-check.mjs` 44 项断言。
+
+**上上轮（第九轮）** — 售后仲裁工单后端：履约域 `t_after_sale` + 8 个端点；卖家拒绝后买家可申请平台仲裁，
 运营裁定退款会**真的执行退款**；**已完成订单（钱已放款给卖家）的裁定退款被拒 422** 并提示走追偿（刻意边界，非缺陷）。
 `scripts/aftersale-smoke.ps1` **101 项断言**。
 
@@ -56,7 +64,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十一套 856 项接口断言 + 三套真实浏览器 UI 断言 93 项）
+### 端到端冒烟（十二套 935 项接口断言 + 四套真实浏览器 UI 断言 137 项）
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 54 项：用户域 + 商品域
@@ -70,8 +78,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1     
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
 
-# 三套 UI 自测都需先起前端 dev server。
+# 四套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
 # 报 `listen EACCES`）。改用 3000 即可 —— 它已在网关 CORS_ORIGINS 默认白名单里，不用改任何配置：
 cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开终端
@@ -79,9 +88,10 @@ cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --hos
 cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs        # 商家端 29 项
 UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs                # 评价与晒单 20 项
 UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项（买家→卖家→运营整条链）
+UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 ```
 
-十一套脚本的共同约定（踩过坑才有的）：
+十二套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -119,7 +129,7 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库）
-├── scripts/                    一键启动、冒烟测试（9 套接口断言 + 3 套真实浏览器 UI 断言）
+├── scripts/                    一键启动、冒烟测试（12 套接口断言 + 4 套真实浏览器 UI 断言）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
@@ -353,6 +363,44 @@ duoduo-pet-mall-java/
 > ⚠️ 踩坑：前端路由是 `after-sales`（连字符），接口路径是 `/api/aftersales`（无连字符），两者**刻意不同**。
 > 卖家端与运营端的入口链接曾写成 `/seller/aftersales`，命不中路由直接落到「页面不存在」——
 > 这类问题 `tsc` 与 `vite build` 都发现不了，只有真实浏览器会现形。
+
+### 履约域：物流轨迹（`duoduo-fulfilment` `/api/logistics`，A2）
+
+| 端点 | 准入 | 说明 |
+|---|---|---|
+| `POST /api/logistics/internal/{orderNo}/tracks` | `X-Internal-Token` | 批量摄入轨迹节点（物流推送 / 交易域发货通知）；**直连服务，不经网关** |
+| `GET /api/logistics/orders/{orderNo}/tracks` | 买家本人 / 该单卖家 / 运营 | 按发生时间正序返回；无轨迹回**空列表**（正常状态，不是 404） |
+
+**节点字典 `LogisticsNode`（白名单，推送方只能选用不能自创）**：
+`PICKED_UP` 已揽收 · `IN_TRANSIT` 运输中 · `ARRIVED_HUB` 到达分拨中心 ·
+`OUT_FOR_DELIVERY` 派送中 · `SIGNED` 已签收 · `REJECTED` 已拒收 · `EXCEPTION` 物流异常。
+中文文案由**服务端**下发（`nodeLabel`），前端不维护第二份映射 —— 两份映射迟早漂移。
+
+**关键实现决策**：
+
+- **幂等靠唯一索引 `uk_track_order_node_time`（订单号 + 节点码 + 发生时间）**，
+  撞键即「跳过」，回执里 `inserted` / `skipped` 分开计数 —— 物流推送的常态就是失败重推 / 补推 /
+  定时对齐，只回一个「成功」的话，重推与漏推在监控上看不出区别。
+- **批量全有或全无（先全部校验、再逐条写）**：批次里混一条非法节点就整批 400 且一条都不落。
+  若边校验边写，调用方无从知道前面几条落了没有，只能整体重推 —— 而重推又会被判成重复。
+- **时间存「发生时间」而不是入库时间**，无时区写法**默认按 UTC 解释**（不是服务器本地时区）：
+  按本地时区解释会让同一份报文在开发机（东八区）与容器（UTC）落成相差 8 小时的两条节点，
+  唯一索引随之兜不住重复。
+- **交易域发货后补推「已揽收」**：`AFTER_COMMIT` 事件 + best-effort —— 通知失败只记日志、
+  绝不让发货失败；且**必须**在事务提交之后（否则履约域可能查到一个尚未提交的订单，
+  反把节点写入判成「订单不存在」）。`occurredAt` 用**发货时间**而不是通知时刻，
+  这样重推永远撞同一个唯一键。
+- **轨迹是对真实运输过程的记录，不从属于订单状态机**：刻意不校验订单状态 ——
+  订单可能因退款变 `REFUNDED` 而包裹仍在路上，按状态拦会把真实后续节点全部丢掉。
+- **前端买家 / 卖家共用同一个时间线组件**（`components/LogisticsTimeline.tsx`），
+  同一包裹不允许两边说法不一致；`shipped` 判定**同时看状态与 `shippedAt`**，
+  否则买家一确认收货轨迹就整块消失，而签收记录恰恰是纠纷时最需要回看的。
+- 路径**不挂在 `/api/orders/**` 下**：那一段整段路由给交易域，硬挂进去就得靠网关里的
+  路由优先级特例来撑 —— 正是历史上造成过「新增端点只 404」的写法。
+
+自测记录：`scripts/logistics-smoke.ps1` **79 项断言全绿**（含★断言总数守卫：任何一条 Check
+因写法错误被静默跳过都会让守卫报失败），`scripts/e2e/logistics-ui-check.mjs` **44 项真实
+Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 
 ---
 
@@ -634,6 +682,31 @@ npm run build      # tsc --noEmit && vite build
 ---
 
 ## 十二、变更记录
+
+### 2026-09-20（第十一轮 · A2 物流轨迹）
+
+- **履约域新表 `t_logistics_track`**：节点流水（订单号 + 节点码 + 发生时间 + 描述 + 留档报文），
+  唯一键 `uk_track_order_node_time` 兜幂等，覆盖索引 `(order_no, occurred_at)` 直接服务「按单取全部节点正序」。
+  节点码白名单见 `LogisticsNode`（7 种），推送方只能选用不能自创。
+- **两个端点**：`POST /api/logistics/internal/{orderNo}/tracks`（批量摄入，`X-Internal-Token`，
+  履约域**第一个**内部接口，新增本域自己的 `InternalTokenFilter`）+
+  `GET /api/logistics/orders/{orderNo}/tracks`（买家本人 / 该单卖家 / 运营）。
+- **交易域发货后补推「已揽收」**：`OrderShippedEvent` + `@TransactionalEventListener(AFTER_COMMIT)`
+  + `LogisticsNotifier`（best-effort，**绝不抛出**）。两条发货路径（卖家中心 / 内部凭据）共用同一段状态机，
+  事件在状态机本体发布，两边都不会漏。
+- **前端买家 / 卖家订单详情各挂共用时间线组件** `components/LogisticsTimeline.tsx`：
+  正序排列 + 头部「当前：××」常驻提示；未发货给说明性空态；已完成订单轨迹仍在；
+  非当事人在订单页本就被挡，不泄露任何物流信息。
+- **新增履约域 `OrderFacts` 统一取数口**：评价域与售后域各自那份「调交易域取订单事实」已经**悄悄漂移**
+  （同一句「交易域不可用」，一处抛 422、一处抛 503）—— 统一收口，两域改用同一实现。
+- **自测**：新增 `scripts/logistics-smoke.ps1` **79 项**（乱序正序 / 幂等 / 批量全有或全无 /
+  无时区按 UTC / 越权 / 敏感字段 / 库存与归属复原）、`scripts/e2e/logistics-ui-check.mjs` **44 项**；
+  前端 `tsc --noEmit` 零错误、`vite build` 通过（主包 171.5KB）。
+  接口冒烟累计 **12 套 935 项**，UI 断言累计 **4 套 137 项**。
+- **两条新踩的坑**（详见 `08` 篇 T-31 / T-32）：
+  Write 工具生成的 `.ps1` 是 UTF-8 **无 BOM**，PowerShell 5.1 按 GBK 读 → 中文乱码且语法被撞坏
+  （既有脚本都带 BOM，照做即可）；多行续行的 `Check "…" (…) -eq '…'` 里的 `-eq` 被当成参数名，
+  该断言**在参数绑定阶段抛异常被跳过，而结果仍是 0 失败** —— 已加「断言总数守卫」防复发。
 
 ### 2026-09-20（第十轮 · A3 售后三端页面）
 

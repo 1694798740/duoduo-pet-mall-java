@@ -13,6 +13,7 @@
  *   POST /api/orders/{orderNo}/cancel         取消（仅待付款）
  *   POST /api/orders/{orderNo}/confirm        确认收货（已发货 → 已完成，并放款）
  *   POST /api/orders/{orderNo}/refund         买家自助退款（仅已付款且未发货）
+ *   GET  /api/logistics/orders/{orderNo}/tracks  物流轨迹（履约域 A2，按发生时间正序）
  *
  * 支付交互（与真实扫码支付一致）：
  *   PC 端展示二维码 → 前端每 3 秒轮询支付单状态 →
@@ -37,6 +38,7 @@ import {
   useToast,
 } from '../components/ui';
 import { QRCode } from '../components/QRCode';
+import { LogisticsTimeline } from '../components/LogisticsTimeline';
 
 /** 轮询间隔（毫秒）——与真实扫码支付的体验对齐 */
 const POLL_INTERVAL = 3000;
@@ -262,6 +264,11 @@ export const OrderDetailPage: React.FC = () => {
   const canRefund = order.status === 'PAID';
   const custody = settlement ?? order.settlement;
   const settlementMeta = custody ? SETTLEMENT_TEXT[custody.status] : undefined;
+  // 是否已进入「已发货 / 已完成」——决定物流轨迹要不要去请求，以及空态该怎么措辞。
+  // 同时看状态与 shippedAt：退款后的订单状态会变（REFUNDED），但包裹可能还在路上，
+  // 只认状态会把一条真实存在的轨迹藏起来。
+  const shipped =
+    Boolean(order.shippedAt) || order.status === 'SHIPPED' || order.status === 'COMPLETED';
 
   return (
     <div>
@@ -302,7 +309,11 @@ export const OrderDetailPage: React.FC = () => {
         </div>
       ) : null}
 
-      <div className="grid grid-2" style={{ alignItems: 'start' }}>
+      {/* 物流轨迹：买家打开订单详情，最想知道的就是「我的货到哪了」，
+          所以放在收货信息之前 —— 而不是埋在页面底部。数据来自履约域（A2）。 */}
+      <LogisticsTimeline orderNo={orderNo} shipped={shipped} />
+
+      <div className="grid grid-2" style={{ alignItems: 'start', marginTop: 16 }}>
         <div>
           <div className="card card-pad">
             <h3 style={{ marginBottom: 12 }}>收货信息</h3>

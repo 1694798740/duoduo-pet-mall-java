@@ -7,6 +7,7 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.trade.client.LogisticsNotifier;
 import com.duoduo.trade.client.ProductGateway;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeItem;
@@ -124,6 +125,7 @@ public class OrderService {
     private final SnowflakeIdGenerator idGenerator;
     private final OrderNoGenerator orderNoGenerator;
     private final ApplicationEventPublisher eventPublisher;
+    private final LogisticsNotifier logisticsNotifier;
 
     @Value("${duoduo.trade.order-expire-minutes:30}")
     private int orderExpireMinutes;
@@ -154,7 +156,8 @@ public class OrderService {
                         PaymentChannelRegistry channelRegistry,
                         SnowflakeIdGenerator idGenerator,
                         OrderNoGenerator orderNoGenerator,
-                        ApplicationEventPublisher eventPublisher) {
+                        ApplicationEventPublisher eventPublisher,
+                        LogisticsNotifier logisticsNotifier) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -167,6 +170,7 @@ public class OrderService {
         this.idGenerator = idGenerator;
         this.orderNoGenerator = orderNoGenerator;
         this.eventPublisher = eventPublisher;
+        this.logisticsNotifier = logisticsNotifier;
     }
 
     // ---------------- 下单 ----------------
@@ -835,6 +839,12 @@ public class OrderService {
         writeStatusLog(order.getId(), current.name(), OrderStatus.SHIPPED.name(),
                 OPERATOR_SELLER, order.getSellerId(), reason, now);
 
+        // 通知履约域补一条「已揽收」轨迹节点。用事件而不是直接调 Feign：
+        // 入库必须发生在**事务提交之后**，否则履约域可能查到一个尚未提交的订单、
+        // 反过来把节点写入判成「订单不存在」。失败语义见 LogisticsNotifier（best-effort，绝不影响发货）。
+        eventPublisher.publishEvent(new OrderShippedEvent(
+                order.getOrderNo(), company, no, isoTs(now)));
+
         // 资金仍在托管中：发货不等于钱该给卖家 —— 买家还没见到货。
         // 这一句日志是为了在排查「钱为什么还没到账」时能直接看到答案。
         SettlementEntity settlement = settlementService.findByOrderId(order.getId());
@@ -1093,6 +1103,35 @@ public class OrderService {
         } catch (RuntimeException e) {
             log.error("订单 {} 退款后入库回补异常，台账保持 RESTOCK_PENDING 待补偿调度重试", event.orderId(), e);
         }
+    }
+
+    /**
+     * 发货已提交的领域事件（订单号 + 物流信息 + 发货时间）。
+     *
+     * <p>与 {@link OrderRefundedEvent} 同一动机：对履约域的通知必须发生在**事务提交之后**。
+     * 提前调用的后果不是「偶尔失败」，而是「稳定失败」——
+     * 履约域收到推送后要去交易域核对订单是否存在，此时本事务尚未提交，
+     * 它看到的还是一张「未发货」的订单，节点会被判成不该存在。
+     *
+     * <p>{@code shippedAtIso} 同时是履约域幂等键的一部分（订单号 + 节点码 + 发生时间），
+     * 必须用**发货那一刻**的时间而不是「通知发出时」的时间 —— 见 {@code LogisticsNotifier}。
+     */
+    public record OrderShippedEvent(String orderNo, String logisticsCompany,
+                                    String logisticsNo, String shippedAtIso) {
+    }
+
+    /**
+     * 发货提交后向履约域补推「已揽收」节点。
+     *
+     * <p>{@code AFTER_COMMIT} + <b>绝不抛出</b>：物流轨迹是给买卖双方看的展示型信息，
+     * 它的缺失不该影响一笔已经成立、货已经出去的交易。
+     * 这里连 {@code try/catch} 都放在 {@link LogisticsNotifier} 内部 ——
+     * 策略只有一个地方需要理解（见该类的类注释）。
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderShipped(OrderShippedEvent event) {
+        logisticsNotifier.notifyPickedUp(event.orderNo(), event.logisticsCompany(),
+                event.logisticsNo(), event.shippedAtIso());
     }
 
     /** 把某订单仍处于 RESTOCK_PENDING 的台账逐条入库回补 */

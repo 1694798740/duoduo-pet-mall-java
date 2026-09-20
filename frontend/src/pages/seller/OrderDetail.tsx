@@ -2,6 +2,7 @@
  * 商家端 · 订单详情（履约工作台）。
  *
  * 数据来源：GET /api/seller/orders/{orderNo} + 发货 / 售后退款
+ *           GET /api/logistics/orders/{orderNo}/tracks（物流轨迹 A2，与买家端共用组件）
  *
  * 与买家端订单详情页的差别：
  *  · 收货信息是<b>履约依据</b>而不是「我的收货地址」，因此放在最显眼的位置
@@ -28,6 +29,7 @@ import {
 } from '../../components/ui';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
 import { useAuth } from '../../store/auth';
+import { LogisticsTimeline } from '../../components/LogisticsTimeline';
 
 export const SellerOrderDetailPage: React.FC = () => {
   const { orderNo = '' } = useParams();
@@ -133,6 +135,10 @@ export const SellerOrderDetailPage: React.FC = () => {
 
   const canShip = order.status === 'PAID';
   const canRefund = order.status === 'PAID' || order.status === 'SHIPPED';
+  // 与买家端同一口径（时间线是同一个组件）：同时看状态与 shippedAt ——
+  // 退款后的订单状态会变，但包裹可能还在路上，只认状态会把真实存在的轨迹藏起来。
+  const shipped =
+    Boolean(order.shippedAt) || order.status === 'SHIPPED' || order.status === 'COMPLETED';
 
   return (
     <div>
@@ -158,7 +164,11 @@ export const SellerOrderDetailPage: React.FC = () => {
         </dl>
       </div>
 
-      <div className="grid grid-2" style={{ alignItems: 'start' }}>
+      {/* 物流轨迹：卖家被买家问「货到哪了」时，答案就在这里 —— 不用再去快递官网挨个查单号。
+          与买家端共用同一个组件，避免两边对同一包裹给出不一样的说法（A2）。 */}
+      <LogisticsTimeline orderNo={orderNo} shipped={shipped} />
+
+      <div className="grid grid-2" style={{ alignItems: 'start', marginTop: 16 }}>
         <div className="card card-pad">
           <h3 style={{ marginBottom: 12 }}>履约信息</h3>
           <dl className="spec-list">

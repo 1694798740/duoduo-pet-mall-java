@@ -8,12 +8,15 @@
  *   /api/seller/products/**                        → duoduo-product:8082
  *   /api/cart/**, /api/orders/**, /api/payments/**,
  *   /api/seller/**, /sandbox/pay/**                → duoduo-trade  :8083
+ *   /api/aftersales/**, /api/admin/aftersales/**,
+ *   /api/reviews/**, /api/logistics/**             → duoduo-fulfilment:8084
  *
- * 注意：duoduo-fulfilment / marketing / ai / admin 尚未部署，
- * 因此评价、优惠券、运营后台的接口在本期不存在，前端不实现对应页面。
+ * 履约域（duoduo-fulfilment）已部署：评价与晒单、售后仲裁、物流轨迹三个子域都可用。
  * 卖家中心（/api/seller/orders|summary|settlements）落在 trade 服务；
  * 商品管理（/api/seller/products/**）落在 product 服务 —— 两者共用 /api/seller 前缀与准入模型，
- * 网关按「products 先于 trade 兜底」的顺序路由，不依赖 fulfilment。
+ * 网关按「products 先于 trade 兜底」的顺序路由。
+ * 物流轨迹**不挂在 /api/orders/** 下**：那一段整段归 trade，而轨迹数据在 fulfilment，
+ * 硬挂进去就得靠网关里的路由优先级特例来撑，属于「新增端点只 404」那类脆弱写法。
  */
 
 import { api } from './client';
@@ -57,6 +60,7 @@ import type {
   SettlementPage,
   SettlementView,
   ShipRequest,
+  TrackListView,
   UserView,
 } from './types';
 
@@ -407,4 +411,24 @@ export const afterSaleApi = {
 
   /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 时可进入） */
   escalate: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/escalate`),
+};
+
+// ---------- 物流轨迹（/api/logistics，履约域 A2） ----------
+
+/**
+ * 物流轨迹查询。
+ *
+ * 路径**不挂在 `/api/orders/**` 下**：那一段整段路由给交易域，而轨迹数据在履约域。
+ * 若硬挂在订单命名空间下，就得在网关里为它插一条优先级更高的路由 ——
+ * 那正是历史上造成过「新增端点不报错、只 404」的写法。这里用履约域自己的命名空间，
+ * 前端本来就是「订单详情 + 轨迹」两次调用，前缀不同不影响使用。
+ *
+ * 准入：买家本人 / 该单卖家 / 运营。非当事人返回 403，订单不存在返回 404，
+ * 订单还没有轨迹返回 **200 + 空列表**（这是正常状态，不该按错误渲染）。
+ *
+ * @param orderNo 订单号（业务键，非雪花 id，字符串直接传即可）
+ */
+export const logisticsApi = {
+  tracks: (orderNo: string, options?: { signal?: AbortSignal }) =>
+    api.get<TrackListView>(`/api/logistics/orders/${encodeURIComponent(orderNo)}/tracks`, options),
 };

@@ -21,6 +21,7 @@ import com.duoduo.fulfilment.entity.AfterSaleEntity;
 import com.duoduo.fulfilment.mapper.AfterSaleMapper;
 import com.duoduo.fulfilment.support.AfterSaleStatus;
 import com.duoduo.fulfilment.support.ImageUrls;
+import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.OrderRefs;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,18 +84,22 @@ public class AfterSaleService {
     private static final int DEFAULT_PAGE_SIZE = 10;
 
     private final AfterSaleMapper afterSaleMapper;
+    /** 只用于执行退款；取订单事实已收敛到 {@link OrderFacts}（见其类注释） */
     private final OrderClient orderClient;
+    private final OrderFacts orderFacts;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final int maxImages;
 
     public AfterSaleService(AfterSaleMapper afterSaleMapper,
                             OrderClient orderClient,
+                            OrderFacts orderFacts,
                             SnowflakeIdGenerator idGenerator,
                             ObjectMapper objectMapper,
                             @Value("${duoduo.aftersale.max-images:6}") int maxImages) {
         this.afterSaleMapper = afterSaleMapper;
         this.orderClient = orderClient;
+        this.orderFacts = orderFacts;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
         this.maxImages = maxImages;
@@ -114,7 +119,7 @@ public class AfterSaleService {
         if (!AfterSaleStatus.isKnownType(request.type())) {
             throw BizException.validation("售后类型只能是 REFUND_ONLY 或 RETURN_REFUND");
         }
-        OrderFact fact = loadOrderFact(request.orderNo());
+        OrderFact fact = orderFacts.require(request.orderNo());
         requireBuyer(fact, userId);
         requireOrderStatusAllowsAfterSale(fact);
 
@@ -328,27 +333,6 @@ public class AfterSaleService {
             throw BizException.unauthorized("请先登录");
         }
         return user;
-    }
-
-    private OrderFact loadOrderFact(String orderNo) {
-        if (orderNo == null || orderNo.isBlank()) {
-            throw BizException.validation("订单号不能为空");
-        }
-        OrderFact fact;
-        try {
-            var response = orderClient.fact(orderNo.trim());
-            fact = response == null ? null : response.data();
-        } catch (FeignException.NotFound e) {
-            throw BizException.notFound("订单");
-        } catch (FeignException e) {
-            // 交易域不可用时**不能**放行：宁可不让人立案，也不能在没有订单事实的情况下凭空立案
-            log.error("调用交易域取订单事实失败 orderNo={} status={}", orderNo, e.status(), e);
-            throw new BizException(ErrorCode.DEGRADED, "订单服务暂时不可用，请稍后再试");
-        }
-        if (fact == null) {
-            throw BizException.notFound("订单");
-        }
-        return fact;
     }
 
     /** 立案人必须是订单归属人（订单事实里的 userId，不是请求体传的） */

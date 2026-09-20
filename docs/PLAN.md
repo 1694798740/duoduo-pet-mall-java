@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-20（第十轮：A3 售后三端页面；编码始于 09-18，三套 UI 自测于 09-20 实跑并全绿）
+> 更新时间：2026-09-20（第十一轮：A2 物流轨迹 —— 履约域新表 + 2 端点 + 买卖双方时间线；接口冒烟 12 套 935 项、UI 断言 4 套 137 项）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **P2-1 评价与晒单已落地**（新建 `duoduo-fulfilment`，自测 59 项 + UI 20 项全绿）；余下：物流轨迹 / 售后仲裁 / 信用分 / 优惠券 / AI / ES |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域三块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**；余下：信用分 / 优惠券 / AI / ES |
 
 ---
 
@@ -124,11 +124,13 @@
 
 | **A3 配套 · 售后三端页面（第十轮）** | **买家 3 页**：`/after-sales`（我的售后 + 状态页签）、`/after-sales/new?orderNo=`（类型 + 诉求 + 举证图）、`/after-sales/:id`（步骤条 + 卖家说明 + 裁定说明 + 退款金额 + 申请平台仲裁）；入口挂在**订单**（仅已发货/已完成）与「我的」页。**卖家 1 页** `/seller/after-sales`（同意即退款 / 拒绝必填原因）。**运营 1 页** `/admin/after-sales`（裁定，说明必填；弹窗默认结论为「驳回」——误点不会把钱退出去）。**契约修正**：售后单 `id` 改为**字符串**传输（18 位雪花超过 JS 安全整数上限，`JSON.parse` 会静默改写）。**共用件** `pages/afterSaleShared.tsx`（状态页签 / 类型文案 / 配色 / 步骤条）。**自测 `scripts/e2e/aftersale-ui-check.mjs` 真实 Chromium 44 通过 / 0 失败**（买家→卖家→运营整条链，末了回接口层确认订单与托管同步 `REFUNDED`、退款金额等于实付）；`tsc` 零错误、`vite build` 通过；回归 `aftersale-smoke 101/0`、`review-smoke 59/0`、`settlement-smoke 125/0`。**已无遗留** |
 
+| **A2 · 物流轨迹（第十一轮）** | **履约域新表 `t_logistics_track`**（订单号 + 节点码 + 发生时间 + 描述 + 留档报文；唯一键 `uk_track_order_node_time` 兜幂等，覆盖索引 `(order_no, occurred_at)` 服务正序查询；节点码白名单 `LogisticsNode` 7 种）。**两个端点**：`POST /api/logistics/internal/{orderNo}/tracks`（批量摄入，`X-Internal-Token`，**履约域第一个内部接口**，本域自建 `InternalTokenFilter`；批量全有或全无）+ `GET /api/logistics/orders/{orderNo}/tracks`（买家本人 / 该单卖家 / 运营，按发生时间正序；**无轨迹回空列表而非 404**）。**交易域发货后补推「已揽收」**：`OrderShippedEvent` + `@TransactionalEventListener(AFTER_COMMIT)` + `LogisticsNotifier`（best-effort，**绝不抛出**，不阻断发货）；两条发货路径（卖家中心 / 内部凭据）共用同一段状态机，事件在状态机本体发布，两边都不漏。**前端共用件** `components/LogisticsTimeline.tsx`：正序排列 + 头部「当前：××」常驻提示；未发货给说明性空态；已完成订单轨迹仍在；非当事人在订单页本就被挡，不泄露物流信息；买家 / 卖家订单详情各挂一份。**顺带收口**：履约域新增 `OrderFacts` 统一取数口（评价域与售后域各自那份「调交易域取订单事实」已悄悄漂移——同一句「交易域不可用」一处抛 422、一处抛 503——统一为同一实现）。**自测 `scripts/logistics-smoke.ps1` 79 通过 / 0 失败**（含★**断言总数守卫**：任何一条 Check 因写法错误被静默跳过都会让守卫报失败）+ **`scripts/e2e/logistics-ui-check.mjs` 真实 Chromium 44 通过 / 0 失败**（买家/卖家同轨 + 空态 + 越权 + 终态仍在）；`tsc` 零错误、`vite build` 通过（主包 171.5KB） |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
-| M11 剩余块：物流轨迹（A2）/ 信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价、**售后仲裁（A3，含三端页面）已全部落地**；下一个最省的是 **A2 物流轨迹** |
+| M11 剩余块：信用分（A4）（`duoduo-fulfilment` 同域内扩展） | 评价、售后仲裁（A3，含三端页面）、**物流轨迹（A2，含买卖双方时间线）均已落地**；同域内下一个最省的是 **A4 信用分** |
 | M11 其他：优惠券营销（A5，`duoduo-marketing`）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
 | **A9 AI 导购「多多」（已排期）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**密钥暂未提供** → 接口与降级链路可先做，联调需等凭据 |
 | **A13 买家端微信小程序（已排期）** | 用户 2026-09-18 拍板：**排期，AppID 暂不提供但允许先开始编码** → 可先用开发者工具测试号开工，真机预览等 AppID |
@@ -180,6 +182,42 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-20（第十一轮 · A2 物流轨迹）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-fulfilment/.../entity/LogisticsTrackEntity.java`、`mapper/LogisticsTrackMapper.java`（**新增**） | 轨迹节点流水实体 + Mapper（按单查正序、批量插入；无状态迁移，纯追加） |
+| `duoduo-fulfilment/.../support/LogisticsNode.java`（**新增**） | 节点码白名单（7 种：`PICKED_UP` / `IN_TRANSIT` / `ARRIVED_HUB` / `OUT_FOR_DELIVERY` / `DELIVERED` / `EXCEPTION` / 自定义留位）——**推送方只能选用不能自创**，非法节点码 422 |
+| `duoduo-fulfilment/.../service/LogisticsService.java`、`controller/LogisticsController.java`、`controller/LogisticsInternalController.java`（**新增**） | 摄入（批量、全有或全无、幂等撞唯一键跳过）+ 查询（正序、越权分层）。**履约域第一个内部接口** |
+| `duoduo-fulfilment/.../support/InternalTokenFilter.java`（**新增**） | 本域内部凭据 Filter（校验 `X-Internal-Token`，**失败关闭**），与用户域那份同口径 |
+| `duoduo-fulfilment/.../support/OrderFacts.java`（**新增**） | 统一取数口：把评价域与售后域各自那份「调交易域取订单事实」收口（两处已漂移，同一句「交易域不可用」一处 422、一处 503）；两域改用同一实现 |
+| `duoduo-trade/.../client/LogisticsClient.java`、`client/LogisticsNotifier.java`、`client/dto/TrackIngestPayload.java`（**新增**） | 交易域发货后**补推「已揽收」**：`@TransactionalEventListener(AFTER_COMMIT)` 触发，Feign 调履约域内部接口；best-effort，**绝不抛出**，不阻断发货 |
+| `duoduo-trade/.../service/OrderService.java` | 两条发货路径（卖家中心 / 内部凭据）共用同一段状态机，`OrderShippedEvent` 在状态机本体发布，两边都不漏 |
+| `duoduo-gateway/.../application.yml` | 新增 `/api/logistics/orders/**` 路由到 `duoduo-fulfilment`（内部接口 `/api/logistics/internal/**` **不进网关**，交易域直连服务） |
+| `frontend/src/components/LogisticsTimeline.tsx`（**新增**） | 共用时间线组件：正序 + 「当前：××」常驻提示 + 未发货说明性空态；行内 `data-node-code` 稳定测试钩子 |
+| `frontend/src/pages/OrderDetail.tsx`、`pages/seller/OrderDetail.tsx` | 买家 / 卖家订单详情各挂一份时间线（时间线置于最显眼处——用户来看的就是「货到哪了」） |
+| `frontend/src/api/{types,endpoints}.ts` | `LogisticsTrackView` 类型 + `logisticsApi.tracks(orderNo)` |
+| `scripts/logistics-smoke.ps1`（**新增**） | **79 项断言**：发货即揽收 / 乱序入库仍按时间正序返回 / 重复推送幂等 / 批量全有或全无 / 无时区按 UTC / 越权 / 敏感字段裁剪 / 库存与归属复原；含★**断言总数守卫** |
+| `scripts/e2e/logistics-ui-check.mjs`（**新增**） | 真实 Chromium **44 项断言**：买家/卖家同轨、未发货空态、非当事人被挡、已完成订单轨迹仍在；**6 张截图** `lg_*.png` |
+| `README.md` | 新增「物流轨迹」章节；冒烟口径 11 套 856 → **12 套 935 项**，UI 断言 3 套 93 → **4 套 137 项**；第十一轮变更记录 |
+
+**自测**：`logistics-smoke.ps1` **79 通过 / 0 失败**（守卫确认无静默跳过）；
+`logistics-ui-check.mjs` **44 通过 / 0 失败**；前端 `tsc --noEmit` 零错误、`vite build` 通过（主包 171.5KB）；
+回归 `review-smoke 59/0`、`aftersale-smoke 101/0`、`settlement-smoke 125/0`。8 容器 healthy。
+接口冒烟累计 **12 套 935 项**，浏览器 UI 断言累计 **4 套 137 项**。
+
+> ⚠️ **两条新踩的坑（第十一轮，已入 `08` 篇 T-31 / T-32）**：
+> 1. **Write 工具生成的 `.ps1` 是 UTF-8 无 BOM**，PowerShell 5.1 按 GBK 读 → 中文乱码且语法被撞坏。
+>    既有脚本都带 BOM，新建脚本照做即可（无 BOM 时用 `UTF8Encoding($true)` 补写）。
+> 2. **多行续行里的 `Check "…" (…) -eq '…'` 断言会被静默跳过**：续行让 `-eq` 落到下一行被当成**参数名**，
+>    参数绑定阶段抛异常 → 该断言跳过，但脚本**仍报 0 失败**。已加「**断言总数守卫**」防复发
+>    ——任何一条 Check 因写法错误被跳过都会让守卫报失败。
+
+**第十一轮暴露并修复的 2 个问题**（都是自测脚本自身写法问题，非实现缺陷）：
+1. **运营断言前提写错**：订单详情按归属拦截，运营不是当事人，页面根本没渲染 → 换成更有价值的断言
+   「**确认收货后轨迹不该消失**」。
+2. **console 过滤漏排 404**：本测试刻意触发的 404（非当事人访问）没被排除，误报为「非预期 HTTP 错误」→ 补进白名单。
 
 ### 2026-09-20（第十轮 · A3 售后三端页面）
 
@@ -518,19 +556,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1
 # 售后仲裁工单（101 项；立案 / 卖家处理 / 买家申请仲裁 / 运营裁定退款 / 已放款边界 B-01 / 越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1
 
+# 物流轨迹（79 项；发货即揽收 / 乱序正序 / 幂等 / 批量全有或全无 / 无时区按 UTC / 越权 / 敏感字段 / 含断言总数守卫）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1
+
 # 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
 # curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
 
-# 商家端 Web 的真实浏览器 UI 自测（29 项；需先起前端 dev server，必须走 localhost:5173）
+# 四套真实浏览器 UI 自测（需先起前端 dev server）
+# ⚠️ 端口用 3000 而非 5173：本机 5173 落在 Windows 排除端口段（Docker Desktop 启动后 WinNAT 保留 5149-5248，
+#    报 listen EACCES）。3000 本就在网关 CORS_ORIGINS 白名单里，且必须走 localhost（不能 127.0.0.1）。
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
-node node_modules/vite/bin/vite.js --port 5173            # 另开一个终端
-cd .. && node scripts/e2e/seller-ui-check.mjs
-
-# 评价与晒单的真实浏览器 UI 自测（20 项；同样需 dev server 与 localhost:5173）
-node scripts/e2e/review-ui-check.mjs
-
-# 售后三端的真实浏览器 UI 自测（44 项；买家→卖家→运营走完整条链）
-node scripts/e2e/aftersale-ui-check.mjs
+node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开一个终端
+cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs      # 商家端 29 项
+UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs              # 评价与晒单 20 项
+UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs           # 售后三端 44 项（买家→卖家→运营整条链）
+UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs           # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

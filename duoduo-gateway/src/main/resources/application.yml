@@ -64,7 +64,12 @@ spring:
             #   必须显式列在这里：product / trade 的路由是按具体子路径列举的（不是 /api/admin/** 兜底），
             #   漏了这一段会被路由到 404，而不是报错，最不容易被发现。
             # 两段都不进白名单：售后单含买家诉求与证据，「不登录就看得到」本身就是缺陷。
-            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**
+            # /api/logistics/** = 物流轨迹查询（A2）—— 数据在履约库，同样必须显式列出。
+            #   路径不挂在 /api/orders/** 下：那一段整段归交易域，多挂一条就要在网关里
+            #   为它插一条更高优先级的路由，正是历史上造成过「新增端点只 404」的写法。
+            #   也不进白名单：轨迹能反映「谁买了什么、寄到哪个城市」，属当事人信息，
+            #   不登录就拿不到 X-User-*，服务端无从判断资格。
+            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**,/api/logistics/**
         - id: duoduo-marketing
           uri: lb://duoduo-marketing
           predicates:

@@ -601,6 +601,45 @@ export interface AfterSaleArbitrateRequest {
   note: string;
 }
 
+// ---------- 物流轨迹（/api/logistics，履约域 A2） ----------
+
+/**
+ * 物流节点码。白名单由服务端定义（`LogisticsNode`），推送方只能选用不能自创 ——
+ * 前端只在需要「按节点类型换图标 / 判断是否已签收」时才用它比较，
+ * 界面上的中文一律用服务端下发的 `nodeLabel`，不在这里维护第二份映射
+ * （两份映射迟早漂移，而「同一节点在买家页和卖家页叫法不同」在用户眼里就是系统坏了）。
+ */
+export type LogisticsNodeCode =
+  | 'PICKED_UP'
+  | 'IN_TRANSIT'
+  | 'ARRIVED_HUB'
+  | 'OUT_FOR_DELIVERY'
+  | 'SIGNED'
+  | 'REJECTED'
+  | 'EXCEPTION';
+
+/** 轨迹节点。`occurredAt` 是节点**发生**时间（ISO-8601 / UTC），前端只展示不计算。 */
+export interface TrackView {
+  nodeCode: LogisticsNodeCode | string;
+  /** 服务端给出的中文文案（如「已揽收」），前端直接用 */
+  nodeLabel: string;
+  /** 节点描述原文；推送方未给时由服务端兜底为节点名 */
+  nodeText: string;
+  occurredAt: string;
+}
+
+/**
+ * 某订单的轨迹。
+ *
+ * `total` 为 0 是**正常状态**（未发货，或已发货但推送还没到），不是错误 ——
+ * 服务端刻意回空列表而不是 404，前端据此渲染「暂无物流信息」空态。
+ */
+export interface TrackListView {
+  orderNo: string;
+  total: number;
+  tracks: TrackView[];
+}
+
 // ---------- 通用 ----------
 
 export interface PageResult<T> {

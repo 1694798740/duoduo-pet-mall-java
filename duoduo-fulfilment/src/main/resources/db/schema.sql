@@ -12,6 +12,7 @@
 --   * 评分存 INTEGER（1-5），聚合靠 SQL（AVG / GROUP BY），不落冗余汇总列：
 --     汇总列一旦写错就会长期错，而评价读取是低频页面，SQL 聚合成本可接受
 
+DROP TABLE IF EXISTS t_logistics_track;
 DROP TABLE IF EXISTS t_after_sale;
 DROP TABLE IF EXISTS t_review;
 
@@ -109,3 +110,41 @@ CREATE INDEX idx_aftersale_seller ON t_after_sale (seller_id, status, created_at
 CREATE INDEX idx_aftersale_status ON t_after_sale (status, created_at);
 -- 运维按订单号直查（订单号来自交易域，本域不生成）
 CREATE INDEX idx_aftersale_order_no ON t_after_sale (order_no);
+
+-- ---------- 物流轨迹节点（A2） ----------
+-- 为什么单独建表而不是在订单上加字段：
+--   一次运输会产生多条节点，数量事先不可知；塞进订单只能存成 JSON 大字段，
+--   于是「查某条节点」「按类型统计」都退化成字符串匹配 —— 那是把结构化数据写成了日志。
+--
+-- 幂等键是 uk_track_order_node_time（订单号 + 节点码 + 发生时间）：
+--   物流推送的常见形态就是失败重推 / 补推 / 定时全量对齐，同一条节点被推两次是正常的。
+--   靠唯一索引把重复静默吃掉，而不是「先查再插」—— 后者在并发重推下必然漏。
+--
+-- 时间存 occurred_at（节点**发生**时间）而不是入库时间：
+--   推送可能延迟或补推，入库时间只反映我们何时收到，反映不了包裹何时到。
+--   排序与展示一律用 occurred_at，全部按 UTC 存（INV-12）。
+--
+-- node_code 取值见 LogisticsNode（白名单，推送方只能选用不能自创）：
+--   PICKED_UP / IN_TRANSIT / ARRIVED_HUB / OUT_FOR_DELIVERY / SIGNED / REJECTED / EXCEPTION
+--
+-- raw 是上报方的原始报文（JSON），只入库**不对外返回** —— 用于轨迹被质疑时回溯，
+--   以及将来对接真实快递公司报文时不必改表结构。
+CREATE TABLE t_logistics_track (
+    id           BIGINT       NOT NULL,
+    -- 订单事实的快照键：order_id 由订单号派生稳定哈希（与评价 / 售后共用 OrderRefs，
+    -- 保证同一订单在三个子域里得到同一个内部标识）
+    order_id     BIGINT       NOT NULL,
+    order_no     VARCHAR(32)  NOT NULL,
+    node_code    VARCHAR(30)  NOT NULL,
+    -- 节点描述原文（推送方给的细节）；推送方没给时用节点名的标准文案兜底
+    node_text    VARCHAR(200) NOT NULL,
+    occurred_at  TIMESTAMP    NOT NULL,
+    raw          VARCHAR(1000),
+    created_at   TIMESTAMP    NOT NULL,
+    updated_at   TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id),
+    -- 幂等键：同订单 + 同节点 + 同发生时间 = 同一条事实，重复推送撞这里
+    CONSTRAINT uk_track_order_node_time UNIQUE (order_no, node_code, occurred_at)
+);
+-- 查询固定是「按订单号取全部节点并按时间正序」，这个联合索引直接覆盖排序
+CREATE INDEX idx_track_order_time ON t_logistics_track (order_no, occurred_at);
