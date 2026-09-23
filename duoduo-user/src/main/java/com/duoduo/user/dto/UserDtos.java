@@ -48,6 +48,17 @@ public final class UserDtos {
     public record RefreshRequest(String refreshToken) {
     }
 
+    /**
+     * A13 微信登录：小程序 wx.login() 拿到的 js_code。
+     * 开发 / 测试环境（duoduo.wechat.mock-enabled=true）支持 {@code mock:<openid>} 形式，
+     * 免调微信服务器即可冒烟；生产环境该开关必须关闭。
+     */
+    public record WechatLoginRequest(
+            @NotBlank(message = "微信登录 code 不能为空")
+            String code
+    ) {
+    }
+
     public record RealNameRequest(
             @NotBlank(message = "真实姓名不能为空")
             @Pattern(regexp = "^[\\u4e00-\\u9fa5·]{2,20}$", message = "请输入 2-20 位中文姓名")

@@ -4,7 +4,18 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-23（第十五轮）** — **A6 契约导出与 CI + A13 小程序骨架（测试号先行）**。
+**最近更新：2026-09-23（第十五轮续）** — **A13 后端 code2Session 登录 + 微信绑定打通**。
+① **DDL**：`t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/08-a13-wechat-bind.sql`，
+并发绑同一微信的最终防线靠索引）。
+② **新端点**：`POST /api/auth/wechat`（免登，白名单只放行这一条）与 `POST /api/auth/wechat/bind`（登录态绑定）。
+语义口径：未绑定微信登录 → **422** 引导先手机号登录再绑定（**不做自动注册**）；openid 已属他人 → **409**；
+重复绑定同一 openid → **200 幂等**；未配置 AppID/Secret → **503 DEGRADED**（外部依赖缺失如实降级）。
+③ **WechatGateway 三分支**：mock（`DUODUO_WECHAT_MOCK_ENABLED=true` 显式开启 + code 前缀 `mock:`，生产禁开）/
+real（jscode2session）/ 未配置（503）；secret 只走环境变量，日志只记 openid 前 4 位。
+**自测**：`scripts/wechat-auth-smoke.ps1` **26/26 全绿**（GUARD-OK）+ CI 子集回归 **356/0 无回归**。
+小程序侧待 `config.js` 开 `WECHAT_LOGIN_READY` 联调；真机预览待用户提供 AppID。
+
+**第十五轮（2026-09-23）** — **A6 契约导出与 CI + A13 小程序骨架（测试号先行）**。
 ① **OpenAPI 契约导出**：knife4j starter 挂 `duoduo-common-web`（5 个业务服务自动获得，网关 WebFlux 不依赖故不受影响），
 各服务 `application.yml` 开 `springdoc`；新增 `scripts/export-openapi.ps1` 从 `/v3/api-docs` 导出
 `docs/openapi/<service>.json` ×5 + `docs/openapi/endpoints.md` 端点摘要（**116 个端点**：user 22 / product 29 / trade 37 / fulfilment 19 / marketing 9），
@@ -14,7 +25,7 @@
 `scripts/ci-run.ps1` 为通用子集执行器（本地实跑 **356/0 全绿**，证明引入 knife4j 未改变任何接口行为）。
 ③ **A13 小程序骨架**：`miniprogram/`（project.config 测试号 + 请求封装 + 首页/详情/购物车/订单/登录 5 页面），
 开发者工具勾「不校验合法域名」即可跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」主链路（登录暂用手机号回退，
-`code2Session` 端点下一轮实现）；详见 `miniprogram/README.md`。
+`code2Session` 后端端点已在第十五轮续补齐）；详见 `miniprogram/README.md`。
 
 **上一轮（2026-09-23 第十四轮）** — **收货地址簿（A8）完成 + 雪花 ID 精度缺陷（T-39）根治**。
 用户域新增地址簿：6 个用户端点（列表 / 新增 / 修改 / 删除 / 设为默认 / 取默认）+
@@ -37,7 +48,7 @@
 新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
 另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
 与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
-**接口冒烟累计 15 套 1286 项，浏览器 UI 断言累计 6 套 244 项。**
+**接口冒烟累计 16 套 1312 项，浏览器 UI 断言累计 6 套 244 项。**
 详见「十二、变更记录」。
 
 **上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
@@ -124,7 +135,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十五套 1286 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（十六套 1312 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
@@ -199,10 +210,10 @@ duoduo-pet-mall-java/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
-│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列 / 07 A8 地址簿建表）
-├── scripts/                    一键启动、冒烟测试（15 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出）
+│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列 / 07 A8 地址簿建表 / 08 A13 微信绑定列）
+├── scripts/                    一键启动、冒烟测试（16 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / wechat-auth-smoke.ps1 微信登录绑定）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
-├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约）
+├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
 ├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传

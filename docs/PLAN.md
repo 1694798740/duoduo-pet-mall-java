@@ -140,7 +140,8 @@
 | **A9 AI 导购「多多」（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**百炼 / DashScope API Key 暂未提供（待用户提供）** → 接口与降级链路可先做，联调需等凭据 |
 | ✅ **A6 契约导出与 CI 已交付**（2026-09-23，第十五轮） | **OpenAPI 导出**：knife4j starter 挂 `duoduo-common-web`（5 业务服务自动获得，网关不受影响；`/v3/api-docs` 与 `/doc.html` 不进网关白名单）+ `scripts/export-openapi.ps1` → `docs/openapi/`（5 份 JSON + endpoints.md，**116 端点**与 04 篇核对一致）；**CI**：`.github/workflows/ci.yml` 双 job（编译 + Docker 全栈冒烟子集 smoke/trade/order/address/id-precision 共 **356 项**，失败即 job 失败 + 日志 artifact）+ `scripts/ci-run.ps1` 通用子集执行器（本地实跑 356/0 全绿） |
 | ✅ **A13 小程序骨架已落地**（2026-09-23，第十五轮，测试号阶段） | 用户批准「代码先写」：`miniprogram/` 5 页面 + 请求封装，**零后端改动**跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」（登录暂用手机号回退）；**余下**：后端 `POST /api/auth/wechat`（code2Session，凭据走环境变量）+ openid 绑定 + 冒烟；真机预览（待 AppID） |
-| **A13 买家端微信小程序（收尾，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 骨架已开工（见上），真机预览等 AppID |
+| ✅ **A13 后端登录打通（code2Session + 绑定）**（2026-09-23，第十五轮续） | `t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/08-a13-wechat-bind.sql`）；新端点 `POST /api/auth/wechat`（免登，白名单只放行这一条）+ `POST /api/auth/wechat/bind`（登录态绑定）；`WechatGateway` 三分支（mock 显式开启 / real jscode2session / 未配置 503 DEGRADED）；未绑定 422、openid 属他人 409、重复绑定幂等 200、空 code 400；secret 只走环境变量、日志只记 openid 前 4 位。**自测：`scripts/wechat-auth-smoke.ps1` 26/26 全绿（GUARD-OK）+ CI 子集 356/0 无回归**。小程序侧待 `WECHAT_LOGIN_READY=true` 联调；真机预览待 AppID |
+| **A13 买家端微信小程序（收尾，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 骨架 + 后端登录均已就绪，真机预览等 AppID |
 
 ### 未开始（按你确认的端形态排期）
 
@@ -212,6 +213,29 @@
 **自测**：`mvn clean install` 9 模块 EXIT=0；fat jar 内确认含 springdoc/knife4j（T-41 判据：看 jar 而非退出码）；重建 9 容器全 healthy；5 服务 `/v3/api-docs` 全 200；本地实跑 CI 子集 **356/0 全绿**（smoke 54 / trade 87 / order 77 / address 82 / id-precision 56）；workflow YAML 解析校验通过。
 
 **遗留**：① CI 在 GitHub Actions 的**首次实跑**待观察（私有仓库需确认 Actions 已启用，免费额度每月 2000 分钟）；② A13 下一轮做 `code2Session` 后端端点；③ 云端台账 v18 同步因**腾讯文档连接器未连接**（`personal=not_connected`，需用户在连接器页授权）暂挂起。
+
+### 2026-09-23（第十五轮续 · A13 后端 code2Session 登录 + 连接器打通与台账 v18）
+
+| 文件 | 变更 |
+|---|---|
+| `docs/sql/08-a13-wechat-bind.sql`（**新增**） | `t_user` 加 `wx_openid VARCHAR(64) NULL` + **唯一键 `uk_user_wxopenid`**；存量库增量脚本，重复执行报 1060 属预期（与 06 同口径） |
+| `docs/sql/01-duoduo-user.sql` + `duoduo-user/.../db/schema.sql`（**改**） | t_user 建表语句同步加列与唯一键（新库口径一致） |
+| `duoduo-user/.../entity/UserEntity.java`（**改**） | 加 `wxOpenid` 字段 + getter/setter |
+| `duoduo-user/.../dto/UserDtos.java`（**改**） | 加 `WechatLoginRequest(@NotBlank String code)` |
+| `duoduo-user/.../support/WechatGateway.java`（**新增**） | code2Session 客户端三分支：mock（`duoduo.wechat.mock-enabled=true` 显式开启 + code 前缀 `mock:`，生产禁开）→ real（`java.net.http.HttpClient` 调 jscode2session，errcode≠0 → 401）→ 未配置（**503 DEGRADED**，不用 422 错怪调用方）；secret 只走环境变量，日志只记 openid 前 4 位 + 长度 |
+| `duoduo-user/.../service/AuthService.java`（**改**） | 加 `wechatLogin`（未绑定 → 422 引导先登录再绑定，**不做自动注册**——微信授权拿不到手机号；封禁账号同样拒绝）与 `wechatBind`（同 openid 幂等 200 / openid 属他人 409，并发由唯一索引兜底）+ `findByOpenid` |
+| `duoduo-user/.../controller/AuthController.java`（**改**） | 加 `POST /api/auth/wechat`（免登；小程序无 Cookie，令牌只走响应体）与 `POST /api/auth/wechat/bind`（`UserContext.requireUserId()`） |
+| `duoduo-gateway/.../GatewaySecurityProperties.java`（**改**） | 白名单加 `/api/auth/wechat` 一条；**`/wechat/bind` 刻意不放行**（需登录态，放行等于可把任意微信绑到自己账号） |
+| `duoduo-user/src/main/resources/application.yml`（**改**） | 加 `duoduo.wechat.{appid,secret,mock-enabled}`，均走环境变量（mock 开关用 `DUODUO_WECHAT_MOCK_ENABLED`，A5 命名纪律） |
+| `docker-compose.yml`（**改**） | `duoduo-user-app` environment 加 `WECHAT_APPID` / `WECHAT_SECRET`（默认空）/ `DUODUO_WECHAT_MOCK_ENABLED`（**本地/CI 默认 true**，生产必须去掉） |
+| `scripts/wechat-auth-smoke.ps1`（**新增**） | 26 项断言：未绑 422 + 引导文案 / 降级 503 + DEGRADED / 绑定 200 + 库内校验 / 幂等 200 / 绑定后登录同 userId / 抢绑 409 且不篡改 / 空 code 400×2 / bind 免登 401 / 响应不含 openid 全文；动态断言总数守卫 |
+| `docs/agent/04-接口契约全集.md`（**改**） | 白名单行加 `/api/auth/wechat`（bind 不放行注释）；端点表加 2 行（422/503/409/幂等语义） |
+| `docs/agent/07-待办事项与验收标准.md`（**改**） | A13 段补「后端补齐（已完成）」：DDL / 端点 / 三分支 / 自测 26 项 / 余下真机待 AppID |
+| `miniprogram/README.md`（**改**） | 头部改为「后端已就绪、`WECHAT_LOGIN_READY` 待开」；待办清单更新 |
+
+**自测**：DDL 实跑并验证列 + 唯一索引存在；`mvn clean install` 9 模块通过；重建 user + gateway 容器 healthy；**`wechat-auth-smoke.ps1` 26/26 全绿（GUARD-OK）**；CI 子集回归 **356/0 全绿**（54/87/77/82/56，与 A6 基线一致）。
+
+**本轮其他进展**：腾讯文档连接器已由用户授权打通（`tdoc_init` READY + 实调 `manage.query_file_info` 验证通过），**云端台账 v17 → v18 覆盖写成功**（`base_version 17 → new_version 18`）。
 
 ### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
 

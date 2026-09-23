@@ -17,6 +17,7 @@ import com.duoduo.user.entity.RefreshTokenEntity;
 import com.duoduo.user.entity.UserEntity;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.WechatGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -57,6 +58,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final SnowflakeIdGenerator idGenerator;
+    private final WechatGateway wechatGateway;
     /**
      * 新用户初始信用分（= 信用分模型的基础分，默认 60）。
      *
@@ -72,12 +74,14 @@ public class AuthService {
                        PasswordEncoder passwordEncoder,
                        JwtTokenService jwtTokenService,
                        SnowflakeIdGenerator idGenerator,
+                       WechatGateway wechatGateway,
                        @Value("${duoduo.user.credit-default:60}") int creditDefault) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.idGenerator = idGenerator;
+        this.wechatGateway = wechatGateway;
         this.creditDefault = creditDefault;
     }
 
@@ -170,6 +174,79 @@ public class AuthService {
         if (payload.valid() && payload.jti() != null) {
             refreshTokenMapper.revoke(payload.jti());
         }
+    }
+
+    /**
+     * A13 · 微信小程序登录（code2Session）。
+     *
+     * <p>openid 与账号是「一对一绑定」关系（{@code t_user.wx_openid} 唯一索引）：
+     * 已绑定且账号 ACTIVE → 直接发令牌；未绑定 → 422 引导用户先手机号登录再绑定。
+     * **不做「首次微信登录自动注册」** —— 微信授权拿不到手机号，自动注册会造出
+     * 一批没有手机号、无法接收通知、连密码都没有的孤儿账号。
+     *
+     * <p>封禁账号即使已绑定也拒绝登录（与手机号登录同一口径，ACC-05）。
+     */
+    @Transactional
+    public LoginResponse wechatLogin(String code, String userAgent) {
+        String openid = wechatGateway.codeToOpenid(code);
+        UserEntity entity = findByOpenid(openid);
+        if (entity == null) {
+            throw BizException.businessRule("该微信未绑定账号，请先用手机号登录，再在「账号与安全」中绑定");
+        }
+        if ("BANNED".equals(entity.getStatus())) {
+            throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");
+        }
+
+        entity.setLastLoginAt(LocalDateTime.now(ZoneOffset.UTC));
+        entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        userMapper.updateById(entity);
+
+        log.info("微信登录成功 userId={}", entity.getId());
+        return issueTokens(entity, userAgent);
+    }
+
+    /**
+     * A13 · 登录态下把当前账号与微信 openid 绑定。
+     *
+     * <p>绑定语义与并发安全：
+     * <ul>
+     *   <li><b>幂等</b>：当前账号已绑同一 openid → 直接成功返回，不报错
+     *       （重复点「绑定微信」不该把人吓一跳，与 applyMerchant 同口径）。</li>
+     *   <li><b>冲突</b>：openid 已绑在**其他**账号上 → 409。正常路径由
+     *       {@code uk_user_wxopenid} 唯一索引兜底（先查后插只是给出友好提示，
+     *       并发抢绑的最终防线是数据库约束 —— 与手机号唯一性同一套姿势）。</li>
+     *   <li><b>换绑</b>：本方案暂不支持一个微信号在两个账号间迁移，A13 不做解绑。</li>
+     * </ul>
+     */
+    @Transactional
+    public UserView wechatBind(Long userId, String code) {
+        UserEntity entity = userMapper.selectById(userId);
+        if (entity == null) {
+            throw BizException.notFound("用户");
+        }
+
+        String openid = wechatGateway.codeToOpenid(code);
+        if (openid.equals(entity.getWxOpenid())) {
+            return toView(entity); // 幂等：重复绑定同一个微信
+        }
+
+        UserEntity holder = findByOpenid(openid);
+        if (holder != null) {
+            throw BizException.conflict("该微信已绑定其他账号");
+        }
+
+        entity.setWxOpenid(openid);
+        entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        try {
+            userMapper.updateById(entity);
+        } catch (DuplicateKeyException ex) {
+            // 并发窗口：先查时还没有人绑，update 时被另一个请求抢先 —— 唯一索引兜底
+            throw BizException.conflict("该微信已绑定其他账号");
+        }
+
+        log.info("微信绑定成功 userId={} openidPrefix={} len={}",
+                userId, openid.substring(0, Math.min(4, openid.length())), openid.length());
+        return toView(entity);
     }
 
     public UserView profile(Long userId) {
@@ -314,6 +391,10 @@ public class AuthService {
 
     private UserEntity findByPhone(String phone) {
         return userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getPhone, phone).last("LIMIT 1"));
+    }
+
+    private UserEntity findByOpenid(String openid) {
+        return userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getWxOpenid, openid).last("LIMIT 1"));
     }
 
     private UserView toView(UserEntity entity) {

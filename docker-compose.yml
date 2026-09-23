@@ -132,6 +132,11 @@ services:
       DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
       # 内部接口凭据（/api/users/internal/**：批量取昵称头像，供履约域评价列表补全展示）
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # A13 · 微信登录：appid/secret 上线后经环境变量注入（WECHAT_APPID / WECHAT_SECRET）；
+      # 本地/CI 开 mock 通道跑冒烟（生产必须去掉或置 false）。
+      WECHAT_APPID: ${WECHAT_APPID:-}
+      WECHAT_SECRET: ${WECHAT_SECRET:-}
+      DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
     ports:
       - '8081:8081'
     depends_on:

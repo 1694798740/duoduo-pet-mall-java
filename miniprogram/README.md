@@ -1,8 +1,9 @@
 # A13 · 买家端微信小程序（骨架 · 测试号阶段）
 
 > 目标：主交易闭环（浏览 → 加购 → 下单 → 支付 → 订单）复用既有网关契约，**不改任何后端代码**。
-> AppID 到位前的边界：微信 `code2Session` 登录未打通（后端 `/api/auth/wechat` 端点在下一轮实现），
-> 登录暂用「手机号 + 密码」回退（复用既有 `/api/auth/login`）。
+> AppID 到位前的边界：微信 `code2Session` 登录的**后端已就绪**（`POST /api/auth/wechat` + `/bind`，
+> 本地走 mock 通道），小程序侧 `config.js` 的 `WECHAT_LOGIN_READY` 仍为 `false`——
+> 打开后走 `wx.login` 微信登录，失败自动回退「手机号 + 密码」（复用既有 `/api/auth/login`）。
 
 ## 开发者工具跑起来（3 步）
 
@@ -37,7 +38,10 @@ miniprogram/
 
 ## 下一轮待办（A13 收尾）
 
-1. 后端 `duoduo-user` 加 `POST /api/auth/wechat`：`code2Session`（appid/secret 走环境变量 `WECHAT_APPID` / `WECHAT_SECRET`，未配置时返回 503 `WECHAT_NOT_CONFIGURED`）+ `openid` 绑定 `t_user`（新列 + 冒烟）。
-2. `config.js` 打开 `WECHAT_LOGIN_READY`，删除手机号回退入口。
-3. 冒烟：`wechat-auth-smoke.ps1`（mock 渠道 + 真实凭据两档）。
-4. 真机预览（**待用户提供 AppID**）。
+1. ~~后端 `POST /api/auth/wechat`~~ ✅ 已实现（第十五轮后端补齐）：
+   `code2Session`（appid/secret 走环境变量 `WECHAT_APPID` / `WECHAT_SECRET`，未配置返回 503 `DEGRADED`）
+   + `t_user.wx_openid` 唯一绑定（`uk_user_wxopenid`）+ `POST /api/auth/wechat/bind`；
+   本地/CI 由 `DUODUO_WECHAT_MOCK_ENABLED=true` 开 mock 通道（code 形如 `mock:<openid>`），生产禁开；
+   冒烟 `scripts/wechat-auth-smoke.ps1` 26/26 全绿。
+2. `config.js` 打开 `WECHAT_LOGIN_READY`（真实 AppID/Secret 配好后），删除手机号回退入口。
+3. 真机预览（**待用户提供 AppID**）。

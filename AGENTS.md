@@ -19,7 +19,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   "-Dmaven.legacyLocalRepo=true" \
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
-# 3) 冒烟基线：15 套 1286 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
+# 3) 冒烟基线：16 套 1312 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
 #    （一键全量：scripts\run-all-smoke.ps1；CI 子集同一入口：scripts\ci-run.ps1 -Scripts …）
 #    推送后 GitHub Actions 会自动跑编译 + 冒烟子集（.github/workflows/ci.yml，A6）
 ```
@@ -70,7 +70,7 @@ duoduo-pet-mall-java/
 │   ├── sql/                   00~07 容器初始化 SQL（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）
 │   ├── handover/              人读交接包 9 篇（含 manifest.json 云端 id）
 │   └── agent/                 ★ 本 AI 接管包（00~08）
-├── scripts/                   15 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
+├── scripts/                   16 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
 ├── duoduo-common/             响应/错误码/异常/雪花ID/UserContext/JWT/OperatorGuard
 ├── duoduo-common-web/         全局异常处理/请求ID/身份透传/LongToStringJacksonModule（全站 ID 序列化）
 ├── duoduo-gateway/            路由 + JWT 校验 + 白名单 + 身份头注入（WebFlux）

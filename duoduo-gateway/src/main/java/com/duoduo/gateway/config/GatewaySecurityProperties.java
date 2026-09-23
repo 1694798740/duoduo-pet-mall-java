@@ -29,6 +29,11 @@ public class GatewaySecurityProperties {
             "/api/auth/register",
             "/api/auth/sms/**",
             "/api/auth/refresh",
+            // 微信小程序登录（A13）：wx.login 的 code 换令牌，此时自然没有登录态。
+            // 只放行 /api/auth/wechat 这一条；/api/auth/wechat/bind 是「登录态下绑定
+            // 微信」，需要 Bearer 令牌，绝不能进白名单 —— 否则拿到任意令牌前缀即可
+            // 把别人的微信绑到自己的账号上。
+            "/api/auth/wechat",
             "/api/products/**",
             "/api/categories/**",
             "/api/home/**",

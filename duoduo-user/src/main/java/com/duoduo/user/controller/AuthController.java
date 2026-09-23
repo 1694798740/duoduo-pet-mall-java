@@ -1,11 +1,13 @@
 package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.context.UserContext;
 import com.duoduo.user.dto.UserDtos.LoginRequest;
 import com.duoduo.user.dto.UserDtos.LoginResponse;
 import com.duoduo.user.dto.UserDtos.RefreshRequest;
 import com.duoduo.user.dto.UserDtos.RegisterRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
+import com.duoduo.user.dto.UserDtos.WechatLoginRequest;
 import com.duoduo.user.service.AuthService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -66,6 +68,25 @@ public class AuthController {
         LoginResponse result = authService.refresh(token, userAgent);
         writeCookies(response, result);
         return ApiResponse.ok(result.user());
+    }
+
+    /**
+     * A13 · 微信小程序登录（免登白名单端点）。
+     *
+     * <p>小程序环境没有 Cookie（平台差异），令牌只走响应体、由小程序端存入其
+     * storage，并以 Bearer 头回传；访问令牌短时效，过期由 401 流程重走登录。
+     */
+    @PostMapping("/wechat")
+    public ApiResponse<UserView> wechatLogin(@Valid @RequestBody WechatLoginRequest request,
+                                             @RequestHeader(value = "User-Agent", required = false) String userAgent) {
+        LoginResponse result = authService.wechatLogin(request.code(), userAgent);
+        return ApiResponse.ok(result.user());
+    }
+
+    /** A13 · 登录态下绑定微信（需 Bearer 令牌，不在网关白名单内） */
+    @PostMapping("/wechat/bind")
+    public ApiResponse<UserView> wechatBind(@Valid @RequestBody WechatLoginRequest request) {
+        return ApiResponse.ok(authService.wechatBind(UserContext.requireUserId(), request.code()));
     }
 
     @PostMapping("/logout")

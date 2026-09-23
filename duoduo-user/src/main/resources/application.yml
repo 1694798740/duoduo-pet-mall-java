@@ -69,6 +69,15 @@ duoduo:
     # 「新注册用户库内分数 == 信用分接口给出的基础分」。
     # 改这里必须同步改履约域的 duoduo.credit.base，否则新用户会立刻出现分数分裂。
     credit-default: ${USER_CREDIT_DEFAULT:60}
+  wechat:
+    # A13 · 小程序登录凭据。appid/secret 从微信公众平台获取，只经环境变量注入，
+    # 绝不写入代码库；两者缺一时微信登录返回 503 DEGRADED（如实降级）。
+    appid: ${WECHAT_APPID:}
+    secret: ${WECHAT_SECRET:}
+    # mock 通道（mock:<openid> 形式的 code 直接换 openid，不调微信服务器）：
+    # 仅限本地 / CI 冒烟使用。注意 A5 环境变量命名纪律：走 DUODUO_ 前缀，
+    # 避免宿主通用名静默覆盖。生产必须为 false。
+    mock-enabled: ${DUODUO_WECHAT_MOCK_ENABLED:false}
 
 management:
   endpoints:

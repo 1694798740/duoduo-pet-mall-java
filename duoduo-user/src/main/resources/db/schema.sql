@@ -23,11 +23,14 @@ CREATE TABLE t_user (
     -- 与「无数据用户得基础分」对齐 —— 新注册用户的库内值与实时计算的信用分必须一致，
     -- 否则会变成「资料页显示 100、信用分页显示 60」这种谁也不知道哪个对的分裂。
     credit_score    INT          NOT NULL DEFAULT 60,
+    -- 微信 openid（A13）：绑定后写入；唯一索引兜底「同一微信并发绑到两个账号」（INV-1）。
+    wx_openid       VARCHAR(64),
     last_login_at   TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL,
     updated_at      TIMESTAMP    NOT NULL,
     PRIMARY KEY (id),
-    CONSTRAINT uk_user_phone UNIQUE (phone)
+    CONSTRAINT uk_user_phone UNIQUE (phone),
+    CONSTRAINT uk_user_wxopenid UNIQUE (wx_openid)
 );
 
 CREATE TABLE t_refresh_token (

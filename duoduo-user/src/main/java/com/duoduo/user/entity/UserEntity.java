@@ -26,6 +26,8 @@ public class UserEntity {
     private String role;
     private String realName;
     private String idCardMasked;
+    /** 微信 openid（A13）：绑定后写入；唯一索引兜底「同一微信并发绑到两个账号」。未绑定为 null */
+    private String wxOpenid;
     private Integer creditScore;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
@@ -101,6 +103,14 @@ public class UserEntity {
 
     public void setIdCardMasked(String idCardMasked) {
         this.idCardMasked = idCardMasked;
+    }
+
+    public String getWxOpenid() {
+        return wxOpenid;
+    }
+
+    public void setWxOpenid(String wxOpenid) {
+        this.wxOpenid = wxOpenid;
     }
 
     public Integer getCreditScore() {
