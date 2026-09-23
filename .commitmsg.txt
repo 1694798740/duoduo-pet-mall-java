@@ -1,12 +1,13 @@
-fix(ci): 冒烟脚本错误响应体读取跨 PS 版本兼容 + mysql 健康检查宽限期
+fix(sql): 增量脚本移出容器初始化目录，根治 CI mysql 容器退出（T-46）
 
-CI 首跑两轮失败的定位与修复（T-45）：
-- Run #2（354/356）：smoke 与 address 两处断言依赖错误响应体文本，读取走 PS5.1
-  独有的 GetResponseStream；CI Linux 用 pwsh 7，Response 是 HttpResponseMessage，
-  静默读到 null。修复：16 套冒烟脚本统一加跨版本兜底（GetResponseStream 与
-  Content.ReadAsStringAsync 双路径），失败断言补诊断 extra
-- Run #1（1m28s 即败）：mysql 容器在 CI 冷机器上初始化期间被判 unhealthy，
-  依赖等待直接失败。修复：healthcheck 加 start_period 120s；compose up 失败时
-  自动打印 mysql/nacos 日志辅助定位
-- setup-java v4 升 v5（消除 deprecation 警告）；CI 注释口径修正（16 套 / 356 项）
-- 本地回归：smoke 54/54、address 82/82 全绿
+Run #3 诊断日志抓到真凶：docker-entrypoint-initdb.d 挂载了整个 docs/sql/，
+其中 06/08 是给存量库做 ALTER 的增量脚本，而 03/01 的从零建库 DDL 已包含同名列，
+全新初始化必撞 ERROR 1060 Duplicate column，entrypoint 中止、容器退出。
+compose 的依赖等待与容器重启复活是赛跑：Run #2 侥幸赢了（9/9 healthy），
+Run #1/#3 输了直接失败。本地永不触发（数据卷不重建，init 只跑过一次）。
+
+- 06/07/08 移入 docs/sql/incremental/（不在挂载目录内，只对存量库手工执行）
+- docs/sql/ 只保留 00~05 从零建库
+- 同步更新 README 目录树、agent 07、handover 04、PLAN 中的路径引用
+- agent 08 新增 T-46（附判据：新 DDL 先问「全新初始化会不会撞 00~05 已建结构」）
+- 顺带登记 T-44（双引号反引号转义坑，此前漏登）

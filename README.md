@@ -5,7 +5,7 @@
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
 **最近更新：2026-09-23（第十五轮续）** — **A13 后端 code2Session 登录 + 微信绑定打通**。
-① **DDL**：`t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/08-a13-wechat-bind.sql`，
+① **DDL**：`t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/incremental/08-a13-wechat-bind.sql`，
 并发绑同一微信的最终防线靠索引）。
 ② **新端点**：`POST /api/auth/wechat`（免登，白名单只放行这一条）与 `POST /api/auth/wechat/bind`（登录态绑定）。
 语义口径：未绑定微信登录 → **422** 引导先手机号登录再绑定（**不做自动注册**）；openid 已属他人 → **409**；
@@ -32,7 +32,7 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 内部快照 `GET /api/addresses/internal/snapshot`（`X-Internal-Token` 保护、**不进网关**），
 交易域下单支持「只传 `addressId`」并在下单瞬间写入收货信息**快照**（此后改 / 删地址簿都不影响历史订单）。
 **归属校验统一返回 404**（不区分"不存在"与"无权限"，避免用状态码差异枚举他人地址 ID）。
-新增 `docs/sql/07-a8-user-address.sql`、前端 `/addresses` 页 + 结算页地址二选一。
+新增 `docs/sql/incremental/07-a8-user-address.sql`、前端 `/addresses` 页 + 结算页地址二选一。
 
 **同一轮根治了 T-39（雪花 ID 精度丢失，全站性缺陷）**：
 雪花 ID 是 18~19 位整数，超出 JS `Number.MAX_SAFE_INTEGER`（16 位），以 JSON **number** 下发时
@@ -210,7 +210,7 @@ duoduo-pet-mall-java/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
-│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列 / 07 A8 地址簿建表 / 08 A13 微信绑定列）
+│   └── sql/                    容器初始化 SQL（00 建库授权 + 01~05 从零建库）与 incremental/（06~08 存量库增量，不进容器初始化目录，T-46）
 ├── scripts/                    一键启动、冒烟测试（16 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / wechat-auth-smoke.ps1 微信登录绑定）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
 ├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
@@ -819,7 +819,7 @@ npm run build      # tsc --noEmit && vite build
 
 ### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
 
-- **用户域新增收货地址簿（A8）**：`t_user_address`（`docs/sql/07-a8-user-address.sql`），
+- **用户域新增收货地址簿（A8）**：`t_user_address`（`docs/sql/incremental/07-a8-user-address.sql`），
   6 个用户端点 —— `GET /api/addresses`（**默认地址排最前**）、`POST /api/addresses`、
   `PUT /api/addresses/{id}`、`DELETE /api/addresses/{id}`、`POST /api/addresses/{id}/default`、
   `GET /api/addresses/default`（**无默认时返回 200 + `data=null`**，不报错，前端据此渲染「去添加」）；
@@ -908,7 +908,7 @@ npm run build      # tsc --noEmit && vite build
   **内部接口**（`X-Internal-Token`，**不进网关**，交易域直连 8085）`/api/coupons/internal/{lock,release,consume,sweep}`。
 - **交易域接入**：`placeOrder` 先锁券（失败抛 422 带人话原因）→ `paySuccess` 核销（核销失败则整笔支付不成立）→
   `cancel` / `forceClose` / 超时关单**三处**解锁；`t_order` 增列 `coupon_code VARCHAR(32)`
-  （增量脚本 `docs/sql/06-a5-coupon-columns.sql`；MySQL 不支持 `ADD COLUMN IF NOT EXISTS`，**重复执行报 1060 属预期**）。
+  （增量脚本 `docs/sql/incremental/06-a5-coupon-columns.sql`；MySQL 不支持 `ADD COLUMN IF NOT EXISTS`，**重复执行报 1060 属预期**）。
 - **三条纪律**：① **券码用随机串**（`CP` + 14 位去混淆字符，字符表去掉 `0/O/1/I`）而**不用雪花主键**（INV-16）；
   ② 锁 / 解 / 核销**全部 CAS 条件更新、不用分布式锁**（INV-1）；③ **营销域只算「能抵多少」，折扣金额由交易域写入
   `t_order.discount_amount`**，营销域是被调用方、**不依赖 openfeign**。
