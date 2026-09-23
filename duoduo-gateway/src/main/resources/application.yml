@@ -42,7 +42,10 @@ spring:
             #   漏了这一段不会被报错，只会 404 —— 最难发现的一类配置缺失。
             #   与 /api/users/** 同样**不进白名单**（需登录）：地址簿里是全站最敏感的个人信息之一，
             #   而归属校验依赖 X-User-*，不登录的话服务端根本无从判断归属。
-            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**
+            # /api/admin/users/** = 运营账号管理（A7）。同样必须显式列出（漏了只会 404）：
+            #   用户与角色数据就在用户库，运营管理视图落回 user 服务；不进白名单（需登录，
+            #   operator/admin 角色由服务端 OperatorGuard + 仅 ADMIN 可改角色两层把关）。
+            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product
@@ -79,8 +82,8 @@ spring:
           uri: lb://duoduo-marketing
           predicates:
             - Path=/api/promotions/**,/api/coupons/**
-        # /api/admin/** 已拆段并入 product 与 trade 两服务（M10）：
-        # 运营管理接口本质是商品域 / 交易域数据的「管理视图」，数据在哪就落哪个服务，
+        # /api/admin/** 已拆段并入 product、trade 与 user 三服务（M10 / A7）：
+        # 运营管理接口本质是商品域 / 交易域 / 用户域数据的「管理视图」，数据在哪就落哪个服务，
         # 避免新建独立 admin 微服务时的跨库查询与额外 Feign 链路。
         # 若将来运营管理面需要独立扩展（如接入风控、审批流），再单独建 duoduo-admin 并回收这些路由。
         - id: duoduo-ai

@@ -112,8 +112,32 @@ CREATE TABLE IF NOT EXISTS `t_user_address` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '收货地址簿';
 
 -- ============================================================================
+-- 运营审计日志（A7）
+--
+-- 记录「谁给谁改了什么」：角色变更等运营敏感操作逐条落库。
+-- 只追加、不更新、不删除（无 updated_at）：审计日志的价值在于不可篡改的顺序历史，
+-- 提供 UPDATE 语义只会诱使人去「修正历史」。
+--
+-- detail 存紧凑变更摘要（如 `USER -> OPERATOR`），结构化扩展留待埋点表
+-- t_analytics_event（仍预留），不在这里过早设计。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `t_audit_log` (
+    `id`          BIGINT       NOT NULL COMMENT '雪花 ID',
+    `actor_id`    BIGINT       NOT NULL COMMENT '操作人用户 ID',
+    `actor_phone` VARCHAR(20)  NOT NULL COMMENT '操作人手机号（审计追责用，库表非日志通道）',
+    `action`      VARCHAR(50)  NOT NULL COMMENT '动作标识（如 USER_ROLE_CHANGE）',
+    `target_id`   BIGINT       NOT NULL COMMENT '目标对象 ID（如被改角色的用户）',
+    `detail`      VARCHAR(500) NOT NULL COMMENT '变更明细（old -> new）',
+    `created_at`  TIMESTAMP    NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_audit_actor` (`actor_id`),
+    KEY `idx_audit_target` (`target_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '运营审计日志';
+
+-- ============================================================================
 -- 说明：以下表结构在后续阶段（P1~P3）加入，此处预留，避免 DBA 反复评审
 --   t_address        收货地址（**已落地**，见上方 t_user_address，A8）
+--   t_audit_log      运营审计日志（**已落地**，见上方，A7）
 --   t_category       类目树
 --   t_product / t_sku  商品与规格（自营）
 --   t_listing        个人闲置（C2C）
@@ -127,5 +151,5 @@ CREATE TABLE IF NOT EXISTS `t_user_address` (
 --   t_wallet / t_wallet_transaction  资金
 --   t_settlement     结算单（禁止直接改余额，必须走结算单）
 --   t_kb_doc / t_chat_session / t_chat_message  AI 知识库与会话
---   t_audit_log / t_analytics_event  运营审计与埋点
+--   t_analytics_event  埋点
 -- ============================================================================

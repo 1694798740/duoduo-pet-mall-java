@@ -25,6 +25,7 @@ import type {
   AbnormalSettlement,
   AdminReport,
   AdminSettlementSummary,
+  AdminUserView,
   AddressUpsertRequest,
   AddressView,
   AfterSaleArbitrateRequest,
@@ -62,6 +63,8 @@ import type {
   ProductCard,
   ProductDetail,
   RefundResult,
+  RoleChangeRequest,
+  RoleChangeResult,
   SellerProductView,
   SellerSummary,
   SettlementPage,
@@ -340,6 +343,12 @@ export const adminApi = {
     api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
   auditListing: (id: string, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
+
+  // ---- 运营账号管理（A7，落在 duoduo-user；改角色仅 ADMIN） ----
+  adminUsers: (query?: { role?: string; keyword?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AdminUserView>>('/api/admin/users', { query }),
+  adminChangeRole: (id: string, body: RoleChangeRequest) =>
+    api.post<RoleChangeResult>(`/api/admin/users/${id}/role`, body),
 
   // ---- 售后仲裁工作台（A3，落在 duoduo-fulfilment） ----
 

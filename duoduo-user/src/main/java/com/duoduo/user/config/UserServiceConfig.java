@@ -1,5 +1,7 @@
 package com.duoduo.user.config;
 
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,5 +43,19 @@ public class UserServiceConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(10);
+    }
+
+    /**
+     * MyBatis-Plus 分页插件（A7 运营账号列表首次用到）。
+     * maxLimit 与交易域同口径（100）：pageSize 是客户端可传的参数，
+     * 没有硬上限的「分页」等于把全表导出接口挂了个分页的名字。
+     */
+    @Bean
+    public MybatisPlusInterceptor mybatisPlusInterceptor() {
+        MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        PaginationInnerInterceptor pagination = new PaginationInnerInterceptor();
+        pagination.setMaxLimit(100L);
+        interceptor.addInnerInterceptor(pagination);
+        return interceptor;
     }
 }

@@ -203,6 +203,51 @@ public final class UserDtos {
     ) {
     }
 
+    // ---------------- 运营账号管理（A7） ----------------
+
+    /**
+     * A7 角色变更请求。角色取值白名单在服务层校验（USER / SELLER / OPERATOR / ADMIN），
+     * 这里只挡空值 —— 错误角色名的具体文案（「只能是这四个之一」）由服务层给出，
+     * 边界校验报「格式」，业务校验报「规则」，两者混在一起会难住排查的人。
+     */
+    public record RoleChangeRequest(
+            @NotBlank(message = "目标角色不能为空")
+            String role
+    ) {
+    }
+
+    /**
+     * A7 运营侧用户视图（**脱敏**）。
+     *
+     * <p>与 {@link UserView}（用户看自己）的差别：运营列表**不该看到**的东西一概没有 ——
+     * 实名姓名、身份证掩码、完整手机号都不下发。运营管理的对象是「账号与角色」，
+     * 不是「身份资料」；需要身份资料的场景将来走带审计的专项查询，而不是把列表接口撑成大杂烩。
+     */
+    public record AdminUserView(
+            Long id,
+            String phoneMasked,
+            String nickname,
+            String role,
+            String status,
+            boolean realNameVerified,
+            Integer creditScore,
+            String createdAt
+    ) {
+    }
+
+    /**
+     * A7 角色变更结果。
+     *
+     * <p>{@code notice} 是给运营界面的提示文案（验收②）：
+     * 被改用户的访问令牌是签发时的角色快照，**重新登录后才生效** ——
+     * 这句提示不带上，运营会以为提权当场生效，在对方报「没有权限」时白排查一轮。
+     */
+    public record RoleChangeResult(
+            AdminUserView user,
+            String notice
+    ) {
+    }
+
     // ---------------- 响应 ----------------
     /**
      * 用户公开资料（服务间只读视图）。

@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-23（第十五轮：**A6 契约导出与 CI**（OpenAPI 116 端点入 `docs/openapi/` + GitHub Actions 冒烟子集 356 项）+ **A13 小程序骨架开工**（测试号阶段，主链路零后端改动跑通，`code2Session` 待下一轮）；上一轮第十四轮完成 A8 收货地址簿 + T-39 雪花 ID 精度根治 —— 用户域地址簿（6 用户端点 + 内部快照）、交易域下单支持 `addressId` 并写收货快照；`duoduo-common-web` 的 `LongToStringJacksonModule` 统一把 64 位标识按字符串下发、金额/计数/时间戳按字段名白名单保持数字；前端 38 个 id 字段与 25 处形参改 `string`；接口冒烟 **15 套 1286 项**、UI 断言 **6 套 244 项**）
+> 更新时间：2026-09-24（第十六轮：**A7 运营账号管理页已完成**——用户域 `/api/admin/users` 两端点（脱敏列表 + 仅 ADMIN 改角色）、`t_audit_log` 审计落库、网关路由与前端 `/admin/operators` 页；冒烟口径 **16 套 1335 项**；上一轮第十五轮完成 A6 契约导出与 CI（OpenAPI 116 端点 + GitHub Actions 冒烟子集 356 项，首跑已全绿 Run #5）+ A13 后端 code2Session 登录（`wechat-auth-smoke` 26 项全绿））
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -27,7 +27,7 @@
 | M4 | **Docker 化开发环境** | ✅ **已完成** | **7 容器全健康**；Nacos 注册 **4 服务**；从零重建数据卷可复现 |
 | M5 | **P1-b 交易服务** | ✅ 已完成 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / C2C 担保交易 / **卖家中心（M5-9）** |
 | M6 | 买家端 · **Web 商城** | ✅ 已完成 | 主交易闭环 10 页（React 18 + TS + Vite）；PC 端二维码扫码支付 + 3 秒轮询；**真实浏览器逐页验证通过** |
-| M7 | 买家端 · **微信小程序** | ⬜ 未开始 | 小程序内复用同一套支付接口 |
+| M7 | 买家端 · **微信小程序** | 🔄 进行中 | 骨架 + 后端 code2Session 登录均已交付（第十五轮）；`WECHAT_LOGIN_READY` 联调与真机预览待 AppID |
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
@@ -141,6 +141,7 @@
 | ✅ **A6 契约导出与 CI 已交付**（2026-09-23，第十五轮） | **OpenAPI 导出**：knife4j starter 挂 `duoduo-common-web`（5 业务服务自动获得，网关不受影响；`/v3/api-docs` 与 `/doc.html` 不进网关白名单）+ `scripts/export-openapi.ps1` → `docs/openapi/`（5 份 JSON + endpoints.md，**116 端点**与 04 篇核对一致）；**CI**：`.github/workflows/ci.yml` 双 job（编译 + Docker 全栈冒烟子集 smoke/trade/order/address/id-precision 共 **356 项**，失败即 job 失败 + 日志 artifact）+ `scripts/ci-run.ps1` 通用子集执行器（本地实跑 356/0 全绿） |
 | ✅ **A13 小程序骨架已落地**（2026-09-23，第十五轮，测试号阶段） | 用户批准「代码先写」：`miniprogram/` 5 页面 + 请求封装，**零后端改动**跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」（登录暂用手机号回退）；**余下**：后端 `POST /api/auth/wechat`（code2Session，凭据走环境变量）+ openid 绑定 + 冒烟；真机预览（待 AppID） |
 | ✅ **A13 后端登录打通（code2Session + 绑定）**（2026-09-23，第十五轮续） | `t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/incremental/08-a13-wechat-bind.sql`）；新端点 `POST /api/auth/wechat`（免登，白名单只放行这一条）+ `POST /api/auth/wechat/bind`（登录态绑定）；`WechatGateway` 三分支（mock 显式开启 / real jscode2session / 未配置 503 DEGRADED）；未绑定 422、openid 属他人 409、重复绑定幂等 200、空 code 400；secret 只走环境变量、日志只记 openid 前 4 位。**自测：`scripts/wechat-auth-smoke.ps1` 26/26 全绿（GUARD-OK）+ CI 子集 356/0 无回归**。小程序侧待 `WECHAT_LOGIN_READY=true` 联调；真机预览待 AppID |
+| ✅ **A7 运营账号管理页已交付**（2026-09-24，第十六轮） | 用户域两端点（`GET /api/admin/users` 脱敏分页列表 + `POST /api/admin/users/{id}/role` 仅 ADMIN 改角色）+ `t_audit_log` 审计落库 + 网关 `/api/admin/users/**` 路由 + 前端 `/admin/operators`（AdminTabs 第 7 页签）；三条硬规则：自己降权 422 / 最后一个 ADMIN 不可降 422 / 每次变更写审计；提权后需重新登录生效（notice 提示）。**自测 `admin-smoke.ps1` 49→72 项全绿（PS5.1）** |
 | **A13 买家端微信小程序（收尾，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 骨架 + 后端登录均已就绪，真机预览等 AppID |
 
 ### 未开始（按你确认的端形态排期）
@@ -191,6 +192,33 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-24（第十六轮 · A7 运营账号管理页）
+
+| 文件 | 变更 |
+|---|---|
+| `docs/sql/01-duoduo-user.sql`（**改**） | 预留注释兑现为实表：`t_audit_log`（id 雪花 / actor_id / actor_phone / action / target_id / detail / created_at；**只追加、无 updated_at**——审计价值在不可篡改的顺序历史）；预留清单同步标注已落地 |
+| `docs/sql/incremental/09-a7-audit-log.sql`（**新增**） | `CREATE TABLE IF NOT EXISTS` 幂等风格（T-46 判据通过：全新表，与从零 DDL 不冲突，可安全进 initdb.d） |
+| `duoduo-user/.../db/schema.sql`（**改**） | 同步 `t_audit_log`（H2/单测口径） |
+| `duoduo-user/.../entity/AuditLogEntity.java` + `mapper/AuditLogMapper.java`（**新增**） | 审计日志实体与 Mapper |
+| `duoduo-user/.../config/UserServiceConfig.java`（**改**） | 补 MyBatis-Plus 分页拦截器（`maxLimit=100` 与交易域同口径；运营列表首次用到分页） |
+| `duoduo-user/.../dto/UserDtos.java`（**改**） | 加 `AdminUserView`（**脱敏**：无实名姓名/身份证/完整手机号）、`RoleChangeRequest`、`RoleChangeResult`（notice 含「重新登录生效」） |
+| `duoduo-user/.../service/AdminUserService.java`（**新增**） | 列表：`OperatorGuard.requireOperator()` + role 过滤 + keyword 模糊匹配手机号/昵称 + 分页；改角色：两层权限门（进后台 OPERATOR/ADMIN → 改角色仅 ADMIN）、角色白名单、**自己降权 422**、**最后一个 ADMIN 不可降 422**（先数后改）、同角色幂等 200 不留审计、写 `t_audit_log`、notice 提示重新登录生效 |
+| `duoduo-user/.../controller/AdminUserController.java`（**新增**） | `GET /api/admin/users` + `POST /api/admin/users/{id}/role`（guard 在 Service 层，与 AdminListingController 同先例） |
+| `duoduo-gateway/.../application.yml`（**改**） | user 路由显式挂 `/api/admin/users/**`（不进白名单；漏挂只 404 不报错——显式列举纪律） |
+| `frontend/src/api/types.ts` + `endpoints.ts`（**改**） | A7 三类型 + `adminApi.adminUsers` / `adminChangeRole` |
+| `frontend/src/pages/admin/Operators.tsx`（**新增**） | 检索（role/keyword）+ 分页表格 + 改角色 Modal（notice 原样展示）；改角色入口仅 ADMIN 可见（后端 403 是硬边界，前端隐藏只是少撞一次墙） |
+| `frontend/src/App.tsx` + `pages/admin/shared.tsx`（**改**） | 路由 `/admin/operators`（RequireOperator）+ AdminTabs 第 7 页签「运营账号」 |
+| `scripts/admin-smoke.ps1`（**改**） | 49 → **72 项**：新增 A7 23 项断言（401/403/脱敏/检索/两层权限门/422 三连/提权 + notice/旧令牌快照/重登生效/审计逐字段/幂等不留痕/最后 ADMIN 动态口径/夹具自建自毁） |
+| `docs/agent/04`（**改**） | 端点表加 2 行（脱敏与 422/403/幂等语义） |
+| `docs/openapi/user.json` + `endpoints.md`（**改**，重导出） | user 22 → **26**（A13 +2、A7 +2），全站 116 → **120 端点**，与 04 篇保持一致 |
+| `docs/agent/07`（**改**） | A7 标 ✅（实际交付 + 自测） |
+| `docs/agent/02` + `docs/handover/00/01/07`（**改**） | 冒烟口径 1312 → **1335**；admin-smoke 条目与 A7 证据 |
+| `README.md` + `AGENTS.md`（**改**） | 冒烟基线 16 套 1335 项 |
+
+**自测**：`t_audit_log` 增量脚本实跑（DDL-OK）；全量 `mvn clean install` EXIT=0；user/gateway 镜像重建 + 容器 healthy；`scripts/admin-smoke.ps1` **72/0 全绿（PS5.1）**——首跑曾 11 项失败，根因是**脚本取值路径错误**（认证响应 `data` 直接是 `UserView`（令牌走 httpOnly Cookie），误写 `data.user.id` → `[long]$null`=0 → URL id=0 → 404 连锁），修正为 `data.id` 后全绿；前端 `tsc --noEmit` 零错误。
+
+**遗留**：admin-smoke 暂不入 CI 子集（子集维持 356 项口径；如需可将 admin-smoke 加入，代价约 +2 分钟/次）。
 
 ### 2026-09-23（第十五轮 · A6 契约导出与 CI + A13 小程序骨架）
 

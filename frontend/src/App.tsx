@@ -50,6 +50,7 @@ import { AdminDashboardPage } from './pages/admin/Dashboard';
 import { AdminAuditsPage } from './pages/admin/Audits';
 import { AdminCategoriesPage } from './pages/admin/Categories';
 import { AdminBrandsPage } from './pages/admin/Brands';
+import { AdminOperatorsPage } from './pages/admin/Operators';
 import { AdminOrdersPage } from './pages/admin/Orders';
 import { AdminAfterSalesPage } from './pages/admin/AfterSales';
 import { AfterSalesPage } from './pages/AfterSales';
@@ -328,6 +329,14 @@ export const App: React.FC = () => (
         element={
           <RequireOperator>
             <AdminAfterSalesPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/operators"
+        element={
+          <RequireOperator>
+            <AdminOperatorsPage />
           </RequireOperator>
         }
       />

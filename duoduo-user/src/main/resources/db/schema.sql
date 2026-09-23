@@ -4,6 +4,7 @@
 --   * 金额统一 BIGINT（单位：分）
 --   * 时间统一 TIMESTAMP(UTC)
 
+DROP TABLE IF EXISTS t_audit_log;
 DROP TABLE IF EXISTS t_user_address;
 DROP TABLE IF EXISTS t_pet_profile;
 DROP TABLE IF EXISTS t_refresh_token;
@@ -85,3 +86,18 @@ CREATE TABLE t_user_address (
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_address_user ON t_user_address (user_id);
+
+-- 运营审计日志（A7）：只追加、不更新、不删除；记录「谁给谁改了什么」。
+-- 与 01-duoduo-user.sql / incremental/09 同源，三处口径一致。
+CREATE TABLE t_audit_log (
+    id           BIGINT       NOT NULL,
+    actor_id     BIGINT       NOT NULL,
+    actor_phone  VARCHAR(20)  NOT NULL,
+    action       VARCHAR(50)  NOT NULL,
+    target_id    BIGINT       NOT NULL,
+    detail       VARCHAR(500) NOT NULL,
+    created_at   TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_audit_actor ON t_audit_log (actor_id);
+CREATE INDEX idx_audit_target ON t_audit_log (target_id);

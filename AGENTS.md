@@ -19,7 +19,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   "-Dmaven.legacyLocalRepo=true" \
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
-# 3) 冒烟基线：16 套 1312 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
+# 3) 冒烟基线：16 套 1335 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
 #    （一键全量：scripts\run-all-smoke.ps1；CI 子集同一入口：scripts\ci-run.ps1 -Scripts …）
 #    推送后 GitHub Actions 会自动跑编译 + 冒烟子集（.github/workflows/ci.yml，A6）
 ```

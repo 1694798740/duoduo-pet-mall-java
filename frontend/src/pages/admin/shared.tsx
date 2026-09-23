@@ -17,7 +17,7 @@ export function isOperator(role: string | null | undefined): boolean {
   return upper === 'OPERATOR' || upper === 'ADMIN';
 }
 
-/** 后台内部导航：把六个工作台挂到一条标签上 */
+/** 后台内部导航：把七个工作台挂到一条标签上 */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
   { to: '/admin/audits', label: '内容审核', end: false },
@@ -25,6 +25,7 @@ const TABS = [
   { to: '/admin/brands', label: '品牌管理', end: false },
   { to: '/admin/orders', label: '订单干预', end: false },
   { to: '/admin/after-sales', label: '售后仲裁', end: false },
+  { to: '/admin/operators', label: '运营账号', end: false },
 ];
 
 export const AdminTabs: React.FC = () => (

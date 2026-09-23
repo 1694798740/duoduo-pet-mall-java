@@ -11,10 +11,14 @@
 - `POST /api/addresses/{addressId}/default`
 - `GET /api/addresses/default`
 - `GET /api/addresses/internal/snapshot`
+- `GET /api/admin/users`
+- `POST /api/admin/users/{id}/role`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `POST /api/auth/refresh`
 - `POST /api/auth/register`
+- `POST /api/auth/wechat`
+- `POST /api/auth/wechat/bind`
 - `GET /api/pets`
 - `POST /api/pets`
 - `DELETE /api/pets/{petId}`
@@ -27,7 +31,7 @@
 - `POST /api/users/me/merchant`
 - `POST /api/users/me/realname`
 
-小计：**22** 个端点。
+小计：**26** 个端点。
 
 ## product （:8082）
 
@@ -143,4 +147,4 @@
 
 小计：**9** 个端点。
 
-合计：**116** 个端点（5 个业务服务）。
+合计：**120** 个端点（5 个业务服务）。

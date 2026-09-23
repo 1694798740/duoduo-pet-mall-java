@@ -4,7 +4,19 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-23（第十五轮续）** — **A13 后端 code2Session 登录 + 微信绑定打通**。
+**最近更新：2026-09-24（第十六轮）** — **A7 运营账号管理页完成**。
+① **后端**：`GET /api/admin/users?role=&keyword=`（运营/管理员，分页 + 检索，**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号）
+与 `POST /api/admin/users/{id}/role`（**仅 ADMIN 可改角色**；OPERATOR 改角色 403）。
+三条硬规则：**不能给自己降权 422**、**不能降级最后一个 ADMIN 422**、每次变更写审计日志 `t_audit_log`
+（谁给谁从什么改成什么，只追加不修改）。提权后目标用户**重新登录才生效**（响应 notice 提示——
+访问令牌里的角色是签发时的快照）。同角色重复变更幂等 200、不产生审计事件。
+② **DDL**：`t_audit_log` 实表（`docs/sql/incremental/09-a7-audit-log.sql` 幂等）。
+③ **网关**：`/api/admin/users/**` 显式挂进 user 服务路由（不进白名单）。
+④ **前端**：`/admin/operators` 运营账号页（AdminTabs 第 7 页签；检索 + 分页 + 改角色 Modal）。
+**自测**：`scripts/admin-smoke.ps1` **49 → 72 项全绿**（PS5.1），新增 23 项 A7 断言；`tsc --noEmit` 零错误；
+全量 `mvn clean install` 通过；CI 子集推送后自动复验。
+
+**第十五轮续（2026-09-23）** — **A13 后端 code2Session 登录 + 微信绑定打通**。
 ① **DDL**：`t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/incremental/08-a13-wechat-bind.sql`，
 并发绑同一微信的最终防线靠索引）。
 ② **新端点**：`POST /api/auth/wechat`（免登，白名单只放行这一条）与 `POST /api/auth/wechat/bind`（登录态绑定）。
@@ -53,7 +65,7 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
 另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
 与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
-**接口冒烟累计 16 套 1312 项，浏览器 UI 断言累计 6 套 244 项。**
+**接口冒烟累计 16 套 1335 项，浏览器 UI 断言累计 6 套 244 项。**
 详见「十二、变更记录」。
 
 **上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
@@ -140,7 +152,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十六套 1312 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（十六套 1335 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
@@ -366,6 +378,8 @@ duoduo-pet-mall-java/
 | POST | `/api/admin/listings/{id}/audit` | 审核：`APPROVE` / `REJECT`（驳回必须填原因）；`audit_reason` / `audit_at` 落库留痕 | 运营 |
 | GET | `/api/admin/orders`、`/{orderNo}` | 全平台订单列表（状态 / 订单号前缀过滤）与详情（无归属限制） | 运营 |
 | POST | `/api/admin/orders/{orderNo}/force-close` | **强制关单**（仅待付款）：复用状态机合法流转 + 作废未支付支付单 + 释放冻结 + 状态日志记 OPERATOR | 运营 |
+| GET | `/api/admin/users?role=&keyword=` | **运营账号列表**（A7）：分页 + 角色过滤 + 关键字（手机号/昵称模糊匹配）；**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号 | 运营/ADMIN |
+| POST | `/api/admin/users/{id}/role` | **变更用户角色**（A7，**仅 ADMIN**）：角色白名单（USER/SELLER/OPERATOR/ADMIN）；自己降权 **422**、最后一个 ADMIN 不可降 **422**、同角色幂等 200 不留审计；每次变更写 `t_audit_log`；目标用户**重新登录后**新角色生效（notice 提示） | ADMIN |
 
 **权限模型**：统一 `OperatorGuard.requireOperator()`（OPERATOR / ADMIN，忽略大小写）；
 网关层 `/api/admin/**` 不进白名单（未登录 401），服务层校验角色（非运营 403）——两层各挡一种流量。

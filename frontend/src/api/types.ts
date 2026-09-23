@@ -537,6 +537,30 @@ export interface ListingAuditRequest {
   reason?: string;
 }
 
+// ---------------- 运营账号管理（A7，落在 duoduo-user） ----------------
+
+/** 运营侧用户视图（脱敏）：不下发实名姓名 / 身份证掩码 / 完整手机号 */
+export interface AdminUserView {
+  id: string;
+  phoneMasked: string;
+  nickname: string;
+  role: string;
+  status: string;
+  realNameVerified: boolean;
+  creditScore: number | null;
+  createdAt: string | null;
+}
+
+export interface RoleChangeRequest {
+  role: 'USER' | 'SELLER' | 'OPERATOR' | 'ADMIN' | string;
+}
+
+export interface RoleChangeResult {
+  user: AdminUserView;
+  /** 展示给运营的提示（含「目标用户需重新登录后生效」） */
+  notice: string;
+}
+
 /** 全平台托管资金汇总（与商家端按卖家过滤的口径分开） */
 export interface AdminSettlementSummary {
   custodyAmount: number;

@@ -8,7 +8,10 @@
 #   2. 运营报表 + 资金对账（全平台口径）；
 #   3. 类目 / 品牌的增改删与启停用；
 #   4. 闲置审核：待审列表可见、通过后公开可查、驳回留痕（原因 + 时间）且公开不可见；
-#   5. 订单干预：运营全平台列表、强制关单（含冻结释放）、重复关单被状态机拒绝、普通用户强关 403。
+#   5. 订单干预：运营全平台列表、强制关单（含冻结释放）、重复关单被状态机拒绝、普通用户强关 403；
+#   6. 运营账号管理（A7）：普通用户 403 / 运营可查脱敏列表但改角色 403 / ADMIN 提权 200 +
+#      「需重新登录生效」提示 / 旧令牌角色快照不放大权限 / 审计日志落库 /
+#      同角色幂等不留痕 / 自己降自己 422 / 最后一个 ADMIN 不可降 422 / keyword + role 检索。
 #
 # 设计原则（沿用前几套脚本的教训）：
 #   1. 夹具从接口动态取或自建自毁，不硬编码价格/库存，不碰种子数据；
@@ -252,15 +255,100 @@ Check "已关闭订单再次强关被状态机拒绝（4xx）" ($r.status -ge 40
 $frozen = Sql 'duoduo_product' "SELECT COALESCE(SUM(frozen_stock),0) FROM t_sku WHERE id = $SKU;"
 Check "关单后 SKU 冻结量已释放" ($frozen -eq '0') $frozen
 
-# ---------- 8. 清理与复原 ----------
+# ---------- 8. 运营账号管理（A7） ----------
+Write-Host ""
+Write-Host "> 运营账号管理（A7：列表 / 改角色 / 审计 / 边界）"
+
+# 夹具：第三个账号 DB 提权为 ADMIN（临时唯一管理员，结尾降回 USER）
+$phoneAd = '138' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+$regAd = Register $phoneAd '后台测试-管理员'
+Check "（A7 前置）管理员账号注册成功" ($regAd.result.status -eq 200) $regAd.result.status
+Sql 'duoduo_user' "UPDATE t_user SET role = 'ADMIN' WHERE phone = '$phoneAd';" | Out-Null
+$sessAd = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$loginAd = Call 'Post' "$Gateway/api/auth/login" $sessAd @{ phone = $phoneAd; password = $Password }
+Check "（A7 前置）管理员重新登录成功" ($loginAd.status -eq 200) $loginAd.status
+# 认证响应 data 直接是 UserView（令牌走 httpOnly Cookie），id 是雪花大数字符串
+$uidAd = [long]$loginAd.body.data.id
+$uidU  = [long]$regU.result.body.data.id
+
+# —— 边界：进后台（OperatorGuard） ——
+$anonA7 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$r = Call 'Get' "$Gateway/api/admin/users" $anonA7 $null $null
+Check "A7 未登录查用户列表返回 401（网关拦截）" ($r.status -eq 401) $r.status
+$r = Call 'Get' "$Gateway/api/admin/users" $sessU $null $null
+Check "A7 普通用户查用户列表返回 403（OperatorGuard）" ($r.status -eq 403) $r.status
+
+# —— 运营可查列表（脱敏） ——
+$r = Call 'Get' "$Gateway/api/admin/users?pageSize=5" $sessOp $null $null
+Check "A7 运营查用户列表返回 200" ($r.status -eq 200) $r.status
+$row0 = @($r.body.data.items)[0]
+Check "A7 列表字段脱敏（手机号掩码）" ($null -ne $row0 -and $row0.phoneMasked -match '^\d{3}\*{4}\d{4}$') ($row0 | ConvertTo-Json -Compress)
+$hasSensitive = ($null -ne $row0.PSObject.Properties['realName']) -or ($null -ne $row0.PSObject.Properties['idCardMasked'])
+Check "A7 列表不下发实名姓名 / 身份证字段" (-not $hasSensitive) ($row0 | ConvertTo-Json -Compress)
+
+# —— 检索 ——
+$r = Call 'Get' "$Gateway/api/admin/users?keyword=$phoneU&pageSize=20" $sessOp $null $null
+$hitU = @($r.body.data.items | Where-Object { [long]$_.id -eq $uidU }).Count
+Check "A7 keyword=手机号命中目标用户" ($r.status -eq 200 -and $hitU -eq 1) ($r.body | ConvertTo-Json -Compress)
+$r = Call 'Get' "$Gateway/api/admin/users?role=ADMIN&pageSize=20" $sessOp $null $null
+$hitAd = @($r.body.data.items | Where-Object { [long]$_.id -eq $uidAd }).Count
+Check "A7 role=ADMIN 过滤命中管理员夹具" ($r.status -eq 200 -and $hitAd -eq 1) ($r.body | ConvertTo-Json -Compress)
+
+# —— 改角色：两层权限门 ——
+$r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessOp @{ role = 'OPERATOR' }
+Check "A7 运营（OPERATOR）改角色返回 403（仅 ADMIN）" ($r.status -eq 403) $r.status
+$r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'VIP' }
+Check "A7 非法角色名返回 422" ($r.status -eq 422) $r.status
+$r = Call 'Post' "$Gateway/api/admin/users/$uidAd/role" $sessAd @{ role = 'USER' }
+Check "A7 管理员给自己降权返回 422" ($r.status -eq 422) $r.status
+
+# —— ADMIN 提权 + 验收②（重新登录才生效） ——
+$r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'OPERATOR' }
+Check "A7 管理员提权返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress)
+Check "A7 响应角色已更新为 OPERATOR" ($r.body.data.user.role -eq 'OPERATOR') $r.body.data.user.role
+Check "A7 提示文案含『重新登录』" ("$($r.body.data.notice)" -match '重新登录') $r.body.data.notice
+$r = Call 'Get' "$Gateway/api/admin/users" $sessU $null $null
+Check "A7 被提权用户旧令牌仍 403（角色快照不放大权限）" ($r.status -eq 403) $r.status
+$sessU2 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$r = Call 'Post' "$Gateway/api/auth/login" $sessU2 @{ phone = $phoneU; password = $Password }
+Check "A7 被提权用户重新登录拿到 OPERATOR 角色" ($r.status -eq 200 -and $r.body.data.role -eq 'OPERATOR') ($r.body | ConvertTo-Json -Compress -Depth 6)
+$r = Call 'Get' "$Gateway/api/admin/users?pageSize=1" $sessU2 $null $null
+Check "A7 重新登录后访问后台生效（200）" ($r.status -eq 200) $r.status
+
+# —— 审计日志（谁给谁改了什么；detail 为 ASCII，直接比对安全） ——
+$audit = Sql 'duoduo_user' "SELECT CONCAT(actor_id, '|', action, '|', detail, '|', target_id) FROM t_audit_log WHERE target_id = $uidU AND detail = 'USER -> OPERATOR' ORDER BY created_at DESC LIMIT 1;"
+Check "A7 审计日志已落库（管理员 → 目标用户 USER->OPERATOR）" ("$audit" -eq "$uidAd|USER_ROLE_CHANGE|USER -> OPERATOR|$uidU") $audit
+
+# —— 幂等：同角色重复变更不留审计 ——
+$before = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log WHERE target_id = $uidU;"
+$r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'OPERATOR' }
+$after = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log WHERE target_id = $uidU;"
+Check "A7 同角色重复变更幂等（200）" ($r.status -eq 200) $r.status
+Check "A7 幂等调用不产生新审计事件" ("$before" -eq "$after") "$before -> $after"
+
+# —— 最后一个 ADMIN 不可降级（动态口径：若平台恰有一名 ADMIN 则 422，否则放行并复原） ——
+$adminCount = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE role = 'ADMIN';"
+$r = Call 'Post' "$Gateway/api/admin/users/$uidAd/role" $sessAd @{ role = 'OPERATOR' }
+if ("$adminCount" -eq '1') {
+    Check "A7 最后一个 ADMIN 不可降级返回 422" ($r.status -eq 422) $r.status
+} else {
+    Check "A7 平台存在多名 ADMIN，降级放行（动态口径 200）" ($r.status -eq 200) $r.status
+    Sql 'duoduo_user' "UPDATE t_user SET role = 'ADMIN' WHERE phone = '$phoneAd';" | Out-Null
+}
+
+# ---------- 9. 清理与复原 ----------
 Write-Host ""
 Write-Host "> 清理夹具"
 Sql 'duoduo_product' "DELETE FROM t_listing WHERE id IN ($listingId1, $listingId2);" | Out-Null
 $left = Sql 'duoduo_product' "SELECT COUNT(*) FROM t_listing WHERE id IN ($listingId1, $listingId2);"
 Check "闲置夹具已删除（库内复原）" ($left -eq '0') $left
-Sql 'duoduo_user' "UPDATE t_user SET role = 'USER' WHERE phone = '$phoneOp';" | Out-Null
-$roleBack = Sql 'duoduo_user' "SELECT role FROM t_user WHERE phone = '$phoneOp';"
-Check "运营账号已降回 USER（库内复原）" ($roleBack -eq 'USER') $roleBack
+Sql 'duoduo_user' "UPDATE t_user SET role = 'USER' WHERE phone IN ('$phoneOp', '$phoneAd');" | Out-Null
+$roleBack = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE phone IN ('$phoneOp', '$phoneAd') AND role = 'USER';"
+Check "运营 / 管理员账号已降回 USER（库内复原）" ("$roleBack" -eq '2') $roleBack
+# A7 审计夹具行一并清掉（自建自毁，不污染真实审计流水）
+Sql 'duoduo_user' "DELETE FROM t_audit_log WHERE actor_id = $uidAd AND target_id IN ($uidU, $uidAd);" | Out-Null
+$auditLeft = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log WHERE actor_id = $uidAd;"
+Check "A7 审计日志夹具行已清除（库内复原）" ("$auditLeft" -eq '0') $auditLeft
 
 # ---------- 结果 ----------
 Write-Host ""
