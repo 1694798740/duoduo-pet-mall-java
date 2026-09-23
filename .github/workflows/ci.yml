@@ -1,0 +1,106 @@
+# A6 · CI：编译 + 冒烟子集（全套回归留在本地，见 scripts/run-all-smoke.ps1）
+#
+# 为什么子集：15 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
+# address / id-precision，合计 364 项断言）。新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
+#
+# 已知环境差异的处理：
+#   * 冒烟脚本是 PS 5.1 风格但与 pwsh 兼容；runner 自带 pwsh（ubuntu-latest）。
+#   * 脚本里有 `& curl.exe`（Windows 习惯）—— Linux 上没有 curl.exe，做一个 symlink shim。
+#   * 金额/状态断言只走 HTTP，不依赖 docker exec 输出编码，Linux 下无 GBK 问题。
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: 编译检查（后端 9 模块 + 前端 tsc/vite）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 后端编译（mvn package，9 模块）
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 前端 tsc --noEmit + vite build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  smoke:
+    name: 冒烟子集（Docker 全栈 + pwsh 断言）
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 构建各服务 fat jar
+        run: mvn -B -ntp -DskipTests package
+
+      - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
+        run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
+
+      - name: 起全栈（mysql / redis / nacos + 6 个业务服务）
+        run: docker compose up -d --build
+
+      - name: 等 9 个容器全部 healthy（最长 10 分钟）
+        run: |
+          for i in $(seq 1 60); do
+            healthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health=="healthy")] | length')
+            total=$(docker compose ps --format json | jq -s 'length')
+            echo "[$i/60] healthy=$healthy/$total"
+            if [ "$healthy" -eq 9 ] && [ "$total" -eq 9 ]; then exit 0; fi
+            # 有容器反复重启就不等了，直接失败并打日志
+            restarting=$(docker compose ps --format json | jq -s '[.[] | select(.State=="restarting")] | length')
+            if [ "$restarting" -gt 0 ]; then
+              echo "::error::有容器处于 restarting 状态，放弃等待"
+              docker compose logs --tail 50
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::10 分钟内未达到 9/9 healthy"
+          docker compose ps
+          docker compose logs --tail 50
+          exit 1
+
+      - name: 跑冒烟子集（任何断言失败即 job 失败）
+        shell: pwsh
+        run: ./scripts/ci-run.ps1 -Scripts $env:SMOKE_SCRIPTS
+
+      - name: 上传冒烟日志（无论成败）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: logs/ci/
+          retention-days: 7

@@ -84,3 +84,18 @@ logging:
     com.duoduo: INFO
   pattern:
     console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-marketing","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'
+
+# ── OpenAPI 契约（A6）────────────────────────────────────────────
+# 随 duoduo-common-web 的 knife4j starter 自动装配，导出 /v3/api-docs 供契约比对与前端联调。
+# 安全边界：网关路由是显式前缀白名单，/v3/api-docs 与 /doc.html 不会被路由到公网入口；
+# 服务直连端口（8081~8085）仅本机/内网可达。生产若要彻底关闭，把 enabled 置 false 即可。
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: false
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn

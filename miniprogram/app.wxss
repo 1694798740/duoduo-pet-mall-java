@@ -1,0 +1,37 @@
+/* A13 · 全局样式 */
+page {
+  background: #f5f6fa;
+  font-size: 28rpx;
+  color: #222;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16rpx;
+  margin: 20rpx;
+  padding: 24rpx;
+}
+
+.btn-primary {
+  background: #4f6ef7;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+  padding: 8rpx 0;
+}
+
+.btn-primary[disabled] {
+  background: #b9c4fb;
+  color: #fff;
+}
+
+.price {
+  color: #e5484d;
+  font-weight: 700;
+}
+
+.empty {
+  text-align: center;
+  color: #999;
+  padding: 120rpx 0;
+}

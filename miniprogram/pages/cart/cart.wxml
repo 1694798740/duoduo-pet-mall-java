@@ -1,0 +1,25 @@
+<view wx:if="{{error}}" class="empty">{{error}}</view>
+<view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
+<view wx:elif="{{items.length === 0}}" class="empty">购物车是空的，去逛逛吧</view>
+
+<block wx:else>
+  <view wx:for="{{items}}" wx:key="skuId" class="card cart-item">
+    <view class="ci-title">{{item.title}}</view>
+    <view class="ci-meta">
+      <text class="price">¥{{item.price / 100}} × {{item.quantity}}</text>
+      <text class="ci-subtotal">小计 ¥{{item.price * item.quantity / 100}}</text>
+    </view>
+    <button class="ci-del" size="mini" data-sku="{{item.skuId}}" bindtap="removeItem">删除</button>
+  </view>
+
+  <view class="footer">
+    <button
+      class="btn-primary footer-btn"
+      bindtap="placeOrder"
+      disabled="{{ordering || items.length === 0}}"
+      loading="{{ordering}}"
+    >
+      结算（{{items.length}} 种商品）
+    </button>
+  </view>
+</block>

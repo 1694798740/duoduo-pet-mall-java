@@ -1,0 +1,823 @@
+﻿{
+    "openapi":  "3.0.1",
+    "info":  {
+                 "title":  "OpenAPI definition",
+                 "version":  "v0"
+             },
+    "servers":  [
+                    {
+                        "url":  "http://127.0.0.1:8085",
+                        "description":  "Generated server url"
+                    }
+                ],
+    "paths":  {
+                  "/api/coupons/templates/{templateId}/claim":  {
+                                                                    "post":  {
+                                                                                 "tags":  [
+                                                                                              "coupon-controller"
+                                                                                          ],
+                                                                                 "operationId":  "claim",
+                                                                                 "parameters":  [
+                                                                                                    {
+                                                                                                        "name":  "templateId",
+                                                                                                        "in":  "path",
+                                                                                                        "required":  true,
+                                                                                                        "schema":  {
+                                                                                                                       "type":  "integer",
+                                                                                                                       "format":  "int64"
+                                                                                                                   }
+                                                                                                    }
+                                                                                                ],
+                                                                                 "responses":  {
+                                                                                                   "200":  {
+                                                                                                               "description":  "OK",
+                                                                                                               "content":  {
+                                                                                                                               "*/*":  {
+                                                                                                                                           "schema":  {
+                                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseClaimResult"
+                                                                                                                                                      }
+                                                                                                                                       }
+                                                                                                                           }
+                                                                                                           }
+                                                                                               }
+                                                                             }
+                                                                },
+                  "/api/coupons/internal/sweep":  {
+                                                      "post":  {
+                                                                   "tags":  [
+                                                                                "coupon-internal-controller"
+                                                                            ],
+                                                                   "operationId":  "sweep",
+                                                                   "responses":  {
+                                                                                     "200":  {
+                                                                                                 "description":  "OK",
+                                                                                                 "content":  {
+                                                                                                                 "*/*":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/ApiResponseSweepResult"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                             }
+                                                                                             }
+                                                                                 }
+                                                               }
+                                                  },
+                  "/api/coupons/internal/release":  {
+                                                        "post":  {
+                                                                     "tags":  [
+                                                                                  "coupon-internal-controller"
+                                                                              ],
+                                                                     "operationId":  "release",
+                                                                     "requestBody":  {
+                                                                                         "content":  {
+                                                                                                         "application/json":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ReleaseRequest"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                     },
+                                                                                         "required":  true
+                                                                                     },
+                                                                     "responses":  {
+                                                                                       "200":  {
+                                                                                                   "description":  "OK",
+                                                                                                   "content":  {
+                                                                                                                   "*/*":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "$ref":  "#/components/schemas/ApiResponseReleaseResult"
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                               }
+                                                                                               }
+                                                                                   }
+                                                                 }
+                                                    },
+                  "/api/coupons/internal/lock":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "coupon-internal-controller"
+                                                                           ],
+                                                                  "operationId":  "lock",
+                                                                  "requestBody":  {
+                                                                                      "content":  {
+                                                                                                      "application/json":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "$ref":  "#/components/schemas/LockRequest"
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                  },
+                                                                                      "required":  true
+                                                                                  },
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseLockResult"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
+                  "/api/coupons/internal/consume":  {
+                                                        "post":  {
+                                                                     "tags":  [
+                                                                                  "coupon-internal-controller"
+                                                                              ],
+                                                                     "operationId":  "consume",
+                                                                     "requestBody":  {
+                                                                                         "content":  {
+                                                                                                         "application/json":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ConsumeRequest"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                     },
+                                                                                         "required":  true
+                                                                                     },
+                                                                     "responses":  {
+                                                                                       "200":  {
+                                                                                                   "description":  "OK",
+                                                                                                   "content":  {
+                                                                                                                   "*/*":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "$ref":  "#/components/schemas/ApiResponseConsumeResult"
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                               }
+                                                                                               }
+                                                                                   }
+                                                                 }
+                                                    },
+                  "/api/coupons/admin/templates":  {
+                                                       "post":  {
+                                                                    "tags":  [
+                                                                                 "coupon-template-controller"
+                                                                             ],
+                                                                    "operationId":  "create",
+                                                                    "requestBody":  {
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/CreateTemplateRequest"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    },
+                                                                                        "required":  true
+                                                                                    },
+                                                                    "responses":  {
+                                                                                      "200":  {
+                                                                                                  "description":  "OK",
+                                                                                                  "content":  {
+                                                                                                                  "*/*":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/ApiResponseTemplateView"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                              }
+                                                                                              }
+                                                                                  }
+                                                                }
+                                                   },
+                  "/api/coupons/templates":  {
+                                                 "get":  {
+                                                             "tags":  [
+                                                                          "coupon-template-controller"
+                                                                      ],
+                                                             "operationId":  "templates",
+                                                             "responses":  {
+                                                                               "200":  {
+                                                                                           "description":  "OK",
+                                                                                           "content":  {
+                                                                                                           "*/*":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseListTemplateView"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                                       }
+                                                                                       }
+                                                                           }
+                                                         }
+                                             },
+                  "/api/coupons/mine":  {
+                                            "get":  {
+                                                        "tags":  [
+                                                                     "coupon-controller"
+                                                                 ],
+                                                        "operationId":  "mine",
+                                                        "parameters":  [
+                                                                           {
+                                                                               "name":  "status",
+                                                                               "in":  "query",
+                                                                               "required":  false,
+                                                                               "schema":  {
+                                                                                              "type":  "string"
+                                                                                          }
+                                                                           }
+                                                                       ],
+                                                        "responses":  {
+                                                                          "200":  {
+                                                                                      "description":  "OK",
+                                                                                      "content":  {
+                                                                                                      "*/*":  {
+                                                                                                                  "schema":  {
+                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseListCouponView"
+                                                                                                                             }
+                                                                                                              }
+                                                                                                  }
+                                                                                  }
+                                                                      }
+                                                    }
+                                        },
+                  "/api/coupons/mine/usable":  {
+                                                   "get":  {
+                                                               "tags":  [
+                                                                            "coupon-controller"
+                                                                        ],
+                                                               "operationId":  "usable",
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "amount",
+                                                                                      "in":  "query",
+                                                                                      "required":  false,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64",
+                                                                                                     "default":  0
+                                                                                                 }
+                                                                                  }
+                                                                              ],
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseUsableResult"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                               }
+              },
+    "components":  {
+                       "schemas":  {
+                                       "ApiResponseClaimResult":  {
+                                                                      "type":  "object",
+                                                                      "properties":  {
+                                                                                         "code":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                         "message":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                         "data":  {
+                                                                                                      "$ref":  "#/components/schemas/ClaimResult"
+                                                                                                  },
+                                                                                         "requestId":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                         "timestamp":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       }
+                                                                                     }
+                                                                  },
+                                       "ClaimResult":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "code":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                              "templateId":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             },
+                                                                              "name":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                              "thresholdAmount":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                              "discountAmount":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                              "expireAt":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                              "replay":  {
+                                                                                             "type":  "boolean"
+                                                                                         }
+                                                                          }
+                                                       },
+                                       "ApiResponseSweepResult":  {
+                                                                      "type":  "object",
+                                                                      "properties":  {
+                                                                                         "code":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                         "message":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                         "data":  {
+                                                                                                      "$ref":  "#/components/schemas/SweepResult"
+                                                                                                  },
+                                                                                         "requestId":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                         "timestamp":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       }
+                                                                                     }
+                                                                  },
+                                       "SweepResult":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "scanned":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32"
+                                                                                          },
+                                                                              "released":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int32"
+                                                                                           },
+                                                                              "expired":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32"
+                                                                                          }
+                                                                          }
+                                                       },
+                                       "ReleaseRequest":  {
+                                                              "required":  [
+                                                                               "orderNo"
+                                                                           ],
+                                                              "type":  "object",
+                                                              "properties":  {
+                                                                                 "orderNo":  {
+                                                                                                 "type":  "string"
+                                                                                             }
+                                                                             }
+                                                          },
+                                       "ApiResponseReleaseResult":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "code":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                           "message":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                           "data":  {
+                                                                                                        "$ref":  "#/components/schemas/ReleaseResult"
+                                                                                                    },
+                                                                                           "requestId":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                           "timestamp":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         }
+                                                                                       }
+                                                                    },
+                                       "ReleaseResult":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "released":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int32"
+                                                                                             }
+                                                                            }
+                                                         },
+                                       "LockRequest":  {
+                                                           "required":  [
+                                                                            "code",
+                                                                            "orderNo",
+                                                                            "userId"
+                                                                        ],
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "code":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                              "userId":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                              "orderNo":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                              "orderAmount":  {
+                                                                                                  "minimum":  0,
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              }
+                                                                          }
+                                                       },
+                                       "ApiResponseLockResult":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "code":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                        "message":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                        "data":  {
+                                                                                                     "$ref":  "#/components/schemas/LockResult"
+                                                                                                 },
+                                                                                        "requestId":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                        "timestamp":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int64"
+                                                                                                      }
+                                                                                    }
+                                                                 },
+                                       "LockResult":  {
+                                                          "type":  "object",
+                                                          "properties":  {
+                                                                             "success":  {
+                                                                                             "type":  "boolean"
+                                                                                         },
+                                                                             "code":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                             "discountAmount":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                             "reason":  {
+                                                                                            "type":  "string"
+                                                                                        }
+                                                                         }
+                                                      },
+                                       "ConsumeRequest":  {
+                                                              "required":  [
+                                                                               "orderNo"
+                                                                           ],
+                                                              "type":  "object",
+                                                              "properties":  {
+                                                                                 "orderNo":  {
+                                                                                                 "type":  "string"
+                                                                                             }
+                                                                             }
+                                                          },
+                                       "ApiResponseConsumeResult":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "code":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                           "message":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                           "data":  {
+                                                                                                        "$ref":  "#/components/schemas/ConsumeResult"
+                                                                                                    },
+                                                                                           "requestId":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                           "timestamp":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         }
+                                                                                       }
+                                                                    },
+                                       "ConsumeResult":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "consumed":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int32"
+                                                                                             }
+                                                                            }
+                                                         },
+                                       "CreateTemplateRequest":  {
+                                                                     "required":  [
+                                                                                      "endAt",
+                                                                                      "name",
+                                                                                      "startAt",
+                                                                                      "type"
+                                                                                  ],
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "name":  {
+                                                                                                     "maxLength":  100,
+                                                                                                     "minLength":  0,
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                        "description":  {
+                                                                                                            "maxLength":  500,
+                                                                                                            "minLength":  0,
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                        "type":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                        "thresholdAmount":  {
+                                                                                                                "minimum":  0,
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int64"
+                                                                                                            },
+                                                                                        "discountAmount":  {
+                                                                                                               "minimum":  1,
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           },
+                                                                                        "totalCount":  {
+                                                                                                           "minimum":  1,
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int32"
+                                                                                                       },
+                                                                                        "startAt":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                        "endAt":  {
+                                                                                                      "type":  "string"
+                                                                                                  }
+                                                                                    }
+                                                                 },
+                                       "ApiResponseTemplateView":  {
+                                                                       "type":  "object",
+                                                                       "properties":  {
+                                                                                          "code":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                          "message":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                          "data":  {
+                                                                                                       "$ref":  "#/components/schemas/TemplateView"
+                                                                                                   },
+                                                                                          "requestId":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                          "timestamp":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        }
+                                                                                      }
+                                                                   },
+                                       "TemplateView":  {
+                                                            "type":  "object",
+                                                            "properties":  {
+                                                                               "id":  {
+                                                                                          "type":  "integer",
+                                                                                          "format":  "int64"
+                                                                                      },
+                                                                               "name":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                               "description":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                               "type":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                               "typeLabel":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                               "thresholdAmount":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   },
+                                                                               "discountAmount":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                               "totalCount":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int32"
+                                                                                              },
+                                                                               "claimedCount":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int32"
+                                                                                                },
+                                                                               "remainingCount":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int32"
+                                                                                                  },
+                                                                               "startAt":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                               "endAt":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                               "status":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                               "claimable":  {
+                                                                                                 "type":  "boolean"
+                                                                                             },
+                                                                               "claimableReason":  {
+                                                                                                       "type":  "string"
+                                                                                                   }
+                                                                           }
+                                                        },
+                                       "ApiResponseListTemplateView":  {
+                                                                           "type":  "object",
+                                                                           "properties":  {
+                                                                                              "code":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                              "message":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                              "data":  {
+                                                                                                           "type":  "array",
+                                                                                                           "items":  {
+                                                                                                                         "$ref":  "#/components/schemas/TemplateView"
+                                                                                                                     }
+                                                                                                       },
+                                                                                              "requestId":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                              "timestamp":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int64"
+                                                                                                            }
+                                                                                          }
+                                                                       },
+                                       "ApiResponseListCouponView":  {
+                                                                         "type":  "object",
+                                                                         "properties":  {
+                                                                                            "code":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                            "message":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                            "data":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "$ref":  "#/components/schemas/CouponView"
+                                                                                                                   }
+                                                                                                     },
+                                                                                            "requestId":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                            "timestamp":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int64"
+                                                                                                          }
+                                                                                        }
+                                                                     },
+                                       "CouponView":  {
+                                                          "type":  "object",
+                                                          "properties":  {
+                                                                             "code":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                             "templateId":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            },
+                                                                             "name":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                             "type":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                             "typeLabel":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                             "thresholdAmount":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                             "discountAmount":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                             "status":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                             "statusLabel":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                             "claimedAt":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                             "expireAt":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                             "lockedOrderNo":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                             "usedOrderNo":  {
+                                                                                                 "type":  "string"
+                                                                                             }
+                                                                         }
+                                                      },
+                                       "ApiResponseUsableResult":  {
+                                                                       "type":  "object",
+                                                                       "properties":  {
+                                                                                          "code":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                          "message":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                          "data":  {
+                                                                                                       "$ref":  "#/components/schemas/UsableResult"
+                                                                                                   },
+                                                                                          "requestId":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                          "timestamp":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        }
+                                                                                      }
+                                                                   },
+                                       "UsableCoupon":  {
+                                                            "type":  "object",
+                                                            "properties":  {
+                                                                               "code":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                               "name":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                               "thresholdAmount":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   },
+                                                                               "discountAmount":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                               "expireAt":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                               "usable":  {
+                                                                                              "type":  "boolean"
+                                                                                          },
+                                                                               "reason":  {
+                                                                                              "type":  "string"
+                                                                                          }
+                                                                           }
+                                                        },
+                                       "UsableResult":  {
+                                                            "type":  "object",
+                                                            "properties":  {
+                                                                               "amount":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int64"
+                                                                                          },
+                                                                               "coupons":  {
+                                                                                               "type":  "array",
+                                                                                               "items":  {
+                                                                                                             "$ref":  "#/components/schemas/UsableCoupon"
+                                                                                                         }
+                                                                                           },
+                                                                               "bestCouponCode":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                               "bestDiscountAmount":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int64"
+                                                                                                      }
+                                                                           }
+                                                        }
+                                   }
+                   },
+    "x-openapi":  {
+                      "x-setting":  {
+                                        "customCode":  200,
+                                        "language":  "zh-CN",
+                                        "enableSwaggerModels":  true,
+                                        "swaggerModelName":  "Swagger Models",
+                                        "enableReloadCacheParameter":  false,
+                                        "enableAfterScript":  true,
+                                        "enableDocumentManage":  true,
+                                        "enableVersion":  false,
+                                        "enableRequestCache":  true,
+                                        "enableFilterMultipartApis":  false,
+                                        "enableFilterMultipartApiMethodType":  "POST",
+                                        "enableHost":  false,
+                                        "enableHostText":  "",
+                                        "enableDynamicParameter":  false,
+                                        "enableDebug":  true,
+                                        "enableFooter":  true,
+                                        "enableFooterCustom":  false,
+                                        "enableSearch":  true,
+                                        "enableOpenApi":  true,
+                                        "enableHomeCustom":  false,
+                                        "enableGroup":  true,
+                                        "enableResponseCode":  true
+                                    },
+                      "x-markdownFiles":  [
+
+                                          ]
+                  }
+}

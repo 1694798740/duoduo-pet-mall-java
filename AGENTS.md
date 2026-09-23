@@ -20,7 +20,8 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
 # 3) 冒烟基线：15 套 1286 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
-#    （一键全量：scripts\run-all-smoke.ps1）
+#    （一键全量：scripts\run-all-smoke.ps1；CI 子集同一入口：scripts\ci-run.ps1 -Scripts …）
+#    推送后 GitHub Actions 会自动跑编译 + 冒烟子集（.github/workflows/ci.yml，A6）
 ```
 
 任何一条不通过 → **先修基线，不要开始写新功能**。基线不绿时的改动无法验证。

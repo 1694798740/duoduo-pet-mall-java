@@ -1,0 +1,24 @@
+<view class="login-wrap">
+  <view class="card">
+    <view class="login-title">登录多多宠物商店</view>
+
+    <button
+      wx:if="{{wechatReady}}"
+      class="btn-primary login-btn"
+      bindtap="submit"
+      disabled="{{submitting}}"
+      loading="{{submitting}}"
+    >
+      微信一键登录
+    </button>
+
+    <block wx:else>
+      <input class="login-input" type="number" placeholder="手机号" value="{{phone}}" bindinput="onPhone" />
+      <input class="login-input" password placeholder="密码" value="{{password}}" bindinput="onPassword" />
+      <button class="btn-primary login-btn" bindtap="submit" disabled="{{submitting}}" loading="{{submitting}}">
+        登录
+      </button>
+      <view class="login-tip">测试号阶段：使用 Web 端注册的账号密码登录；AppID 就绪后切换为微信一键登录</view>
+    </block>
+  </view>
+</view>

@@ -1,0 +1,35 @@
+<view wx:if="{{error}}" class="empty">{{error}}</view>
+<view wx:elif="{{loading && orders.length === 0}}" class="empty">加载中…</view>
+<view wx:elif="{{orders.length === 0}}" class="empty">还没有订单</view>
+
+<view wx:for="{{orders}}" wx:key="orderNo" class="card order-item">
+  <view class="o-head">
+    <text class="o-no">单号 {{item.orderNo}}</text>
+    <text class="o-status">{{item.status}}</text>
+  </view>
+  <view class="o-body">
+    <text>共 {{item.totalQuantity || item.items.length}} 件商品</text>
+    <text class="price">实付 ¥{{item.payAmount / 100}}</text>
+  </view>
+  <view class="o-actions">
+    <button
+      wx:if="{{item.status === 'PENDING_PAYMENT'}}"
+      class="btn-primary o-btn"
+      size="mini"
+      data-no="{{item.orderNo}}"
+      bindtap="pay"
+      loading="{{payingOrderNo === item.orderNo}}"
+    >
+      去支付
+    </button>
+    <button
+      wx:if="{{item.status === 'SHIPPED'}}"
+      class="o-btn o-btn-plain"
+      size="mini"
+      data-no="{{item.orderNo}}"
+      bindtap="confirmOrder"
+    >
+      确认收货
+    </button>
+  </view>
+</view>

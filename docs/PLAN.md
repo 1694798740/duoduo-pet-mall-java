@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-23（第十四轮：A8 收货地址簿 + **T-39 雪花 ID 精度缺陷根治** —— 用户域新增地址簿（6 用户端点 + 内部快照）、交易域下单支持 `addressId` 并写收货快照；`duoduo-common-web` 新增 `LongToStringJacksonModule` 统一把 64 位标识按字符串下发、金额/计数/时间戳按字段名白名单保持数字；前端 38 个 id 字段与 25 处形参改 `string`；接口冒烟 **15 套 1286 项**、UI 断言 **6 套 244 项**）
+> 更新时间：2026-09-23（第十五轮：**A6 契约导出与 CI**（OpenAPI 116 端点入 `docs/openapi/` + GitHub Actions 冒烟子集 356 项）+ **A13 小程序骨架开工**（测试号阶段，主链路零后端改动跑通，`code2Session` 待下一轮）；上一轮第十四轮完成 A8 收货地址簿 + T-39 雪花 ID 精度根治 —— 用户域地址簿（6 用户端点 + 内部快照）、交易域下单支持 `addressId` 并写收货快照；`duoduo-common-web` 的 `LongToStringJacksonModule` 统一把 64 位标识按字符串下发、金额/计数/时间戳按字段名白名单保持数字；前端 38 个 id 字段与 25 处形参改 `string`；接口冒烟 **15 套 1286 项**、UI 断言 **6 套 244 项**）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -138,7 +138,9 @@
 | ✅ **M11 剩余块：优惠券营销（A5）已交付**（2026-09-23，第十三轮） | **新增第 6 个业务服务 `duoduo-marketing`（:8085，雪花 worker-id=5）**：领券中心 / 券包 / 内部锁·解·核销 / TTL 补偿调度 + 前端领券中心与结算选券；容器 **8 → 9**（3 中间件 + 6 业务服务）。v1 边界：券不随退款退回、只实现满减、一张券只作用于拆单后商品总额最大的那一单 |
 | M11 其他：ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job | 都需要新中间件或新服务，建议按「检索 → 削峰 → 压测」顺序推进 |
 | **A9 AI 导购「多多」（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**百炼 / DashScope API Key 暂未提供（待用户提供）** → 接口与降级链路可先做，联调需等凭据 |
-| **A13 买家端微信小程序（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 可先用开发者工具测试号开工，真机预览等 AppID |
+| ✅ **A6 契约导出与 CI 已交付**（2026-09-23，第十五轮） | **OpenAPI 导出**：knife4j starter 挂 `duoduo-common-web`（5 业务服务自动获得，网关不受影响；`/v3/api-docs` 与 `/doc.html` 不进网关白名单）+ `scripts/export-openapi.ps1` → `docs/openapi/`（5 份 JSON + endpoints.md，**116 端点**与 04 篇核对一致）；**CI**：`.github/workflows/ci.yml` 双 job（编译 + Docker 全栈冒烟子集 smoke/trade/order/address/id-precision 共 **356 项**，失败即 job 失败 + 日志 artifact）+ `scripts/ci-run.ps1` 通用子集执行器（本地实跑 356/0 全绿） |
+| ✅ **A13 小程序骨架已落地**（2026-09-23，第十五轮，测试号阶段） | 用户批准「代码先写」：`miniprogram/` 5 页面 + 请求封装，**零后端改动**跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」（登录暂用手机号回退）；**余下**：后端 `POST /api/auth/wechat`（code2Session，凭据走环境变量）+ openid 绑定 + 冒烟；真机预览（待 AppID） |
+| **A13 买家端微信小程序（收尾，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 骨架已开工（见上），真机预览等 AppID |
 
 ### 未开始（按你确认的端形态排期）
 
@@ -188,6 +190,28 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-23（第十五轮 · A6 契约导出与 CI + A13 小程序骨架）
+
+| 文件 | 变更 |
+|---|---|
+| `pom.xml`（**改**） | dependencyManagement 加 `knife4j-openapi3-jakarta-spring-boot-starter:4.5.0`（版本号属性原有但从未被引用） |
+| `duoduo-common-web/pom.xml`（**改**） | 引入 knife4j starter —— 业务服务全继承（common-web 仅业务服务依赖、网关不依赖），**一处声明全站生效** |
+| `duoduo-{user,product,trade,fulfilment,marketing}/src/main/resources/application.yml`（**改** ×5） | 追加 `springdoc`（api-docs 开 / swagger-ui 关）+ `knife4j` 配置块；注释写明安全边界（网关显式白名单不路由 `/v3/api-docs`、`/doc.html`） |
+| `scripts/export-openapi.ps1`（**新增**） | 从 5 个服务的 `/v3/api-docs` 导出 JSON + 生成 `endpoints.md` 端点摘要（人读，与 04 篇比对用） |
+| `docs/openapi/*.json ×5 + endpoints.md`（**新增产物**） | user 22 / product 29 / trade 37 / fulfilment 19 / marketing 9 = **116 端点**，与 04 篇逐条核对一致 |
+| `.github/workflows/ci.yml`（**新增**） | 双 job：`build`（JDK21 编译 9 模块 + Node20 前端 tsc/vite build）；`smoke`（起 Docker 全栈 → 等 9 容器 healthy → pwsh 冒烟子集 → 失败即 job 失败 → 日志 artifact）。适配点：`curl.exe` shim（脚本里的 Windows 习惯）、`ci-run.ps1` 在 Linux 自动切 `pwsh` |
+| `scripts/ci-run.ps1`（**新增**） | 通用冒烟子集执行器：`-Scripts` 指定脚本集，逐套落盘 `logs/ci/`，兼容两种汇总行格式，失败清单逐条打印，**禁止传入自身 / run-all-smoke**（防递归） |
+| `miniprogram/**`（**新增，A13 骨架**） | `project.config.json`（测试号 touristappid）+ `config.js`（BASE_URL / WECHAT_LOGIN_READY 开关）+ `utils/api.js`（包络解包 / Bearer 令牌 / 401 跳登录 / 错误文案，与 Web 端 client.ts 同口径；ID 一律字符串）+ 5 页面（index 检索 / product 详情加购 / cart 结算下单（取默认地址 `addressId`，A8 语义）/ orders 沙箱支付预下单+轮询 / login 手机号回退）+ `README.md`（3 步跑起来 + 下一轮待办） |
+| `docs/agent/07-待办事项与验收标准.md`（**改**） | A6 标记 ✅（实际交付 / 自测 / CI Linux 适配点 / 待验证：Actions 首跑）；A13 改 🔄 并记第十五轮进展；取任务顺序更新 |
+| `README.md`（**改**） | 顶部第十五轮说明；冒烟节加 CI / 契约导出入口；目录树加 `.github`、`miniprogram`、`docs/openapi` |
+| `AGENTS.md`（**改**） | 冒烟基线行补 CI 子集入口 |
+| `docs/agent/02-代码地图与现状.md`（**改**） | 脚本资产表加 `export-openapi.ps1` / `ci-run.ps1` / `ci.yml` / `docs/openapi` |
+| `docs/handover/00、01、07`（**改**） | 进度快照加 A6/A13；上手步骤加 CI 与契约导出；测试证据加 CI 子集 |
+
+**自测**：`mvn clean install` 9 模块 EXIT=0；fat jar 内确认含 springdoc/knife4j（T-41 判据：看 jar 而非退出码）；重建 9 容器全 healthy；5 服务 `/v3/api-docs` 全 200；本地实跑 CI 子集 **356/0 全绿**（smoke 54 / trade 87 / order 77 / address 82 / id-precision 56）；workflow YAML 解析校验通过。
+
+**遗留**：① CI 在 GitHub Actions 的**首次实跑**待观察（私有仓库需确认 Actions 已启用，免费额度每月 2000 分钟）；② A13 下一轮做 `code2Session` 后端端点；③ 云端台账 v18 同步因**腾讯文档连接器未连接**（`personal=not_connected`，需用户在连接器页授权）暂挂起。
 
 ### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
 

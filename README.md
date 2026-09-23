@@ -4,7 +4,19 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-23（第十四轮）** — **收货地址簿（A8）完成 + 雪花 ID 精度缺陷（T-39）根治**。
+**最近更新：2026-09-23（第十五轮）** — **A6 契约导出与 CI + A13 小程序骨架（测试号先行）**。
+① **OpenAPI 契约导出**：knife4j starter 挂 `duoduo-common-web`（5 个业务服务自动获得，网关 WebFlux 不依赖故不受影响），
+各服务 `application.yml` 开 `springdoc`；新增 `scripts/export-openapi.ps1` 从 `/v3/api-docs` 导出
+`docs/openapi/<service>.json` ×5 + `docs/openapi/endpoints.md` 端点摘要（**116 个端点**：user 22 / product 29 / trade 37 / fulfilment 19 / marketing 9），
+与 `docs/agent/04` 逐条核对一致。**安全边界**：网关路由是显式前缀白名单，`/v3/api-docs` 与 `/doc.html` 不会出现在公网入口。
+② **GitHub Actions CI**：`.github/workflows/ci.yml` 双 job —— `build`（后端 9 模块编译 + 前端 tsc/vite build）与
+`smoke`（起 Docker 全栈 → 等 9 容器 healthy → pwsh 跑冒烟子集 smoke/trade/order/address/id-precision 共 **356 项** → 失败即 job 失败 + 日志 artifact）；
+`scripts/ci-run.ps1` 为通用子集执行器（本地实跑 **356/0 全绿**，证明引入 knife4j 未改变任何接口行为）。
+③ **A13 小程序骨架**：`miniprogram/`（project.config 测试号 + 请求封装 + 首页/详情/购物车/订单/登录 5 页面），
+开发者工具勾「不校验合法域名」即可跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」主链路（登录暂用手机号回退，
+`code2Session` 端点下一轮实现）；详见 `miniprogram/README.md`。
+
+**上一轮（2026-09-23 第十四轮）** — **收货地址簿（A8）完成 + 雪花 ID 精度缺陷（T-39）根治**。
 用户域新增地址簿：6 个用户端点（列表 / 新增 / 修改 / 删除 / 设为默认 / 取默认）+
 内部快照 `GET /api/addresses/internal/snapshot`（`X-Internal-Token` 保护、**不进网关**），
 交易域下单支持「只传 `addressId`」并在下单瞬间写入收货信息**快照**（此后改 / 删地址簿都不影响历史订单）。
@@ -115,6 +127,9 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 ### 端到端冒烟（十五套 1286 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
+> CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
+> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，115+ 端点与 `docs/agent/04` 逐条核对）；
+> GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 69 项：用户域 + 商品域
@@ -185,7 +200,10 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列 / 07 A8 地址簿建表）
-├── scripts/                    一键启动、冒烟测试（15 套接口断言 + 6 套真实浏览器 UI 断言；另有 run-all-smoke.ps1 一键全量）
+├── scripts/                    一键启动、冒烟测试（15 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出）
+├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
+├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约）
+├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）

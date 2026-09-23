@@ -1,0 +1,40 @@
+.cart-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.ci-title {
+  width: 100%;
+  font-size: 30rpx;
+}
+
+.ci-meta {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+}
+
+.ci-subtotal {
+  color: #666;
+}
+
+.ci-del {
+  background: #fff1f0;
+  color: #e5484d;
+  border-radius: 10rpx;
+}
+
+.footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: #fff;
+}
+
+.footer-btn {
+  width: 100%;
+}

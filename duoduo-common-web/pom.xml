@@ -27,5 +27,14 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!--
+      OpenAPI 契约（A6）：随 common-web 自动装配到全部业务服务，网关（WebFlux）不依赖本模块故不受影响。
+      只为导出 /v3/api-docs 供契约比对与前端联调；网关路由是显式白名单，不会把 doc.html / v3/api-docs 暴露到公网入口。
+      服务内直接端口（8081~8085）仅本机可达，UI（/doc.html）只在开发环境可用。
+    -->
+    <dependency>
+      <groupId>com.github.xiaoymin</groupId>
+      <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+    </dependency>
   </dependencies>
 </project>
