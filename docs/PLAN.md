@@ -237,6 +237,15 @@
 
 **本轮其他进展**：腾讯文档连接器已由用户授权打通（`tdoc_init` READY + 实调 `manage.query_file_info` 验证通过），**云端台账 v17 → v18 覆盖写成功**（`base_version 17 → new_version 18`）。
 
+### 2026-09-24（第十五轮续 · CI 首跑打通：4 轮失败定位与修复）
+
+| 提交 | 内容 |
+|---|---|
+| `12d155b` | 依据 Run #1/#2 日志定位：① 16 套冒烟脚本错误响应体读取是 PS5.1-only 写法（CI pwsh 7 读不到）→ 统一双路径兜底；② mysql healthcheck 加 `start_period 120s`；③ setup-java v4→v5 |
+| `f7a2248` | Run #3 诊断日志抓到真凶：**增量 SQL（06/08）被容器初始化目录加载，全新建库必撞 1060 → mysql 容器退出 → 依赖等待赛跑时输时赢**（Run #2 侥幸过）。修复：06/07/08 移入 `docs/sql/incremental/`（不进挂载目录），docs 同步路径；登记 **T-46**，顺带补登 **T-44** |
+| `5be6a67` | Run #4 仍挂同两条 → 本地下载 pwsh 7.4 实测：PS7 的 ErrorDetails.Message 是**多行 + \u 转义**形态（curl 实锤服务端发的是真中文），且响应流已被 PS7 释放（ReadAsStringAsync 必抛异常）。修复：ReadErrBody 改 ErrorDetails 优先；address「拒单文案」断言改匹配 `body.message`（JSON 解码后是真中文）。**本地 pwsh 7.4 预演 smoke 54/0 + address 82/0** |
+| **Run #5 ✅** | **GitHub Actions 首次全绿**：编译检查 ✅ + 冒烟子集 356 项 ✅（`5be6a67`）。A6 的「CI 待验证」正式关闭；agent 08 踩坑登记 **T-44 / T-45 / T-46** |
+
 ### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
 
 | 文件 | 变更 |

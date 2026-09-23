@@ -15,6 +15,11 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 **自测**：`scripts/wechat-auth-smoke.ps1` **26/26 全绿**（GUARD-OK）+ CI 子集回归 **356/0 无回归**。
 小程序侧待 `config.js` 开 `WECHAT_LOGIN_READY` 联调；真机预览待用户提供 AppID。
 
+**GitHub Actions 首跑已打通（2026-09-24，Run #5 ✅）**：编译检查 + 冒烟子集 356 项双 job 全绿。
+首跑连续 4 轮失败暴露并修复两个真缺陷（详见 `docs/agent/08` **T-44/T-45/T-46**）：
+冒烟脚本错误响应体读取的 PS5.1-only 写法（pwsh 7 需 ErrorDetails 优先 + 断言走解析后的 message），
+以及增量 SQL 被容器初始化目录加载导致全新建库撞 1060（已移入 `docs/sql/incremental/`）。
+
 **第十五轮（2026-09-23）** — **A6 契约导出与 CI + A13 小程序骨架（测试号先行）**。
 ① **OpenAPI 契约导出**：knife4j starter 挂 `duoduo-common-web`（5 个业务服务自动获得，网关 WebFlux 不依赖故不受影响），
 各服务 `application.yml` 开 `springdoc`；新增 `scripts/export-openapi.ps1` 从 `/v3/api-docs` 导出
