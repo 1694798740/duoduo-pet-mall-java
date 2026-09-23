@@ -36,9 +36,9 @@
 
 按需读（用于核实事实，不要只信文档）：
 14. docker-compose.yml（9 容器与端口）、pom.xml（9 模块 reactor、Java 21）、Dockerfile
-15. docs\sql\00~06*.sql（五库 DDL + 商品种子 + 交易域增量列）、各模块 src\main\resources\db\schema.sql
+15. docs\sql\00~07*.sql（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）、各模块 src\main\resources\db\schema.sql
 16. 源码：先读你将要改的模块的 controller / service / dto / entity，再读依赖它的上游
-17. scripts\*.ps1（14 套接口冒烟，1204 项断言）、scripts\e2e\*.mjs（5 套真实浏览器自测，180 项；另有 1 套 .ps1 夹具）
+17. scripts\*.ps1（15 套接口冒烟，1286 项断言；`run-all-smoke.ps1` 一键全量）、scripts\e2e\*.mjs（6 套真实浏览器自测，244 项；另有 1 套 .ps1 夹具）
 18. frontend\src\api\{client,endpoints,types}.ts 与 frontend\src\pages\（若要改前端）
 
 阶段 1 的产出（必须先给我看，不要直接开始改代码）：

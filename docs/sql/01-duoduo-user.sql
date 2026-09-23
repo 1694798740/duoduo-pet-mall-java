@@ -82,9 +82,36 @@ CREATE TABLE IF NOT EXISTS `t_pet_profile` (
     KEY `idx_pet_user` (`user_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '宠物档案';
 
+-- ---------------------------------------------------------------------------
+-- 收货地址簿（A8）
+-- ---------------------------------------------------------------------------
+-- 省 / 市 / 区拆开存、明细单独一列：下单最终要的是「拼好的一段文本」，
+-- 但拆开存才支持后续「按城市算运费」「按省筛选」这类能力。
+-- 拼接口径由 AddressService.fullAddress() 一处维护，避免每个调用方各拼一遍、拼出三种格式。
+--
+-- 唯一默认地址不建唯一索引：MySQL 没有partial index，
+-- 若用 `UNIQUE(user_id, is_default)`，一个用户就只能有一条 is_default=0 的地址 —— 与需求正好相反。
+-- 改为「服务层在同一事务内先清旧默认、再置新默认」，并用 idx_address_user 保证扫描代价恒定为 O(当前用户地址数)。
+CREATE TABLE IF NOT EXISTS `t_user_address` (
+    `id`             BIGINT       NOT NULL COMMENT '雪花 ID',
+    `user_id`        BIGINT       NOT NULL COMMENT '归属用户；所有读写都带此维度，杜绝越权',
+    `receiver_name`  VARCHAR(50)  NOT NULL COMMENT '收货人姓名',
+    `receiver_phone` VARCHAR(20)  NOT NULL COMMENT '收货手机号',
+    `province`       VARCHAR(30)  NOT NULL COMMENT '省 / 直辖市',
+    `city`           VARCHAR(30)  NOT NULL COMMENT '市',
+    `district`       VARCHAR(30)  NOT NULL COMMENT '区 / 县',
+    `detail`         VARCHAR(200) NOT NULL COMMENT '详细地址（街道门牌）',
+    `label`          VARCHAR(20)           DEFAULT NULL COMMENT '标签（家 / 公司 / 学校），仅供展示',
+    `is_default`     TINYINT      NOT NULL DEFAULT 0 COMMENT '默认地址；同一用户至多一条为 1，由服务层在同一事务内保证',
+    `created_at`     TIMESTAMP    NOT NULL,
+    `updated_at`     TIMESTAMP    NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_address_user` (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '收货地址簿';
+
 -- ============================================================================
 -- 说明：以下表结构在后续阶段（P1~P3）加入，此处预留，避免 DBA 反复评审
---   t_address        收货地址
+--   t_address        收货地址（**已落地**，见上方 t_user_address，A8）
 --   t_category       类目树
 --   t_product / t_sku  商品与规格（自营）
 --   t_listing        个人闲置（C2C）

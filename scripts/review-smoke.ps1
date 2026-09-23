@@ -242,10 +242,13 @@ $r = Call 'Post' "$Gateway/api/reviews" $sessB @{
 }
 Check "匿名提交评价返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress)
 Check "提交结果为 1 条" ($r.body.data.created -eq 1) $r.body.data.created
-# 主键必须从**原始响应文本**正则提取：19 位雪花值会被 ConvertFrom-Json 丢精度，
-# 拿它去调 /append 会 404，而人会误以为是「追评接口坏了」
-$reviewId = [regex]::Match($r.raw, '"id":(\d+)').Groups[1].Value
-Check "取到评价主键（原始文本）" ($reviewId.Length -ge 15) $reviewId
+# 主键必须从**原始响应文本**正则提取（不要走 ConvertFrom-Json）。
+# 注意：自 T-39 起，64 位标识**统一以 JSON 字符串下发**（`"id":"361..."`），
+# 所以正则要允许可选引号 —— 写成 '"id":(\d+)' 会匹配不到（引号把它挡住了），
+# 拿到空串后 `WHERE id = ` 会变成语法错误，表现为"追评接口全挂"。
+# 用 "?(\d+)"? 兼容两种形态：老写法（裸数字）与新写法（字符串）。
+$reviewId = [regex]::Match($r.raw, '"id"\s*:\s*"?(\d+)"?').Groups[1].Value
+Check "取到评价主键（原始文本）" ($reviewId.Length -ge 15) "reviewId='$reviewId'"
 $dbCount = Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_review WHERE order_no = '$orderNo';"
 Check "库内已落 1 条评价" ($dbCount -eq '1') $dbCount
 $dbAnon = Sql 'duoduo_fulfilment' "SELECT anonymous FROM t_review WHERE id = $reviewId;"

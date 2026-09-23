@@ -9,13 +9,41 @@
  * 不像 Node 原型版那样把 meta 平铺在响应顶层：
  *   {"items":[...],"total":100,"page":1,"pageSize":20,"pageCount":5}
  *
- * 约定：金额一律整数「分」；时间一律 ISO8601 UTC 字符串。
+ * 约定：
+ *   · 金额一律整数「分」；
+ *   · 时间一律 ISO8601 UTC 字符串；
+ *   · **所有 64 位标识（雪花 id 及其外键）一律是 `string`，不是 `number`** —— 见下方说明。
+ *
+ * ## ⚠️ 为什么 id 必须是 string（T-39）
+ *
+ * 数据库主键是雪花算法生成的 18~19 位整数，例如 `361084524781768704`。
+ * 而 JavaScript 的 `number` 是 IEEE-754 双精度浮点，**安全整数上限只有
+ * `Number.MAX_SAFE_INTEGER = 9007199254740991`（16 位）**。
+ * 超过这个范围的值会被 `JSON.parse` **静默四舍五入**到另一个整数 —— 末位直接丢：
+ *
+ * ```js
+ * Number('361084524781768704')  // → 361084524781768700（末位 704 变成 700，且不报错）
+ * ```
+ *
+ * 后果是**功能性错误而非显示问题**：把这个值拼进 URL，服务端查不到记录，接口返回 404。
+ * 本项目已在真实浏览器自测中复现过两次（售后单、收货地址），每次都表现为
+ * 「点按钮 → XX 不存在」这种看不出原因的错误。
+ *
+ * **因此本文件里所有 `xxxId` 字段都是 `string`。**前端只做两件事：
+ *   1. 拼进 URL（`` `/api/addresses/${id}` ``）—— 字符串天然安全；
+ *   2. 相等比较（`a.id === selectedId`）—— 两侧都是字符串，精确。
+ *
+ * **绝对不要**：`Number(id)` / `parseInt(id)` / `id + 1` / `id > 0` 这类数值运算。
+ * 若确实需要判断「有没有值」，用 `id !== ''` 或 `id != null`，**不要**用 `Number.isFinite`。
+ *
+ * 例外：`CategorySaveRequest.parentId` 的哨兵值 `'0'`（表示「顶级类目」）
+ * 是**真正的数值语义**，与雪花 id 无关 —— 见 `admin/Categories.tsx` 的处理。
  */
 
 // ---------- 用户域（duoduo-user） ----------
 
 export interface UserView {
-  id: number;
+  id: string;
   /** 手机号掩码，如 138****0001；后端不下发明文 */
   phoneMasked: string;
   nickname: string;
@@ -30,7 +58,7 @@ export interface UserView {
 }
 
 export interface PetView {
-  id: number;
+  id: string;
   name: string;
   /** cat / dog / other */
   species: string;
@@ -67,9 +95,9 @@ export interface PetUpsertRequest {
 // ---------- 商品域（duoduo-product） ----------
 
 export interface CategoryNode {
-  id: number;
+  id: string;
   name: string;
-  parentId: number | null;
+  parentId: string | null;
   depth: number;
   icon: string | null;
   /** 后台列表会返回停用项；公开接口只暴露 ACTIVE */
@@ -78,7 +106,7 @@ export interface CategoryNode {
 }
 
 export interface BrandView {
-  id: number;
+  id: string;
   name: string;
   logo: string | null;
   country: string | null;
@@ -93,7 +121,7 @@ export interface DictItem {
 }
 
 export interface SkuView {
-  id: number;
+  id: string;
   skuCode: string;
   spec: Record<string, string>;
   image: string | null;
@@ -110,12 +138,12 @@ export interface SkuView {
 }
 
 export interface ProductCard {
-  id: number;
+  id: string;
   title: string;
   subtitle: string | null;
-  categoryId: number | null;
+  categoryId: string | null;
   categoryName: string | null;
-  brandId: number | null;
+  brandId: string | null;
   brandName: string | null;
   /** self 自营 / merchant 第三方 */
   supplyType: string;
@@ -132,7 +160,7 @@ export interface ProductCard {
    * 声明为可选：老版本后端不下发该字段时，前端按「未知卖家」处理（不展示信用），
    * 而不是把它当成自营（那会把第三方商家的商品错标成平台自营的信用）。
    */
-  sellerId?: number | null;
+  sellerId?: string | null;
 }
 
 export interface Suitability {
@@ -153,7 +181,7 @@ export interface ProductDetail {
 }
 
 export interface ListingCard {
-  id: number;
+  id: string;
   title: string;
   price: number;
   originalPrice: number;
@@ -163,7 +191,7 @@ export interface ListingCard {
   species: string | null;
   breed: string | null;
   viewCount: number;
-  sellerId: number | null;
+  sellerId: string | null;
 }
 
 export interface ListingDetail {
@@ -204,8 +232,8 @@ export type CartInvalidReason =
   | 'STOCK_NOT_ENOUGH';
 
 export interface CartItemView {
-  skuId: number;
-  spuId: number;
+  skuId: string;
+  spuId: string;
   title: string;
   specText: string | null;
   image: string | null;
@@ -239,7 +267,7 @@ export type OrderStatus =
 
 export interface SettlementView {
   orderNo: string;
-  sellerId: number | null;
+  sellerId: string | null;
   amount: number;
   platformFee: number;
   sellerAmount: number;
@@ -252,8 +280,8 @@ export interface SettlementView {
 }
 
 export interface OrderItemView {
-  skuId: number;
-  spuId: number;
+  skuId: string;
+  spuId: string;
   title: string;
   specText: string | null;
   mainImage: string | null;
@@ -264,7 +292,7 @@ export interface OrderItemView {
 
 export interface OrderView {
   orderNo: string;
-  sellerId: number | null;
+  sellerId: string | null;
   orderType: string;
   status: OrderStatus;
   /** 状态中文文案由服务端给出，前端不维护映射表 */
@@ -295,10 +323,54 @@ export interface OrderView {
   logisticsNo: string | null;
 }
 
-export interface PlaceOrderRequest {
+// ---------- 收货地址簿（/api/addresses，A8） ----------
+
+export interface AddressView {
+  id: string;
   receiverName: string;
   receiverPhone: string;
-  receiverAddress: string;
+  province: string;
+  city: string;
+  district: string;
+  detail: string;
+  label: string | null;
+  /**
+   * 服务端拼好的完整地址，与下单快照写入的文本严格同源。
+   *
+   * 前端**不要**自己用 province + city + district + detail 拼：
+   * 直辖市（如「北京市 / 北京市」）在服务端会被去重，
+   * 前端再拼一遍就会得到「北京市北京市朝阳区…」，
+   * 与订单里存的地址不一致 —— 这类差异在售后纠纷里会被当成证据问题。
+   */
+  fullAddress: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface AddressUpsertRequest {
+  receiverName: string;
+  receiverPhone: string;
+  province: string;
+  city: string;
+  district: string;
+  detail: string;
+  label?: string | null;
+  /** true = 设为默认；false / 不传 = 不改变默认归属（不存在「取消默认」这个动作） */
+  isDefault?: boolean;
+}
+
+export interface PlaceOrderRequest {
+  /**
+   * 收货信息有两种传法，**二选一**：
+   *  · 传 addressId（推荐）—— 服务端去用户域取地址并写入订单快照，三个 receiver* 可省略；
+   *  · 传 receiverName / receiverPhone / receiverAddress —— 直填，兼容旧流程。
+   *
+   * 两者都传时以 addressId 为准（服务端定的优先级），此处定义成可选以反映真实契约。
+   */
+  addressId?: string | null;
+  receiverName?: string;
+  receiverPhone?: string;
+  receiverAddress?: string;
   remark?: string;
   /**
    * 本单使用的优惠券券码（可空）。
@@ -368,7 +440,7 @@ export interface RefundResult {
 
 /** 商家端概览：订单状态分布 + 资金三栏（金额单位「分」） */
 export interface SellerSummary {
-  sellerId: number;
+  sellerId: string;
   role: string;
   /** true 表示可见范围额外包含平台自营（seller_id=0）：运营 / 管理员代运营时为真 */
   platformScope: boolean;
@@ -416,13 +488,13 @@ export interface ShipRequest {
 
 /** 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存） */
 export interface SellerProductView {
-  id: number;
+  id: string;
   title: string;
   mainImage: string | null;
   status: 'ON_SALE' | 'OFF_SHELF' | string;
   /** 状态中文文案由服务端给出，前端不维护映射表 */
   statusLabel: string;
-  sellerId: number;
+  sellerId: string;
   minPrice: number;
   maxPrice: number;
   salesCount: number;
@@ -434,7 +506,7 @@ export interface SellerProductView {
 
 export interface CategorySaveRequest {
   name: string;
-  parentId?: number;
+  parentId?: string;
   sortNo?: number;
   icon?: string;
 }
@@ -448,8 +520,8 @@ export interface BrandSaveRequest {
 
 /** 闲置审核列表条目（运营视角，含未审核通过的内容） */
 export interface ListingAuditView {
-  id: number;
-  sellerId: number;
+  id: string;
+  sellerId: string;
   title: string;
   price: number;
   conditionLevel: string;
@@ -501,10 +573,10 @@ export interface ForceCloseRequest {
 // ---------- 评价与晒单（/api/reviews，履约域） ----------
 
 export interface ReviewView {
-  id: number;
+  id: string;
   orderNo: string;
-  spuId: number;
-  skuId: number | null;
+  spuId: string;
+  skuId: string | null;
   /** 商品快照标题（下单时的商品名，商品改名不影响历史评价） */
   productTitle: string;
   productImage: string | null;
@@ -523,7 +595,7 @@ export interface ReviewView {
 }
 
 export interface ReviewSummary {
-  spuId: number;
+  spuId: string;
   total: number;
   avgRating: string;
   goodRate: string;
@@ -535,8 +607,8 @@ export interface ReviewSummary {
 
 /** 单件商品的评价内容（一次可提交订单里多件） */
 export interface ReviewItemRequest {
-  spuId: number;
-  skuId?: number | null;
+  spuId: string;
+  skuId?: string | null;
   rating: number;
   content?: string;
   images?: string[];
@@ -585,8 +657,8 @@ export type AfterSaleArbitrateResult = 'APPROVE_REFUND' | 'REJECT';
 export interface AfterSaleView {
   id: string;
   orderNo: string;
-  buyerId: number;
-  sellerId: number;
+  buyerId: string;
+  sellerId: string;
   type: AfterSaleType | string;
   typeLabel: string;
   reason: string;
@@ -702,7 +774,7 @@ export interface CreditInputs {
  * 因此这里 `score` 恒为数字，前端不必写空态兜底。
  */
 export interface CreditView {
-  userId: number;
+  userId: string;
   score: number;
   level: CreditLevel | string;
   /** 等级中文文案（优秀 / 良好 / 一般 / 待提升） */
@@ -729,7 +801,7 @@ export type CouponType = 'FULL_REDUCE';
  * 后者依赖登录态，前端拿不到；与其让前端猜，不如服务端直接给结论。
  */
 export interface CouponTemplateView {
-  id: number;
+  id: string;
   name: string;
   description: string | null;
   type: CouponType | string;
@@ -754,7 +826,7 @@ export interface CouponTemplateView {
 export interface CouponView {
   /** 券码：**字符串**，不要做数值转换（雪花 ID 会丢精度，券码则刻意用随机串规避） */
   code: string;
-  templateId: number;
+  templateId: string;
   name: string | null;
   type: CouponType | string | null;
   typeLabel: string | null;
@@ -773,7 +845,7 @@ export interface CouponView {
 /** 领券结果；`replay=true` 表示「你已经领过这张券」，本次没有新建 */
 export interface CouponClaimResult {
   code: string;
-  templateId: number;
+  templateId: string;
   name: string;
   thresholdAmount: number;
   discountAmount: number;

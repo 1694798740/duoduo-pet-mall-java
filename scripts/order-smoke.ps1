@@ -147,8 +147,21 @@ $r = Call 'Post' "$Gateway/api/orders" $sessA @{ receiverName = '小林'; receiv
 Check "缺 idempotentKey 被拦截（400）" ($r.status -eq 400) $r.status
 $r = Call 'Post' "$Gateway/api/orders" $sessA @{ receiverName = '小林'; receiverPhone = '12345'; receiverAddress = $addr; idempotentKey = (NewKey) }
 Check "收货手机号格式错误被拦截（400）" ($r.status -eq 400) $r.status
+
+# ⚠ 测「收货人缺失」**必须先往购物车放东西**：
+#   否则校验会先撞上「购物车为空」，而那是**另一条**业务规则、**另一个状态码**（BUSINESS_RULE/422），
+#   断言拿到的是"别的绿灯"——典型假阳性。加购后，收货信息缺失才是唯一的失败原因。
+Call 'Post' "$Gateway/api/cart/items" $sessA @{ skuId = $SKU_A; quantity = 1 } $null | Out-Null
+# 期望码仍是 **400**（VALIDATION_ERROR），这一点在 A8 前后没变：
+#   A8 只是把 receiver* 三字段上的 @NotBlank 移除（否则"只传 addressId"的新用法会直接 400），
+#   改在服务层显式校验并抛 BizException.validation(...) → VALIDATION_ERROR → 400。
+#   ⚠ 别把它和「购物车为空」搞混：那是 BizException.businessRule(...) → BUSINESS_RULE → 422。
 $r = Call 'Post' "$Gateway/api/orders" $sessA @{ receiverPhone = '13900000000'; receiverAddress = $addr; idempotentKey = (NewKey) }
-Check "缺收货人被拦截（400）" ($r.status -eq 400) $r.status
+Check "缺收货人被拦截（400 / VALIDATION_ERROR）" ($r.status -eq 400) $r.status
+Check "↑ 且原因是收货信息缺失，而不是被'购物车为空'（422）拦截的假绿灯" `
+    (($r.status -eq 400) -and ($r.body.code -eq 'VALIDATION_ERROR') -and ($r.body.message -match '收货信息|收货地址')) `
+    "status=$($r.status) code=$($r.body.code) msg=$($r.body.message)"
+Call 'Delete' "$Gateway/api/cart/items/$SKU_A" $sessA $null | Out-Null
 
 $r = Call 'Post' "$Gateway/api/orders" $sessA @{ receiverName = '小林'; receiverPhone = '13900000000'; receiverAddress = $addr; idempotentKey = (NewKey) }
 Check "购物车为空时下单返回 422" ($r.status -eq 422) $r.status

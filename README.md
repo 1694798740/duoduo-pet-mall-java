@@ -4,7 +4,31 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-23（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
+**最近更新：2026-09-23（第十四轮）** — **收货地址簿（A8）完成 + 雪花 ID 精度缺陷（T-39）根治**。
+用户域新增地址簿：6 个用户端点（列表 / 新增 / 修改 / 删除 / 设为默认 / 取默认）+
+内部快照 `GET /api/addresses/internal/snapshot`（`X-Internal-Token` 保护、**不进网关**），
+交易域下单支持「只传 `addressId`」并在下单瞬间写入收货信息**快照**（此后改 / 删地址簿都不影响历史订单）。
+**归属校验统一返回 404**（不区分"不存在"与"无权限"，避免用状态码差异枚举他人地址 ID）。
+新增 `docs/sql/07-a8-user-address.sql`、前端 `/addresses` 页 + 结算页地址二选一。
+
+**同一轮根治了 T-39（雪花 ID 精度丢失，全站性缺陷）**：
+雪花 ID 是 18~19 位整数，超出 JS `Number.MAX_SAFE_INTEGER`（16 位），以 JSON **number** 下发时
+浏览器 `JSON.parse` 会**静默四舍五入**（`Number('...704') === '...700'`，不报错），
+前端拿损坏值拼 URL → 服务端查不到 → **404**。**接口冒烟照不出来**（.NET 用 Int64/Decimal 解 JSON 不丢精度），
+只有真实浏览器会踩；A3 曾局部踩过一次、A8 又踩了一次。
+根治方案：`duoduo-common-web` 新增 **`LongToStringJacksonModule`**（随 `WebAutoConfiguration` 自动装配到全部业务服务）
+—— **`Long`/`long`/`BigInteger` 默认转字符串，字段名命中白名单（金额 / 计数 / epoch 毫秒时间戳）的保持数字**。
+判据是**字段语义**（这个值前端会不会参与运算），不是 Java 类型：全站金额字段（`price`/`payAmount`/…）**共 63 处都是 `Long`**，
+一刀切会静默变成 `"12900"` 使前端 `price / 100` 算出 `NaN`，把页面金额全打成「¥NaN」——"用更大的 bug 换小 bug"。
+**漏标方向是安全的**：新加 id 字段无需任何操作即受保护。前端 `types.ts` 的 **38 个 id 类字段**与 `endpoints.ts` 的 **25 处形参**同步由 `number` 改 `string`。
+
+新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
+另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
+与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
+**接口冒烟累计 15 套 1286 项，浏览器 UI 断言累计 6 套 244 项。**
+详见「十二、变更记录」。
+
+**上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
 （营销域 / 优惠券，:8085；compose 服务名 `duoduo-marketing-app`，容器 `duoduo-app-marketing`，镜像 `duoduo/duoduo-marketing:1.0.0`），
 容器总数 **8 → 9**（3 中间件 + 6 业务服务），雪花 worker-id 补 **营销 5**。
 公开只读领券中心 `GET /api/coupons/templates` + 领券（重复领取返回 `replay=true` 不报错）+ 我的券包 /
@@ -13,7 +37,8 @@
 券码用**随机串**（`CP` + 14 位去混淆字符）而不用雪花（规避 JS `Number.MAX_SAFE_INTEGER` 精度坑，同 INV-16）；
 锁 / 解 / 核销全部 **CAS 条件更新、不用分布式锁**（INV-1）；**折扣金额由交易域写入 `t_order.discount_amount`**（营销域不依赖 openfeign）。
 前端新增 `/coupons`（领券中心 + 我的券包，**刻意不套 `RequireAuth`**）+ 结算页选券 + 订单详情优惠展示。
-新增 `scripts/coupon-smoke.ps1`（**145 项断言**）与 `scripts/e2e/coupon-ui-check.mjs`（**43 项**真实 Chromium 断言）。接口冒烟累计 **14 套 1204 项**，浏览器 UI 断言累计 **5 套 180 项**。
+新增 `scripts/coupon-smoke.ps1`（**145 项断言**）与 `scripts/e2e/coupon-ui-check.mjs`（**43 项**真实 Chromium 断言）。
+（随后第十四轮 A8 把接口冒烟推进到 **15 套 1286 项**、浏览器 UI 断言推进到 **6 套 244 项**。）
 详见「十二、变更记录」。
 
 **上一轮（第十二轮）** — **信用分（A4）完成**：履约域新增 `support/CreditModel`
@@ -87,7 +112,9 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十四套 1204 项接口断言 + 五套真实浏览器 UI 断言 180 项）
+### 端到端冒烟（十五套 1286 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+
+> 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 69 项：用户域 + 商品域
@@ -157,8 +184,8 @@ duoduo-pet-mall-java/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
-│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列）
-├── scripts/                    一键启动、冒烟测试（14 套接口断言 + 5 套真实浏览器 UI 断言）
+│   └── sql/                    容器初始化 SQL（00 建库授权 / 01 用户库 / 02 商品库 / 03 交易库 / 04 履约库 / 05 营销库 / 06 交易域增量列 / 07 A8 地址簿建表）
+├── scripts/                    一键启动、冒烟测试（15 套接口断言 + 6 套真实浏览器 UI 断言；另有 run-all-smoke.ps1 一键全量）
 ├── duoduo-common/              通用：统一响应 / 错误码 / 业务异常 / 雪花 ID / 用户上下文 / JWT
 ├── duoduo-common-web/          Servlet 侧基础设施：全局异常处理 / 请求 ID / 身份上下文透传
 ├── duoduo-gateway/             API 网关：路由 + JWT 前置校验 + 身份透传（WebFlux）
@@ -194,6 +221,17 @@ duoduo-pet-mall-java/
 | GET / POST | `/api/pets` | 宠物档案列表 / 新建（首只自动设为当前宠物） | 需登录 |
 | PUT / DELETE | `/api/pets/{id}` | 更新 / 删除档案（默认宠物自动顺延） | 需登录 |
 | POST | `/api/pets/{id}/default` | 设为当前宠物 | 需登录 |
+| GET / POST | `/api/addresses` | **收货地址簿**（A8）：列表（**默认地址排最前**）/ 新增（**首个自动成为默认**） | 需登录 |
+| PUT / DELETE | `/api/addresses/{id}` | 修改 / 删除（**删默认会自动顺延**到剩下的一条） | 需登录 |
+| POST | `/api/addresses/{id}/default` | 设为默认（事务内先清旧默认，库内恒有且仅有 1 条默认） | 需登录 |
+| GET | `/api/addresses/default` | 取默认地址；**没有默认时返回 200 + `data=null`**（不是 404，前端据此渲染「去添加」） | 需登录 |
+| GET | `/api/addresses/internal/snapshot` | **内部快照**（供交易域下单取收货信息）：`?userId=&addressId=`；`fullAddress` 与地址簿接口**逐字相同**（拼接口径只有一处） | **内部凭据**，不进网关 |
+
+> **地址簿的两条纪律**：
+> ① **归属校验统一返回 404** —— 改 / 删 / 设默认他人地址一律与「id 不存在」**同码同文案**，刻意不区分
+> 「不存在」与「无权限」，避免用状态码差异枚举他人地址 ID（这与 `docs/agent/07` 原文写的「403」是有意偏离）。
+> ② **下单写的是快照** —— 用 `addressId` 下单时，收货人 / 电话 / 完整地址在**下单瞬间**写入 `t_order.receiver_*`，
+> 此后改 / 删地址簿**都不影响历史订单**。传了 `addressId` 就**只认它**（直填三字段被忽略），避免两套来源冲突。
 
 ### 商品域（`duoduo-product`）
 
@@ -750,6 +788,80 @@ npm run build      # tsc --noEmit && vite build
 
 ## 十二、变更记录
 
+### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
+
+- **用户域新增收货地址簿（A8）**：`t_user_address`（`docs/sql/07-a8-user-address.sql`），
+  6 个用户端点 —— `GET /api/addresses`（**默认地址排最前**）、`POST /api/addresses`、
+  `PUT /api/addresses/{id}`、`DELETE /api/addresses/{id}`、`POST /api/addresses/{id}/default`、
+  `GET /api/addresses/default`（**无默认时返回 200 + `data=null`**，不报错，前端据此渲染「去添加」）；
+  另加内部快照 `GET /api/addresses/internal/snapshot`（`X-Internal-Token` + `InternalTokenFilter` 失败关闭，
+  **不进网关白名单**，交易域直连 8081）。
+- **业务规则**：① **首个地址自动成为默认**（未显式指定也是）；② 设默认时**在事务内先清旧默认再置新默认**，
+  库内恒有且仅有 1 条默认；③ **删除默认地址时自动顺延**到剩下的一条，前端 toast 明确告知；
+  ④ `fullAddress` 拼接**只有一处定义**（`AddressService.fullAddress()`）：省+市+区+明细直接相连，
+  市名等于省名（直辖市）时只保留一次 —— 内部快照与地址簿接口走同一个方法，用冒烟断言「逐字相同」锁住。
+- **归属校验统一 404**：改 / 删 / 设默认他人地址一律返回 **404**（与「id 不存在」同码同文案），
+  **刻意不区分「不存在」与「无权限」**，避免用状态码差异枚举他人地址 ID。这是对 `docs/agent/07`
+  原文「他人地址 → 403」的一处**有意偏离**，实现时统一为 404 并在此说明。
+- **交易域接入**：下单请求新增可选 `addressId`；传了就**只认 `addressId`**（直填三字段被忽略，
+  避免两套来源冲突），为空才回落旧逻辑。收货信息在**下单瞬间写入快照**（`t_order.receiver_*`），
+  此后改 / 删地址簿**都不影响历史订单**（冒烟按字节比对锁住）。用不存在的 / 他人的 `addressId` 下单 →
+  被拒且文案指向「地址不可用」。
+- **★ T-39 根治（全站性 ID 精度缺陷）**：雪花 ID 是 18~19 位整数，超出 JS
+  `Number.MAX_SAFE_INTEGER = 9007199254740991`（16 位）。以 JSON **number** 下发时，浏览器
+  `JSON.parse` 会**静默四舍五入**——`Number('361084524781768704') === 361084524781768700`（末位 704→700，**不报错**）。
+  前端拿这个已损坏的值拼 URL → 服务端按 id 查不到 → **404**，页面表现为「点按钮 → XX 不存在」。
+  **接口冒烟照不出来**（PowerShell/.NET 用 `Int64`/`Decimal` 解 JSON 数字不丢精度），只有真实浏览器会踩；
+  **A3 售后单曾局部踩过一次**（当时用 `String.valueOf` 单独修了 `AfterSaleView.id`，未上升到通用规则），**A8 又踩了一次**。
+  根治：`duoduo-common-web` 新增 **`LongToStringJacksonModule`**，随 `WebAutoConfiguration`
+  自动装配到全部业务服务的 Jackson 转换器（MVC 转换器 + 作为 Bean 供 Feign/RestTemplate 使用）。
+- **为什么不是「见到 `Long` 就转字符串」**：全站金额字段（`price` / `payAmount` / `discountAmount` /
+  `thresholdAmount` / `freight` / `balance` …）**共 63 处也是 `Long`**（单位：分），
+  计数与 epoch 毫秒时间戳同样是 `Long`。一刀切会让金额变成 `"12900"`，
+  前端 `formatPrice` 里的 `price / 100` **静默算出 `NaN`**，把页面金额全打成「¥NaN」——用更大的 bug 换掉小 bug。
+  **判据是字段语义**（这个值前端会不会拿去做算术），不是 Java 类型。
+  因此模块规则 = **「`Long`/`long`/`BigInteger` 默认转字符串」+「字段名命中 `NUMERIC_LONG_FIELDS`
+  （金额 / 计数 / 时间戳三类）白名单的保持数字」**，用 `BeanSerializerModifier.changeProperties()`
+  把对应字段的 writer 换回数值输出。**漏标方向是安全的**：新加 id 字段**不需要做任何事**就受保护；
+  新加金额类字段才需要记得进白名单（漏了会 `NaN`，比 404 更容易被发现）。
+  **反序列化与 `@PathVariable Long` 不受影响**（后者由 Spring 转换器处理，与 Jackson 无关），入参无需改动。
+- **前端同步**：`types.ts` 的 **38 个 id 类字段**（`id`/`parentId`/`categoryId`/`brandId`/`sellerId`/`skuId`/
+  `spuId`/`addressId`/`templateId`/`buyerId`/`userId`/`petId`）由 `number` 改 `string`；
+  `endpoints.ts` **25 处**形参类型同步；受影响页面 13 个（`Cart`/`Checkout`/`ProductDetail`/`ListingDetail`/
+  `Search`/`Categories`/`ReviewNew`/`Audits`/`Coupons`/`seller/Products`/`CreditBadge`/`ReviewSection`/`Me`）
+  逐个修到 `tsc --noEmit` **零错误**。纪律写进 `types.ts` 顶部：id 只能**拼 URL 与相等比较**，
+  **绝不做数值运算**（`Number(id)` / `parseInt` / `id + 1` / `id > 0` 全禁）。
+  `ProductDetail` 的 `Number(id)` 改为直接用字符串并新增 `hasSpuId` 布尔哨兵；
+  `Categories` 新增 `TOP_PARENT = '0'` 常量（这是**真正的数值语义**哨兵，与雪花 id 可区分）。
+- **前端顺带修掉一个真缺陷（地址加载竞态）**：`Checkout.tsx` 的初始化守卫写成
+  `addressList === null`，而本仓 `useAsync` 的初始 `data` 是 **`undefined`**，
+  导致首次渲染就锁定「空地址簿」分支、把用户推进「手动填写」模式 —— 地址簿里的地址渲染出来了却一个都选不上，
+  提交报「请填写收货人姓名」。改为 **`addrLoading` 门控 + 判 `undefined`**。
+  UI e2e 抓到：修复前 5 条断言红，修复后全绿。
+- **自测**：
+  - `scripts/address-smoke.ps1` —— **82 项 / 0 失败**（含★断言总数守卫），覆盖四条验收 + 归属校验 /
+    内部凭据边界（无 token 403、错误 token 403、经网关无登录态 401）/ 直辖市拼接去重 / 快照不回写 /
+    顺延不留空默认 / 参数边界 / 清理复原。
+  - `scripts/e2e/address-ui-check.mjs` —— **64 项 / 0 失败**（真实 Chromium），16 段覆盖未登录拦截、
+    首个自动默认、设默认唯一性、编辑时复选框禁用、删除顺延 toast、结算页自动预选 + 下单、
+    订单详情 == 地址簿、改 / 删地址簿后快照不变、切手动填写按钮不变死按钮。
+  - **`scripts/id-precision-smoke.ps1`（新增）** —— **56 项 / 0 失败**，跨商品 / 用户 / 交易 / 营销四域，
+    **直接断言 JSON 原始文本**（绕开 `ConvertFrom-Json` 对精度的掩盖）：id 类字段必须是**带引号的字符串**
+    且与库内**逐字符相同**（末位不许被舍入），金额 / 计数 / 时间戳必须**仍是不带引号的数字**；
+    并做端到端闭环：用响应里抠出的 id 反查，证明它"可用"而不只是"长得像字符串"。
+  - **`scripts/run-all-smoke.ps1`（新增）** —— 一键跑全套并输出汇总表 + 失败清单。
+  - **全套回归**：15 套接口冒烟 **1286 项全绿**。连带修了 2 处**因 T-39 修复而失效的旧断言**：
+    `review-smoke.ps1` 从原始文本抠主键的正则 `"id":(\d+)` 匹配不到新形态 `"id":"361…"`
+    （改为 `"?(\d+)"?` 兼容两种形态），`order-smoke.ps1` 的「缺收货人」用例补上"先加购"前置
+    （否则会先撞上「购物车为空」的 422，是**同码不同因**的假绿灯）。
+  - 前端 `tsc --noEmit` 零错误。
+- **踩坑登记**：`docs/agent/08` 新增 **T-39**（雪花 ID 精度，判据「接口冒烟过、浏览器 4xx」）、
+  **T-40**（一刀切字符串化会让金额变 `NaN`；白名单必须用 `Set.copyOf(Arrays.asList(...))`，
+  `Set.of()` 遇重复元素在**运行期**抛异常）、**T-41**（改公共模块后业务 fat jar 未重打：
+  `mvn package` 增量判定业务模块无变化 → 不重打 jar，必须 `mvn clean install` + `build --no-cache`
+  + `up -d --force-recreate`；判据「改动没生效 + 构建很快」→ 查 jar 时间戳）、
+  **T-42**（`useAsync` 的 `undefined` 被当成空列表：守卫判 `=== null` 是死代码，要用 `loading` 门控）。
+
 ### 2026-09-23（第十三轮 · A5 优惠券营销）
 
 - **新增第 6 个业务服务 `duoduo-marketing`（营销域 / 优惠券，:8085）**：compose 第 9 个容器
@@ -782,7 +894,7 @@ npm run build      # tsc --noEmit && vite build
   ③ 锁·解·核销 CAS ④ 折扣落交易域 ⑤ 生命周期闭环，另加公开只读边界 / 内部凭据 403 / 并发锁券 / 归属校验 /
   门槛文案 / 券码非雪花 / sweep 幂等 / TTL 环境变量校验 / 运营建券准入 / 清理复原。
   前端 `tsc --noEmit` 零错误、`vite build` 通过（**79 模块**）。
-  接口冒烟累计 **14 套 1204 项**，浏览器 UI 断言累计 **5 套 180 项**。
+  （该轮口径为 14 套 1204 项 + 5 套 180 项；**第十四轮 A8 已把累计推进到 15 套 1286 项 + 6 套 244 项**。）
 - **本轮自测暴露并修复的 3 个缺陷**：
   1. **未登录访客被标记成「可领取」**：`toTemplateView` 没把登录态传进去，未登录时前端会渲染一个注定 401 的
      「立即领取」按钮 → 加 `loggedIn` 分支，未登录时 `claimable=false` + 原因文案「登录后可领取」。

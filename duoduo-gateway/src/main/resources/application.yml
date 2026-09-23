@@ -37,7 +37,12 @@ spring:
         - id: duoduo-user
           uri: lb://duoduo-user
           predicates:
-            - Path=/api/auth/**,/api/users/**,/api/pets/**
+            # /api/addresses/** = 收货地址簿（A8）。必须显式列出：
+            #   本路由是按具体子路径列举的（不是 /api/users/** 兜底），
+            #   漏了这一段不会被报错，只会 404 —— 最难发现的一类配置缺失。
+            #   与 /api/users/** 同样**不进白名单**（需登录）：地址簿里是全站最敏感的个人信息之一，
+            #   而归属校验依赖 X-User-*，不登录的话服务端根本无从判断归属。
+            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product

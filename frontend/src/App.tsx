@@ -36,6 +36,7 @@ import { NotFoundPage } from './pages/NotFound';
 import { OrderDetailPage } from './pages/OrderDetail';
 import { OrdersPage } from './pages/Orders';
 import { PetsPage } from './pages/Pets';
+import { AddressesPage } from './pages/Addresses';
 import { ProductDetailPage } from './pages/ProductDetail';
 import { ReviewNewPage } from './pages/ReviewNew';
 import { MyReviewsPage } from './pages/MyReviews';
@@ -128,6 +129,14 @@ export const App: React.FC = () => (
         element={
           <RequireAuth>
             <PetsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/addresses"
+        element={
+          <RequireAuth>
+            <AddressesPage />
           </RequireAuth>
         }
       />

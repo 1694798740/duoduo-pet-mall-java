@@ -31,12 +31,18 @@ const INVALID_REASON_TEXT: Record<string, string> = {
   STOCK_NOT_ENOUGH: '库存不足',
 };
 
-/** 单条购物车行 */
+/**
+ * 单条购物车行。
+ *
+ * ⚠️ `skuId` 类型是 **string** 而不是 number：它是 18 位雪花 ID，
+ * 超出 JS 安全整数上限，以数字形态流转会被静默四舍五入
+ * （见 `types.ts` 顶部与 docs/agent/08 的 T-39）。只做拼 URL 与相等比较。
+ */
 const CartRow: React.FC<{
   item: CartItemView;
-  onQuantity: (skuId: number, quantity: number) => void;
-  onSelect: (skuId: number, selected: boolean) => void;
-  onRemove: (skuId: number) => void;
+  onQuantity: (skuId: string, quantity: number) => void;
+  onSelect: (skuId: string, selected: boolean) => void;
+  onRemove: (skuId: string) => void;
   pending: boolean;
 }> = ({ item, onQuantity, onSelect, onRemove, pending }) => {
   const [draft, setDraft] = useState(String(item.quantity));
@@ -156,7 +162,7 @@ export const CartPage: React.FC = () => {
   const navigate = useNavigate();
   const { push } = useToast();
   const { refreshCart } = useApp();
-  const [pendingSku, setPendingSku] = useState<number | null>(null);
+  const [pendingSku, setPendingSku] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const fetcher = useCallback(() => cartApi.list(), []);
@@ -168,7 +174,7 @@ export const CartPage: React.FC = () => {
     await refreshCart();
   };
 
-  const changeQuantity = async (skuId: number, quantity: number) => {
+  const changeQuantity = async (skuId: string, quantity: number) => {
     setPendingSku(skuId);
     setActionError(null);
     try {
@@ -181,7 +187,7 @@ export const CartPage: React.FC = () => {
     }
   };
 
-  const changeSelection = async (skuId: number, selected: boolean) => {
+  const changeSelection = async (skuId: string, selected: boolean) => {
     setPendingSku(skuId);
     setActionError(null);
     try {
@@ -194,7 +200,7 @@ export const CartPage: React.FC = () => {
     }
   };
 
-  const removeItem = async (skuId: number) => {
+  const removeItem = async (skuId: string) => {
     setPendingSku(skuId);
     setActionError(null);
     try {

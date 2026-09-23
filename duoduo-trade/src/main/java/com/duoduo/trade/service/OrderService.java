@@ -10,6 +10,8 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.trade.client.LogisticsNotifier;
 import com.duoduo.trade.client.MarketingGateway;
 import com.duoduo.trade.client.ProductGateway;
+import com.duoduo.trade.client.UserAddressGateway;
+import com.duoduo.trade.client.dto.AddressCallDtos.ReceiverSnapshot;
 import com.duoduo.trade.client.dto.CouponCallDtos.LockResult;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeItem;
@@ -124,6 +126,7 @@ public class OrderService {
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
     private final MarketingGateway marketingGateway;
+    private final UserAddressGateway userAddressGateway;
     private final SettlementService settlementService;
     private final PaymentChannelRegistry channelRegistry;
     private final SnowflakeIdGenerator idGenerator;
@@ -157,6 +160,7 @@ public class OrderService {
                         CartItemMapper cartItemMapper,
                         ProductGateway productGateway,
                         MarketingGateway marketingGateway,
+                        UserAddressGateway userAddressGateway,
                         SettlementService settlementService,
                         PaymentChannelRegistry channelRegistry,
                         SnowflakeIdGenerator idGenerator,
@@ -171,6 +175,7 @@ public class OrderService {
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
         this.marketingGateway = marketingGateway;
+        this.userAddressGateway = userAddressGateway;
         this.settlementService = settlementService;
         this.channelRegistry = channelRegistry;
         this.idGenerator = idGenerator;
@@ -220,6 +225,16 @@ public class OrderService {
                         "商品「" + safeTitle(snap) + "」库存不足，当前最多可购 " + snap.availableStock() + " 件");
             }
         }
+
+        // 3.5) 收货信息解析（A8）：两种传法收敛成一份 receiver 快照，之后所有订单共用。
+        //
+        //      刻意放在这里、且在**任何跨服务写之前**：
+        //      地址取不到要拒单，越早失败越好 —— 放到建单之后就成了「订单已建、货已冻、
+        //      才发现地址不对」，还得回头做补偿。校验类的事情一律前置。
+        //
+        //      也刻意只解析一次而不是每个拆单各解析一次：同一批拆单共用同一份收货信息，
+        //      解析多次不仅多打几次跨服务调用，更会让「多单之间地址不一致」成为可能。
+        Receiver receiver = resolveReceiver(userId, request);
 
         // 4) 按卖家拆单：归属来自商品域 t_spu.seller_id（随 SKU 快照下发）。
         //    商品域没归属字段时这里只能全部写 0（自营）；现在按真实卖家分组，
@@ -277,7 +292,7 @@ public class OrderService {
             for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
                 boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
                 created.add(createOne(userId, entry.getKey(), entry.getValue(), snapshots,
-                        request, now, expireAt,
+                        request, receiver, now, expireAt,
                         couponTarget ? couponOrderNo : orderNoGenerator.next(),
                         couponTarget ? couponDiscount : 0L,
                         couponTarget ? couponCode : null,
@@ -312,13 +327,15 @@ public class OrderService {
      * 创建单个订单：订单头 + 明细快照 + 库存冻结 + 冻结台账 + 状态日志。
      *
      * @param orderNo        预先生成的订单号（券作用的目标订单必须先有号才能锁券）
+     * @param receiver       已解析好的收货信息（地址簿快照或直填值，见 {@link #resolveReceiver}）
      * @param discountAmount 优惠券抵扣（分），由营销域算出、交易域<b>照抄</b>进来
      * @param couponCode     使用的券码（未用券为 null）
      */
     private OrderEntity createOne(Long userId, Long sellerId, List<CartItemEntity> rows,
                                   Map<Long, SkuSnapshot> snapshots, PlaceOrderRequest request,
-                                  LocalDateTime now, LocalDateTime expireAt, String orderNo,
-                                  long discountAmount, String couponCode, List<FrozenRef> frozenRefs) {
+                                  Receiver receiver, LocalDateTime now, LocalDateTime expireAt,
+                                  String orderNo, long discountAmount, String couponCode,
+                                  List<FrozenRef> frozenRefs) {
         long totalAmount = 0L;
         for (CartItemEntity row : rows) {
             SkuSnapshot snap = snapshots.get(row.getSkuId());
@@ -340,9 +357,12 @@ public class OrderService {
         order.setCouponCode(couponCode);
         // 兜底：抵扣额绝不该大于商品总额（营销域已按 min 处理过，这里是同一事务内的最后一道闸）
         order.setPayAmount(Math.max(0L, totalAmount + freightAmount - discountAmount));
-        order.setReceiverName(request.receiverName().trim());
-        order.setReceiverPhone(request.receiverPhone().trim());
-        order.setReceiverAddress(request.receiverAddress().trim());
+        // 收货信息快照：用 addressId 下单时这里是用户域拼好的地址文本，
+        // 直填时是客户端传来的三个字段。无论哪种来源，**都落在订单自己的列里**，
+        // 之后用户改地址簿、甚至删掉那个地址，历史订单的收货信息都不受影响（验收③）。
+        order.setReceiverName(receiver.name());
+        order.setReceiverPhone(receiver.phone());
+        order.setReceiverAddress(receiver.address());
         order.setRemark(request.remark() == null ? null : request.remark().trim());
         order.setIdempotentKey(request.idempotentKey());
         order.setExpireAt(expireAt);
@@ -1732,6 +1752,52 @@ public class OrderService {
         };
     }
 
+    /**
+     * 解析本次下单的收货信息（A8）。
+     *
+     * <p>两种传法二选一，优先级<b>地址簿优先</b>：
+     * <ol>
+     *   <li>{@code addressId} 非空 → 去用户域回查，拿到收货人 / 电话 / 完整地址。
+     *       查不到（不存在或不属于当前用户）→ 拒单。归属校验必须由服务端做，
+     *       这就是为什么接口只收 {@code addressId} 而不收地址内容。</li>
+     *   <li>{@code addressId} 为空 → 用客户端直填的三个字段（旧逻辑，保持不变）。</li>
+     * </ol>
+     *
+     * <p>为什么不允许「两个都传、取其一」之外的第三种写法（比如合并）：
+     * 优先级必须唯一确定。若按「谁非空用谁」这种模糊规则处理，
+     * 「地址簿改了地址、结算页还留着旧的直填值」就会拼出一份来源不明的收货信息，
+     * 而且这种 bug 只在特定操作顺序下出现，极难复现。
+     */
+    private Receiver resolveReceiver(Long userId, PlaceOrderRequest request) {
+        if (request.addressId() != null) {
+            ReceiverSnapshot snapshot = userAddressGateway.load(userId, request.addressId());
+            if (snapshot == null) {
+                // 不区分「地址不存在」与「不是你的地址」——与用户域口径一致，
+                // 避免用错误文案差异探测他人地址是否存在。
+                throw BizException.businessRule("收货地址不存在或不属于当前账号，请重新选择");
+            }
+            return new Receiver(
+                    snapshot.receiverName(),
+                    snapshot.receiverPhone(),
+                    snapshot.fullAddress());
+        }
+        // 兼容旧的直填方式：三个字段此时必填（@NotBlank 已移除，故在这里显式校验）。
+        //
+        // 为什么把 @NotBlank 从 DTO 上摘掉：注解是静态的，无法表达「两种传法至少满足其一」。
+        // 留在 DTO 上会让「只传 addressId」的新用法直接 400，正好违反 A8「新字段可选、旧字段仍可用」。
+        // 因此把「至少有一份收货信息」这条规则挪到服务层，这里能同时看到两个输入源，判断才是完整的。
+        String name = trimToNull(request.receiverName());
+        String phone = trimToNull(request.receiverPhone());
+        String address = trimToNull(request.receiverAddress());
+        if (name == null || phone == null || address == null) {
+            throw BizException.validation("请填写完整收货信息，或选择一个已保存的收货地址");
+        }
+        if (!phone.matches("^1[3-9]\\d{9}$")) {
+            throw BizException.validation("收货手机号格式不正确");
+        }
+        return new Receiver(name, phone, address);
+    }
+
     private static String safeTitle(SkuSnapshot snap) {
         return snap.spuTitle() == null ? ("SKU " + snap.skuId()) : snap.spuTitle();
     }
@@ -1759,5 +1825,16 @@ public class OrderService {
 
     /** 已成功冻结的 SKU 与数量，用于异常补偿 */
     private record FrozenRef(Long skuId, Integer quantity) {
+    }
+
+    /**
+     * 已解析的收货信息（A8）。
+     *
+     * <p>用一个内部 record 而不是继续在 {@code createOne} 里读 {@code request}：
+     * 收货信息现在有两个来源（地址簿 / 直填），如果每个下单路径各自去 {@code request} 上读字段，
+     * 「地址簿下单」这条新路径迟早会被漏掉一处，表现为订单里收货信息为空。
+     * 收敛成一个值对象后，编译期就能保证「解析一次、处处一致」。
+     */
+    private record Receiver(String name, String phone, String address) {
     }
 }

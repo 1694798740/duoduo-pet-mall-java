@@ -38,6 +38,18 @@ public class WebAutoConfiguration {
         return new GlobalExceptionHandler();
     }
 
+    /**
+     * 64 位整数转字符串的 Jackson 模块（雪花 ID 精度保护，见 T-39）。
+     *
+     * <p>注册为 Bean 有两个作用：一是让业务服务的 {@code ObjectMapper} 也带上它
+     * （Feign / RestTemplate 等非 MVC 场景），二是把这个"隐藏规则"显式暴露在装配清单里，
+     * 读代码的人不必翻 {@code extendMessageConverters} 才知道 id 是字符串。
+     */
+    @Bean
+    public LongToStringJacksonModule longToStringJacksonModule() {
+        return new LongToStringJacksonModule();
+    }
+
     @Bean
     public WebMvcConfigurer duoduoWebMvcConfigurer() {
         return new WebMvcConfigurer() {
@@ -61,13 +73,21 @@ public class WebAutoConfiguration {
              * 统一在 Content-Type 上带 charset=UTF-8。
              * 规范上 application/json 默认即 UTF-8，但不少老客户端（Windows PowerShell 5.1 等）
              * 在缺少 charset 时按 ISO-8859-1 解码，导致中文乱码。带上 charset 消除这类兼容问题。
+             *
+             * <p>同时给每个 Jackson 转换器挂上 {@link LongToStringJacksonModule}：
+             * 雪花 ID 是 18~19 位，超出 JS 安全整数范围，直接以 JSON number 下发会被浏览器
+             * 静默舍入（见该模块的类注释与 T-39）。这里挂模块而不是逐个字段标注注解 ——
+             * 漏标的代价是一个只在真实浏览器里才出现的 404，不能靠"记得标"来保证。
              */
             @Override
             public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
                 converters.stream()
                         .filter(MappingJackson2HttpMessageConverter.class::isInstance)
                         .map(MappingJackson2HttpMessageConverter.class::cast)
-                        .forEach(converter -> converter.setDefaultCharset(StandardCharsets.UTF_8));
+                        .forEach(converter -> {
+                            converter.setDefaultCharset(StandardCharsets.UTF_8);
+                            converter.getObjectMapper().registerModule(new LongToStringJacksonModule());
+                        });
             }
         };
     }

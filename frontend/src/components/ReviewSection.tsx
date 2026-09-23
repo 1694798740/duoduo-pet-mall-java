@@ -28,7 +28,7 @@ const RATING_TABS: Array<{ value: number | undefined; label: string }> = [
   { value: 1, label: '1 星' },
 ];
 
-export const ReviewSection: React.FC<{ spuId: number }> = ({ spuId }) => {
+export const ReviewSection: React.FC<{ spuId: string }> = ({ spuId }) => {
   const [rating, setRating] = useState<number | undefined>(undefined);
   const [hasImage, setHasImage] = useState(false);
   const [page, setPage] = useState(1);

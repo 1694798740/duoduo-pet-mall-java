@@ -23,8 +23,8 @@ import { Alert, Empty, Field, LoadingBlock, useToast } from '../components/ui';
 import { useAsync } from '../components/hooks';
 
 interface DraftItem {
-  spuId: number;
-  skuId: number | null;
+  spuId: string;
+  skuId: string | null;
   title: string;
   mainImage: string | null;
   specText: string | null;
@@ -63,7 +63,7 @@ export const ReviewNewPage: React.FC = () => {
       setDrafts([]);
       return;
     }
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     const next: DraftItem[] = [];
     for (const item of data.items) {
       const spuId = item.spuId;
@@ -122,7 +122,7 @@ export const ReviewNewPage: React.FC = () => {
     );
   }
 
-  const update = (spuId: number, patch: Partial<DraftItem>) => {
+  const update = (spuId: string, patch: Partial<DraftItem>) => {
     setDrafts((list) => list.map((d) => (d.spuId === spuId ? { ...d, ...patch } : d)));
   };
 

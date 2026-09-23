@@ -24,16 +24,36 @@ public final class OrderDtos {
      *
      * <p>{@code idempotentKey} 由客户端生成（建议 UUID），用于「重复提交只下一个单」：
      * 同一用户用同一个键再次提交会直接返回**首次**产生的订单，而不是再下一单。
+     *
+     * <p><b>收货信息有两种传法（A8）</b>：
+     * <ol>
+     *   <li><b>地址簿方式</b>（推荐）：只传 {@code addressId}，服务端去用户域取地址并写入订单快照。
+     *       三个 {@code receiver*} 字段可省略。</li>
+     *   <li><b>直填方式</b>（兼容旧客户端）：传 {@code receiverName / receiverPhone / receiverAddress}，
+     *       不传 {@code addressId}。</li>
+     * </ol>
+     * 两者都传时以 {@code addressId} 为准，直填字段被忽略 ——
+     * 必须有一个确定性的优先级，否则「地址簿里改了地址、结算页还留着旧的直填值」
+     * 会拼出一份谁也不知道从哪来的收货信息。
+     *
+     * <p>之所以不让 {@code addressId} 与三个直填字段合并成「地址对象」：那会破坏旧客户端的请求体，
+     * 而 A8 的验收标准里明确要求「新字段可选，旧字段仍可用」。
      */
     public record PlaceOrderRequest(
-            @NotBlank(message = "收货人不能为空")
             @Size(max = 50, message = "收货人姓名过长") String receiverName,
 
-            @NotBlank(message = "收货手机号不能为空")
             @Pattern(regexp = "^1[3-9]\\d{9}$", message = "收货手机号格式不正确") String receiverPhone,
 
-            @NotBlank(message = "收货地址不能为空")
             @Size(max = 300, message = "收货地址过长") String receiverAddress,
+
+            /**
+             * 使用地址簿中的地址下单（可空）。非空时忽略上方三个直填字段。
+             *
+             * <p>归属校验在用户域完成：带上当前登录用户去查这个地址，
+             * 查不到（不存在 / 不是自己的）一律拒单。交易域<b>不</b>自己做归属判断 ——
+             * 地址数据在用户域，交易域无从判断，硬判断只会写出一份会过期的副本。
+             */
+            Long addressId,
 
             @Size(max = 200, message = "备注过长") String remark,
 

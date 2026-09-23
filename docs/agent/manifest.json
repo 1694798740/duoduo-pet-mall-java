@@ -1,6 +1,7 @@
 {
   "kind": "ai-agent",
   "generated_at": "2026-09-18",
+  "last_synced": "2026-09-23",
   "source_dir": "docs/agent",
   "description": "AI Agent 接管包：仓库根 AGENTS.md + docs/agent/00~08 + 本目录的启动提示词。逐篇在乐享知识库的 entry_id 见下（人读交接包见 docs/handover/manifest.json）。",
   "lexiang_space": {
@@ -44,7 +45,7 @@
     {
       "local": "docs/agent/03-架构与不变式.md",
       "name": "A03 · 架构与不变式",
-      "purpose": "INV-1~15 硬约束 + 工程约定 + 改架构的注意",
+      "purpose": "INV-1~17 硬约束（含 INV-16/17 全站 ID 序列化）+ 工程约定 + 改架构的注意",
       "lexiang_entry_id": "bfb8011a71e44689bdc899826a36c172"
     },
     {
@@ -74,7 +75,7 @@
     {
       "local": "docs/agent/08-环境运维与踩坑禁忌.md",
       "name": "A08 · 环境运维与踩坑禁忌",
-      "purpose": "T-01~T-24 症状→根因→做法、10 条禁忌、外部依赖边界",
+      "purpose": "T-01~T-42 症状→根因→做法、10 条禁忌、外部依赖边界",
       "lexiang_entry_id": "7cad455269074ba3820c6722b9037f68"
     }
   ],

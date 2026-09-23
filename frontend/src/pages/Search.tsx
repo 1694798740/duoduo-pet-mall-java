@@ -33,14 +33,25 @@ function num(value: string | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * 把 URL 上的字符串原样传下去，只做**非空**校验。
+ *
+ * ⚠️ id 类参数（categoryId / brandId）**不能**走 Num()：它们是 18 位雪花值，
+ * `Number()` 会静默四舍五入成另一个 id，筛选结果直接变空（T-39）。
+ * 价格类参数（minPrice）是真正需要运算的，继续用 num()。
+ */
+function rawId(value: string | null): string | undefined {
+  return value === null || value === '' ? undefined : value;
+}
+
 export const SearchPage: React.FC = () => {
   const [params, setParams] = useSearchParams();
 
   const query = useMemo<ProductQuery>(
     () => ({
       keyword: params.get('keyword') ?? undefined,
-      categoryId: num(params.get('categoryId')),
-      brandId: num(params.get('brandId')),
+      categoryId: rawId(params.get('categoryId')),
+      brandId: rawId(params.get('brandId')),
       supplyType: (params.get('supplyType') as ProductQuery['supplyType']) ?? undefined,
       // 输入是「元」，转成「分」下发
       minPrice: num(params.get('minPrice')) != null ? num(params.get('minPrice'))! * 100 : undefined,
@@ -91,7 +102,7 @@ export const SearchPage: React.FC = () => {
 
   const activeCategoryId = query.categoryId;
   const flatCategories = useMemo(() => {
-    const out: { id: number; name: string; depth: number }[] = [];
+    const out: { id: string; name: string; depth: number }[] = [];
     const walk = (nodes: CategoryNode[]) => {
       for (const node of nodes) {
         out.push({ id: node.id, name: node.name, depth: node.depth });

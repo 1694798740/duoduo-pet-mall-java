@@ -19,16 +19,21 @@ import { Alert, LoadingBlock, ProductGrid, conditionLabelOf, formatPrice } from 
 
 export const ListingDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const listingId = Number(id);
+  /**
+   * 路由参数**保持字符串**（同 ProductDetail 的处理）。
+   *
+   * `Number(id)` 会把 18 位雪花值静默四舍五入成另一个整数，
+   * 拼进 URL 就查不到那条闲置 —— 表现为「点开详情 404」且无任何报错（T-39）。
+   */
+  const listingId = id ?? '';
+  const hasListingId = listingId !== '';
 
   const fetcher = useCallback(() => productApi.listing(listingId), [listingId]);
-  const { data, loading, error, reload } = useAsync<ListingDetail>(
-    fetcher,
-    Number.isFinite(listingId),
-    [listingId],
-  );
+  const { data, loading, error, reload } = useAsync<ListingDetail>(fetcher, hasListingId, [
+    listingId,
+  ]);
 
-  if (!Number.isFinite(listingId)) return <Alert kind="error">闲置编号不合法</Alert>;
+  if (!hasListingId) return <Alert kind="error">闲置编号不合法</Alert>;
   if (loading && !data) return <LoadingBlock text="正在加载闲置详情…" />;
 
   if (error && !data) {
@@ -128,7 +133,7 @@ export const ListingDetailPage: React.FC = () => {
               {/* C2C 是一对一交易，卖家可不可信比「成色」更影响决策 —— 放在规格表里最显眼 */}
               <dt>卖家信用</dt>
               <dd>
-                {card.sellerId != null && Number.isFinite(card.sellerId) ? (
+                {card.sellerId != null && card.sellerId !== '' ? (
                   <CreditBadge sellerId={card.sellerId} label="卖家信用" />
                 ) : (
                   <span className="muted">暂无</span>

@@ -54,7 +54,7 @@ export const AdminAuditsPage: React.FC = () => {
 
   if (!operator) return <AdminDenied />;
 
-  const runAudit = async (id: number, action: 'APPROVE' | 'REJECT', rejectReason?: string) => {
+  const runAudit = async (id: string, action: 'APPROVE' | 'REJECT', rejectReason?: string) => {
     setActionError(null);
     setBusy(true);
     try {

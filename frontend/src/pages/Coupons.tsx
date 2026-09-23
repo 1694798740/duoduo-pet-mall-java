@@ -59,7 +59,7 @@ export const CouponsPage: React.FC = () => {
 
   const [tab, setTab] = useState<Tab>('center');
   const [mineStatus, setMineStatus] = useState<'' | CouponStatus>('UNUSED');
-  const [claiming, setClaiming] = useState<number | null>(null);
+  const [claiming, setClaiming] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const center = useAsync<CouponTemplateView[]>(

@@ -43,7 +43,7 @@ export const SellerProductsPage: React.FC = () => {
   const page = num(params.get('page')) ?? 1;
   const allowed = canAccessSellerConsole(user?.role);
 
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [keywordDraft, setKeywordDraft] = useState(keyword);
 
   const fetcher = useCallback(

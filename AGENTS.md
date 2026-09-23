@@ -19,7 +19,8 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   "-Dmaven.legacyLocalRepo=true" \
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
-# 3) 冒烟基线：14 套 1204 项接口断言 + 5 套 180 项浏览器断言全绿，至少跑受你改动影响的那几套
+# 3) 冒烟基线：15 套 1286 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
+#    （一键全量：scripts\run-all-smoke.ps1）
 ```
 
 任何一条不通过 → **先修基线，不要开始写新功能**。基线不绿时的改动无法验证。
@@ -65,12 +66,12 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                ★ 进度权威（里程碑/任务/变更记录/命令速查）
 │   ├── ARCHITECTURE.md        长期架构蓝图（12 服务，部分未落地）
 │   ├── PROJECT-STATUS.md      已废弃（见文首横幅）
-│   ├── sql/                   00~06 容器初始化 SQL（五库 DDL + 商品种子 + 交易域增量列）
+│   ├── sql/                   00~07 容器初始化 SQL（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）
 │   ├── handover/              人读交接包 9 篇（含 manifest.json 云端 id）
 │   └── agent/                 ★ 本 AI 接管包（00~08）
-├── scripts/                   14 套接口冒烟 .ps1 + e2e/ 5 套真实浏览器自测（另 1 套夹具脚本）
+├── scripts/                   15 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
 ├── duoduo-common/             响应/错误码/异常/雪花ID/UserContext/JWT/OperatorGuard
-├── duoduo-common-web/         全局异常处理/请求ID/身份透传
+├── duoduo-common-web/         全局异常处理/请求ID/身份透传/LongToStringJacksonModule（全站 ID 序列化）
 ├── duoduo-gateway/            路由 + JWT 校验 + 白名单 + 身份头注入（WebFlux）
 ├── duoduo-user/       :8081   账号/令牌/宠物档案/内部批量昵称
 ├── duoduo-product/    :8082   类目品牌/SPU-SKU/库存/闲置/商家商品/后台类目品牌审核

@@ -26,6 +26,7 @@ const NAV = [
   { to: '/listings', label: '二手闲置' },
   { to: '/coupons', label: '优惠券' },
   { to: '/pets', label: '我的宠物' },
+  { to: '/addresses', label: '收货地址' },
   { to: '/orders', label: '我的订单' },
 ];
 

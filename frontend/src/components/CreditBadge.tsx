@@ -41,7 +41,7 @@ function toneOf(level: string) {
 }
 
 /** 一行式的信用徽标（卖家侧）：`🏅 信用 98 · 优秀`。加载中 / 失败都不占据视觉重心。 */
-export const CreditBadge: React.FC<{ sellerId: number; label?: string }> = ({
+export const CreditBadge: React.FC<{ sellerId: string; label?: string }> = ({
   sellerId,
   label = '卖家信用',
 }) => {
@@ -49,7 +49,7 @@ export const CreditBadge: React.FC<{ sellerId: number; label?: string }> = ({
     (signal: AbortSignal) => creditApi.seller(sellerId, { signal }),
     [sellerId],
   );
-  const { data, loading, error } = useAsync(fetcher, Number.isFinite(sellerId), [sellerId]);
+  const { data, loading, error } = useAsync(fetcher, sellerId !== '', [sellerId]);
 
   if (loading) {
     return <span className="small muted">{label} 加载中…</span>;
@@ -122,12 +122,12 @@ const FactorRow: React.FC<{ factor: { code: string; label: string; weight: numbe
  * 用户看到 94 分而不知道为什么时，唯一能建立信任的做法就是把依据摊开 ——
  * 完成了几单、均分多少、有几笔被裁定退款。这些都不是隐私字段（只有计数与评分）。
  */
-export const CreditPanel: React.FC<{ userId: number }> = ({ userId }) => {
+export const CreditPanel: React.FC<{ userId: string }> = ({ userId }) => {
   const fetcher = useCallback(
     (signal: AbortSignal) => creditApi.seller(userId, { signal }),
     [userId],
   );
-  const { data, loading, error } = useAsync(fetcher, Number.isFinite(userId), [userId]);
+  const { data, loading, error } = useAsync(fetcher, userId !== '', [userId]);
 
   if (loading) return <LoadingBlock text="正在加载信用分…" />;
   if (error) return <Alert kind="error">{error}</Alert>;

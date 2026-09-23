@@ -45,22 +45,28 @@ const LIFE_STAGE_LABEL: Record<string, string> = {
 
 export const ProductDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const spuId = Number(id);
+  /**
+   * 路由参数**保持字符串**。
+   *
+   * ⚠️ 这里刻意不写 `const spuId = Number(id)`：spuId 是 18 位雪花值
+   * （如 `361084524781768704`），超出 JS 安全整数上限，`Number()` 会静默
+   * 四舍五入到另一个整数，于是「点开商品详情」直接 404 —— 且不报任何错（T-39）。
+   * 下游只把它拼进 URL，用字符串完全够用。
+   */
+  const spuId = id ?? '';
+  const hasSpuId = spuId !== '';
   const navigate = useNavigate();
   const { push } = useToast();
   const { refreshCart } = useApp();
   const { user, pet } = useAuth();
 
-  const [skuId, setSkuId] = useState<number | null>(null);
+  /** 选中的 SKU id；同为 18 位雪花值，保持 string（见上方 spuId 的说明） */
+  const [skuId, setSkuId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [adding, setAdding] = useState(false);
 
   const fetcher = useCallback(() => productApi.detail(spuId), [spuId]);
-  const { data, loading, error, reload } = useAsync<ProductDetail>(
-    fetcher,
-    Number.isFinite(spuId),
-    [spuId],
-  );
+  const { data, loading, error, reload } = useAsync<ProductDetail>(fetcher, hasSpuId, [spuId]);
 
   const skus = data?.skus ?? [];
 
@@ -84,7 +90,7 @@ export const ProductDetailPage: React.FC = () => {
     if (selectedSku) setQuantity((q) => Math.min(Math.max(1, q), Math.max(1, selectedSku.stock)));
   }, [selectedSku]);
 
-  if (!Number.isFinite(spuId)) {
+  if (!hasSpuId) {
     return <Alert kind="error">商品编号不合法</Alert>;
   }
 
@@ -215,7 +221,7 @@ export const ProductDetailPage: React.FC = () => {
                 <SupplyTag supplyType={card.supplyType} />
                 {/* 信用分是「卖家」的可信度：放在下单决策最显眼的位置（价格区），而不是塞进规格表底部。
                     supplyType=self 的商品归属平台自营（sellerId=0），标签随之改成「平台自营信用」。 */}
-                {card.sellerId != null && Number.isFinite(card.sellerId) ? (
+                {card.sellerId != null && card.sellerId !== '' ? (
                   <CreditBadge
                     sellerId={card.sellerId}
                     label={card.supplyType === 'self' ? '平台自营信用' : '卖家信用'}

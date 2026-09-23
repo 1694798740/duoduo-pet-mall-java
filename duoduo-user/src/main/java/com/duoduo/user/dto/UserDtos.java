@@ -120,8 +120,79 @@ public final class UserDtos {
     ) {
     }
 
-    // ---------------- 响应 ----------------
+    // ---------------- 收货地址（A8） ----------------
 
+    /**
+     * 新增 / 修改收货地址。
+     *
+     * <p>省 / 市 / 区 / 明细分开提交，由服务端拼成一段完整地址写进订单快照；
+     * 客户端<b>不能</b>只提交一段拼好的文本 —— 那样后续按城市算运费就无从做起。
+     *
+     * <p>{@code isDefault} 语义：{@code true} = 设为默认；{@code null} / {@code false} = 不改变默认归属。
+     * 用包装类型而非 {@code boolean}，是为了区分「没传」与「明确要取消默认」——
+     * 「取消默认」这个动作在本模型里不存在（默认要么转移到别的地址，要么随地址一起删掉），
+     * 因此 {@code false} 一律按「不改变」处理，避免出现「用户一个默认地址都没有」的中间态。
+     */
+    public record AddressUpsertRequest(
+            @NotBlank(message = "收货人不能为空")
+            @Size(max = 50, message = "收货人姓名过长")
+            String receiverName,
+
+            @NotBlank(message = "收货手机号不能为空")
+            @Pattern(regexp = PHONE_REGEX, message = "请输入合法的 11 位手机号")
+            String receiverPhone,
+
+            @NotBlank(message = "省份不能为空")
+            @Size(max = 30, message = "省份名称过长")
+            String province,
+
+            @NotBlank(message = "城市不能为空")
+            @Size(max = 30, message = "城市名称过长")
+            String city,
+
+            @NotBlank(message = "区 / 县不能为空")
+            @Size(max = 30, message = "区县名称过长")
+            String district,
+
+            @NotBlank(message = "详细地址不能为空")
+            @Size(max = 200, message = "详细地址最多 200 个字符")
+            String detail,
+
+            @Size(max = 20, message = "标签最多 20 个字符")
+            String label,
+
+            Boolean isDefault
+    ) {
+    }
+
+    /**
+     * 收货地址视图。
+     *
+     * <p>{@code receiverPhone} 在这里是<b>完整号码</b>，不做脱敏：地址簿是用户自己的数据，
+     * 编辑时把号码显示成 {@code 138****8000} 会让用户没法确认自己填错了没有。
+     * 需要脱敏的是「给第三方看的场景」（如订单列表给卖家看），那个脱敏发生在交易域，
+     * 不在这个视图上做 —— 一处脱敏、一处不脱敏，比两处都脱敏更好排查。
+     *
+     * <p>{@code fullAddress} 由服务端拼好一起下发，免得每个前端页面各拼一遍、
+     * 拼出三种顺序（「省市区+明细」与「省+市+区+明细」看起来只差个空格，实际会不一致）。
+     */
+    public record AddressView(
+            Long id,
+            String receiverName,
+            String receiverPhone,
+            String province,
+            String city,
+            String district,
+            String detail,
+            String label,
+            /** 服务端拼好的完整地址，与下单快照写入的文本严格同源 */
+            String fullAddress,
+            boolean isDefault,
+            String createdAt
+    ) {
+    }
+
+    // ---------------- 响应 ----------------
     /**
      * 用户公开资料（服务间只读视图）。
      *
@@ -189,6 +260,22 @@ public final class UserDtos {
             String medicalHistory,
             boolean isDefault,
             String createdAt
+    ) {
+    }
+
+    /**
+     * 地址簿视图（服务间只读，A8）。
+     *
+     * <p>与 {@link AddressView} 的差别：<b>只有收货人三要素 + 完整地址</b>。
+     * 交易域下单需要的就是这三样，用于写入订单快照；
+     * 标签、省份字段、是否默认这些「地址簿管理」信息它一概不需要，
+     * 按调用方真正需要什么裁剪字段（同 {@link UserBrief} 的取舍）。
+     */
+    public record AddressSnapshot(
+            Long id,
+            String receiverName,
+            String receiverPhone,
+            String fullAddress
     ) {
     }
 }

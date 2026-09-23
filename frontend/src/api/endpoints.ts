@@ -2,7 +2,8 @@
  * 接口清单 —— 与 Java 微服务网关的实际路由逐条对齐。
  *
  * 网关路由（duoduo-gateway/application.yml）：
- *   /api/auth/**, /api/users/**, /api/pets/**      → duoduo-user   :8081
+ *   /api/auth/**, /api/users/**, /api/pets/**,
+ *   /api/addresses/**                              → duoduo-user   :8081
  *   /api/categories/**, /api/products/**, /api/listings/**,
  *   /api/home/**, /api/meta/**,
  *   /api/seller/products/**                        → duoduo-product:8082
@@ -24,6 +25,8 @@ import type {
   AbnormalSettlement,
   AdminReport,
   AdminSettlementSummary,
+  AddressUpsertRequest,
+  AddressView,
   AfterSaleArbitrateRequest,
   AfterSaleCreateRequest,
   AfterSaleReplyRequest,
@@ -112,9 +115,24 @@ export const userApi = {
 export const petApi = {
   list: () => api.get<PetView[]>('/api/pets'),
   create: (body: PetUpsertRequest) => api.post<PetView>('/api/pets', body),
-  update: (id: number, body: PetUpsertRequest) => api.put<PetView>(`/api/pets/${id}`, body),
-  setDefault: (id: number) => api.post<PetView>(`/api/pets/${id}/default`),
-  remove: (id: number) => api.del<void>(`/api/pets/${id}`),
+  update: (id: string, body: PetUpsertRequest) => api.put<PetView>(`/api/pets/${id}`, body),
+  setDefault: (id: string) => api.post<PetView>(`/api/pets/${id}/default`),
+  remove: (id: string) => api.del<void>(`/api/pets/${id}`),
+};
+
+// ---------- 收货地址簿（/api/addresses，A8） ----------
+
+export const addressApi = {
+  list: () => api.get<AddressView[]>('/api/addresses'),
+  /**
+   * 默认地址；新用户尚无地址时后端返回 `data: null`（不是报错）。
+   * 因此返回类型是 `AddressView | null`，调用方必须处理 null。
+   */
+  defaultAddress: () => api.get<AddressView | null>('/api/addresses/default'),
+  create: (body: AddressUpsertRequest) => api.post<AddressView>('/api/addresses', body),
+  update: (id: string, body: AddressUpsertRequest) => api.put<AddressView>(`/api/addresses/${id}`, body),
+  setDefault: (id: string) => api.post<AddressView>(`/api/addresses/${id}/default`),
+  remove: (id: string) => api.del<void>(`/api/addresses/${id}`),
 };
 
 // ---------- 类目 / 元数据 ----------
@@ -133,8 +151,14 @@ export const catalogApi = {
 /** 商品检索参数（与后端 ProductQuery 字段一一对应） */
 export interface ProductQuery {
   keyword?: string;
-  categoryId?: number;
-  brandId?: number;
+  /**
+   * 类目 / 品牌筛选。
+   *
+   * ⚠️ 是 **string**：这两个都是 18 位雪花 id，转成 number 会静默丢精度（T-39），
+   * 于是「点类目筛选」会筛出一片空白。它们只被拼进查询串，字符串完全够用。
+   */
+  categoryId?: string;
+  brandId?: string;
   supplyType?: 'self' | 'merchant';
   minPrice?: number;
   maxPrice?: number;
@@ -167,14 +191,14 @@ export const productApi = {
     api.get<PageResult<ProductCard>>('/api/products', { query }),
 
   /** 商品详情：SKU、适用属性聚合、同类与相关推荐 */
-  detail: (spuId: number) => api.get<ProductDetail>(`/api/products/${spuId}`),
+  detail: (spuId: string) => api.get<ProductDetail>(`/api/products/${spuId}`),
 
   /** C2C 闲置列表（只返回已上架且审核通过的） */
   listings: (query: ListingQuery & { signal?: AbortSignal }) =>
     api.get<PageResult<ListingCard>>('/api/listings', { query }),
 
   /** 闲置详情 + 「同款全新」推荐 */
-  listing: (id: number) => api.get<ListingDetail>(`/api/listings/${id}`),
+  listing: (id: string) => api.get<ListingDetail>(`/api/listings/${id}`),
 };
 
 // ---------- 购物车（/api/cart，需登录） ----------
@@ -184,12 +208,12 @@ export const cartApi = {
   /** 件数角标；不查商品服务，可高频调用 */
   count: () => api.get<{ count: number }>('/api/cart/count'),
   /** 加购；同 SKU 累加数量，不新增行 */
-  add: (body: { skuId: number; quantity?: number }) => api.post<CartItemView>('/api/cart/items', body),
-  updateQuantity: (skuId: number, quantity: number) =>
+  add: (body: { skuId: string; quantity?: number }) => api.post<CartItemView>('/api/cart/items', body),
+  updateQuantity: (skuId: string, quantity: number) =>
     api.patch<CartItemView>(`/api/cart/items/${skuId}`, { quantity }),
-  setSelected: (skuId: number, selected: boolean) =>
+  setSelected: (skuId: string, selected: boolean) =>
     api.patch<CartItemView>(`/api/cart/items/${skuId}/selection`, { selected }),
-  remove: (skuId: number) => api.del<void>(`/api/cart/items/${skuId}`),
+  remove: (skuId: string) => api.del<void>(`/api/cart/items/${skuId}`),
   /** 清空已勾选条目（下单成功后调用） */
   removeSelected: () => api.del<{ removed: number }>('/api/cart/selected'),
 };
@@ -269,7 +293,7 @@ export const sellerApi = {
     api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
 
   /** 上下架（幂等开关）：action = ON_SALE | OFF_SHELF；越权操作别人的商品返回 403 */
-  changeProductStatus: (spuId: number, action: 'ON_SALE' | 'OFF_SHELF') =>
+  changeProductStatus: (spuId: string, action: 'ON_SALE' | 'OFF_SHELF') =>
     api.post<SellerProductView>(`/api/seller/products/${spuId}/status`, { action }),
 };
 
@@ -298,23 +322,23 @@ export const adminApi = {
   // ---- 基础数据：类目 / 品牌（落在 duoduo-product） ----
   categories: () => api.get<CategoryNode[]>('/api/admin/categories'),
   createCategory: (body: CategorySaveRequest) => api.post<CategoryNode>('/api/admin/categories', body),
-  updateCategory: (id: number, body: CategorySaveRequest) =>
+  updateCategory: (id: string, body: CategorySaveRequest) =>
     api.put<CategoryNode>(`/api/admin/categories/${id}`, body),
-  setCategoryStatus: (id: number, active: boolean) =>
+  setCategoryStatus: (id: string, active: boolean) =>
     api.put<void>(`/api/admin/categories/${id}/status?active=${active}`),
-  deleteCategory: (id: number) => api.del<void>(`/api/admin/categories/${id}`),
+  deleteCategory: (id: string) => api.del<void>(`/api/admin/categories/${id}`),
 
   brands: () => api.get<BrandView[]>('/api/admin/brands'),
   createBrand: (body: BrandSaveRequest) => api.post<BrandView>('/api/admin/brands', body),
-  updateBrand: (id: number, body: BrandSaveRequest) => api.put<BrandView>(`/api/admin/brands/${id}`, body),
-  setBrandStatus: (id: number, active: boolean) =>
+  updateBrand: (id: string, body: BrandSaveRequest) => api.put<BrandView>(`/api/admin/brands/${id}`, body),
+  setBrandStatus: (id: string, active: boolean) =>
     api.put<void>(`/api/admin/brands/${id}/status?active=${active}`),
-  deleteBrand: (id: number) => api.del<void>(`/api/admin/brands/${id}`),
+  deleteBrand: (id: string) => api.del<void>(`/api/admin/brands/${id}`),
 
   // ---- 内容审核（落在 duoduo-product；含未审核通过的内容） ----
   listingsForAudit: (query?: { auditStatus?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
-  auditListing: (id: number, body: ListingAuditRequest) =>
+  auditListing: (id: string, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
 
   // ---- 售后仲裁工作台（A3，落在 duoduo-fulfilment） ----
@@ -359,18 +383,18 @@ export const paymentApi = {
 export const reviewApi = {
   /** 商品评价分页（公开） */
   byProduct: (
-    spuId: number,
+    spuId: string,
     query?: { rating?: number; hasImage?: boolean; page?: number; pageSize?: number },
   ) => api.get<PageResult<ReviewView>>(`/api/reviews/product/${spuId}`, { query }),
 
   /** 商品评分汇总（公开） */
-  summary: (spuId: number) => api.get<ReviewSummary>(`/api/reviews/product/${spuId}/summary`),
+  summary: (spuId: string) => api.get<ReviewSummary>(`/api/reviews/product/${spuId}/summary`),
 
   /** 提交评价：一次可提交订单里多件商品 */
   create: (body: ReviewCreateRequest) => api.post<ReviewCreateResult>('/api/reviews', body),
 
   /** 追评（每条评价一次） */
-  append: (id: number, content: string) => api.post<ReviewView>(`/api/reviews/${id}/append`, { content }),
+  append: (id: string, content: string) => api.post<ReviewView>(`/api/reviews/${id}/append`, { content }),
 
   /** 我的评价（分页） */
   mine: (query?: { page?: number; pageSize?: number }) =>
@@ -456,7 +480,7 @@ export const logisticsApi = {
  */
 export const creditApi = {
   /** 某卖家（用户）的信用分与构成明细（公开，未登录可读） */
-  seller: (sellerId: number, options?: { signal?: AbortSignal }) =>
+  seller: (sellerId: string, options?: { signal?: AbortSignal }) =>
     api.get<CreditView>(`/api/reviews/seller/${sellerId}/credit`, options),
 };
 
@@ -486,7 +510,7 @@ export const couponApi = {
    * 重复领取不会报错，而是返回 `replay=true` 与**已有那张券的券码** ——
    * 用户双击、多端并发、网络重试都是常态，把它们报成失败只会让用户以为操作没成功。
    */
-  claim: (templateId: number) =>
+  claim: (templateId: string) =>
     api.post<CouponClaimResult>(`/api/coupons/templates/${templateId}/claim`),
 
   /** 我的券包；status 可选 UNUSED / LOCKED / USED / EXPIRED，不传为全部 */

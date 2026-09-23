@@ -16,7 +16,17 @@ import { toFriendlyMessage } from '../../api/client';
 import { useAuth } from '../../store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
-const emptyForm: CategorySaveRequest = { name: '', parentId: 0, sortNo: 0, icon: '' };
+/**
+ * 顶级类目的哨兵 parentId。
+ *
+ * ⚠️ 这个 `0` 是**真正的数值语义**（"没有父类目"），不是雪花 id ——
+ * 它和后端的 `Long parentId` 约定一致。因此这里用字符串 `'0'` 表示，
+ * 与真实的类目 id（18 位数字字符串）在类型上一致（都是 string）、
+ * 在语义上可区分（`'0'` 恒为顶级）。**不要**把它和 `Number()` 混用。
+ */
+const TOP_PARENT = '0';
+
+const emptyForm: CategorySaveRequest = { name: '', parentId: TOP_PARENT, sortNo: 0, icon: '' };
 
 export const AdminCategoriesPage: React.FC = () => {
   const { user } = useAuth();
@@ -39,8 +49,11 @@ export const AdminCategoriesPage: React.FC = () => {
   if (loading) return <LoadingBlock text="正在加载类目…" />;
 
   const items = data ?? [];
-  const nameOf = (parentId: number | null) =>
-    parentId && parentId !== 0 ? (items.find((c) => c.id === parentId)?.name ?? `#${parentId}`) : '（顶级）';
+  /** 列出父类目名；parentId 为 null 或哨兵 '0' 都表示顶级 */
+  const nameOf = (parentId: string | null) =>
+    parentId && parentId !== TOP_PARENT
+      ? (items.find((c) => c.id === parentId)?.name ?? `#${parentId}`)
+      : '（顶级）';
 
   const openCreate = () => {
     setEditing(null);
@@ -51,7 +64,7 @@ export const AdminCategoriesPage: React.FC = () => {
   const openEdit = (item: CategoryNode) => {
     setEditing(item);
     setCreating(false);
-    setForm({ name: item.name, parentId: item.parentId ?? 0, sortNo: 0, icon: item.icon ?? '' });
+    setForm({ name: item.name, parentId: item.parentId ?? TOP_PARENT, sortNo: 0, icon: item.icon ?? '' });
     setActionError(null);
   };
   const closeModal = () => {
@@ -167,12 +180,17 @@ export const AdminCategoriesPage: React.FC = () => {
           <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={50} />
         </Field>
         <Field label="父类目" hint="留 0 表示顶级类目；选某个类目则成为其子类目">
+          {/*
+            value 全程用**字符串**：真实类目 id 是 18 位雪花值，
+            经 number 中转会丢精度（T-39）。仅哨兵 TOP_PARENT='0' 是普通短值。
+            这里刻意不做 Number() —— select 的 value 本来就是字符串，直接用即可。
+          */}
           <select
             className="input"
-            value={form.parentId ?? 0}
-            onChange={(e) => setForm({ ...form, parentId: Number(e.target.value) })}
+            value={form.parentId ?? TOP_PARENT}
+            onChange={(e) => setForm({ ...form, parentId: e.target.value })}
           >
-            <option value={0}>（顶级）</option>
+            <option value={TOP_PARENT}>（顶级）</option>
             {items.filter((c) => c.depth === 1).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
