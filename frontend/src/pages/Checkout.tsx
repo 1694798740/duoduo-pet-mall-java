@@ -3,21 +3,27 @@
  *
  * 流程：
  *   1. GET /api/cart 拿到「已勾选且有效」的条目与 selectedAmount（服务端口径）
- *   2. 填写收货信息 → POST /api/orders
- *      · 请求体只含 receiverName / receiverPhone / receiverAddress / remark / idempotentKey
+ *   2. GET /api/coupons/mine/usable?amount=selectedAmount 拿可用券与**服务端推荐的**最优券
+ *      · 门槛 / 有效期 / 是否已被别的订单锁住这三件事都在服务端，前端只负责展示与选择
+ *      · 「未选择」与「明确不用券」是两个不同状态（undefined vs null），不能合并
+ *   3. 填写收货信息 → POST /api/orders
+ *      · 请求体含 receiverName / receiverPhone / receiverAddress / remark / couponCode / idempotentKey
+ *      · **只传券码、不传优惠金额** —— 抵扣多少由营销域按券模板算出、交易域落账
  *      · **没有 addressId**，本期不做地址簿
  *      · idempotentKey 在进入本页时生成一次并全程复用：网络重试或用户连点两次
  *        都会命中同一个键，后端只会创建一个订单
- *   3. 下单成功后清空已勾选条目，跳转到订单详情继续支付
+ *   4. 下单成功后清空已勾选条目，跳转到订单详情继续支付
  *
- * 后端会按卖家拆单（sellerId 维度），因此一次提交可能产出多个订单。
+ * 后端会按卖家拆单（sellerId 维度），因此一次提交可能产出多个订单；
+ * 一张券只作用在**商品总额最大**的那一单（v1 口径），因此上面的「应付合计」
+ * 等于各订单 payAmount 之和，与所选券的抵扣一致。
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '../api/client';
-import { cartApi, orderApi } from '../api/endpoints';
-import type { CartView, PlaceOrderResult } from '../api/types';
+import { cartApi, couponApi, orderApi } from '../api/endpoints';
+import type { CartView, PlaceOrderResult, UsableCouponResult } from '../api/types';
 import { useAsync } from '../components/hooks';
 import { Alert, Field, LoadingBlock, formatPrice, useToast } from '../components/ui';
 import { useApp } from '../store/app';
@@ -36,6 +42,14 @@ export const CheckoutPage: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<PlaceOrderResult | null>(null);
+  /**
+   * 选中的券码。
+   *
+   * `undefined` = 用户还没做选择（此时默认采用服务端推荐的最优券）；
+   * `null` = 用户**主动选择不使用**券。两者必须区分开：把「未选择」和「明确不用」
+   * 混成一个值，用户取消选券后页面会立刻又帮他选回去。
+   */
+  const [couponChoice, setCouponChoice] = useState<string | null | undefined>(undefined);
 
   // 幂等键：进入结算页生成一次，提交失败重试时保持不变
   const idempotentKeyRef = useRef<string>(newIdempotentKey());
@@ -44,6 +58,29 @@ export const CheckoutPage: React.FC = () => {
   const { data, loading, error, reload } = useAsync<CartView>(fetcher);
 
   const selected = (data?.items ?? []).filter((i) => i.selected && i.valid);
+  const selectedAmount = data?.selectedAmount ?? 0;
+
+  /**
+   * 可用券：金额取服务端的 selectedAmount（购物车口径），由服务端判断门槛与有效期。
+   * 前端自己拿券包算会出现「页面说能用、下单说不能用」，所以这里只负责展示与选择。
+   */
+  const usableFetcher = useCallback(
+    () => (selectedAmount > 0 ? couponApi.usable(selectedAmount) : Promise.resolve(null)),
+    [selectedAmount],
+  );
+  const { data: usable, loading: usableLoading } = useAsync<UsableCouponResult | null>(
+    usableFetcher,
+    true,
+    [selectedAmount],
+  );
+
+  const coupons = usable?.coupons ?? [];
+  // 服务端推荐的最优券（抵扣最大的可用券）；服务端为唯一判定方，前端不重算
+  const bestCode = usable?.bestCouponCode ?? null;
+  const effectiveCode = couponChoice === undefined ? bestCode : couponChoice;
+  const chosen = coupons.find((c) => c.code === effectiveCode && c.usable) ?? null;
+  const discountAmount = chosen ? chosen.discountAmount : 0;
+  const payAmount = Math.max(0, selectedAmount - discountAmount);
 
   // 全部所选条目失效（或被清空）时，不允许停留在结算页盲目提交
   useEffect(() => {
@@ -80,6 +117,8 @@ export const CheckoutPage: React.FC = () => {
         receiverPhone: receiverPhone.trim(),
         receiverAddress: receiverAddress.trim(),
         remark: remark.trim() || undefined,
+        // 只传券码，不传优惠金额：能抵多少由营销域算、交易域落账
+        couponCode: chosen ? chosen.code : undefined,
         idempotentKey: idempotentKeyRef.current,
       });
       setResult(placed);
@@ -269,20 +308,82 @@ export const CheckoutPage: React.FC = () => {
 
         <div>
           <div className="card card-pad">
+            <h3 style={{ marginBottom: 12 }}>优惠券</h3>
+
+            {usableLoading ? <div className="small muted">正在查询可用券…</div> : null}
+
+            {!usableLoading && coupons.length === 0 ? (
+              <div className="small muted">
+                没有可用的优惠券。<Link to="/coupons">去领券中心看看</Link>
+              </div>
+            ) : null}
+
+            {coupons.length ? (
+              <div className="stack" style={{ gap: 10 }}>
+                <label className="row" style={{ gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="coupon"
+                    checked={effectiveCode === null}
+                    onChange={() => setCouponChoice(null)}
+                  />
+                  <span>不使用优惠券</span>
+                </label>
+
+                {coupons.map((c) => (
+                  <label
+                    key={c.code}
+                    className="row row-wrap"
+                    style={{ gap: 8, alignItems: 'center', cursor: c.usable ? 'pointer' : 'not-allowed' }}
+                  >
+                    <input
+                      type="radio"
+                      name="coupon"
+                      disabled={!c.usable}
+                      checked={effectiveCode === c.code}
+                      onChange={() => setCouponChoice(c.code)}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      {c.name} ·{' '}
+                      {c.thresholdAmount > 0
+                        ? `满 ${formatPrice(c.thresholdAmount)} 可用`
+                        : '无门槛'}{' '}
+                      · 抵 {formatPrice(c.discountAmount)}
+                      {bestCode === c.code ? (
+                        <span className="tag tag-success" style={{ marginLeft: 6 }}>
+                          推荐
+                        </span>
+                      ) : null}
+                      {/* 不可用原因由服务端给出：用户要知道「还差多少钱」，而不是看到一个灰掉的选项 */}
+                      {!c.usable && c.reason ? (
+                        <span className="small muted" style={{ marginLeft: 6 }}>
+                          {c.reason}
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="card card-pad" style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 12 }}>费用明细</h3>
             <dl className="spec-list">
               <dt>商品总额</dt>
-              <dd>{formatPrice(data?.selectedAmount ?? 0)}</dd>
+              <dd>{formatPrice(selectedAmount)}</dd>
               <dt>运费</dt>
               <dd>{formatPrice(0)}</dd>
               <dt>优惠</dt>
-              <dd>{formatPrice(0)}</dd>
+              <dd style={{ color: discountAmount > 0 ? 'var(--success)' : undefined }}>
+                {discountAmount > 0 ? `-${formatPrice(discountAmount)}` : formatPrice(0)}
+              </dd>
             </dl>
             <div className="divider" />
             <div className="row-between">
               <span>应付金额</span>
               <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
-                {formatPrice(data?.selectedAmount ?? 0)}
+                {formatPrice(payAmount)}
               </span>
             </div>
 
@@ -298,8 +399,9 @@ export const CheckoutPage: React.FC = () => {
 
           <div className="card card-pad" style={{ marginTop: 16 }}>
             <div className="small muted">
-              收费口径：金额单位为「分」，展示时统一折算为元。运费与优惠本期为 0，
-              接入营销服务后再启用。
+              收费口径：金额单位为「分」，展示时统一折算为元。
+              下单时<b>券被锁定</b>（此时还不能给别人用），支付成功才核销、取消订单自动退回；
+              购物车含多家卖家时，一张券只作用在<b>商品总额最大</b>的那一单（v1 口径）。
             </div>
           </div>
         </div>

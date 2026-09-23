@@ -366,7 +366,7 @@ npm run smoke      # 88 项端到端冒烟
 | 3 | `duoduo-product` | 8082 | 🟡 部分完成 | 类目/品牌/SPU-SKU/检索/首页 ✅；**ES 检索 ❌、C2C 闲置发布与审核 ❌** |
 | 4 | `duoduo-trade` | 8083 | ❌ 未开始 | **整个交易闭环缺失——这是当前最大的缺口** |
 | 5 | `duoduo-fulfilment` | 8084 | ❌ 未开始 | 发货、物流轨迹、售后、纠纷仲裁、评价、信用分 |
-| 6 | `duoduo-marketing` | 8085 | ❌ 未开始 | 优惠券、活动、会员等级、积分 |
+| 6 | `duoduo-marketing` | 8085 | ✅ 已完成（优惠券） | **优惠券已落地**（2026-09-23，A5）：领券中心 / 我的券包 / 内部锁·解·核销 / TTL 补偿调度；活动、会员等级、积分仍未做 |
 | 7 | `duoduo-ai` | 8086 | ❌ 未开始 | 「多多」智能体：意图路由、RAG、工具调用、SSE、会话记忆 |
 | 8 | `duoduo-admin` | 8087 | ❌ 未开始 | 运营后台：审核、类目配置、风控、数据看板 |
 
@@ -881,8 +881,9 @@ docker compose -f docker-compose.yml up -d mysql redis nacos
    形成可在浏览器里完整走一遍的商城；
 4. **补单元测试与集成测试**——优先覆盖商品域计算逻辑（价格区间相交、类目展开、可售判定）
    与交易域状态机；
-5. **P2 履约与售后 + 营销**（`duoduo-fulfilment` :8084、`duoduo-marketing` :8085），
-   同期起 **Nacos ZIP** 验证服务注册发现、起 **XXL-Job** 接管分布式调度；
+5. ~~**P2 履约与售后 + 营销**（`duoduo-fulfilment` :8084、`duoduo-marketing` :8085）~~
+   **已完成（2026-09-23）**：履约域评价 / 售后 / 物流 / 信用分四块 + 营销域优惠券均已落地（全部容器化，
+   共 **9 个容器** = 3 中间件 + 6 业务服务）；同期起 **Nacos ZIP** 验证服务注册发现、起 **XXL-Job** 接管分布式调度；
 6. **P3 AI 服务「多多」+ ES 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 事务**，
    全部走 ZIP / jar 免安装形态；
 7. **P4 可观测 + 压测**——Prometheus + SkyWalking，JMeter 对齐容量验收标准。

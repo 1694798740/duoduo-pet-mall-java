@@ -229,6 +229,39 @@ services:
       duoduo-trade-app:
         condition: service_healthy
 
+  # 营销服务（A5）：优惠券。被交易域单向依赖（下单锁券 / 支付核销 / 关单解锁），自己不调别人。
+  duoduo-marketing-app:
+    container_name: duoduo-app-marketing
+    image: duoduo/duoduo-marketing:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-marketing/target/duoduo-marketing-1.0.0.jar
+        APP_PORT: '8085'
+    restart: unless-stopped
+    environment:
+      DUODUO_MARKETING_PORT: '8085'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_marketing?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      # 服务间调用共享密钥：保护内部锁券 / 核销 / 解锁接口
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # 券锁定保留时长（分钟）。必须**略大于**交易域的订单超时关单时长（默认 30），
+      # 否则会出现「订单还没关、券已被解锁给别人领走」。
+      COUPON_LOCK_TTL_MINUTES: '35'
+    ports:
+      - '8085:8085'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
   duoduo-gateway-app:
     container_name: duoduo-app-gateway
     image: duoduo/duoduo-gateway:1.0.0
@@ -257,6 +290,8 @@ services:
       duoduo-trade-app:
         condition: service_healthy
       duoduo-fulfilment-app:
+        condition: service_healthy
+      duoduo-marketing-app:
         condition: service_healthy
 
 volumes:

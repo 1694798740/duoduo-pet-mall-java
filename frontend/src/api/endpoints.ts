@@ -34,6 +34,9 @@ import type {
   CartView,
   CategoryNode,
   CategorySaveRequest,
+  CouponClaimResult,
+  CouponTemplateView,
+  CouponView,
   CreditView,
   DictItem,
   HomeView,
@@ -62,6 +65,7 @@ import type {
   SettlementView,
   ShipRequest,
   TrackListView,
+  UsableCouponResult,
   UserView,
 } from './types';
 
@@ -454,4 +458,48 @@ export const creditApi = {
   /** 某卖家（用户）的信用分与构成明细（公开，未登录可读） */
   seller: (sellerId: number, options?: { signal?: AbortSignal }) =>
     api.get<CreditView>(`/api/reviews/seller/${sellerId}/credit`, options),
+};
+
+// ---------- 优惠券（/api/coupons，营销域 A5） ----------
+
+/**
+ * 优惠券接口。
+ *
+ * 网关白名单**只放行 `/api/coupons/templates` 这一条精确路径**，因此：
+ *   · 领券中心（`templates`）未登录可读 —— 那是营销落地页，它的作用就是把人留住；
+ *   · 我的券包、可用券、领券、运营建券全部需要登录。
+ *
+ * 三条纪律：
+ *   1. **不要把需要登录的接口挪进 `templates/` 子路径**：白名单按路径而非按方法匹配，
+ *      挪进去等于把写接口也一起放行了；
+ *   2. 下单只传 `couponCode`，**不传优惠金额** —— 抵扣多少由服务端算、交易域落账；
+ *   3. 券码是字符串，从列表里原样回传即可，不要 `Number(code)`。
+ */
+export const couponApi = {
+  /** 领券中心：当前可领取的券模板（公开只读）。是否已领由服务端按登录态判定 */
+  templates: (options?: { signal?: AbortSignal }) =>
+    api.get<CouponTemplateView[]>('/api/coupons/templates', options),
+
+  /**
+   * 领取一张券。
+   *
+   * 重复领取不会报错，而是返回 `replay=true` 与**已有那张券的券码** ——
+   * 用户双击、多端并发、网络重试都是常态，把它们报成失败只会让用户以为操作没成功。
+   */
+  claim: (templateId: number) =>
+    api.post<CouponClaimResult>(`/api/coupons/templates/${templateId}/claim`),
+
+  /** 我的券包；status 可选 UNUSED / LOCKED / USED / EXPIRED，不传为全部 */
+  mine: (query?: { status?: string }, options?: { signal?: AbortSignal }) =>
+    api.get<CouponView[]>('/api/coupons/mine', { query, ...options }),
+
+  /**
+   * 结算页可用券：给定本次订单的商品总额（分），返回每张券能不能用与最优券。
+   *
+   * 做成「传金额查」而不是「前端拿券包自己算」：门槛、有效期、是否已被锁定
+   * 这三件事都在服务端，两边各算一次迟早不一致，表现出来就是
+   * 「页面说能用、下单说不能用」。
+   */
+  usable: (amount: number, options?: { signal?: AbortSignal }) =>
+    api.get<UsableCouponResult>('/api/coupons/mine/usable', { query: { amount }, ...options }),
 };

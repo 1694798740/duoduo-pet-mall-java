@@ -2,8 +2,11 @@
  * 全局布局：顶部导航 + 购物车角标 + 用户菜单。
  *
  * 导航项只保留本期真正有后端支撑的页面：
- * 领券中心 / 评价 / 运营后台依赖尚未部署的服务（duoduo-marketing、fulfilment、admin），
- * 网关会返 503，故不放出来。
+ * 领券中心已随 A5 上线（duoduo-marketing 已部署），故放到一级导航；
+ * 评价（fulfilment）、运营后台的其余页面按角色 / 场景在页内进入。
+ *
+ * 「优惠券」入口**对未登录也显示**：领券中心是公开落地页，先让人看到有什么券，
+ * 点「立即领取」时再引导登录 —— 与 App.tsx 里该路由不套 RequireAuth 是同一个考虑。
  *
  * 「商家端」入口按角色显示：卖家中心（M5-9）落在 trade 服务上，不依赖上述服务，
  * 但普通买家点进去只会看到入驻引导，把入口藏掉更干净。
@@ -21,6 +24,7 @@ const NAV = [
   { to: '/', label: '首页' },
   { to: '/search', label: '逛商品' },
   { to: '/listings', label: '二手闲置' },
+  { to: '/coupons', label: '优惠券' },
   { to: '/pets', label: '我的宠物' },
   { to: '/orders', label: '我的订单' },
 ];
@@ -116,6 +120,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     </Link>
                     <Link className="nav-link" to="/orders" style={{ display: 'block' }}>
                       我的订单
+                    </Link>
+                    <Link className="nav-link" to="/coupons" style={{ display: 'block' }}>
+                      我的券包
                     </Link>
                     {canAccessSellerConsole(user.role) ? (
                       <Link className="nav-link" to="/seller" style={{ display: 'block' }}>

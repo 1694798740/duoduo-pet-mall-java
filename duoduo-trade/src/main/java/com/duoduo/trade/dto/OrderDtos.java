@@ -37,6 +37,19 @@ public final class OrderDtos {
 
             @Size(max = 200, message = "备注过长") String remark,
 
+            /**
+             * 本次结算要使用的优惠券券码（可空）。
+             *
+             * <p>只传券码、<b>不传优惠金额</b>：抵扣多少由营销域按券模板算出，
+             * 再由交易域写进 {@code discount_amount}。
+             * 一旦接受客户端传金额，就等于把「能抵多少」的决定权交给了浏览器 ——
+             * 那是所有优惠券漏洞里最经典的一种。
+             *
+             * <p>v1 口径：一张券只作用于<b>本次拆单后商品总额最大的那个订单</b>
+             * （并列时取最先拆出的）。购物车含多家卖家时，其余订单不享受该券。
+             */
+            @Size(max = 32, message = "优惠券码过长") String couponCode,
+
             @NotBlank(message = "idempotentKey 不能为空，用于防止重复下单")
             @Size(max = 64, message = "idempotentKey 过长") String idempotentKey
     ) {
@@ -107,6 +120,8 @@ public final class OrderDtos {
             long totalAmount,
             long freightAmount,
             long discountAmount,
+            /** 本单使用的优惠券券码；未用券为 null */
+            String couponCode,
             long payAmount,
             String receiverName,
             String receiverPhone,

@@ -58,6 +58,10 @@ CREATE TABLE t_order (
     total_amount      BIGINT       NOT NULL,
     freight_amount    BIGINT       NOT NULL DEFAULT 0,
     discount_amount   BIGINT       NOT NULL DEFAULT 0,
+    -- 本单使用的优惠券券码（未用券为 NULL）。A5 新增。
+    -- 为什么必须落库：订单详情要展示「抵了多少、用的哪张券」，取消 / 关单要凭它去营销域解锁、
+    -- 支付成功要凭它核销。只记金额不记券码，「这 30 块是哪张券抵的」就永远答不上来。
+    coupon_code       VARCHAR(32),
     pay_amount        BIGINT       NOT NULL,
     receiver_name     VARCHAR(50)  NOT NULL,
     receiver_phone    VARCHAR(20)  NOT NULL,

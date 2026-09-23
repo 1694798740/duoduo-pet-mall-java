@@ -20,6 +20,7 @@
     <module>duoduo-product</module>
     <module>duoduo-trade</module>
     <module>duoduo-fulfilment</module>
+    <module>duoduo-marketing</module>
   </modules>
 
   <properties>

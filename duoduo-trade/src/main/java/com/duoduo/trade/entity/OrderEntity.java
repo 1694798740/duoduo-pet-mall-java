@@ -31,6 +31,15 @@ public class OrderEntity {
     private Long freightAmount;
     private Long discountAmount;
     private Long payAmount;
+    /**
+     * 本单使用的优惠券券码（未用券为 null）。
+     *
+     * <p>为什么必须落在订单上：订单详情要给买卖双方展示「本单用了哪张券、抵了多少」，
+     * 而取消 / 关单时要凭它去营销域解锁、支付成功时要凭它核销。
+     * 只记金额不记券码的话，出问题时无法回答「这 30 块是哪张券抵的」——
+     * 对账与客诉都会卡在这里。
+     */
+    private String couponCode;
     private String receiverName;
     private String receiverPhone;
     private String receiverAddress;
@@ -81,6 +90,8 @@ public class OrderEntity {
     public void setDiscountAmount(Long discountAmount) { this.discountAmount = discountAmount; }
     public Long getPayAmount() { return payAmount; }
     public void setPayAmount(Long payAmount) { this.payAmount = payAmount; }
+    public String getCouponCode() { return couponCode; }
+    public void setCouponCode(String couponCode) { this.couponCode = couponCode; }
     public String getReceiverName() { return receiverName; }
     public void setReceiverName(String receiverName) { this.receiverName = receiverName; }
     public String getReceiverPhone() { return receiverPhone; }

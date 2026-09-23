@@ -8,6 +8,7 @@
  *   平台管理后台 5 页（M10）—— 运营概览（含资金对账）/ 内容审核 / 类目 / 品牌 / 订单干预
  *   售后仲裁 5 页（A3）—— 买家：我的售后 / 申请售后 / 售后详情；
  *     卖家：售后服务；运营：售后仲裁工作台
+ *   优惠券 1 页（A5）—— 领券中心 + 我的券包（营销域 duoduo-marketing）
  *
  * 需登录的页面统一由 RequireAuth 包裹：
  *  · 会话校验期间渲染加载态，避免「先闪一下登录页再跳回来」
@@ -25,6 +26,7 @@ import { LoadingBlock } from './components/ui';
 import { useAuth } from './store/auth';
 import { CartPage } from './pages/Cart';
 import { CheckoutPage } from './pages/Checkout';
+import { CouponsPage } from './pages/Coupons';
 import { HomePage } from './pages/Home';
 import { ListingDetailPage } from './pages/ListingDetail';
 import { ListingsPage } from './pages/Listings';
@@ -213,6 +215,12 @@ export const App: React.FC = () => (
           </RequireAuth>
         }
       />
+
+      {/* ---------- 优惠券（A5，营销域 duoduo-marketing） ----------
+          刻意**不加** RequireAuth：领券中心是公开落地页（未登录也看得到有什么券），
+          未登录时页面自己在领券按钮上引导去登录，比先把人拦在门外转化高。
+          券包页签同样在页内处理未登录态（渲染「去登录」引导）。 */}
+      <Route path="/coupons" element={<CouponsPage />} />
 
       {/* ---------- 商家端（M5-9 / M9，需登录；非卖家由页面引导入驻） ---------- */}
       <Route

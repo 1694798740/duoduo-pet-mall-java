@@ -8,7 +8,9 @@ import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.trade.client.LogisticsNotifier;
+import com.duoduo.trade.client.MarketingGateway;
 import com.duoduo.trade.client.ProductGateway;
+import com.duoduo.trade.client.dto.CouponCallDtos.LockResult;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeItem;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeOutcome;
@@ -121,6 +123,7 @@ public class OrderService {
     private final PaymentMapper paymentMapper;
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
+    private final MarketingGateway marketingGateway;
     private final SettlementService settlementService;
     private final PaymentChannelRegistry channelRegistry;
     private final SnowflakeIdGenerator idGenerator;
@@ -153,6 +156,7 @@ public class OrderService {
                         PaymentMapper paymentMapper,
                         CartItemMapper cartItemMapper,
                         ProductGateway productGateway,
+                        MarketingGateway marketingGateway,
                         SettlementService settlementService,
                         PaymentChannelRegistry channelRegistry,
                         SnowflakeIdGenerator idGenerator,
@@ -166,6 +170,7 @@ public class OrderService {
         this.paymentMapper = paymentMapper;
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
+        this.marketingGateway = marketingGateway;
         this.settlementService = settlementService;
         this.channelRegistry = channelRegistry;
         this.idGenerator = idGenerator;
@@ -232,13 +237,56 @@ public class OrderService {
         // 已在商品服务成功冻结的记录，用于异常时补偿释放
         List<FrozenRef> frozenRefs = new ArrayList<>();
 
+        // 4.5) 优惠券：先锁券再建单。
+        //
+        // 顺序刻意如此：锁券是**跨服务写**，且必须在知道订单号之后才能做
+        // （营销域要靠 locked_order_no 定位这张券，之后解锁 / 核销都按订单号走）。
+        // 因此目标订单的订单号在这里先生成，再传给建单逻辑。
+        //
+        // 券只作用于**商品总额最大的那个订单**（并列时取最先拆出的那个）：
+        // 一个购物车可能拆成多家卖家的多单，而 v1 一张券只能用一次，
+        // 必须有一个确定性的归属规则，否则「券到底抵在哪一单」就成了谁也说不清的事。
+        String couponCode = trimToNull(request.couponCode());
+        String couponOrderNo = null;
+        long couponDiscount = 0L;
+        Long couponSellerId = null;
+        if (couponCode != null) {
+            long bestAmount = -1L;
+            for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+                long amount = 0L;
+                for (CartItemEntity row : entry.getValue()) {
+                    SkuSnapshot snap = snapshots.get(row.getSkuId());
+                    amount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
+                }
+                if (amount > bestAmount) {
+                    bestAmount = amount;
+                    couponSellerId = entry.getKey();
+                }
+            }
+            couponOrderNo = orderNoGenerator.next();
+            LockResult locked = marketingGateway.lock(couponCode, userId, couponOrderNo, Math.max(0L, bestAmount));
+            if (locked == null || !locked.success()) {
+                throw new BizException(ErrorCode.BUSINESS_RULE,
+                        locked == null || locked.reason() == null ? "优惠券不可用" : locked.reason());
+            }
+            couponDiscount = locked.discountAmount();
+            couponCode = locked.code();
+        }
+
         try {
             for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+                boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
                 created.add(createOne(userId, entry.getKey(), entry.getValue(), snapshots,
-                        request, now, expireAt, frozenRefs));
+                        request, now, expireAt,
+                        couponTarget ? couponOrderNo : orderNoGenerator.next(),
+                        couponTarget ? couponDiscount : 0L,
+                        couponTarget ? couponCode : null,
+                        frozenRefs));
             }
         } catch (DuplicateKeyException e) {
-            // 并发下同一幂等键撞车：唯一索引拦下了第二条，回滚并返回首次那条
+            // 并发下同一幂等键撞车：唯一索引拦下了第二条，回滚并返回首次那条。
+            // 券也要一并解锁 —— 它是用「本次预生成的订单号」锁的，而那个订单并没有建成。
+            releaseCouponQuietly(couponOrderNo, "幂等撞车补偿");
             releaseQuietly(frozenRefs, "幂等撞车补偿");
             OrderEntity dup = findByIdempotentKey(userId, request.idempotentKey());
             if (dup != null) {
@@ -246,7 +294,8 @@ public class OrderService {
             }
             throw e;
         } catch (RuntimeException e) {
-            // 关键补偿：库存冻结在商品服务，不受本事务回滚保护
+            // 关键补偿：库存冻结与券锁定都在别的服务，不受本事务回滚保护
+            releaseCouponQuietly(couponOrderNo, "下单失败补偿");
             releaseQuietly(frozenRefs, "下单失败补偿");
             throw e;
         }
@@ -259,22 +308,28 @@ public class OrderService {
         return new PlaceOrderResult(views, views.size(), totalPay, false);
     }
 
-    /** 创建单个订单：订单头 + 明细快照 + 库存冻结 + 冻结台账 + 状态日志 */
+    /**
+     * 创建单个订单：订单头 + 明细快照 + 库存冻结 + 冻结台账 + 状态日志。
+     *
+     * @param orderNo        预先生成的订单号（券作用的目标订单必须先有号才能锁券）
+     * @param discountAmount 优惠券抵扣（分），由营销域算出、交易域<b>照抄</b>进来
+     * @param couponCode     使用的券码（未用券为 null）
+     */
     private OrderEntity createOne(Long userId, Long sellerId, List<CartItemEntity> rows,
                                   Map<Long, SkuSnapshot> snapshots, PlaceOrderRequest request,
-                                  LocalDateTime now, LocalDateTime expireAt, List<FrozenRef> frozenRefs) {
+                                  LocalDateTime now, LocalDateTime expireAt, String orderNo,
+                                  long discountAmount, String couponCode, List<FrozenRef> frozenRefs) {
         long totalAmount = 0L;
         for (CartItemEntity row : rows) {
             SkuSnapshot snap = snapshots.get(row.getSkuId());
             totalAmount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
         }
-        // 运费与优惠本阶段固定为 0；营销接入后由促销服务计算，口径不变（应付 = 商品 + 运费 − 优惠）
+        // 运费本阶段固定为 0；优惠来自营销域（已锁券并算出抵扣额），口径不变：应付 = 商品 + 运费 − 优惠
         long freightAmount = 0L;
-        long discountAmount = 0L;
 
         OrderEntity order = new OrderEntity();
         order.setId(idGenerator.nextId());
-        order.setOrderNo(orderNoGenerator.next());
+        order.setOrderNo(orderNo);
         order.setUserId(userId);
         order.setSellerId(sellerId);
         order.setOrderType(ORDER_TYPE_NORMAL);
@@ -282,7 +337,9 @@ public class OrderService {
         order.setTotalAmount(totalAmount);
         order.setFreightAmount(freightAmount);
         order.setDiscountAmount(discountAmount);
-        order.setPayAmount(totalAmount + freightAmount - discountAmount);
+        order.setCouponCode(couponCode);
+        // 兜底：抵扣额绝不该大于商品总额（营销域已按 min 处理过，这里是同一事务内的最后一道闸）
+        order.setPayAmount(Math.max(0L, totalAmount + freightAmount - discountAmount));
         order.setReceiverName(request.receiverName().trim());
         order.setReceiverPhone(request.receiverPhone().trim());
         order.setReceiverAddress(request.receiverAddress().trim());
@@ -505,6 +562,9 @@ public class OrderService {
         if (release[1] > 0) {
             log.error("订单 {} 取消后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
         }
+        // 同步解锁优惠券：与释放冻结同一时点。用户取消后最关心的就是「我的券回来了吗」，
+        // 只靠营销域的 TTL 兜底会让他等上三十多分钟。
+        releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "用户取消");
         return toViews(List.of(order)).get(0);
     }
 
@@ -539,6 +599,7 @@ public class OrderService {
                 null, closeReason, now);
 
         paymentMapper.markClosedByOrder(order.getId(), "平台干预关单：" + closeReason, now);
+        releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "运营强制关单");
         int[] release = releaseOrderFreeze(order.getId(), now);
         if (release[1] > 0) {
             log.error("订单 {} 运营强关后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
@@ -1041,6 +1102,11 @@ public class OrderService {
         String refundReason = (reason == null || reason.isBlank()) ? defaultReason : reason.trim();
         long refundAmount = nz(order.getPayAmount());
 
+        // 券的处理：**退款项里不含优惠券，券也不退回**（v1 明确口径）。
+        // 退款额 = payAmount（已扣掉券抵扣），券在支付成功那一刻已核销为终态；
+        // 若这里把券退回去，就会出现「一笔订单既退了全款、又把券拿回来再抵一次」的漏洞。
+        // 想改这条口径必须先想清楚：退款金额要不要含券面额、券要不要退、退的券还能不能用。
+
         // 1) 资金：托管中才能退回买家
         if (!settlementService.refund(order.getId(), now)) {
             SettlementEntity settlement = settlementService.findByOrderId(order.getId());
@@ -1290,6 +1356,7 @@ public class OrderService {
             writeStatusLog(order.getId(), OrderStatus.PENDING_PAYMENT.name(), OrderStatus.CLOSED.name(),
                     OPERATOR_SYSTEM, null, reason, now);
             paymentMapper.markClosedByOrder(order.getId(), reason, now);
+            releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "超时关单");
             closed++;
         }
 
@@ -1482,6 +1549,14 @@ public class OrderService {
                 "支付成功（渠道 " + payment.getChannel() + "，流水号 " + channelTradeNo + "）", now);
         markFreezeDeducted(order.getId(), now);
 
+        // 核销优惠券：抵扣已经算进 payAmount，券必须在此刻真正用掉。
+        // 失败一律抛出让整笔支付回滚 —— 若让它过去，券会在 TTL 到期后被解锁回用户手里，
+        // 于是同一张券抵了两次钱（先抵了这一单，又能在下一单再抵）。
+        if (order.getCouponCode() != null && marketingGateway.consume(order.getOrderNo()) <= 0) {
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "优惠券核销失败（券可能已被解锁），本次支付未成立，请重新下单或换一张券");
+        }
+
         // 钱进平台托管（C2C 担保交易的核心语义）：
         // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
         // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
@@ -1563,6 +1638,7 @@ public class OrderService {
                     nz(order.getTotalAmount()),
                     nz(order.getFreightAmount()),
                     nz(order.getDiscountAmount()),
+                    order.getCouponCode(),
                     nz(order.getPayAmount()),
                     order.getReceiverName(),
                     order.getReceiverPhone(),
@@ -1593,6 +1669,20 @@ public class OrderService {
                 .filter(StockChangeResult::success)
                 .map(StockChangeResult::skuId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * 补偿解锁券：失败只记日志，不再向外抛 —— 否则会掩盖真正的原始异常。
+     *
+     * @param orderNo 锁券时用的订单号；传 null 表示本次没用券，直接跳过
+     * @param scene   解锁场景（幂等撞车 / 下单失败），只用于日志与营销域调用描述，
+     *                排查时「这张券为什么被解锁了」能直接从日志看出来
+     */
+    private void releaseCouponQuietly(String orderNo, String scene) {
+        if (orderNo == null) {
+            return;
+        }
+        marketingGateway.release(orderNo, scene);
     }
 
     /** 补偿释放：失败只记日志，不再向外抛 —— 否则会掩盖真正的原始异常 */

@@ -1,0 +1,86 @@
+server:
+  # 不要用 MARKETING_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_MARKETING_PORT:8085}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 30
+    accept-count: 500
+    max-connections: 5000
+
+spring:
+  application:
+    name: duoduo-marketing
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_marketing?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: duoduo-marketing-pool
+  sql:
+    init:
+      # 表结构由 DDL 统一管理（docs/sql/05-duoduo-marketing.sql 或 db/schema.sql），
+      # 绝不能在启动时自动执行 —— schema.sql 里有 DROP TABLE。
+      mode: never
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+duoduo:
+  id:
+    datacenter-id: ${ID_DATACENTER:1}
+    worker-id: ${ID_WORKER:5}
+  internal:
+    # 服务间调用共享密钥（交易域下单时来锁券 / 核销 / 解锁）。
+    # 失败关闭：配置为空一律拒绝，绝不能「没配就放行」（INV-11）。
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+  coupon:
+    # 券被下单锁定后的保留时长（分钟）。超时未支付 → 补偿任务自动解锁。
+    # 应与交易域的订单超时关单时长（duoduo.trade.order-expire-minutes，默认 30）保持
+    # 「略大于」的关系：券比订单晚一步释放，避免「订单还活着、券已被别人领走用掉」。
+    lock-ttl-minutes: ${COUPON_LOCK_TTL_MINUTES:35}
+    # 解锁兜底任务的扫描间隔（毫秒）。
+    release-sweep-interval-ms: ${COUPON_RELEASE_SWEEP_MS:60000}
+    release-sweep-initial-delay-ms: ${COUPON_RELEASE_SWEEP_DELAY_MS:30000}
+    # 单次扫描最多解锁多少张（防止一次扫爆）。
+    release-batch-size: ${COUPON_RELEASE_BATCH:200}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-marketing","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'

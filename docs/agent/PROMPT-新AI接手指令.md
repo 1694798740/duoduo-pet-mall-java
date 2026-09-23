@@ -16,7 +16,7 @@
 · 主仓库（本任务唯一目标）：D:\智能体项目\duoduo-pet-mall-java
 · 同目录下另有 D:\智能体项目\duoduo-pet-mall（Node 原型工程，**与主仓库无关，不要改、不要混用**）
 · 该仓库是「多多宠物商店」：Java 微服务后端（Spring Boot 3 + Spring Cloud Alibaba）+ React 前端，
-  本地用 Docker Compose 起 8 个容器，资金走平台托管担保交易，支付用沙箱渠道（不接真实商户）。
+  本地用 Docker Compose 起 9 个容器（3 中间件 + 6 业务服务），资金走平台托管担保交易，支付用沙箱渠道（不接真实商户）。
 
 ──────── 阶段 1：读文件（按顺序读完，不要跳）────────
 必读（项目自带的 AI 接管资料，先读这些能省掉大量猜测）：
@@ -24,21 +24,21 @@
 2. D:\智能体项目\duoduo-pet-mall-java\docs\agent\00-AGENT-接管指令.md  ← 硬规矩 C1~C10、工作循环、完成定义 DoD
 3. D:\智能体项目\duoduo-pet-mall-java\docs\agent\01-项目目标与领域模型.md ← 业务目标、参与者、领域对象、主流程
 4. D:\智能体项目\duoduo-pet-mall-java\docs\agent\02-代码地图与现状.md  ← 文件级索引（要改什么去哪个文件）
-5. D:\智能体项目\duoduo-pet-mall-java\docs\agent\03-架构与不变式.md    ← INV-1~15（绝不能破的规则）
+5. D:\智能体项目\duoduo-pet-mall-java\docs\agent\03-架构与不变式.md    ← INV-1~16（绝不能破的规则）
 6. D:\智能体项目\duoduo-pet-mall-java\docs\agent\04-接口契约全集.md    ← 端点/认证/DTO 字段/枚举/错误码
 7. D:\智能体项目\duoduo-pet-mall-java\docs\agent\05-开发任务手册.md    ← 六类开发场景的配方与代码骨架
 8. D:\智能体项目\duoduo-pet-mall-java\docs\agent\06-测试与验收门禁.md  ← 什么改动跑哪些测试、断言怎么写
 9. D:\智能体项目\duoduo-pet-mall-java\docs\agent\07-待办事项与验收标准.md ← 待办 A1~A13（含接口草案与验收标准）
-10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-24 症状→根因→做法、禁忌
+10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-38 症状→根因→做法、禁忌
 11. D:\智能体项目\duoduo-pet-mall-java\AGENTS.md 同级：docs\PLAN.md   ← 进度权威（里程碑/任务/变更记录/命令速查）
 12. D:\智能体项目\duoduo-pet-mall-java\README.md                     ← 运行方式 + 全量接口清单
 13. D:\智能体项目\.workbuddy\memory\MEMORY.md 与 memory\2026-09-*.md  ← 项目长期记忆与「值钱的坑」
 
 按需读（用于核实事实，不要只信文档）：
-14. docker-compose.yml（8 容器与端口）、pom.xml（7 模块、Java 21）、Dockerfile
-15. docs\sql\00~04*.sql（四库 DDL 与商品种子）、各模块 src\main\resources\db\schema.sql
+14. docker-compose.yml（9 容器与端口）、pom.xml（9 模块 reactor、Java 21）、Dockerfile
+15. docs\sql\00~06*.sql（五库 DDL + 商品种子 + 交易域增量列）、各模块 src\main\resources\db\schema.sql
 16. 源码：先读你将要改的模块的 controller / service / dto / entity，再读依赖它的上游
-17. scripts\*.ps1（9 套接口冒烟，667 项断言）、scripts\e2e\*.mjs（2 套真实浏览器自测，49 项）
+17. scripts\*.ps1（14 套接口冒烟，1204 项断言）、scripts\e2e\*.mjs（5 套真实浏览器自测，180 项；另有 1 套 .ps1 夹具）
 18. frontend\src\api\{client,endpoints,types}.ts 与 frontend\src\pages\（若要改前端）
 
 阶段 1 的产出（必须先给我看，不要直接开始改代码）：
@@ -75,8 +75,9 @@ E. **开发计划**：优先级排序后的任务表，每项含「目标 / 涉�
 · 测试要求：跨服务改动至少跑上下游两套冒烟；前端改动跑 tsc --noEmit + vite build，UI 改动加真实浏览器自测；
   严禁修改既有断言使其通过（除非断言本身写错，且须在变更记录里说明旧/新口径）。
 · 环境特例：Docker Desktop 需人工启动；Maven 必须用项目内 maven\settings.xml 并以 java 驱动 launcher
-  （不能直接调 mvn.cmd）；单模块打包必须带 -am；前端必须用 http://localhost:5173（不能用 127.0.0.1）。
-  以上细节与更多坑见 docs\agent\08，遇错先查那张表。
+  （不能直接调 mvn.cmd）；单模块打包必须带 -am；前端必须用 http://localhost:3000（不能用 127.0.0.1；
+  本机 5173 落在 Windows 排除端口段内，用不了）。
+  以上细节与更多坑见 docs\agent\08（含 T-37「改了源码必须重建容器」、T-38「Node 无法创建子进程」），遇错先查那张表。
 · 禁止：删改 .workbuddy\ 目录、把真实密钥/口令写进任何文件、跨库 JOIN、在网关白名单放写接口、
   跳过 Git hooks、未跑冒烟就交付。
 

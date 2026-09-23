@@ -407,6 +407,14 @@ export const OrderDetailPage: React.FC = () => {
               <dd>{formatPrice(order.freightAmount)}</dd>
               <dt>优惠</dt>
               <dd>−{formatPrice(order.discountAmount)}</dd>
+              {order.couponCode ? (
+                <>
+                  <dt>优惠券</dt>
+                  <dd>
+                    <code>{order.couponCode}</code>
+                  </dd>
+                </>
+              ) : null}
               <dt>应付金额</dt>
               <dd>
                 <strong style={{ color: 'var(--danger)', fontSize: 18 }}>

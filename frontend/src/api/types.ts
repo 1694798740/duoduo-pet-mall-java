@@ -272,6 +272,8 @@ export interface OrderView {
   totalAmount: number;
   freightAmount: number;
   discountAmount: number;
+  /** 本单使用的优惠券券码；未用券为 null */
+  couponCode: string | null;
   payAmount: number;
   receiverName: string;
   receiverPhone: string;
@@ -298,6 +300,16 @@ export interface PlaceOrderRequest {
   receiverPhone: string;
   receiverAddress: string;
   remark?: string;
+  /**
+   * 本单使用的优惠券券码（可空）。
+   *
+   * 只传券码、**不传优惠金额**：抵扣多少由营销域按券模板算出、交易域落账。
+   * 一旦接受客户端传金额，就等于把「能抵多少」的决定权交给浏览器。
+   *
+   * 注意：一张券只作用于**本次拆单后商品总额最大的那个订单**（v1 口径），
+   * 因此用券时提交的多个订单里只有一个会带优惠。
+   */
+  couponCode?: string;
   /** 客户端生成（建议 UUID），同一用户同键重复提交只会产生一个订单 */
   idempotentKey: string;
 }
@@ -699,6 +711,100 @@ export interface CreditView {
   inputs: CreditInputs;
   /** 服务端计算时刻（ISO-8601 UTC） */
   generatedAt: string;
+}
+
+// ---------- 优惠券（/api/coupons，营销域 A5） ----------
+
+/** 券状态（与后端 com.duoduo.marketing.support.CouponStatus 一致） */
+export type CouponStatus = 'UNUSED' | 'LOCKED' | 'USED' | 'EXPIRED';
+
+/** 券类型：v1 只实现满减 */
+export type CouponType = 'FULL_REDUCE';
+
+/**
+ * 券模板（领券中心的一行）。
+ *
+ * `claimable` 与 `claimableReason` 由**服务端**算好一起返回：
+ * 「为什么这张券不能领」要看领取窗口、剩余量、以及**我是否已领过**，
+ * 后者依赖登录态，前端拿不到；与其让前端猜，不如服务端直接给结论。
+ */
+export interface CouponTemplateView {
+  id: number;
+  name: string;
+  description: string | null;
+  type: CouponType | string;
+  /** 券类型中文文案，前端不维护映射表 */
+  typeLabel: string;
+  /** 满减门槛（分）；0 表示无门槛 */
+  thresholdAmount: number;
+  /** 抵扣金额（分） */
+  discountAmount: number;
+  totalCount: number;
+  claimedCount: number;
+  remainingCount: number;
+  startAt: string;
+  endAt: string;
+  status: string;
+  claimable: boolean;
+  /** 不可领时的原因文案；可领时为 null */
+  claimableReason: string | null;
+}
+
+/** 用户手上的一张券（我的券包） */
+export interface CouponView {
+  /** 券码：**字符串**，不要做数值转换（雪花 ID 会丢精度，券码则刻意用随机串规避） */
+  code: string;
+  templateId: number;
+  name: string | null;
+  type: CouponType | string | null;
+  typeLabel: string | null;
+  thresholdAmount: number;
+  discountAmount: number;
+  status: CouponStatus | string;
+  statusLabel: string;
+  claimedAt: string;
+  expireAt: string;
+  /** 被哪个订单锁定；未锁定为 null */
+  lockedOrderNo: string | null;
+  /** 被哪个订单核销；未核销为 null */
+  usedOrderNo: string | null;
+}
+
+/** 领券结果；`replay=true` 表示「你已经领过这张券」，本次没有新建 */
+export interface CouponClaimResult {
+  code: string;
+  templateId: number;
+  name: string;
+  thresholdAmount: number;
+  discountAmount: number;
+  expireAt: string;
+  replay: boolean;
+}
+
+/** 结算页的一条候选券 */
+export interface UsableCoupon {
+  code: string;
+  name: string;
+  thresholdAmount: number;
+  discountAmount: number;
+  expireAt: string;
+  usable: boolean;
+  /** 不可用时的原因；可用时为 null */
+  reason: string | null;
+}
+
+/**
+ * 结算页可用券结果。
+ *
+ * `bestCouponCode` 是**服务端**挑出的最优券（抵扣最大），前端默认选中它 ——
+ * 「默认帮用户选最省钱的一张」只该有一个实现，否则会出现
+ * 「页面显示已选 A、实际下单锁的是 B」。
+ */
+export interface UsableCouponResult {
+  amount: number;
+  coupons: UsableCoupon[];
+  bestCouponCode: string | null;
+  bestDiscountAmount: number;
 }
 
 // ---------- 通用 ----------

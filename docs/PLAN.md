@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-20（第十二轮：A4 信用分 —— 履约域权重模型 + 3 端点 + 前端两处展示；接口冒烟 13 套 1034 项、UI 断言 4 套 137 项）
+> 更新时间：2026-09-23（第十三轮：A5 优惠券营销 —— 新增第 6 个业务服务 `duoduo-marketing`（:8085）+ 领券中心 / 券包 / 内部锁·解·核销 / 补偿调度 + 前端领券中心与结算选券；接口冒烟 14 套 1204 项、UI 断言 5 套 180 项）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；余下：优惠券 / AI / ES |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；余下：AI 导购（A9，待凭据）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） |
 
 ---
 
@@ -126,14 +126,17 @@
 
 | **A2 · 物流轨迹（第十一轮）** | **履约域新表 `t_logistics_track`**（订单号 + 节点码 + 发生时间 + 描述 + 留档报文；唯一键 `uk_track_order_node_time` 兜幂等，覆盖索引 `(order_no, occurred_at)` 服务正序查询；节点码白名单 `LogisticsNode` 7 种）。**两个端点**：`POST /api/logistics/internal/{orderNo}/tracks`（批量摄入，`X-Internal-Token`，**履约域第一个内部接口**，本域自建 `InternalTokenFilter`；批量全有或全无）+ `GET /api/logistics/orders/{orderNo}/tracks`（买家本人 / 该单卖家 / 运营，按发生时间正序；**无轨迹回空列表而非 404**）。**交易域发货后补推「已揽收」**：`OrderShippedEvent` + `@TransactionalEventListener(AFTER_COMMIT)` + `LogisticsNotifier`（best-effort，**绝不抛出**，不阻断发货）；两条发货路径（卖家中心 / 内部凭据）共用同一段状态机，事件在状态机本体发布，两边都不漏。**前端共用件** `components/LogisticsTimeline.tsx`：正序排列 + 头部「当前：××」常驻提示；未发货给说明性空态；已完成订单轨迹仍在；非当事人在订单页本就被挡，不泄露物流信息；买家 / 卖家订单详情各挂一份。**顺带收口**：履约域新增 `OrderFacts` 统一取数口（评价域与售后域各自那份「调交易域取订单事实」已悄悄漂移——同一句「交易域不可用」一处抛 422、一处抛 503——统一为同一实现）。**自测 `scripts/logistics-smoke.ps1` 79 通过 / 0 失败**（含★**断言总数守卫**：任何一条 Check 因写法错误被静默跳过都会让守卫报失败）+ **`scripts/e2e/logistics-ui-check.mjs` 真实 Chromium 44 通过 / 0 失败**（买家/卖家同轨 + 空态 + 越权 + 终态仍在）；`tsc` 零错误、`vite build` 通过（主包 171.5KB） |
 
+| **A5 · 优惠券营销（第十三轮）** | **新建第 6 个业务服务 `duoduo-marketing`（:8085）**：POM 入父反应堆、三档配置、雪花 **worker-id=5**、compose 第 **9** 个容器（服务名 `duoduo-marketing-app` / 容器名 `duoduo-app-marketing` / 镜像 `duoduo/duoduo-marketing:1.0.0`）、新库 `duoduo_marketing`（`t_coupon_template` + `t_coupon`）。**公开只读** `GET /api/coupons/templates`（领券中心，含 `claimable` / `claimableReason`，**能否领由服务端判定**）；**需登录** `POST /api/coupons/templates/{id}/claim`（**重复领取不报错**，返回 `replay=true` 与已有券码）、`GET /api/coupons/mine?status=`、`GET /api/coupons/mine/usable?amount=`（服务端给 `bestCouponCode`）；**运营** `POST /api/coupons/admin/templates`（`OperatorGuard`）；**内部**（`X-Internal-Token`，**不进网关**，交易域直连 8085）`/api/coupons/internal/{lock,release,consume,sweep}`。**三条纪律**：① 券码用**随机串**（`CP` + 14 位去混淆字符，字符表去 `0/O/1/I`）而**不用雪花**（规避 JS `Number.MAX_SAFE_INTEGER` 精度坑，同 INV-16）；② 锁 / 解 / 核销**全部 CAS 条件更新、不用分布式锁**（INV-1）；③ **营销域只算「能抵多少」，折扣金额由交易域写入 `t_order.discount_amount`**（被调用方、**不依赖 openfeign**）。**交易域接入**：下单 `placeOrder` 先锁券（失败抛 422 带人话原因）→ `paySuccess` 核销（核销失败则整笔支付不成立）→ `cancel` / `forceClose` / 超时关单**三处**解锁；`t_order` 增列 `coupon_code VARCHAR(32)`（增量脚本 `docs/sql/06-a5-coupon-columns.sql`）。**网关白名单收紧为精确路径 `/api/coupons/templates`**（白名单按**路径**而非方法匹配，放通配会把领券 / 券包 / 内部接口一起放成匿名可调，与既有 `/api/reviews/product/**` 同一纪律）。**前端**：新增 `pages/Coupons.tsx`（领券中心 + 我的券包双页签）、路由 `/coupons`（**刻意不套 `RequireAuth`**）；一级导航 + 用户下拉 + 「我的」页加快捷入口；结算页选券（`undefined`=未选择→用服务端推荐 / `null`=明确不用，提交只传 `couponCode`）、订单详情金额区展示优惠与券码。**自测 `scripts/coupon-smoke.ps1` 145 通过 / 0 失败**（含★断言总数守卫）+ **`scripts/e2e/coupon-ui-check.mjs` 真实 Chromium 43 通过 / 0 失败**（配套夹具 `scripts/e2e/coupon-ui-fixture.ps1 -Action create\|drop`）；`tsc --noEmit` 零错误、`vite build` 通过（**79 模块**） |
+
 ### 进行中
 
 | 任务 | 当前进展 |
 |---|---|
 | ✅ **M11 剩余块：信用分（A4）已交付**（2026-09-20，第十二轮） | 履约域**四块已全部落地**：评价与晒单、售后仲裁（A3，含三端页面）、物流轨迹（A2，含买卖双方时间线）、**信用分（A4）** —— 同域内已无低成本可做项，下一项须新起服务或中间件 |
-| M11 其他：优惠券营销（A5，`duoduo-marketing`）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） | 都需要新中间件或新服务，建议按「营销 → 检索 → 削峰」顺序推进 |
-| **A9 AI 导购「多多」（已排期）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**密钥暂未提供** → 接口与降级链路可先做，联调需等凭据 |
-| **A13 买家端微信小程序（已排期）** | 用户 2026-09-18 拍板：**排期，AppID 暂不提供但允许先开始编码** → 可先用开发者工具测试号开工，真机预览等 AppID |
+| ✅ **M11 剩余块：优惠券营销（A5）已交付**（2026-09-23，第十三轮） | **新增第 6 个业务服务 `duoduo-marketing`（:8085，雪花 worker-id=5）**：领券中心 / 券包 / 内部锁·解·核销 / TTL 补偿调度 + 前端领券中心与结算选券；容器 **8 → 9**（3 中间件 + 6 业务服务）。v1 边界：券不随退款退回、只实现满减、一张券只作用于拆单后商品总额最大的那一单 |
+| M11 其他：ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job | 都需要新中间件或新服务，建议按「检索 → 削峰 → 压测」顺序推进 |
+| **A9 AI 导购「多多」（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**百炼 / DashScope API Key 暂未提供（待用户提供）** → 接口与降级链路可先做，联调需等凭据 |
+| **A13 买家端微信小程序（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**排期，允许先开始编码**；**小程序 AppID 暂未提供（待用户提供）** → 可先用开发者工具测试号开工，真机预览等 AppID |
 
 ### 未开始（按你确认的端形态排期）
 
@@ -183,6 +186,57 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-23（第十三轮 · A5 优惠券营销）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-marketing/`（**新增整个模块，第 6 个业务服务**） | POM 入父反应堆（reactor 变 **9 模块**）；`MarketingApplication`（`@MapperScan`）；`config/MarketingServiceConfig`（分页 + 雪花 **worker-id=5**，与用户 1 / 商品 2 / 交易 3 / 履约 4 错开）；`application.yml` / `-local` / `-mysql` 三档；`controller/{CouponTemplateController,CouponController,CouponInternalController}`；`service/CouponService` + `service/CouponReleaseJob`（TTL 补偿）；`entity/{CouponTemplateEntity,CouponEntity}` + `mapper/{CouponTemplateMapper,CouponMapper}`；`support/{CouponCodeGenerator,CouponStatus,InternalTokenFilter}`；`dto/CouponDtos`；`resources/db/schema.sql` |
+| `duoduo-marketing/.../resources/application.yml`（**新增**） | 端口走 **`DUODUO_MARKETING_PORT`**（**刻意不用通用名 `MARKETING_PORT`**，避免宿主环境已有同名变量时静默改端口）；`COUPON_LOCK_TTL_MINUTES`（默认 **35**，**略大于**交易域订单超时关单 30，避免「订单还活着、券已被别人领走」）、`COUPON_RELEASE_SWEEP_MS`（60000）、`COUPON_RELEASE_SWEEP_DELAY_MS`（30000）、`COUPON_RELEASE_BATCH`（200）；内部凭据复用 `INTERNAL_TOKEN` |
+| `docs/sql/05-duoduo-marketing.sql`、`docs/sql/06-a5-coupon-columns.sql`（**新增**）、`docs/sql/00-init-databases-and-user.sql`（**改**） | 新库 `duoduo_marketing`：`t_coupon_template`（运营券模板：名称/描述/类型/门槛/抵扣/总量/已领量/起止/状态）、`t_coupon`（用户券：券码/用户/模板/状态/锁定订单号/核销订单号/领取时间/过期时间），**领券幂等靠唯一索引 `uk_coupon_user_tpl(user_id, template_id)`**（一人一模板一张）；种子模板 **5001**（新客立减 5 元，满 50 减 5，1000 张）/ **5002**（满 200 减 30）；交易域增量列 `t_order.coupon_code VARCHAR(32)`（**MySQL 不支持 `ADD COLUMN IF NOT EXISTS`，重复执行报 1060 属预期**） |
+| `duoduo-trade/.../client/{MarketingClient,MarketingGateway}.java`、`client/dto/CouponCallDtos.java`（**新增**） | 交易域按「**营销域是被调用方**」的纪律做**反向**取数：交易域直连 8085 调内部接口（`X-Internal-Token`，**不进网关**）；`MarketingGateway.release` 带 `scene` 参数用于日志与调用描述 |
+| `duoduo-trade/.../{service/OrderService.java,dto/OrderDtos.java,entity/OrderEntity.java,resources/db/schema.sql}`（**改**） | 下单 `placeOrder` 先**锁券**（失败抛 422 带人话原因，如「满 200 元可用」）→ `paySuccess` **核销**（核销失败则整笔支付不成立）→ `cancel` / `forceClose` / 超时关单**三处**解锁（统一带 `scene` 便于排障）；`OrderView` 增 `couponCode` / `discountAmount` |
+| `duoduo-gateway/.../application.yml`、`config/GatewaySecurityProperties.java`（**改**） | 新路由 `duoduo-marketing` → `Path=/api/promotions/**,/api/coupons/**`（**`/api/promotions/**` 是预留路径，确实写在配置里**）；白名单**只放行精确路径 `/api/coupons/templates`**，**不是** `/api/coupons/**` —— 白名单按**路径**而非方法匹配，放通配会把「领券」「我的券包」「内部锁券 / 核销 / 解锁」一起放成匿名可调（与既有 `/api/reviews/product/**` 同一纪律，INV-14） |
+| `docker-compose.yml`（**改**） | 第 **9** 个容器 `duoduo-marketing-app`（`container_name: duoduo-app-marketing`，镜像 `duoduo/duoduo-marketing:1.0.0`，:8085，`worker-id=5`）；网关依赖加营销 |
+| `frontend/src/pages/Coupons.tsx`（**新增**） | 领券中心 + 我的券包双页签（券模板卡片显示门槛 / 有效期 / `claimableReason`；券包按 `UNUSED/LOCKED/USED/EXPIRED` 筛选） |
+| `frontend/src/{App.tsx,components/Layout.tsx}`、`pages/{Checkout,OrderDetail,Me}.tsx`、`api/{types,endpoints}.ts`（**改**） | 路由 `/coupons`（**刻意不套 `RequireAuth`**：领券中心是公开落地页，未登录也看得到有什么券，点「立即领取」时才引导登录）；一级导航加「优惠券」、用户下拉与「我的」页加「我的券包」；结算页选券（`undefined`=未选择→用服务端推荐 / `null`=明确不用；费用明细显示优惠与实付；提交只传 `couponCode`）；订单详情金额区展示优惠金额与券码（**有券时才显示券码行**）；新增 `CouponStatus` / `CouponType` / `CouponTemplateView` / `CouponView` / `CouponClaimResult` / `UsableCoupon` / `UsableCouponResult`，`OrderView` 加 `couponCode` |
+| `scripts/coupon-smoke.ps1`（**新增**） | **145 项断言**（含★断言总数守卫）：① 领券幂等（重复领返回 `replay=true` 不报错）② 并发防超发 ③ 锁·解·核销 CAS ④ 折扣落交易域 ⑤ 生命周期闭环；另加公开只读边界 / 内部凭据 403 / 门槛文案（「满 200 元可用」）/ 券码非雪花 / sweep 幂等 / TTL 环境变量校验 / 运营建券准入 / 清理复原 |
+| `scripts/e2e/coupon-ui-check.mjs` + `scripts/e2e/coupon-ui-fixture.ps1`（**新增**） | **43 项真实 Chromium 断言**（未登录态 / 领券 / 券包 / 结算选券与费用口径 / 订单详情券码 / 取消退回 / 噪声）；夹具脚本 `-Action create\|drop` 建 / 删测试数据 |
+| `README.md`、`docs/agent/02·03·04·05·06·07·08`、`docs/PLAN.md`、`docs/PROJECT-STATUS.md`、`docs/ARCHITECTURE.md`、`docs/handover/00~08`、`docs/待协助问题.md` | 接口章节（新增「营销域：优惠券」）、模块与代码地图、不变式举例、契约全集（3 组端点 + 内部 4 端点 + DTO + 状态机）、开发任务手册、门禁表（改优惠券 → `coupon-smoke.ps1` + `coupon-ui-check.mjs`）、待办 A5 标记完成、容器 / 端口 / 脚本口径（8 → 9 容器、14 套 1204 项 + 5 套 180 项）、踩坑 **T-37 / T-38** |
+
+**自测**：
+- `scripts/coupon-smoke.ps1` **145 通过 / 0 失败**（守卫确认无静默跳过）；
+- `scripts/e2e/coupon-ui-check.mjs` **43 通过 / 0 失败**（真实 Chromium，夹具由 PowerShell 建 / 删）；
+- 前端 `tsc --noEmit` 零错误、`vite build` 通过（**79 模块**）；
+- 全量编译 **九模块 BUILD SUCCESS**；重建 `duoduo-marketing-app` 容器后 **9 容器 healthy**；
+- 接口冒烟累计 **14 套 1204 项**（新增 `coupon-smoke` 145 项），浏览器 UI 断言累计 **5 套 180 项**
+  （原 4 套 137 项 = `review-ui 20` + `seller-ui 29` + `logistics-ui 44` + `aftersale-ui 44`；新增 `coupon-ui 43`）。
+
+**第十三轮自测暴露并修复的 5 个问题**（前 3 个是代码缺陷，后 2 个是工程 / 环境坑）：
+1. **未登录访客被标记成「可领取」**：`toTemplateView` 没把登录态传进去，未登录时前端会渲染一个注定 401 的
+   「立即领取」按钮 → 加 `loggedIn` 分支，未登录时 `claimable=false` + 原因文案「登录后可领取」。
+2. **`cancel` 路径漏了解锁券**：原先只有运营强制关单与超时关单会解锁，用户主动取消订单时券会一直卡在 `LOCKED`
+   直到 TTL 兜底 → `cancel` 补 `releaseCouponQuietly(orderNo, "用户取消")`，三处调用统一带 `scene` 便于排障。
+3. **`OrderService` 构造器漏赋值 `marketingGateway`**（编译报「可能尚未初始化变量」，编译期即拦截）；
+   `MarketingGateway.release` 补 `scene` 参数用于日志。
+4. **「改完源码没重建容器，冒烟假红」**（**同一坑本轮第二次踩到**）：`loggedIn` 修复写进源码后
+   `duoduo-app-marketing` 容器没重建，`coupon-smoke.ps1` 首跑 **143 通过 / 2 失败**，失败项恰是
+   「未登录访客应标 `claimable=false`」与「原因文案为『登录后可领取』」—— 而源码里该分支明明存在。
+   排查路径：读源码确认分支存在 → 确认调用方已传 `userId != null` → 判断「**代码对但容器是旧的**」。
+   修法：`docker compose build duoduo-marketing-app` + `up -d`，重跑后 **145/145 全绿**。
+   教训：**改了源码必须重建对应容器再跑冒烟；`docker compose build` 之后补的改动不会进运行中的容器**。
+5. **未支付订单详情页的 `/settlement` 404**（P3 前端优化点，**与 A5 无关**）：`OrderService.settlementOf()` 对
+   「没有托管记录」的订单**按设计**返回 404（`OrderView.settlement` 注释即写明「未支付时为 null」），页面自行忽略；
+   e2e 里已**显式排除该已知良性 404 并注明理由**。未支付时可直接跳过这次请求（记为 P3，暂不改）。
+
+> ⚠️ **两条新踩的坑（第十三轮，已入 `08` 篇 T-37 / T-38）**：
+> 1. **T-37 `docker compose build` 之后补的代码不会进运行中的容器**：表现为「代码明明改了、断言还是失败」，
+>    curl / 日志都看不到新分支。**修法**：补丁写完必须重新 `mvn package` + `docker compose build <svc> && docker compose up -d <svc>`。
+> 2. **T-38 本机 Node 无法创建子进程**：`spawnSync` / `execFileSync` 一律 `EBUSY errno -4082`
+>    （`cmd.exe` / `powershell.exe` / `docker.exe` 都试过，两版 Node、沙箱内外都一样）→ 那种「在 Node 里
+>    `execFileSync('docker', ['exec','duoduo-mysql','mysql',…])` 跑 SQL」的 e2e 夹具写法在本机跑不通。
+>    **修法**：把 SQL 从 Node 里彻底移出 —— 夹具建 / 删由 `scripts/e2e/coupon-ui-fixture.ps1` 用 PowerShell
+>    `& docker exec` 完成（与 `coupon-smoke.ps1` 同一姿势），Node 脚本只做 HTTP + 浏览器。
 
 ### 2026-09-20（第十二轮 · A4 信用分）
 
@@ -650,7 +704,7 @@ docker exec duoduo-mysql sh -c 'mysql --default-character-set=utf8mb4 -uroot -pd
 curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-Token: duoduo-local-dev-internal-token"
 ```
 
-> 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**、履约 **8084**。
+> 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**、履约 **8084**、营销 **8085**。
 
 ---
 
@@ -663,13 +717,13 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | 篇 | 主题 |
 |---|---|
 | 00 | 交接总纲（10 分钟接管：进度快照 / 下一步 / 命令速查 / 9 篇导航 / 密钥与权限指引） |
-| 01 | 快速上手与环境搭建（8 容器、构建专用姿势、常见故障 8 条） |
+| 01 | 快速上手与环境搭建（9 容器、构建专用姿势、常见故障 8 条） |
 | 02 | 架构与模块导航（服务拓扑 / 模块对照 / 跨域调用 / 一笔订单的数据流） |
 | 03 | 环境变量与密钥（脱敏，四把钥匙与轮换建议） |
-| 04 | 数据库与表结构（四库、表清单、状态枚举字典、口径约定） |
+| 04 | 数据库与表结构（五库、表清单、状态枚举字典、口径约定） |
 | 05 | 接口清单与契约（按域速查、认证与放行边界、错误码表） |
 | 06 | 前端开发手册（目录职责、四大页面域、截图索引、浏览器专属坑） |
-| 07 | 测试与验收证据（9 套 667 项 + 2 套 49 项、脚本四条约定、历史缺陷） |
+| 07 | 测试与验收证据（14 套 1204 项 + 5 套 180 项、脚本四条约定、历史缺陷） |
 | 08 | 风险、已知边界与接手建议（I-14 等遗留、不做清单、8 条值钱的坑、接手顺序） |
 
 **7.6 AI Agent 接管包（2026-09-18 新增，给 AI 读）**
@@ -725,3 +779,5 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | B-08 | **角色升级后需重新登录才生效**（角色快照写在 access token 内，15 分钟） | 避免每次请求回源查角色；前端已在入驻成功提示里写明 | 若要即时生效：网关每次回源查角色，或入驻成功后服务端主动使旧 refresh 失效并强制重登 |
 | B-09 | **售后已有独立的售后单（立案-卖家处理-平台仲裁，A3 已落地）**；仍缺**退货物流**（退货退款的货怎么寄回、怎么签收） | 退货物流是独立的物流域模型（面单、轨迹、签收），与争议裁定分开做更清晰 | 接物流轨迹（A2）时一并做 |
 | B-10 | 旧的内部凭据端点 `/api/orders/{no}/ship` 与 `/internal/**` **保留** | 现有 6 套冒烟脚本依赖它们 | 清理脚本依赖后可收敛为卖家端单一入口 |
+| B-11 | **优惠券 v1：券不随退款退回**（退款金额为订单实付金额） | 券的资金语义（退回 / 作废 / 部分退）需要与交易域退款流程一起重设计，v1 先保证「折扣只算一次、钱数对得上」 | 做「退款退券」前必须与交易域退款流程一并设计 |
+| B-12 | **优惠券 v1：只实现满减**（无折扣率 / 兑换 / 会员 / 积分），且**一张券只作用于拆单后商品总额最大的那一单** | 拆单后一券多单的分摊规则复杂、容易算错钱；先做覆盖最常见场景的最小闭环 | 出现跨单优惠需求时 |
