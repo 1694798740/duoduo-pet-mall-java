@@ -69,9 +69,18 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
         try { $code = [int]$_.Exception.Response.StatusCode.value__ } catch { }
         try { if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $raw = $_.ErrorDetails.Message; $body = $raw | ConvertFrom-Json } } catch { }
         if ($null -eq $body) {
+            # 跨 PS 版本读错误响应体：PS5.1 的 Response 是 HttpWebResponse（GetResponseStream），
+            # pwsh 7（CI Linux）的是 HttpResponseMessage —— 只能 Content.ReadAsStringAsync 读
             try {
-                $st = $_.Exception.Response.GetResponseStream()
-                if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd(); if ($t) { $raw = $t; $body = $t | ConvertFrom-Json } }
+                $resp = $_.Exception.Response
+                $t = $null
+                if ($resp -and $resp.PSObject.Methods.Name -contains 'GetResponseStream') {
+                    $st = $resp.GetResponseStream()
+                    if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd() }
+                } elseif ($resp -and $null -ne $resp.Content) {
+                    $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                }
+                if ($t) { $raw = $t; $body = $t | ConvertFrom-Json }
             } catch { }
         }
         return @{ status = $code; body = $body; raw = $raw }
@@ -396,7 +405,7 @@ $o4 = Call 'Post' "$Gateway/api/orders" $sessC @{
     idempotentKey = (NewKey)
 }
 Check "④ 用不存在的 addressId 下单 → 4xx（拒单）" ($o4.status -ge 400 -and $o4.status -lt 500) "$($o4.status)/$($o4.body.code)"
-Check "④ 拒单文案指向「地址不可用」，而不是 500 或泛化的系统错误" ($o4.raw -match '地址') $o4.raw
+Check "④ 拒单文案指向「地址不可用」，而不是 500 或泛化的系统错误" ($o4.raw -match '地址') "$($o4.status)/$($o4.body.code)/raw=$($o4.raw)"
 $o5 = Call 'Post' "$Gateway/api/orders" $sessC @{
     addressId = $a1
     idempotentKey = (NewKey)

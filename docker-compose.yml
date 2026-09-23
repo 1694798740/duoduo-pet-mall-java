@@ -49,6 +49,9 @@ services:
       - ./docs/sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${MYSQL_ROOT_PASSWORD:-duoduo_root}']
+      # start_period：CI 冷机器首次初始化（执行 00~08 全部建库 SQL）可能远慢于本地，
+      # 宽限期内健康检查失败不计入 retries —— 否则偶发「dependency failed to start」（T-45）。
+      start_period: 120s
       interval: 10s
       timeout: 5s
       retries: 20

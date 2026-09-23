@@ -1,0 +1,12 @@
+fix(ci): 冒烟脚本错误响应体读取跨 PS 版本兼容 + mysql 健康检查宽限期
+
+CI 首跑两轮失败的定位与修复（T-45）：
+- Run #2（354/356）：smoke 与 address 两处断言依赖错误响应体文本，读取走 PS5.1
+  独有的 GetResponseStream；CI Linux 用 pwsh 7，Response 是 HttpResponseMessage，
+  静默读到 null。修复：16 套冒烟脚本统一加跨版本兜底（GetResponseStream 与
+  Content.ReadAsStringAsync 双路径），失败断言补诊断 extra
+- Run #1（1m28s 即败）：mysql 容器在 CI 冷机器上初始化期间被判 unhealthy，
+  依赖等待直接失败。修复：healthcheck 加 start_period 120s；compose up 失败时
+  自动打印 mysql/nacos 日志辅助定位
+- setup-java v4 升 v5（消除 deprecation 警告）；CI 注释口径修正（16 套 / 356 项）
+- 本地回归：smoke 54/54、address 82/82 全绿

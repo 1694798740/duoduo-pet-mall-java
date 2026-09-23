@@ -1,10 +1,10 @@
 # A6 · CI：编译 + 冒烟子集（全套回归留在本地，见 scripts/run-all-smoke.ps1）
 #
-# 为什么子集：15 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
-# address / id-precision，合计 364 项断言）。新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
+# 为什么子集：16 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
+# address / id-precision，合计 356 项断言）。新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
 #
 # 已知环境差异的处理：
-#   * 冒烟脚本是 PS 5.1 风格但与 pwsh 兼容；runner 自带 pwsh（ubuntu-latest）。
+#   * 冒烟脚本是 PS 5.1 风格但与 pwsh 兼容（错误响应体读取已做双版本兼容，T-45）；runner 自带 pwsh（ubuntu-latest）。
 #   * 脚本里有 `& curl.exe`（Windows 习惯）—— Linux 上没有 curl.exe，做一个 symlink shim。
 #   * 金额/状态断言只走 HTTP，不依赖 docker exec 输出编码，Linux 下无 GBK 问题。
 
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -70,7 +70,13 @@ jobs:
         run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
 
       - name: 起全栈（mysql / redis / nacos + 6 个业务服务）
-        run: docker compose up -d --build
+        run: |
+          docker compose up -d --build || {
+            echo "::error::compose up 失败，打印中间件日志辅助定位"
+            docker compose logs mysql --tail 100 || true
+            docker compose logs nacos --tail 40 || true
+            exit 1
+          }
 
       - name: 等 9 个容器全部 healthy（最长 10 分钟）
         run: |

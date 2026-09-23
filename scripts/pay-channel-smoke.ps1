@@ -53,8 +53,16 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
         try { if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $body = $_.ErrorDetails.Message | ConvertFrom-Json } } catch { }
         if ($null -eq $body) {
             try {
-                $st = $_.Exception.Response.GetResponseStream()
-                if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd(); if ($t) { $body = $t | ConvertFrom-Json } }
+                # 跨 PS 版本：PS5.1 用 GetResponseStream，pwsh 7（CI Linux）用 Content.ReadAsStringAsync
+                $resp = $_.Exception.Response
+                $t = $null
+                if ($resp -and $resp.PSObject.Methods.Name -contains 'GetResponseStream') {
+                    $st = $resp.GetResponseStream()
+                    if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd() }
+                } elseif ($resp -and $null -ne $resp.Content) {
+                    $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                }
+                if ($t) { $body = $t | ConvertFrom-Json }
             } catch { }
         }
         return @{ status = $code; body = $body; raw = $null }

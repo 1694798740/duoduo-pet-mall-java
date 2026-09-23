@@ -71,9 +71,18 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
         try { $code = [int]$_.Exception.Response.StatusCode.value__ } catch { }
         try { if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $raw = $_.ErrorDetails.Message; $body = $raw | ConvertFrom-Json } } catch { }
         if ($null -eq $body) {
+            # 跨 PS 版本读错误响应体：PS5.1 的 Response 是 HttpWebResponse（GetResponseStream），
+            # pwsh 7（CI Linux）的是 HttpResponseMessage —— 只能 Content.ReadAsStringAsync 读
             try {
-                $st = $_.Exception.Response.GetResponseStream()
-                if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd(); if ($t) { $raw = $t; $body = $t | ConvertFrom-Json } }
+                $resp = $_.Exception.Response
+                $t = $null
+                if ($resp -and $resp.PSObject.Methods.Name -contains 'GetResponseStream') {
+                    $st = $resp.GetResponseStream()
+                    if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd() }
+                } elseif ($resp -and $null -ne $resp.Content) {
+                    $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                }
+                if ($t) { $raw = $t; $body = $t | ConvertFrom-Json }
             } catch { }
         }
         return @{ status = $code; body = $body; raw = $raw }

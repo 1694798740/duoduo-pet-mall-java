@@ -31,6 +31,24 @@ function Check([string]$name, [bool]$ok, $extra) {
 
 function CodeOf($resp) { if ($resp) { [int]$resp.StatusCode } else { 0 } }
 
+# 跨 PS 版本读错误响应体（T-45）：PS5.1 的 Response 是 HttpWebResponse（GetResponseStream），
+# pwsh 7（CI Linux）的是 HttpResponseMessage —— 只能 Content.ReadAsStringAsync 读。
+# 本脚本 CI 上以 pwsh 运行，Windows 习惯写法在读错误体时会静默拿到 null。
+function ReadErrBody($errRecord) {
+    try {
+        $resp = $errRecord.Exception.Response
+        $t = $null
+        if ($resp -and $resp.PSObject.Methods.Name -contains 'GetResponseStream') {
+            $st = $resp.GetResponseStream()
+            if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd() }
+        } elseif ($resp -and $null -ne $resp.Content) {
+            $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        }
+        if ($t) { return $t | ConvertFrom-Json }
+    } catch { }
+    return $null
+}
+
 Write-Host ""
 Write-Host "=== 多多宠物商店 · Java 微服务版冒烟测试 @ $Gateway ==="
 Write-Host ""
@@ -61,7 +79,7 @@ try {
     $regBody = $r.Content | ConvertFrom-Json
 } catch {
     $regCode = [int]$_.Exception.Response.StatusCode.value__
-    try { $regBody = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() | ConvertFrom-Json } catch { }
+    $regBody = ReadErrBody $_
 }
 
 if ($regCode -eq 409) {
@@ -90,10 +108,7 @@ try {
     $anonCode = [int]$r.StatusCode
 } catch {
     $anonCode = [int]$_.Exception.Response.StatusCode.value__
-    try {
-        $sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream(), [System.Text.Encoding]::UTF8)
-        $anonBody = $sr.ReadToEnd() | ConvertFrom-Json
-    } catch { }
+    $anonBody = ReadErrBody $_
 }
 Check "未带令牌访问 /api/users/me 返回 401" ($anonCode -eq 401) $anonCode
 # 注：PowerShell 5.1 读取 WebException 响应流不稳定，这里改用 curl 取原始响应体；
@@ -162,10 +177,7 @@ try {
     $badCode = [int]$r.StatusCode
 } catch {
     $badCode = [int]$_.Exception.Response.StatusCode.value__
-    try {
-        $sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream(), [System.Text.Encoding]::UTF8)
-        $badBody = $sr.ReadToEnd() | ConvertFrom-Json
-    } catch { }
+    $badBody = ReadErrBody $_
 }
 Check "生日与生命阶段矛盾时拒绝写入（422）" ($badCode -eq 422) $badCode
 Check "矛盾提示要求用户确认" ($badBody.code -eq 'BUSINESS_RULE') $badBody.code
