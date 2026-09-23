@@ -405,7 +405,9 @@ $o4 = Call 'Post' "$Gateway/api/orders" $sessC @{
     idempotentKey = (NewKey)
 }
 Check "④ 用不存在的 addressId 下单 → 4xx（拒单）" ($o4.status -ge 400 -and $o4.status -lt 500) "$($o4.status)/$($o4.body.code)"
-Check "④ 拒单文案指向「地址不可用」，而不是 500 或泛化的系统错误" ($o4.raw -match '地址') "$($o4.status)/$($o4.body.code)/raw=$($o4.raw)"
+# 注意用 body.message（ConvertFrom-Json 已把 \uXXXX 解码回中文）而不是 raw：
+# pwsh 7 的 ErrorDetails.Message 会把非 ASCII 重编码成 \uXXXX 转义（T-45），raw 文本匹配会假失败
+Check "④ 拒单文案指向「地址不可用」，而不是 500 或泛化的系统错误" ($o4.body.message -match '地址') "$($o4.status)/$($o4.body.code)/msg=$($o4.body.message)"
 $o5 = Call 'Post' "$Gateway/api/orders" $sessC @{
     addressId = $a1
     idempotentKey = (NewKey)

@@ -31,10 +31,17 @@ function Check([string]$name, [bool]$ok, $extra) {
 
 function CodeOf($resp) { if ($resp) { [int]$resp.StatusCode } else { 0 } }
 
-# 跨 PS 版本读错误响应体（T-45）：PS5.1 的 Response 是 HttpWebResponse（GetResponseStream），
-# pwsh 7（CI Linux）的是 HttpResponseMessage —— 只能 Content.ReadAsStringAsync 读。
-# 本脚本 CI 上以 pwsh 运行，Windows 习惯写法在读错误体时会静默拿到 null。
+# 跨 PS 版本读错误响应体（T-45）：
+#   * PS5.1 的 Response 是 HttpWebResponse → GetResponseStream() 可读；
+#   * pwsh 7（CI Linux）的 Response 是 HttpResponseMessage，且 PS7 已自行读过内容流
+#     （ReadAsStringAsync 会抛「对象已释放」），错误体只能从 ErrorDetails.Message 拿，
+#     但 PS7 会把它重排成多行 / \u 转义形态 —— 所以读出来后一律 ConvertFrom-Json 再用属性。
 function ReadErrBody($errRecord) {
+    try {
+        if ($errRecord.ErrorDetails -and $errRecord.ErrorDetails.Message) {
+            return $errRecord.ErrorDetails.Message | ConvertFrom-Json
+        }
+    } catch { }
     try {
         $resp = $errRecord.Exception.Response
         $t = $null
@@ -42,7 +49,7 @@ function ReadErrBody($errRecord) {
             $st = $resp.GetResponseStream()
             if ($st) { $t = (New-Object System.IO.StreamReader($st)).ReadToEnd() }
         } elseif ($resp -and $null -ne $resp.Content) {
-            $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            try { $t = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() } catch { }
         }
         if ($t) { return $t | ConvertFrom-Json }
     } catch { }
