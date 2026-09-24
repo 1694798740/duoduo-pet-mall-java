@@ -125,6 +125,58 @@ foreach ($cid in $catIds) {
 }
 Check "猫品类推荐同样全部真实存在" $catValid ($catIds -join ',')
 
+# ---------- 3b. 多轮追问召回（上下文并入关键词）----------
+# 追问句本身不含商品词（「那最便宜的是哪个？」），若召回只用当前消息，历史传了也白传；
+# 历史里最近若干轮**用户**提问会被并入召回关键词，故追问仍能落到同一批商品上。
+Write-Host ""
+Write-Host "> 多轮追问召回"
+$multiHistory = @(
+    @{ role = 'user'; content = '推荐猫粮' },
+    @{ role = 'assistant'; content = '皇家幼猫粮、麦富迪冻干双拼' }
+)
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？'; history = $multiHistory } $null $null
+Check "追问句返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress -Depth 6)
+Check "追问仍能召回（上下文并入关键词生效）" (@($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+$followupIds = @($r.body.data.recommendations | ForEach-Object { $_.id })
+$followupValid = $true
+foreach ($fid in $followupIds) {
+    $d = Call 'Get' "$Gateway/api/products/$fid" $sess $null $null
+    if ($d.status -ne 200) { $followupValid = $false }
+}
+Check "追问推荐的每条仍真实存在（无编造）" $followupValid ($followupIds -join ',')
+
+# 连续追问：前两轮用户消息都不含商品词，第二句追问仍须命中（验证「多轮」而非「仅上一轮」）
+$deepHistory = @(
+    @{ role = 'user'; content = '推荐猫粮' },
+    @{ role = 'assistant'; content = '皇家幼猫粮' },
+    @{ role = 'user'; content = '那最便宜的是哪个？' },
+    @{ role = 'assistant'; content = '网易严选 99 元' }
+)
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '有货吗？'; history = $deepHistory } $null $null
+Check "连续追问（第二轮追问）仍能召回" (@($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+
+# 对照：不带 history 的追问句必须如实说没有 —— 证明上面命中的确来自上下文并入，而非该句本身可召回
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？' } $null $null
+Check "无 history 的追问句召回为空（对照成立）" (@($r.body.data.recommendations).Count -eq 0) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+
+# ---------- 3c. 推荐与话术一致性（候选≠必推清单）----------
+# 候选里混有超预算商品时，正文只挑符合的、recommendations 却全量下发，会让卡片与话术互相打脸。
+Write-Host ""
+Write-Host "> 推荐与话术一致性"
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐猫粮' } $null $null
+$allCandCount = @($r.body.data.recommendations).Count
+Check "推荐数量受上限约束（<= 4）" ($allCandCount -le 4) $allCandCount
+
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '预算 200 元以内的猫粮，有推荐吗？' } $null $null
+Check "带预算条件的对话返回 200" ($r.status -eq 200) $r.status
+# mock 形态下推荐取候选前 3，不做语义筛选，故预算断言只在 llm 形态有意义
+if ("$($r.body.data.mode)" -eq 'llm') {
+    $overBudget = @($r.body.data.recommendations | Where-Object { $_.minPrice -gt 20000 }).Count
+    Check "llm 形态：推荐不超出用户预算（200 元）" ($overBudget -eq 0) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+} else {
+    Write-Host "  [SKIP] llm 形态预算断言（当前 mode=$($r.body.data.mode)）"
+}
+
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = 'QWERASDFZXCV 无关输入' } $null $null
 Check "无关输入返回 200 且如实答复" ($r.status -eq 200 -and "$($r.body.data.reply)" -ne '') ($r.body | ConvertTo-Json -Compress -Depth 6)
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '' } $null $null

@@ -4,7 +4,7 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-24（第十七轮）** — **A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**。
+**最近更新：2026-09-24（第十七轮）** — **A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**；**A9 已用真实百炼 Key 跑通 `llm` 形态**。
 ① **A9 · 新服务 `duoduo-ai`（:8086，容器 `duoduo-app-ai`）**：**无状态**（不连库、v1 不落对话历史）。
 `POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`，两条都在网关白名单 —— **未登录可问答**是硬需求。
 推荐**基于真实商品库**：Feign（Nacos + `X-Internal-Token`）调商品域
@@ -23,7 +23,7 @@ ES 只返回 **id 顺序页**、卡片装配回 MySQL —— **权威数据只�
 （「一键全量」报 18 套却宣称全部通过）；`LongToStringJacksonModule` 白名单**漏列 `total` 等 20 余个
 金额/计数字段** → `total` 以字符串下发，使冒烟断言 `$p.total -ge 3` 在 PowerShell 里**退化成字典序比较**而恒失败
 （**类型错误伪装成业务失败**）。两处均已修复，并新增一条断言直接检查原始文本防复发（见 `docs/agent/08` **T-53 / T-56**）。
-**自测**：`scripts/run-all-smoke.ps1` **19 套全绿**（`ai-smoke` 16/0、`search-smoke` 40/0）；
+**自测**：`scripts/run-all-smoke.ps1` **19 套全绿**（`ai-smoke` 23/0、`search-smoke` 40/0）；
 容器 **9 → 10** 全 healthy；OpenAPI **120 → 125 端点**；前端 `tsc --noEmit` 零错误。
 
 **上一轮（2026-09-24 第十六轮）** — **A7 运营账号管理页完成**。
@@ -205,7 +205,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1      # 82 项：收货地址簿（CRUD/默认唯一性与删除顺延/归属统一 404/下单写快照/清理复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1 # 56 项：跨域 ID 精度回归（只断言 JSON 原始文本，绕开反序列化的精度掩盖）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1  # 26 项：微信登录绑定（未绑 422/未配置 503/幂等/抢绑 409/免登 401）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 16 项：AI 导购（推荐真实性/无 sellerId 泄露/匿名可问答/429 限流）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 23 项：AI 导购（推荐真实性/无 sellerId 泄露/匿名可问答/多轮追问/推荐上限/429 限流）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 
 # 六套 UI 自测都需先起前端 dev server。

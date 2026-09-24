@@ -55,6 +55,16 @@ public class DashScopeClient {
      * 对调用方而言「模型这次没帮上忙」，不该区分成 N 种内部错误。
      */
     public String chat(String systemPrompt, List<Map<String, String>> history, String userMessage) {
+        return chat(systemPrompt, history, userMessage, 0);
+    }
+
+    /**
+     * 对话补全（可指定 max_tokens）。
+     *
+     * <p>{@code maxTokens <= 0} 表示不约束；导购的结构化选择场景给一个小上限，
+     * 既省配额又天然限制「模型自由发挥」的空间。
+     */
+    public String chat(String systemPrompt, List<Map<String, String>> history, String userMessage, int maxTokens) {
         if (!isConfigured()) {
             throw new BizException(ErrorCode.DEGRADED, "AI 服务未配置，请联系管理员完成百炼 API Key 配置");
         }
@@ -65,7 +75,7 @@ public class DashScopeClient {
         }
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        String body = buildBody(model, messages);
+        String body = buildBody(model, messages, maxTokens);
         long start = System.currentTimeMillis();
         try {
             HttpResponse<String> resp = http.send(HttpRequest.newBuilder()
@@ -97,7 +107,7 @@ public class DashScopeClient {
     }
 
     /** OpenAI 兼容请求体（受控结构，手写拼接避免引入额外序列化依赖） */
-    private static String buildBody(String model, List<Map<String, String>> messages) {
+    private static String buildBody(String model, List<Map<String, String>> messages, int maxTokens) {
         StringBuilder sb = new StringBuilder("{\"model\":\"").append(model).append("\",\"messages\":[");
         for (int i = 0; i < messages.size(); i++) {
             if (i > 0) {
@@ -109,7 +119,11 @@ public class DashScopeClient {
                     .replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
             sb.append("{\"role\":\"").append(role).append("\",\"content\":\"").append(content).append("\"}");
         }
-        return sb.append("]}").toString();
+        sb.append(']');
+        if (maxTokens > 0) {
+            sb.append(",\"max_tokens\":").append(maxTokens);
+        }
+        return sb.append('}').toString();
     }
 
     /** 从 OpenAI 兼容响应里取 choices[0].message.content；解析失败按依赖故障处理 */
