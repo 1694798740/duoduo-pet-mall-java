@@ -42,6 +42,21 @@
       <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
     </dependency>
 
+    <!-- A10 · Elasticsearch 检索加速。只用底层 ElasticsearchClient（Java API Client），
+         不用 Spring Data 仓储 —— 检索失败必须能「原地降级回 MySQL」，仓储抽象只会碍事。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+    </dependency>
+
+    <!-- A10 · 拼音检索：应用侧生成拼音字段（免 ES 插件 —— 官方镜像即可跑，
+         不引入「装插件失败→起不来」的运维面）。 -->
+    <dependency>
+      <groupId>com.github.promeg</groupId>
+      <artifactId>tinypinyin</artifactId>
+      <version>2.0.3</version>
+    </dependency>
+
     <dependency>
       <groupId>com.baomidou</groupId>
       <artifactId>mybatis-plus-spring-boot3-starter</artifactId>

@@ -13,7 +13,10 @@ import com.duoduo.product.entity.ListingEntity;
 import com.duoduo.product.mapper.ListingMapper;
 import com.duoduo.product.support.BannedWordGuard;
 import com.duoduo.product.support.Csv;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,13 +46,19 @@ public class ListingService {
     private final ListingMapper listingMapper;
     private final ProductService productService;
     private final BannedWordGuard bannedWordGuard;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.duoduo.product.support.search.EsSearchEngine> esSearchProvider;
+    private static final Logger log = LoggerFactory.getLogger(ListingService.class);
 
     public ListingService(ListingMapper listingMapper,
                           ProductService productService,
-                          BannedWordGuard bannedWordGuard) {
+                          BannedWordGuard bannedWordGuard,
+                          org.springframework.beans.factory.ObjectProvider<
+                                  com.duoduo.product.support.search.EsSearchEngine> esSearchProvider) {
         this.listingMapper = listingMapper;
         this.productService = productService;
         this.bannedWordGuard = bannedWordGuard;
+        this.esSearchProvider = esSearchProvider;
     }
 
     public PageResult<ListingCard> search(ListingQuery query) {
@@ -60,6 +69,20 @@ public class ListingService {
             throw BizException.validation("最低价不能高于最高价");
         }
         bannedWordGuard.rejectIfHit(query.keyword(), "搜索词");
+
+        // A10 · ES 优先，任何 ES 异常原地降级回 MySQL（与 ProductService.search 同一降级纪律）
+        var esSearch = esSearchProvider.getIfAvailable();
+        if (esSearch != null && StringUtils.hasText(query.keyword())) {
+            try {
+                var hits = esSearch.searchListings(query, pageNo, pageSize);
+                List<ListingEntity> records = hits.ids().isEmpty()
+                        ? List.of()
+                        : orderByIds(listingMapper.selectBatchIds(hits.ids()), hits.ids());
+                return PageResult.of(toCards(records), hits.total(), pageNo, pageSize);
+            } catch (Exception ex) {
+                log.warn("ES 闲置检索失败，降级 MySQL（设计内行为）: {}", ex.getMessage());
+            }
+        }
 
         LambdaQueryWrapper<ListingEntity> wrapper = visibleWrapper();
 
@@ -132,6 +155,13 @@ public class ListingService {
         return new LambdaQueryWrapper<ListingEntity>()
                 .eq(ListingEntity::getStatus, STATUS_ON_SALE)
                 .eq(ListingEntity::getAuditStatus, AUDIT_APPROVED);
+    }
+
+    /** A10：按 ES 返回的 id 顺序还原记录顺序 */
+    private List<ListingEntity> orderByIds(List<ListingEntity> listings, List<Long> orderedIds) {
+        java.util.Map<Long, ListingEntity> byId = listings.stream()
+                .collect(java.util.stream.Collectors.toMap(ListingEntity::getId, l -> l, (a, b) -> a));
+        return orderedIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
     }
 
     private void applySort(LambdaQueryWrapper<ListingEntity> wrapper, String sort) {

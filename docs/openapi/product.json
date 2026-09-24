@@ -390,6 +390,26 @@
                                                                                      }
                                                                    }
                                                       },
+                  "/api/admin/search/reindex":  {
+                                                    "post":  {
+                                                                 "tags":  [
+                                                                              "search-admin-controller"
+                                                                          ],
+                                                                 "operationId":  "reindex",
+                                                                 "responses":  {
+                                                                                   "200":  {
+                                                                                               "description":  "OK",
+                                                                                               "content":  {
+                                                                                                               "*/*":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseMapStringObject"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                                           }
+                                                                                           }
+                                                                               }
+                                                             }
+                                                },
                   "/api/admin/listings/{id}/audit":  {
                                                          "post":  {
                                                                       "tags":  [
@@ -779,6 +799,46 @@
                                                                                       }
                                                                     }
                                                         },
+                  "/api/products/internal/candidates":  {
+                                                            "get":  {
+                                                                        "tags":  [
+                                                                                     "product-controller"
+                                                                                 ],
+                                                                        "operationId":  "candidates",
+                                                                        "parameters":  [
+                                                                                           {
+                                                                                               "name":  "keyword",
+                                                                                               "in":  "query",
+                                                                                               "required":  true,
+                                                                                               "schema":  {
+                                                                                                              "type":  "string"
+                                                                                                          }
+                                                                                           },
+                                                                                           {
+                                                                                               "name":  "limit",
+                                                                                               "in":  "query",
+                                                                                               "required":  false,
+                                                                                               "schema":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int32",
+                                                                                                              "default":  8
+                                                                                                          }
+                                                                                           }
+                                                                                       ],
+                                                                        "responses":  {
+                                                                                          "200":  {
+                                                                                                      "description":  "OK",
+                                                                                                      "content":  {
+                                                                                                                      "*/*":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseListProductCard"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                                  }
+                                                                                                  }
+                                                                                      }
+                                                                    }
+                                                        },
                   "/api/meta/dictionaries":  {
                                                  "get":  {
                                                              "tags":  [
@@ -1042,6 +1102,37 @@
                                                                          }
                                                        }
                                            },
+                  "/api/admin/search/reconcile":  {
+                                                      "get":  {
+                                                                  "tags":  [
+                                                                               "search-admin-controller"
+                                                                           ],
+                                                                  "operationId":  "reconcile",
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "type",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "string",
+                                                                                                        "default":  "product"
+                                                                                                    }
+                                                                                     }
+                                                                                 ],
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseReconcileReport"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                  },
                   "/api/admin/listings":  {
                                               "get":  {
                                                           "tags":  [
@@ -1405,6 +1496,30 @@
                                                                                                }
                                                                                 }
                                                              },
+                                       "ApiResponseMapStringObject":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "object",
+                                                                                                          "additionalProperties":  {
+                                                                                                                                       "type":  "object"
+                                                                                                                                   }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
                                        "ListingAuditRequest":  {
                                                                    "type":  "object",
                                                                    "properties":  {
@@ -1842,6 +1957,30 @@
                                                                                                }
                                                                               }
                                                            },
+                                       "ApiResponseListProductCard":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "$ref":  "#/components/schemas/ProductCard"
+                                                                                                                    }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
                                        "ApiResponseMapStringListDictItem":  {
                                                                                 "type":  "object",
                                                                                 "properties":  {
@@ -2142,6 +2281,70 @@
                                                                                                             }
                                                                                           }
                                                                        },
+                                       "ApiResponseReconcileReport":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/ReconcileReport"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "ReconcileReport":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "docType":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                  "dbCount":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              },
+                                                                                  "indexCount":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                  "missingInIndex":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "type":  "integer",
+                                                                                                                       "format":  "int64"
+                                                                                                                   }
+                                                                                                     },
+                                                                                  "extraInIndex":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                   },
+                                                                                  "staleInIndex":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                   },
+                                                                                  "syncStatus":  {
+                                                                                                     "type":  "object",
+                                                                                                     "additionalProperties":  {
+                                                                                                                                  "type":  "object"
+                                                                                                                              }
+                                                                                                 }
+                                                                              }
+                                                           },
                                        "ApiResponsePageResultListingAuditView":  {
                                                                                      "type":  "object",
                                                                                      "properties":  {

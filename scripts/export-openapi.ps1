@@ -4,7 +4,7 @@
 # 产物：
 #   docs/openapi/<service>.json      —— 各服务完整 OpenAPI 3 契约
 #   docs/openapi/endpoints.md       —— 按「服务 → 方法 路径」排序的端点清单（人读，逐条比对 04 篇用）
-# 注意：只导 5 个业务服务（knife4j 是 MVC 生态，网关 WebFlux 没有 /v3/api-docs）。
+# 注意：只导 6 个业务服务（knife4j 是 MVC 生态，网关 WebFlux 没有 /v3/api-docs）。
 
 param(
     [string]$OutDir = (Join-Path $PSScriptRoot '..\docs\openapi')
@@ -18,7 +18,8 @@ $Services = @(
     @{ Name = 'product';    Port = 8082 },
     @{ Name = 'trade';      Port = 8083 },
     @{ Name = 'fulfilment'; Port = 8084 },
-    @{ Name = 'marketing';  Port = 8085 }
+    @{ Name = 'marketing';  Port = 8085 },
+    @{ Name = 'ai';         Port = 8086 }
 )
 
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
@@ -65,7 +66,7 @@ foreach ($svc in $Services) {
     Write-Host ("  [OK] {0} 个端点 → {1}" -f $count, $file)
 }
 
-$summary.Add(("合计：**{0}** 个端点（5 个业务服务）。" -f $totalEndpoints))
+$summary.Add(("合计：**{0}** 个端点（6 个业务服务）。" -f $totalEndpoints))
 $summaryFile = Join-Path $OutDir 'endpoints.md'
 [System.IO.File]::WriteAllLines($summaryFile, $summary, (New-Object System.Text.UTF8Encoding($true)))
 Write-Host ""

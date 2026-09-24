@@ -1,6 +1,6 @@
 # A6 · CI：编译 + 冒烟子集（全套回归留在本地，见 scripts/run-all-smoke.ps1）
 #
-# 为什么子集：16 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
+# 为什么子集：19 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
 # address / id-precision，合计 356 项断言）。新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
 #
 # 已知环境差异的处理：
@@ -18,7 +18,7 @@ on:
 
 jobs:
   build:
-    name: 编译检查（后端 9 模块 + 前端 tsc/vite）
+    name: 编译检查（后端 10 模块 + 前端 tsc/vite）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,7 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: 后端编译（mvn package，9 模块）
+      - name: 后端编译（mvn package，10 模块）
         run: mvn -B -ntp -DskipTests package
 
       - name: Set up Node 20
@@ -69,7 +69,7 @@ jobs:
       - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
         run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
 
-      - name: 起全栈（mysql / redis / nacos + 6 个业务服务）
+      - name: 起全栈（mysql / redis / nacos + 7 个业务服务）
         run: |
           docker compose up -d --build || {
             echo "::error::compose up 失败，打印中间件日志辅助定位"
@@ -78,13 +78,13 @@ jobs:
             exit 1
           }
 
-      - name: 等 9 个容器全部 healthy（最长 10 分钟）
+      - name: 等 10 个容器全部 healthy（最长 10 分钟）
         run: |
           for i in $(seq 1 60); do
             healthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health=="healthy")] | length')
             total=$(docker compose ps --format json | jq -s 'length')
             echo "[$i/60] healthy=$healthy/$total"
-            if [ "$healthy" -eq 9 ] && [ "$total" -eq 9 ]; then exit 0; fi
+            if [ "$healthy" -eq 10 ] && [ "$total" -eq 10 ]; then exit 0; fi
             # 有容器反复重启就不等了，直接失败并打日志
             restarting=$(docker compose ps --format json | jq -s '[.[] | select(.State=="restarting")] | length')
             if [ "$restarting" -gt 0 ]; then
@@ -94,7 +94,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "::error::10 分钟内未达到 9/9 healthy"
+          echo "::error::10 分钟内未达到 10/10 healthy"
           docker compose ps
           docker compose logs --tail 50
           exit 1

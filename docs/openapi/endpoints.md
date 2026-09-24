@@ -47,6 +47,8 @@
 - `PUT /api/admin/categories/{id}/status`
 - `GET /api/admin/listings`
 - `POST /api/admin/listings/{id}/audit`
+- `GET /api/admin/search/reconcile`
+- `POST /api/admin/search/reindex`
 - `GET /api/categories`
 - `GET /api/categories/{id}`
 - `GET /api/categories/flat`
@@ -57,6 +59,7 @@
 - `GET /api/meta/dictionaries`
 - `GET /api/products`
 - `GET /api/products/{spuId}`
+- `GET /api/products/internal/candidates`
 - `GET /api/products/internal/skus/batch`
 - `POST /api/products/skus/stock/deduct`
 - `POST /api/products/skus/stock/freeze`
@@ -65,7 +68,7 @@
 - `GET /api/seller/products`
 - `POST /api/seller/products/{spuId}/status`
 
-小计：**29** 个端点。
+小计：**32** 个端点。
 
 ## trade （:8083）
 
@@ -147,4 +150,11 @@
 
 小计：**9** 个端点。
 
-合计：**120** 个端点（5 个业务服务）。
+## ai （:8086）
+
+- `GET /api/duoduo/capabilities`
+- `POST /api/duoduo/chat`
+
+小计：**2** 个端点。
+
+合计：**125** 个端点（6 个业务服务）。

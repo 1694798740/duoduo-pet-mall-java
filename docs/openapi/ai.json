@@ -1,0 +1,237 @@
+﻿{
+    "openapi":  "3.0.1",
+    "info":  {
+                 "title":  "OpenAPI definition",
+                 "version":  "v0"
+             },
+    "servers":  [
+                    {
+                        "url":  "http://127.0.0.1:8086",
+                        "description":  "Generated server url"
+                    }
+                ],
+    "paths":  {
+                  "/api/duoduo/chat":  {
+                                           "post":  {
+                                                        "tags":  [
+                                                                     "ai-controller"
+                                                                 ],
+                                                        "operationId":  "chat",
+                                                        "requestBody":  {
+                                                                            "content":  {
+                                                                                            "application/json":  {
+                                                                                                                     "schema":  {
+                                                                                                                                    "$ref":  "#/components/schemas/ChatRequest"
+                                                                                                                                }
+                                                                                                                 }
+                                                                                        },
+                                                                            "required":  true
+                                                                        },
+                                                        "responses":  {
+                                                                          "200":  {
+                                                                                      "description":  "OK",
+                                                                                      "content":  {
+                                                                                                      "*/*":  {
+                                                                                                                  "schema":  {
+                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseChatResponse"
+                                                                                                                             }
+                                                                                                              }
+                                                                                                  }
+                                                                                  }
+                                                                      }
+                                                    }
+                                       },
+                  "/api/duoduo/capabilities":  {
+                                                   "get":  {
+                                                               "tags":  [
+                                                                            "ai-controller"
+                                                                        ],
+                                                               "operationId":  "capabilities",
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseCapabilityView"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                               }
+              },
+    "components":  {
+                       "schemas":  {
+                                       "ChatRequest":  {
+                                                           "required":  [
+                                                                            "message"
+                                                                        ],
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "message":  {
+                                                                                              "maxLength":  500,
+                                                                                              "minLength":  0,
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                              "history":  {
+                                                                                              "maxItems":  6,
+                                                                                              "minItems":  0,
+                                                                                              "type":  "array",
+                                                                                              "items":  {
+                                                                                                            "$ref":  "#/components/schemas/ChatTurn"
+                                                                                                        }
+                                                                                          }
+                                                                          }
+                                                       },
+                                       "ChatTurn":  {
+                                                        "required":  [
+                                                                         "content",
+                                                                         "role"
+                                                                     ],
+                                                        "type":  "object",
+                                                        "properties":  {
+                                                                           "role":  {
+                                                                                        "maxLength":  16,
+                                                                                        "minLength":  0,
+                                                                                        "type":  "string"
+                                                                                    },
+                                                                           "content":  {
+                                                                                           "maxLength":  500,
+                                                                                           "minLength":  0,
+                                                                                           "type":  "string"
+                                                                                       }
+                                                                       }
+                                                    },
+                                       "ApiResponseChatResponse":  {
+                                                                       "type":  "object",
+                                                                       "properties":  {
+                                                                                          "code":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                          "message":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                          "data":  {
+                                                                                                       "$ref":  "#/components/schemas/ChatResponse"
+                                                                                                   },
+                                                                                          "requestId":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                          "timestamp":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        }
+                                                                                      }
+                                                                   },
+                                       "ChatResponse":  {
+                                                            "type":  "object",
+                                                            "properties":  {
+                                                                               "reply":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                               "recommendations":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "$ref":  "#/components/schemas/ProductRecommendation"
+                                                                                                                 }
+                                                                                                   },
+                                                                               "mode":  {
+                                                                                            "type":  "string"
+                                                                                        }
+                                                                           }
+                                                        },
+                                       "ProductRecommendation":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "id":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
+                                                                                        "title":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                        "subtitle":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                        "minPrice":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
+                                                                                        "maxPrice":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
+                                                                                        "inStock":  {
+                                                                                                        "type":  "boolean"
+                                                                                                    }
+                                                                                    }
+                                                                 },
+                                       "ApiResponseCapabilityView":  {
+                                                                         "type":  "object",
+                                                                         "properties":  {
+                                                                                            "code":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                            "message":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                            "data":  {
+                                                                                                         "$ref":  "#/components/schemas/CapabilityView"
+                                                                                                     },
+                                                                                            "requestId":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                            "timestamp":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int64"
+                                                                                                          }
+                                                                                        }
+                                                                     },
+                                       "CapabilityView":  {
+                                                              "type":  "object",
+                                                              "properties":  {
+                                                                                 "chatAvailable":  {
+                                                                                                       "type":  "boolean"
+                                                                                                   },
+                                                                                 "mode":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                                 "hint":  {
+                                                                                              "type":  "string"
+                                                                                          }
+                                                                             }
+                                                          }
+                                   }
+                   },
+    "x-openapi":  {
+                      "x-setting":  {
+                                        "customCode":  200,
+                                        "language":  "zh-CN",
+                                        "enableSwaggerModels":  true,
+                                        "swaggerModelName":  "Swagger Models",
+                                        "enableReloadCacheParameter":  false,
+                                        "enableAfterScript":  true,
+                                        "enableDocumentManage":  true,
+                                        "enableVersion":  false,
+                                        "enableRequestCache":  true,
+                                        "enableFilterMultipartApis":  false,
+                                        "enableFilterMultipartApiMethodType":  "POST",
+                                        "enableHost":  false,
+                                        "enableHostText":  "",
+                                        "enableDynamicParameter":  false,
+                                        "enableDebug":  true,
+                                        "enableFooter":  true,
+                                        "enableFooterCustom":  false,
+                                        "enableSearch":  true,
+                                        "enableOpenApi":  true,
+                                        "enableHomeCustom":  false,
+                                        "enableGroup":  true,
+                                        "enableResponseCode":  true
+                                    },
+                      "x-markdownFiles":  [
+
+                                          ]
+                  }
+}

@@ -8,7 +8,8 @@
 ```bash
 cd <repo>/duoduo-pet-mall-java
 
-# 1) 容器基线：必须 9 个 healthy（mysql/redis/nacos + gateway/user/product/trade/fulfilment/marketing）
+# 1) 容器基线：必须 10 个 healthy（mysql/redis/nacos + gateway/user/product/trade/fulfilment/marketing/ai）
+#    需要 ES 检索能力（A10）时再 `docker compose --profile search up -d` 额外起 duoduo-es；不起则检索自动降级 MySQL
 docker compose ps
 
 # 2) 编译基线：BUILD SUCCESS（构建命令必须用下面这条，原因见 docs/agent/08）
@@ -19,7 +20,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   "-Dmaven.legacyLocalRepo=true" \
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
-# 3) 冒烟基线：16 套 1335 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
+# 3) 冒烟基线：19 套 1424 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
 #    （一键全量：scripts\run-all-smoke.ps1；CI 子集同一入口：scripts\ci-run.ps1 -Scripts …）
 #    推送后 GitHub Actions 会自动跑编译 + 冒烟子集（.github/workflows/ci.yml，A6）
 ```
@@ -45,7 +46,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 
 ## 2. 十条硬规矩（违反其一即为不合格交付）
 
-1. **不动基线**：`docker compose ps` 非 9 healthy、或编译不通过时，先修基线。
+1. **不动基线**：`docker compose ps` 非 10 healthy、或编译不通过时，先修基线。
 2. **改完必跑冒烟**：跨服务改动至少跑上下游两套；前端改动跑 `tsc --noEmit` + `vite build`。
 3. **幂等靠唯一索引**，不靠应用层「先查再插」，不引入分布式锁。
 4. **不跨库查询**：跨域数据一律走对端服务的内部接口（带 `X-Internal-Token`），且**裁剪字段**。
@@ -60,8 +61,8 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 
 ```
 duoduo-pet-mall-java/
-├── pom.xml                    聚合父 POM（9 模块，Java 21）
-├── docker-compose.yml         9 容器编排
+├── pom.xml                    聚合父 POM（10 模块，Java 21）
+├── docker-compose.yml         10 容器编排（另有可选 duoduo-es，profile=search）
 ├── Dockerfile                 业务服务共用镜像（temurin:21-jre-alpine，非 root）
 ├── docs/
 │   ├── PLAN.md                ★ 进度权威（里程碑/任务/变更记录/命令速查）
@@ -70,7 +71,7 @@ duoduo-pet-mall-java/
 │   ├── sql/                   00~07 容器初始化 SQL（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）
 │   ├── handover/              人读交接包 9 篇（含 manifest.json 云端 id）
 │   └── agent/                 ★ 本 AI 接管包（00~08）
-├── scripts/                   16 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
+├── scripts/                   19 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
 ├── duoduo-common/             响应/错误码/异常/雪花ID/UserContext/JWT/OperatorGuard
 ├── duoduo-common-web/         全局异常处理/请求ID/身份透传/LongToStringJacksonModule（全站 ID 序列化）
 ├── duoduo-gateway/            路由 + JWT 校验 + 白名单 + 身份头注入（WebFlux）
@@ -79,7 +80,8 @@ duoduo-pet-mall-java/
 ├── duoduo-trade/      :8083   购物车/订单/冻结/支付/托管/卖家中心/后台干预
 ├── duoduo-fulfilment/ :8084   评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分
 ├── duoduo-marketing/  :8085   营销域：优惠券（领券中心 / 我的券包 / 锁·解·核销 / 补偿调度）
-└── frontend/                  React 18 + TS strict + Vite 5（买家/商家/后台/评价/优惠券）
+├── duoduo-ai/         :8086   AI 导购「多多」（无状态；Feign 取真实候选 → DashScope/mock；限流 429、降级 503）
+└── frontend/                  React 18 + TS strict + Vite 5（买家/商家/后台/评价/优惠券/AI 导购）
 ```
 
 ## 4. 交付动作清单（每次任务收尾照做）

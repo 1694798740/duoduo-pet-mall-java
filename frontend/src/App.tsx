@@ -24,6 +24,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { LoadingBlock } from './components/ui';
 import { useAuth } from './store/auth';
+import { AiGuruPage } from './pages/AiGuru';
 import { CartPage } from './pages/Cart';
 import { CheckoutPage } from './pages/Checkout';
 import { CouponsPage } from './pages/Coupons';
@@ -231,6 +232,12 @@ export const App: React.FC = () => (
           未登录时页面自己在领券按钮上引导去登录，比先把人拦在门外转化高。
           券包页签同样在页内处理未登录态（渲染「去登录」引导）。 */}
       <Route path="/coupons" element={<CouponsPage />} />
+
+      {/* ---------- AI 导购「多多」（A9，duoduo-ai :8086） ----------
+          刻意**不加** RequireAuth：`/api/duoduo/chat` 在网关白名单里，对话本身不承载身份，
+          未登录也能问答（验收②）；「加购 / 下单」这类需要身份的动作由回复文案引导登录，
+          页面再补一条登录入口 —— 把「能不能问」和「能不能买」分开。 */}
+      <Route path="/ai" element={<AiGuruPage />} />
 
       {/* ---------- 商家端（M5-9 / M9，需登录；非卖家由页面引导入驻） ---------- */}
       <Route

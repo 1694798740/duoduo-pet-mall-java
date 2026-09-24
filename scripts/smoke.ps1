@@ -292,6 +292,11 @@ try {
     $r = Invoke-WebRequest -Uri "$Gateway/api/products?keyword=$kw&pageSize=50" -UseBasicParsing -TimeoutSec 20
     $p = ($r.Content | ConvertFrom-Json).data
     Check "关键词检索命中猫粮相关商品（≥3 件）" ($p.total -ge 3) $p.total
+    # `total` 是**计数**，必须按 JSON 数字下发。它曾漏进 LongToStringJacksonModule 的白名单
+    # 而被当标识转成字符串，于是上面那条 `-ge` 在 PowerShell 里退化成**字典序比较**
+    # （"15" -ge "3" → False）恒失败 —— 类型错误伪装成业务失败。
+    # 断言原始文本而非反序列化结果，让同类问题**当场现形**（见 docs/agent/08 篇 T-40/T-56）。
+    Check "分页 total 以 JSON 数字下发（计数不是标识）" ($r.Content -match '"total"\s*:\s*\d') 'raw'
 } catch {
     Check "关键词检索命中猫粮相关商品（≥3 件）" $false $_.Exception.Message
 }

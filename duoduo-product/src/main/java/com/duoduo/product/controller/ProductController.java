@@ -79,4 +79,16 @@ public class ProductController {
     public ApiResponse<List<SkuPurchaseView>> batchSkus(@RequestParam("ids") List<Long> ids) {
         return ApiResponse.ok(productService.purchaseViews(ids));
     }
+
+    /**
+     * AI 导购候选召回（内部接口，A9，供 duoduo-ai 经内部凭据调用）。
+     *
+     * <p>把一句用户消息变成**真实商品库**里的候选卡片 —— AI 服务只负责组织回复，
+     * 推荐的每一个商品都出自这里，从根上堵死「模型编造不存在的商品」。
+     */
+    @GetMapping("/internal/candidates")
+    public ApiResponse<List<ProductCard>> candidates(@RequestParam("keyword") String keyword,
+                                                     @RequestParam(defaultValue = "8") int limit) {
+        return ApiResponse.ok(productService.internalCandidates(keyword, limit));
+    }
 }

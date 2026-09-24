@@ -69,11 +69,13 @@
       └───────────────┴────────────────┴────────────┴────────────────┴───────────────┘
 ```
 
-> **落地现状（2026-09-23）**：图中 8 个业务服务里，`gateway` / `user` / `product` / `trade` / `fulfilment` /
-> `marketing` **6 个已落地并容器化**（共 9 个容器 = mysql + redis + nacos 3 个中间件 + 6 个业务服务）；
-> 图中**营销块的「优惠券」已落地**（活动 / 会员 / 积分仍未做）；`duoduo-ai`（8086）与 `duoduo-admin`（8087）
-> 未落地（平台后台能力目前由交易 / 商品域的 `/api/admin/**` 提供）。图中 Elasticsearch / RocketMQ / Sentinel /
-> Seata / XXL-Job / SkyWalking 亦**未接入**，属目标形态。
+> **落地现状（2026-09-24）**：图中 8 个业务服务里，`gateway` / `user` / `product` / `trade` / `fulfilment` /
+> `marketing` / `ai` **7 个已落地并容器化**（共 **10 个容器** = mysql + redis + nacos 3 个中间件 + 7 个业务服务；
+> 另有**可选容器 `duoduo-es`**，compose `profile=search` 默认不起）；
+> 图中**营销块的「优惠券」已落地**（活动 / 会员 / 积分仍未做）；`duoduo-admin`（8087）
+> 未落地（平台后台能力目前由交易 / 商品 / 用户域的 `/api/admin/**` 提供）。
+> 图中 **Elasticsearch 已按「可选加速层」接入**（A10：单索引 + 应用侧拼音/同义词 + 补偿扫描与对账，
+> ES 缺席时检索**原地降级 MySQL**），RocketMQ / Sentinel / Seata / XXL-Job / SkyWalking 仍**未接入**，属目标形态。
 
 ---
 

@@ -21,6 +21,7 @@
     <module>duoduo-trade</module>
     <module>duoduo-fulfilment</module>
     <module>duoduo-marketing</module>
+    <module>duoduo-ai</module>
   </modules>
 
   <properties>

@@ -4,7 +4,29 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-24（第十六轮）** — **A7 运营账号管理页完成**。
+**最近更新：2026-09-24（第十七轮）** — **A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**。
+① **A9 · 新服务 `duoduo-ai`（:8086，容器 `duoduo-app-ai`）**：**无状态**（不连库、v1 不落对话历史）。
+`POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`，两条都在网关白名单 —— **未登录可问答**是硬需求。
+推荐**基于真实商品库**：Feign（Nacos + `X-Internal-Token`）调商品域
+`GET /api/products/internal/candidates` 召回候选（视图**不含 `sellerId`**），再把候选喂给模型，
+系统提示硬约束「只推荐候选列表内的商品」—— **结构上杜绝编造，不是事后用正则抓幻觉**。
+三形态 `mock`（默认，用真实候选拼回复，整链可跑）/ `llm`（配 `DASHSCOPE_API_KEY`）/ `unconfigured`；
+未配置或超时 → **503 `DEGRADED`**，每 IP 限流 → **429 `RATE_LIMITED`**（客户端不应自动重试）。
+前端新增 `/ai` 对话页（**刻意不套 `RequireAuth`**）：气泡 + 推荐卡片直链商品详情 + 带角色回传历史。
+② **A10 · 商品域接入单索引 `duoduo-search`**（ES 作为**可选加速层**，`profile=search` 默认不起）：
+**拼音与同义词都在应用侧**（TinyPinyin + 应用侧同义词替换 —— 按 ES 实测，查询侧挂 `synonym_graph`
+会把 or 语义收成 phrase、**反而降低召回**）；`SearchSyncJob` 15s 扫 `updated_at` 变更（**兼补偿**）+
+启动全量对齐 + 清孤儿；运营可查 `GET /api/admin/search/reconcile`、可 `POST /api/admin/search/reindex`；
+**ES 不可用原地降级 MySQL**（并**禁用 ES 健康指示器** —— 否则 ES 一停会因容器 unhealthy 被健康门杀掉降级链路本身）。
+ES 只返回 **id 顺序页**、卡片装配回 MySQL —— **权威数据只有库一份**，开关 ES 看到同一个商品世界。
+③ **顺带修掉两个真缺陷**：`run-all-smoke.ps1` 的过滤器 `*-smoke.ps1` **漏跑最基础的 `smoke.ps1`**
+（「一键全量」报 18 套却宣称全部通过）；`LongToStringJacksonModule` 白名单**漏列 `total` 等 20 余个
+金额/计数字段** → `total` 以字符串下发，使冒烟断言 `$p.total -ge 3` 在 PowerShell 里**退化成字典序比较**而恒失败
+（**类型错误伪装成业务失败**）。两处均已修复，并新增一条断言直接检查原始文本防复发（见 `docs/agent/08` **T-53 / T-56**）。
+**自测**：`scripts/run-all-smoke.ps1` **19 套全绿**（`ai-smoke` 16/0、`search-smoke` 40/0）；
+容器 **9 → 10** 全 healthy；OpenAPI **120 → 125 端点**；前端 `tsc --noEmit` 零错误。
+
+**上一轮（2026-09-24 第十六轮）** — **A7 运营账号管理页完成**。
 ① **后端**：`GET /api/admin/users?role=&keyword=`（运营/管理员，分页 + 检索，**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号）
 与 `POST /api/admin/users/{id}/role`（**仅 ADMIN 可改角色**；OPERATOR 改角色 403）。
 三条硬规则：**不能给自己降权 422**、**不能降级最后一个 ADMIN 422**、每次变更写审计日志 `t_audit_log`
@@ -65,7 +87,7 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
 另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
 与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
-**接口冒烟累计 16 套 1335 项，浏览器 UI 断言累计 6 套 244 项。**
+**接口冒烟累计 19 套 1424 项，浏览器 UI 断言累计 6 套 244 项。**
 详见「十二、变更记录」。
 
 **上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
@@ -116,21 +138,26 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 中间件与业务服务**全部容器化**，一条命令起全套：
 
 ```bash
-docker compose up -d          # 起 9 个容器
-docker ps                     # 期望：9 个容器全是 healthy
+docker compose up -d          # 起 10 个容器（3 中间件 + 7 业务服务）
+docker ps                     # 期望：10 个容器全是 healthy
+
+# 可选：检索加速层（A10）。刻意挂 profile，默认不起 —— 不起时检索自动走 MySQL
+docker compose --profile search up -d duoduo-es
 ```
 
 | 容器 | 镜像 | 端口 | 说明 |
 |---|---|---|---|
 | `duoduo-mysql` | mysql:8.0.36 | 3306 | **五个库**：`duoduo_user` / `duoduo_product` / `duoduo_trade` / `duoduo_fulfilment` / `duoduo_marketing`（`nacos` 库由 Nacos 自建） |
 | `duoduo-redis` | redis:7.2-alpine | 6379 | 缓存与分布式能力预留 |
-| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 6 个服务**（网关 + 5 个业务服务） |
+| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 7 个服务**（网关 + 6 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
 | `duoduo-app-fulfilment` | duoduo/duoduo-fulfilment:1.0.0 | 8084 | 履约域：**评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分** |
 | `duoduo-app-marketing` | duoduo/duoduo-marketing:1.0.0 | 8085 | 营销域：**优惠券**（领券中心 / 我的券包 / 锁·解·核销 / 补偿调度） |
+| `duoduo-app-ai` | duoduo/duoduo-ai:1.0.0 | 8086 | AI 导购「多多」：**候选召回（商品域）+ 对话编排**；未配百炼 Key 时 503 降级，mock 模式可整链跑通 |
+| `duoduo-es`（可选） | elasticsearch:8.11.4 | 9200 | **检索加速层（A10）**，compose `profile=search` 默认不起：`docker compose --profile search up -d duoduo-es`。不起时检索自动降级走 MySQL |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -152,30 +179,36 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十六套 1335 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（十九套 1424 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
+> 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
 > CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
-> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，115+ 端点与 `docs/agent/04` 逐条核对）；
+> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**125 个端点**与 `docs/agent/04` 逐条核对）；
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 69 项：用户域 + 商品域
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 88 项：购物车
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 55 项：用户域 + 商品域
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 77 项：下单拆单 + 库存冻结
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 72 项：支付幂等 + 状态机 + 超时关单
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 126 项：担保交易 + 资金托管 + 退款
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 103 项：卖家中心（准入/归属隔离/发货/售后/结算）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 49 项：平台管理后台（权限边界/审核/强关/对账）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 60 项：履约域评价（内部接口/资格/匿名/追评/聚合）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 89 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 102 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 80 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\credit-smoke.ps1       # 82 项：信用分（基础分/权重表/因子和=总分/单调性/售后因子/回写幂等/凭据边界）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1       # 145 项：优惠券（领券幂等/并发防超发/锁·解·核销 CAS/折扣落交易域/生命周期闭环/凭据边界/断言总数守卫）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1      # 82 项：收货地址簿（CRUD/默认唯一性与删除顺延/归属统一 404/下单写快照/清理复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1 # 56 项：跨域 ID 精度回归（只断言 JSON 原始文本，绕开反序列化的精度掩盖）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1  # 26 项：微信登录绑定（未绑 422/未配置 503/幂等/抢绑 409/免登 401）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 16 项：AI 导购（推荐真实性/无 sellerId 泄露/匿名可问答/429 限流）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 
-# 五套 UI 自测都需先起前端 dev server。
+# 六套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
 # 报 `listen EACCES`）。改用 3000 即可 —— 它已在网关 CORS_ORIGINS 默认白名单里，不用改任何配置：
 cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开终端
@@ -221,14 +254,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\coupon-ui-fixtur
 duoduo-pet-mall-java/
 ├── pom.xml                     聚合父 POM：统一版本、编译参数（release 21）、插件管理
 ├── Dockerfile                  业务服务共用镜像（temurin:21-jre-alpine，非 root 运行）
-├── docker-compose.yml          9 容器编排（中间件 + 6 个业务服务）
+├── docker-compose.yml          10 容器编排（中间件 + 7 个业务服务；另有可选 duoduo-es，profile=search）
 ├── maven/                      项目专用 Maven 配置（阿里云镜像）与本地环境变量脚本
 ├── docs/
 │   ├── ARCHITECTURE.md         完整架构设计（服务拆分、分库分表、容量模型、降级矩阵、路线）
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 + 01~05 从零建库）与 incremental/（06~08 存量库增量，不进容器初始化目录，T-46）
-├── scripts/                    一键启动、冒烟测试（16 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / wechat-auth-smoke.ps1 微信登录绑定）
+├── scripts/                    一键启动、冒烟测试（19 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
 ├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
 ├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
@@ -669,7 +702,7 @@ React 18.3 · react-router-dom 6.28 · TypeScript 5.6（strict + noUncheckedInde
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173，需后端 9 容器在跑（网关 :8080）
+npm run dev        # http://localhost:5173，需后端 10 容器在跑（网关 :8080）
 npm run build      # tsc --noEmit && vite build
 ```
 
@@ -822,7 +855,7 @@ npm run build      # tsc --noEmit && vite build
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P0** | 工程骨架 + 公共模块 + 网关 + 用户服务 + 商品服务 | ✅ 完成（54 项冒烟） |
-| **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（现已 9 容器 healthy，含履约 / 营销服务） |
+| **P1-a** | 容器化开发环境（中间件 + 业务服务全部容器化、Nacos 服务发现） | ✅ 完成（现已 10 容器 healthy，含履约 / 营销 / AI 服务；另有可选 `duoduo-es`） |
 | **P1-b** | 交易服务：购物车 ✅ / 下单拆单 ✅ / 库存冻结 ✅ / 状态机 ✅ / 支付幂等 ✅ / C2C 担保交易 ✅ / 沙箱支付渠道 ✅ / **卖家中心 ✅** | ✅ 完成 |
 | **P1-c** | 买家端 **Web 商城**（主交易闭环 10 页，接口指向网关 :8080） | ✅ 完成 |
 | **P1-d** | 买家端 **微信小程序** | ⏳ |

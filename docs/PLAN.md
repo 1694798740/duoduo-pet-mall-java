@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-24（第十六轮：**A7 运营账号管理页已完成**——用户域 `/api/admin/users` 两端点（脱敏列表 + 仅 ADMIN 改角色）、`t_audit_log` 审计落库、网关路由与前端 `/admin/operators` 页；冒烟口径 **16 套 1335 项**；上一轮第十五轮完成 A6 契约导出与 CI（OpenAPI 116 端点 + GitHub Actions 冒烟子集 356 项，首跑已全绿 Run #5）+ A13 后端 code2Session 登录（`wechat-auth-smoke` 26 项全绿））
+> 更新时间：2026-09-24（第十七轮：**A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**——新建第 7 个业务服务 `duoduo-ai`（:8086，无状态；真实候选召回 + DashScope/mock 三形态 + 限流 429 + 降级 503 + 前端 `/ai`）；商品域接入单索引 `duoduo-search`（拼音/同义词应用侧容错、15s 增量兼补偿、对账与重建接口、ES 不可用原地降级 MySQL）；容器 **9 → 10**（另有可选 `duoduo-es`，profile=search）；OpenAPI **120 → 125 端点**；冒烟口径 **16 套 1335 项 → 19 套 1424 项**。**并顺带修掉两个真缺陷**：`run-all-smoke.ps1` 过滤器漏跑 `smoke.ps1`（「一键全量」名不副实），以及 `LongToStringJacksonModule` 白名单漏列 `total` 等 20 余个金额/计数字段（`total` 以字符串下发致冒烟断言退化成字典序比较而恒失败）—— 上一轮第十六轮完成 A7 运营账号管理页）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；余下：AI 导购（A9，待凭据）/ ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12） |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；余下：RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job；A9 仅剩 `llm` 形态待百炼 API Key 联调 |
 
 ---
 
@@ -137,7 +137,9 @@
 | ✅ **M11 剩余块：信用分（A4）已交付**（2026-09-20，第十二轮） | 履约域**四块已全部落地**：评价与晒单、售后仲裁（A3，含三端页面）、物流轨迹（A2，含买卖双方时间线）、**信用分（A4）** —— 同域内已无低成本可做项，下一项须新起服务或中间件 |
 | ✅ **M11 剩余块：优惠券营销（A5）已交付**（2026-09-23，第十三轮） | **新增第 6 个业务服务 `duoduo-marketing`（:8085，雪花 worker-id=5）**：领券中心 / 券包 / 内部锁·解·核销 / TTL 补偿调度 + 前端领券中心与结算选券；容器 **8 → 9**（3 中间件 + 6 业务服务）。v1 边界：券不随退款退回、只实现满减、一张券只作用于拆单后商品总额最大的那一单 |
 | M11 其他：ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job | 都需要新中间件或新服务，建议按「检索 → 削峰 → 压测」顺序推进 |
-| **A9 AI 导购「多多」（已排期，待用户提供凭据）** | 用户 2026-09-18 拍板：**用阿里百炼大模型**；**百炼 / DashScope API Key 暂未提供（待用户提供）** → 接口与降级链路可先做，联调需等凭据 |
+| **A9 AI 导购「多多」（已交付，仅剩凭据联调）** | ✅ **第十七轮已交付**：新建 `duoduo-ai`（:8086，容器 `duoduo-app-ai`，**无状态**——不连库、v1 不落对话历史）；`POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`（网关白名单含这两条，**未登录可问答**）；Feign 调商品域 `GET /api/products/internal/candidates` 取**真实候选**（视图**不含 `sellerId`**），系统提示硬约束「只推荐候选内商品」；三形态 `mock`/`llm`/`unconfigured`，未配或超时 → **503 `DEGRADED`**，每 IP 限流 → **429 `RATE_LIMITED`**；前端 `/ai` 免登录对话页。**自测 `ai-smoke.ps1` 16/0**。**待用户提供**百炼 DashScope API Key（仅影响 `llm` 形态联调） |
+| **A10 ES 检索（已交付）** | ✅ **第十七轮已交付**：商品域单索引 `duoduo-search`（`docType` ∈ PRODUCT/LISTING）；**拼音与同义词都在应用侧**（TinyPinyin + `SearchSynonyms.variants()`，**按 ES 实测不挂同义词分析器**）；`SearchSyncJob` 15s 增量兼补偿 + 启动全量对齐 + 清孤儿；`GET /api/admin/search/reconcile` / `POST /api/admin/search/reindex`（`OperatorGuard`）；ES 不可用**原地降级 MySQL**（`ObjectProvider` 可选注入 + 写操作前置 `ready()` 守卫 + **禁用 ES 健康指示器**以免健康门杀掉降级链路）；ES 只返回 id 页、卡片回库装配（权威数据只有库一份）。**自测 `search-smoke.ps1` 40/0**（需 ES） |
+| ✅ **A7 运营账号管理页已交付**（2026-09-24，第十六轮） | 用户域两端点（`GET /api/admin/users` 脱敏分页列表 + `POST /api/admin/users/{id}/role` 仅 ADMIN 改角色）+ `t_audit_log` 审计落库 + 网关 `/api/admin/users/**` 路由 + 前端 `/admin/operators`（AdminTabs 第 7 页签）；三条硬规则：自己降权 422 / 最后一个 ADMIN 不可降 422 / 每次变更写审计；提权后需重新登录生效（notice 提示）。**自测 `admin-smoke.ps1` 49→72 项全绿（PS5.1）** |
 | ✅ **A6 契约导出与 CI 已交付**（2026-09-23，第十五轮） | **OpenAPI 导出**：knife4j starter 挂 `duoduo-common-web`（5 业务服务自动获得，网关不受影响；`/v3/api-docs` 与 `/doc.html` 不进网关白名单）+ `scripts/export-openapi.ps1` → `docs/openapi/`（5 份 JSON + endpoints.md，**116 端点**与 04 篇核对一致）；**CI**：`.github/workflows/ci.yml` 双 job（编译 + Docker 全栈冒烟子集 smoke/trade/order/address/id-precision 共 **356 项**，失败即 job 失败 + 日志 artifact）+ `scripts/ci-run.ps1` 通用子集执行器（本地实跑 356/0 全绿） |
 | ✅ **A13 小程序骨架已落地**（2026-09-23，第十五轮，测试号阶段） | 用户批准「代码先写」：`miniprogram/` 5 页面 + 请求封装，**零后端改动**跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」（登录暂用手机号回退）；**余下**：后端 `POST /api/auth/wechat`（code2Session，凭据走环境变量）+ openid 绑定 + 冒烟；真机预览（待 AppID） |
 | ✅ **A13 后端登录打通（code2Session + 绑定）**（2026-09-23，第十五轮续） | `t_user` 加 `wx_openid` + **唯一键 `uk_user_wxopenid`**（增量脚本 `docs/sql/incremental/08-a13-wechat-bind.sql`）；新端点 `POST /api/auth/wechat`（免登，白名单只放行这一条）+ `POST /api/auth/wechat/bind`（登录态绑定）；`WechatGateway` 三分支（mock 显式开启 / real jscode2session / 未配置 503 DEGRADED）；未绑定 422、openid 属他人 409、重复绑定幂等 200、空 code 400；secret 只走环境变量、日志只记 openid 前 4 位。**自测：`scripts/wechat-auth-smoke.ps1` 26/26 全绿（GUARD-OK）+ CI 子集 356/0 无回归**。小程序侧待 `WECHAT_LOGIN_READY=true` 联调；真机预览待 AppID |
@@ -192,6 +194,71 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-24（第十七轮 · A9 AI 导购「多多」+ A10 Elasticsearch 检索）
+
+> 用户指令：「请直接执行任务 A9 和 A10，两项任务一并完成，无需再次确认。」—— 本轮的实质是**新建第 7 个业务服务**（`duoduo-ai`）+ **给商品域接入一层可选检索加速**。
+> 口径变化：容器 **9 → 10**（另有可选 `duoduo-es`）、OpenAPI **120 → 125 端点**、冒烟 **16 套 → 19 套**。
+
+#### A9 · AI 导购「多多」（新服务 `duoduo-ai` :8086）
+
+| 文件 | 变更 |
+|---|---|
+| `pom.xml`（**改**） | 父反应堆加 `<module>duoduo-ai</module>`（reactor 9 → **10 项**） |
+| `duoduo-ai/pom.xml`（**新增**） | 依赖 common / common-web / web / validation / actuator / nacos-discovery / openfeign + loadbalancer；**刻意无 DB 依赖** |
+| `duoduo-ai/.../AiApplication.java`（**新增**） | `@SpringBootApplication @EnableDiscoveryClient @EnableFeignClients(basePackages="com.duoduo.ai.client")` |
+| `duoduo-ai/.../resources/application.yml`（**新增**） | `duoduo.ai.{api-key:DASHSCOPE_API_KEY, base-url, model:qwen-plus, mock-enabled:true, timeout-seconds:15, rate-limit-per-minute:20}`、`duoduo.internal.token` |
+| `duoduo-ai/.../client/{ProductSearchClient, dto/ProductCandidate}.java`（**新增**） | Feign 调商品域候选召回；**候选视图不含 `sellerId`**（裁剪字段） |
+| `duoduo-ai/.../config/FeignInternalConfig.java`（**新增**） | `RequestInterceptor` 注入 `X-Internal-Token` |
+| `duoduo-ai/.../dto/AiDtos.java`（**新增**） | `ChatTurn{role, content}`（**带角色**，服务端只认 `user`）、`ChatRequest`/`ChatResponse`/`ProductRecommendation`/`CapabilityView` |
+| `duoduo-ai/.../support/IpRateLimiter.java`（**新增**） | 每 IP 固定窗口限流（键取 `X-Forwarded-For` 首段）→ 429 `RATE_LIMITED` |
+| `duoduo-ai/.../support/DashScopeClient.java`（**新增**） | JDK `HttpClient` 直连 OpenAI 兼容 REST，**不引 SDK**；超时/非 2xx → 503 `DEGRADED`；日志只记耗时与状态 |
+| `duoduo-ai/.../service/ChatService.java`（**新增**） | `SYSTEM_PROMPT` 五条硬规则（**只能推荐候选列表内商品** / 价格分→元 / 引导登录 / 无候选如实说 / 150 字内）；三形态 `mock`/`llm`/`unconfigured` |
+| `duoduo-ai/.../controller/AiController.java`（**新增**） | `POST /api/duoduo/chat`、`GET /api/duoduo/capabilities` |
+| `duoduo-product/.../controller/ProductController.java` + `service/ProductService.java`（**改**） | 新增 `GET /api/products/internal/candidates?keyword=&limit=`：压掉标点后切 **2~3 字滑窗词元** OR 匹配 title/subtitle，按「命中词元数 + 销量」重排取前 N（默认 8、上限 10） |
+| `duoduo-gateway/.../application.yml`（**改**） | 新增 `duoduo-ai` 路由（`Path=/api/duoduo/**`）；product 路由加 `/api/admin/search/**` |
+| `docker-compose.yml`（**改**） | 新增 `duoduo-ai-app`（容器 `duoduo-app-ai`，8086）+ gateway `depends_on` |
+| 前端 `types.ts` / `endpoints.ts` / `pages/AiGuru.tsx`（**新增**）/ `App.tsx` / `components/Layout.tsx`（**改**） | `/ai` 对话页（**刻意不套 `RequireAuth`**）：气泡 + 推荐卡片 + 带角色回传历史（`HISTORY_LIMIT=6`）+ 429 友好提示 + 四个快捷问题 + 未登录底部引导；一级导航加「AI 导购」（未登录也显示） |
+| `scripts/ai-smoke.ps1`（**新增**） | **16 项**：推荐 id 逐个经公开详情验证 / 标题与库内**逐字同源** / 无 `sellerId` 泄露 / 空与超长 400 / 连发 30 次**必现 429** / `capabilities` 口径一致 |
+
+#### A10 · Elasticsearch 检索（商品域）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-product/pom.xml`（**改**） | 加 `spring-boot-starter-data-elasticsearch` + `com.github.promeg:tinypinyin:2.0.3`（**拼音在应用侧生成，免 ES 插件**） |
+| `duoduo-product/.../application.yml`（**改**） | `spring.elasticsearch.uris`（连接超时 300ms / socket 2s）；`duoduo.search.{enabled:false, sweep-interval-ms:15000, synonyms:…}`；**`management.health.elasticsearch.enabled=false`**（ES 缺席不得拖垮容器健康检查，否则健康门会杀掉降级链路本身） |
+| `duoduo-product/.../ProductApplication.java`（**改**） | 加 `@EnableScheduling` |
+| `duoduo-product/.../support/search/SearchSynonyms.java`（**新增**） | 同义词分组解析 + `variants(keyword)` 生成**不含原文**的替换变体（去重、上限 8）。类注释记录「为什么不挂 ES 同义词分析器」的实测依据 |
+| `duoduo-product/.../support/search/SearchIndexer.java`（**新增**） | 单索引 `duoduo-search`（`pet_text` / `pinyin_ngram` / `pinyin_query` 三分析器，ngram 2~10 且**两侧都切分**）；`ready()` 守卫（**所有写操作前置**）；`refreshIndex()` |
+| `duoduo-product/.../support/search/EsSearchEngine.java`（**新增**） | 检索与筛选全量平移（`status=ON_SALE`、listing 加 `auditStatus=APPROVED`）；关键字=**原文分支 + 各同义词变体分支**，每支含 multi_match 与拼音 match；**ES 只返回 id 顺序页** |
+| `duoduo-product/.../support/search/SearchSyncJob.java`（**新增**） | 15s 增量扫 `updated_at`（**兼补偿**）+ 启动 `ApplicationReadyEvent` 全量对齐 + 清孤儿 + `status()` |
+| `duoduo-product/.../controller/SearchAdminController.java`（**新增**） | `/api/admin/search/reconcile` + `/reindex`（`OperatorGuard`）；**只挂 `@ConditionalOnProperty`**（`@ConditionalOnBean` 依赖 bean 注册顺序、可能随机 404） |
+| `duoduo-product/.../service/{ProductService, ListingService}.java`（**改**） | `ObjectProvider<EsSearchEngine>` 可选注入；ES 异常**原地降级 MySQL（只记 WARN）** |
+| `docker-compose.yml`（**改**） | 新增 `duoduo-es`（`profiles: ["search"]`，elasticsearch:8.11.4，single-node + security off + 512m 堆 + healthcheck）；product 加 `DUODUO_SEARCH_ENABLED/DUODUO_ES_URL/DUODUO_SEARCH_SWEEP_MS` |
+| `scripts/search-smoke.ps1`（**新增**） | **40 项**：就绪检查 → 运营会话与接口可用性（匿名 401 / 普通 403 / 运营 200）→ 夹具（含**标题自检**）→ 全量重建与对账（三空）→ 拼音容错（**含 MySQL 反证 + 负例**）→ 同义词容错 → 上下架一致性 → 降级（停 ES → 仍 200 → 恢复自动重生效）→ 清理与孤儿回收 |
+
+#### 顺带修掉的两个真缺陷（不是新功能）
+
+| 缺陷 | 根因 | 修法 |
+|---|---|---|
+| **`run-all-smoke.ps1` 名不副实**：「一键全量」报 18 套全部通过，而目录里有 19 套 —— 最基础的 `smoke.ps1` **从来没被跑过** | 用 `-Filter '*-smoke.ps1'` 收集脚本，**通配符要求名字里带 `-s`**，`smoke.ps1` 不匹配 | 改 `-Filter '*smoke.ps1'`（仍显式排除自身防递归）。**「全量通过」的套数必须与目录实际套数对得上** |
+| **`LongToStringJacksonModule` 白名单漏列**（见 `docs/agent/08` **T-56**） | `PageResult.total` 等 **20 余个金额/计数字段**（`total`/`gmv`/`custodyAmount`/`platformFee`/`*Count` …）不在 `NUMERIC_LONG_FIELDS` → 被当"标识"转成**字符串**下发；于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里**退化成字典序比较**（`"15" -ge "3"` 为 False）而恒失败 —— **类型错误伪装成业务失败** | 用脚本把「DTO 里所有 `long` 字段」与白名单做**差集**逐个按语义判据核对，补齐金额/计数/时长字段；并在 `smoke.ps1` **新增一条断言直接检查原始文本**（`"total"\s*:\s*\d`），让同类问题**当场现形**而不是伪装成业务失败。**必须走 T-41 全流程**（`clean install` + `build --no-cache` + `up -d --force-recreate`） |
+| 附带：`ai-smoke.ps1` 取值路径写错 | `ProductDetail` 是 `{card, detail, …}`，脚本读了 `data.title`（不存在）→ 断言恒失败 | 改 `data.card.title` |
+
+#### 文档与工程
+
+| 文件 | 变更 |
+|---|---|
+| `scripts/run-all-smoke.ps1`（**改**） | 支持过滤；**ES 前置检查**（ES 未运行时**显式跳过并列入汇总**，不静默略过）；过滤器 bug 修复 |
+| `scripts/export-openapi.ps1`（**改**） | 服务 5 → **6**；产出 `docs/openapi/ai.json`（**125 端点**） |
+| `.github/workflows/ci.yml`（**改**） | 模块 9 → 10、容器 9 → 10；注释里冒烟套数同步 |
+| `README.md` / `AGENTS.md` / `docs/PLAN.md`（**改**） | 容器数、端口、模块数、冒烟口径、端点总数、目录树、变更记录 |
+| `docs/agent/02 · 04 · 05 · 06 · 07 · 08`（**改**） | 代码地图（AI 域 + 检索支撑件 + 新增脚本）、契约（§7.1 AI 域、候选召回、对账/重建、错误码 `RATE_LIMITED`/`DEGRADED`）、任务手册（无状态服务参照）、门禁表（AI 与检索两行）、A9/A10 验收落地、**新增 T-47~T-56 十个坑** |
+| `docs/handover/00 · 01 · 02 · 05 · 07 · 08`（**改**） | 交接包口径与自测资产同步（10 容器 / 125 端点 / 开关 ES 的说明 / AI 与检索章节 / 历史缺陷表） |
+
+**自测**：全量 `mvn -DskipTests clean install` **10 模块 BUILD SUCCESS**；改公共模块后按 T-41 走 `build --no-cache` + `up -d --force-recreate`（6 个依赖 `common-web` 的服务）→ **10 个容器全 healthy**；`scripts/run-all-smoke.ps1` **共 19 套 / 通过 19 套 / 失败 0 套（`ALL_EXIT=0`，合计 1424 项）** —— 含 `smoke.ps1` 55/0（**修复前它从未被"一键全量"跑过，且有一条失败断言**）、`ai-smoke` 16/0、`search-smoke` 40/0；product 启动日志 `ES 索引已创建 index=duoduo-search（同义词由应用侧替换，不挂分析器）` + `ES 全量对齐完成 实体总数=28 成功=28`；ES `_settings` 确认 `max_ngram_diff: 10` 与三分析器；`search-smoke` 实测下架 **15.3s** 消失 / 重新上架 **15.3s** 回归、停 ES 仍 200、恢复 **1.6s** 自动重生效；序列化修复实况核验：`"total":15`（数字）、`marketPrice` 数字；OpenAPI 重导出 **125 端点**；前端 `tsc --noEmit` 零错误。
+
+**遗留**：① A9 的 `llm` 形态**待用户提供**百炼（DashScope）**API Key** 联调（`mock`/`unconfigured` 为设计内行为，不阻塞）；② `admin-smoke` 仍未入 CI 子集（维持 356 项口径）；③ `docs/openapi/*.json` 中 AI 域的 schema 以 `mock` 形态导出，凭据接入后建议重导一次。
 
 ### 2026-09-24（第十六轮 · A7 运营账号管理页）
 
@@ -734,15 +801,18 @@ JavaScript 里 `JSON.parse` 会把它改成另一个数，拿去写 `seller_id` 
 # 起全部中间件 + 业务服务（Docker 优先）
 cd D:\智能体项目\duoduo-pet-mall-java
 docker compose up -d
-docker ps                                  # 8 个容器应全为 healthy
+docker ps                                  # 10 个容器应全为 healthy
+# 需要 ES 检索（A10）时额外起：docker compose --profile search up -d duoduo-es
+# 一键全量回归（19 套，含 ES 前置检查：ES 未运行时显式跳过 search-smoke 并列入汇总）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1
 
-# 端到端冒烟（54 项，网关 + 用户域 + 商品域）
+# 端到端冒烟（55 项，网关 + 用户域 + 商品域；含「分页 total 以 JSON 数字下发」类型断言）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1
 
 # 购物车端到端自测（87 项，需登录，会临时改库并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1
 
-# 下单 / 拆单 / 库存冻结 端到端自测（76 项，含安全断言与部分冻结失败补偿）
+# 下单 / 拆单 / 库存冻结 端到端自测（77 项，含安全断言与部分冻结失败补偿）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1
 
 # 支付 / 订单状态机 / 超时关单 端到端自测（71 项）
@@ -751,13 +821,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1
 # 担保交易 / 资金托管 / 放款 / 退款 / 自动确认收货 端到端自测（125 项）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 
-# 沙箱支付渠道 / 预下单 / 回调验签 端到端自测
+# 沙箱支付渠道 / 预下单 / 回调验签 端到端自测（62 项）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1
 
 # 卖家中心 / 商家端：准入、归属隔离、发货、售后退款、结算对账（101 项，会临时改夹具并自动复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1
 
-# 平台管理后台：权限边界、报表对账、类目品牌、内容审核、订单强关（49 项，夹具自建自毁）
+# 平台管理后台：权限边界、报表对账、类目品牌、内容审核、订单强关（72 项，夹具自建自毁）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1
 
 # 履约域：评价与晒单（59 项；含内部接口保护、字段裁剪、匿名脱敏、追评与聚合口径）
@@ -772,10 +842,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1
 # 物流轨迹（79 项；发货即揽收 / 乱序正序 / 幂等 / 批量全有或全无 / 无时区按 UTC / 越权 / 敏感字段 / 含断言总数守卫）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1
 
+# 信用分（82 项；基础分 / 权重表 / 因子和=总分 / 单调性 / 回写幂等 / 凭据边界）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\credit-smoke.ps1
+
+# 优惠券（145 项；领券幂等 / 并发防超发 / 锁·解·核销 CAS / 折扣落交易域 / 生命周期闭环 / 清理复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1
+
+# 收货地址簿（82 项；CRUD / 默认唯一性与删除顺延 / 归属校验统一 404 / 下单写快照 / 清理复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1
+
+# 跨域 ID 精度回归（56 项；只断言 JSON 原始文本，绕开反序列化的精度掩盖；含断言总数守卫）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1
+
+# 微信登录绑定（26 项；未绑 422 / 未配置降级 503 / 绑定幂等 / 抢绑 409 / 免登 401）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1
+
+# AI 导购（16 项；推荐真实性 / 无 sellerId 泄露 / 匿名可问答 / 400 边界 / 429 限流）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1
+
+# ES 检索（40 项；**需 ES 在跑**：docker compose --profile search up -d duoduo-es）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1
+
 # 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
 # curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
 
-# 四套真实浏览器 UI 自测（需先起前端 dev server）
+# 六套真实浏览器 UI 自测（需先起前端 dev server）
 # ⚠️ 端口用 3000 而非 5173：本机 5173 落在 Windows 排除端口段（Docker Desktop 启动后 WinNAT 保留 5149-5248，
 #    报 listen EACCES）。3000 本就在网关 CORS_ORIGINS 白名单里，且必须走 localhost（不能 127.0.0.1）。
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
@@ -784,11 +875,12 @@ cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs     
 UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs              # 评价与晒单 20 项
 UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs           # 售后三端 44 项（买家→卖家→运营整条链）
 UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs           # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
+# 地址簿 64 项 / 优惠券 43 项（优惠券需先建夹具：scripts\e2e\coupon-ui-fixture.ps1 -Action create|drop）——合计 6 套 244 项
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
 npm install                 # 首次
-npm run dev                 # http://localhost:5173（需后端 7 容器在跑，网关 :8080）
+npm run dev                 # http://localhost:5173（需后端 10 容器在跑，网关 :8080）
 npm run build               # tsc --noEmit && vite build
 # 改后端地址：设 VITE_DEV_API_TARGET 环境变量（默认 http://localhost:8080）
 

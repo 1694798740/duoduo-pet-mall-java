@@ -16,7 +16,7 @@
 · 主仓库（本任务唯一目标）：D:\智能体项目\duoduo-pet-mall-java
 · 同目录下另有 D:\智能体项目\duoduo-pet-mall（Node 原型工程，**与主仓库无关，不要改、不要混用**）
 · 该仓库是「多多宠物商店」：Java 微服务后端（Spring Boot 3 + Spring Cloud Alibaba）+ React 前端，
-  本地用 Docker Compose 起 9 个容器（3 中间件 + 6 业务服务），资金走平台托管担保交易，支付用沙箱渠道（不接真实商户）。
+  本地用 Docker Compose 起 10 个容器（3 中间件 + 7 业务服务；另有可选 duoduo-es，profile=search），资金走平台托管担保交易，支付用沙箱渠道（不接真实商户）。
 
 ──────── 阶段 1：读文件（按顺序读完，不要跳）────────
 必读（项目自带的 AI 接管资料，先读这些能省掉大量猜测）：
@@ -29,16 +29,16 @@
 7. D:\智能体项目\duoduo-pet-mall-java\docs\agent\05-开发任务手册.md    ← 六类开发场景的配方与代码骨架
 8. D:\智能体项目\duoduo-pet-mall-java\docs\agent\06-测试与验收门禁.md  ← 什么改动跑哪些测试、断言怎么写
 9. D:\智能体项目\duoduo-pet-mall-java\docs\agent\07-待办事项与验收标准.md ← 待办 A1~A13（含接口草案与验收标准）
-10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-38 症状→根因→做法、禁忌
+10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-55 症状→根因→做法、禁忌
 11. D:\智能体项目\duoduo-pet-mall-java\AGENTS.md 同级：docs\PLAN.md   ← 进度权威（里程碑/任务/变更记录/命令速查）
 12. D:\智能体项目\duoduo-pet-mall-java\README.md                     ← 运行方式 + 全量接口清单
 13. D:\智能体项目\.workbuddy\memory\MEMORY.md 与 memory\2026-09-*.md  ← 项目长期记忆与「值钱的坑」
 
 按需读（用于核实事实，不要只信文档）：
-14. docker-compose.yml（9 容器与端口）、pom.xml（9 模块 reactor、Java 21）、Dockerfile
+14. docker-compose.yml（10 容器与端口）、pom.xml（10 模块 reactor、Java 21）、Dockerfile
 15. docs\sql\00~07*.sql（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）、各模块 src\main\resources\db\schema.sql
 16. 源码：先读你将要改的模块的 controller / service / dto / entity，再读依赖它的上游
-17. scripts\*.ps1（15 套接口冒烟，1286 项断言；`run-all-smoke.ps1` 一键全量）、scripts\e2e\*.mjs（6 套真实浏览器自测，244 项；另有 1 套 .ps1 夹具）
+17. scripts\*.ps1（19 套接口冒烟，1424 项断言；`run-all-smoke.ps1` 一键全量、含 ES 前置检查）、scripts\e2e\*.mjs（6 套真实浏览器自测，244 项；另有 1 套 .ps1 夹具）
 18. frontend\src\api\{client,endpoints,types}.ts 与 frontend\src\pages\（若要改前端）
 
 阶段 1 的产出（必须先给我看，不要直接开始改代码）：

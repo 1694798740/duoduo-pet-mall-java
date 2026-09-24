@@ -19,7 +19,10 @@ import com.duoduo.product.support.CatalogLookup;
 import com.duoduo.product.support.Csv;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -48,6 +51,8 @@ import java.util.stream.Collectors;
 @Service
 public class ProductService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProductService.class);
+
     private static final String STATUS_ON_SALE = "ON_SALE";
     private static final String SKU_ACTIVE = "ACTIVE";
     private static final int MAX_PAGE_SIZE = 100;
@@ -61,19 +66,25 @@ public class ProductService {
     private final CatalogLookup catalogLookup;
     private final BannedWordGuard bannedWordGuard;
     private final ObjectMapper objectMapper;
+    /** A10 · ES 检索引擎（可选：开关关闭时 bean 不存在，检索一律走 MySQL） */
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.duoduo.product.support.search.EsSearchEngine> esSearchProvider;
 
     public ProductService(SpuMapper spuMapper,
                           SkuMapper skuMapper,
                           CategoryService categoryService,
                           CatalogLookup catalogLookup,
                           BannedWordGuard bannedWordGuard,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          org.springframework.beans.factory.ObjectProvider<
+                                  com.duoduo.product.support.search.EsSearchEngine> esSearchProvider) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.categoryService = categoryService;
         this.catalogLookup = catalogLookup;
         this.bannedWordGuard = bannedWordGuard;
         this.objectMapper = objectMapper;
+        this.esSearchProvider = esSearchProvider;
     }
 
     // ---------------- 检索 ----------------
@@ -91,6 +102,28 @@ public class ProductService {
         }
         bannedWordGuard.rejectIfHit(query.keyword(), "搜索词");
 
+        // A10 · ES 优先：同义词 / 拼音容错在这里兑现；**任何 ES 异常都原地降级回 MySQL**（验收④）——
+        // 降级不是错误分支，是检索的常规运行形态之一，因此只记 WARN 不抛 5xx
+        var esSearch = esSearchProvider.getIfAvailable();
+        if (esSearch != null && StringUtils.hasText(query.keyword())) {
+            try {
+                var expanded = query.categoryId() == null ? null
+                        : categoryService.expandCategoryIds(query.categoryId());
+                var hits = esSearch.searchProducts(query, expanded, pageNo, pageSize);
+                List<SpuEntity> records = hits.ids().isEmpty()
+                        ? List.of()
+                        : orderByIds(spuMapper.selectBatchIds(hits.ids()), hits.ids());
+                return PageResult.of(toCards(records), hits.total(), pageNo, pageSize);
+            } catch (Exception ex) {
+                log.warn("ES 检索失败，降级 MySQL（设计内行为）: {}", ex.getMessage());
+            }
+        }
+
+        return searchByMysql(query, pageNo, pageSize);
+    }
+
+    /** MySQL 权威路径（ES 未启用 / 降级时的实现，与 ES 查询语义一一对应） */
+    private PageResult<ProductCard> searchByMysql(ProductQuery query, int pageNo, int pageSize) {
         LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SpuEntity::getStatus, STATUS_ON_SALE);
 
@@ -424,6 +457,87 @@ public class ProductService {
             // 规格串损坏不应该让整页商品挂掉，降级为空规格
             return Map.of();
         }
+    }
+
+    // ---------------- 内部接口（服务间，X-Internal-Token 保护） ----------------
+
+    /**
+     * A9 · AI 导购的候选召回（取数口，供 duoduo-ai 经内部凭据调用）。
+     *
+     * <p>MySQL LIKE 没有分词器，怎么从一句自然语言里召回候选：
+     * 把消息压掉标点后切 **2~3 字滑窗词元**，OR 匹配标题 / 副标题 ——
+     * 真实意图词（「幼犬」「狗粮」）必然是某个窗口的子串；切出来的无意义片段
+     * （「推荐」→「荐幼」）匹配不到东西，是零成本的噪声。命中后再按
+     * 「命中词元数 + 销量」重排，噪声自然沉底，不需要真的分词器。
+     *
+     * <p>只回在售商品；上限 8 条 —— 候选列表是给 LLM 组织回复用的素材，
+ * 不是搜索结果页，多了反而稀释推荐质量。
+     */
+    public List<ProductCard> internalCandidates(String message, int limit) {
+        String msg = trimToNull(message);
+        if (msg == null) {
+            return List.of();
+        }
+        int size = Math.max(1, Math.min(limit, 10));
+        String compact = msg.replaceAll("[，。！？、,.!?\\s]", "");
+        LinkedHashSet<String> grams = new LinkedHashSet<>();
+        if (compact.length() <= 12 && compact.length() >= 2) {
+            grams.add(compact);
+        }
+        for (int n = 2; n <= 3; n++) {
+            for (int i = 0; i + n <= compact.length(); i++) {
+                grams.add(compact.substring(i, i + n));
+            }
+        }
+        if (grams.isEmpty()) {
+            return List.of();
+        }
+        List<String> tokens = grams.stream().limit(15).toList();
+
+        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
+                .eq(SpuEntity::getStatus, STATUS_ON_SALE);
+        wrapper.and(outer -> {
+            for (String g : tokens) {
+                outer.or(i -> i.like(SpuEntity::getTitle, g).or().like(SpuEntity::getSubtitle, g));
+            }
+        });
+        wrapper.last("LIMIT 60");
+        List<SpuEntity> pool = spuMapper.selectList(wrapper);
+        if (pool.isEmpty()) {
+            return List.of();
+        }
+        // 重排：命中的词元越多越相关，同分看销量
+        pool.sort((a, b) -> {
+            int sa = matchedTokens(a, tokens);
+            int sb = matchedTokens(b, tokens);
+            if (sa != sb) {
+                return Integer.compare(sb, sa);
+            }
+            return Integer.compare(
+                    b.getSalesCount() == null ? 0 : b.getSalesCount(),
+                    a.getSalesCount() == null ? 0 : a.getSalesCount());
+        });
+        return toCards(pool.subList(0, Math.min(size, pool.size())));
+    }
+
+    private static int matchedTokens(SpuEntity spu, List<String> tokens) {
+        String text = (spu.getTitle() == null ? "" : spu.getTitle())
+                + (spu.getSubtitle() == null ? "" : spu.getSubtitle());
+        int count = 0;
+        for (String t : tokens) {
+            if (text.contains(t)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // ---------------- 内部辅助 ----------------
+
+    /** A10：按 ES 返回的 id 顺序还原记录顺序（相关性 / 排序语义都在 id 列表里） */
+    private List<SpuEntity> orderByIds(List<SpuEntity> spus, List<Long> orderedIds) {
+        Map<Long, SpuEntity> byId = spus.stream().collect(Collectors.toMap(SpuEntity::getId, s -> s, (a, b) -> a));
+        return orderedIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
     }
 
     private static String trimToNull(String value) {

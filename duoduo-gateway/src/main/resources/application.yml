@@ -55,7 +55,8 @@ spring:
             # 商品管理要落到 product 服务（归属判断靠 X-User-*，也是服务端责任）
             # /api/admin/{categories,brands,listings} = 平台管理后台（M10）的类目/品牌/审核，
             # 数据在商品库，运营接口本质是商品域数据的「管理视图」，落回 product 服务最自然
-            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**
+            # /api/admin/search/** = 检索对账（A10）：ES 索引与库差异报告 + 重建，数据在商品域
+            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/search/**
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:

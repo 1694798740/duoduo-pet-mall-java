@@ -39,6 +39,13 @@ spring:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
 
+  elasticsearch:
+    # A10 · ES 检索（可选加速层）。uris 默认指向 compose 网络内的 duoduo-es；
+    # 本地 IDE 运行改 DUODUO_ES_URL=http://127.0.0.1:9200。
+    uris: ${DUODUO_ES_URL:http://127.0.0.1:9200}
+    connection-timeout: 300ms   # ES 不在场时快速失败 → 立刻降级回 MySQL，搜索请求不等超时
+    socket-timeout: 2s
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
@@ -67,6 +74,19 @@ duoduo:
       - 人用处方药
       - 氰化物
       - 毒鼠强
+  search:
+    # A10 · ES 检索开关：false 时一律走 MySQL（本地 IDE / 单机零依赖模式的默认）。
+    # true 时 keyword 检索 ES 优先，**任何 ES 异常都原地降级回 MySQL**（验收④），
+    # 因此本开关开错方向也不会让搜索挂掉。
+    enabled: ${DUODUO_SEARCH_ENABLED:false}
+    # 对账扫描间隔（毫秒）：把 updated_at 变过的 SPU / 闲置与 SKU 库存变动重新入索引，
+    # 兼做「补偿任务」—— ES 写失败（重启、抖动）最迟一个周期后被追平（验收②③）。
+    sweep-interval-ms: ${DUODUO_SEARCH_SWEEP_MS:15000}
+    # 同义词（一条一组，';' 分隔；组内 ',' 分隔）。**由应用侧替换生效**：把查询串里出现的词
+    # 换成同组其它词，作为额外的 or 召回分支（见 SearchSynonyms，内含「为什么不能交给 ES
+    # synonym filter」的实测依据）。改配置即时生效，无需重建索引。
+    # 组内各项建议<b>不共享单字</b>：逐字分词下共享单字的词本来就互相命中，写成同义词没有增量。
+    synonyms: ${DUODUO_SEARCH_SYNONYMS:犬,狗;幼犬,小狗;猫咪,喵星人;仓鼠,金丝熊}
 
 management:
   endpoints:
@@ -77,6 +97,11 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    # ES 不在场时容器健康检查必须仍是 UP（搜索降级是设计内行为，不是故障）；
+    # 否则 ES 一停，健康门就把 product 判死，降级链路反而被探针杀死。
+    elasticsearch:
+      enabled: false
 
 logging:
   level:

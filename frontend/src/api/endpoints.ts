@@ -43,6 +43,9 @@ import type {
   CouponView,
   CreditView,
   DictItem,
+  DuoduoCapability,
+  DuoduoChatResponse,
+  DuoduoChatTurn,
   HomeView,
   ListingAuditRequest,
   ListingAuditView,
@@ -535,4 +538,25 @@ export const couponApi = {
    */
   usable: (amount: number, options?: { signal?: AbortSignal }) =>
     api.get<UsableCouponResult>('/api/coupons/mine/usable', { query: { amount }, ...options }),
+};
+
+/**
+ * AI 导购「多多」（/api/duoduo，duoduo-ai 服务）。
+ *
+ * 两条路径都在网关白名单，**未登录也能问答**（验收②）：
+ *  · `capabilities` 先问能力，再决定要不要展示对话入口；
+ *  · `chat` 的回复里推荐的商品由服务端从真实商品库召回，前端只负责渲染；
+ *  · 「加购 / 下单」这类需要身份的动作**不在这里做** —— 回复文案会引导用户
+ *    登录后到商品页操作，所以本模块不需要令牌，也不该往这里塞带身份的请求。
+ *
+ * 限流是每 IP 每分钟（服务端），触发时返回 429 —— 页面按「太频繁」提示，
+ * **不**做自动重试：重试只会让下一次更早撞上限流。
+ */
+export const duoduoApi = {
+  capabilities: (options?: { signal?: AbortSignal }) =>
+    api.get<DuoduoCapability>('/api/duoduo/capabilities', options),
+
+  /** 对话；history 为最近 6 轮的带角色历史（服务端上限 6 条） */
+  chat: (body: { message: string; history?: DuoduoChatTurn[] }) =>
+    api.post<DuoduoChatResponse>('/api/duoduo/chat', body),
 };

@@ -71,18 +71,32 @@ public class LongToStringJacksonModule extends SimpleModule {
      */
     private static final Set<String> NUMERIC_LONG_FIELDS = Set.copyOf(java.util.Arrays.asList(
             // —— 金额（单位：分）——
-            "price", "originalPrice", "minPrice", "maxPrice",
+            "price", "originalPrice", "minPrice", "maxPrice", "marketPrice",
             "amount", "totalAmount", "payAmount", "unitAmount", "itemAmount",
             "discountAmount", "thresholdAmount", "refundAmount",
             "freight", "freightAmount", "shippingFee",
             "settleAmount", "settlementAmount", "sellerAmount", "platformAmount",
             "balance", "paidAmount", "receivableAmount", "backfillAmount",
+            // 第十七轮补齐：这些金额字段此前**漏列**，被当成标识转成了字符串
+            // （前端 `types.ts` 早已把它们声明为 number → 类型与实况不符）。
+            // 在 JS 里 `"12900" / 100` 有隐式转换所以"看着正常"，但 `+` 会变成字符串拼接、
+            // `===` 恒 false、`.toFixed()` 直接抛错 —— 属 T-40 同一类缺陷，一并根治。
+            "gmv", "totalPayAmount", "orderAmount", "selectedAmount", "bestDiscountAmount",
+            "custodyAmount", "custodyFee", "custodySellerAmount",
+            "releasedAmount", "releasedFee", "releasedSellerAmount", "refundedAmount",
+            "platformFee",
             // —— 计数 / 度量 ——
             "stock", "frozenStock", "availableStock",
             "claimedCount", "totalCount", "remainingCount", "usedCount",
-            "salesCount", "viewCount", "ratingCount",
+            "salesCount", "viewCount", "ratingCount", "imageCount", "appendCount",
             "itemCount", "totalQuantity", "selectedCount", "orderCount",
-            "closeMinutes", "expireMinutes", "durationMinutes",
+            "pendingPaymentCount", "pendingShipCount", "shippedCount",
+            "completedCount", "refundedCount", "closedCount", "totalOrderCount",
+            "closeMinutes", "expireMinutes", "durationMinutes", "expiresInSeconds",
+            // 第十七轮补齐：**分页总数**。此前漏列导致 `PageResult.total` 以字符串下发，
+            // 于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里退化成**字典序比较**
+            // （"15" -ge "3" 为 False）而恒失败 —— 一个类型错误伪装成业务失败。
+            "total",
             // —— 时间戳（epoch 毫秒，前端要 new Date(ts) 参与运算）——
             "timestamp", "createdAtMs", "updatedAtMs", "expireAtMs"
     ));

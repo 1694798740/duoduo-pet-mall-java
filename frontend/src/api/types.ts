@@ -903,6 +903,50 @@ export interface UsableCouponResult {
   bestDiscountAmount: number;
 }
 
+// ---------- AI 导购「多多」（A9，duoduo-ai） ----------
+
+/**
+ * 能力声明。前端据此决定入口与提示文案。
+ *
+ * mode：`mock` 演示模式（推荐仍来自真实商品库，只是话术不由大模型生成）/
+ * `llm` 已接大模型 / `unconfigured` 未配置（此时 chatAvailable=false，
+ * 页面应直接说明而不是让人对着输入框反复点发送）。
+ */
+export interface DuoduoCapability {
+  chatAvailable: boolean;
+  mode: 'mock' | 'llm' | 'unconfigured' | string;
+  hint: string;
+}
+
+/** 导购推荐卡片：价格单位为分，与商品详情同一套语义 */
+export interface DuoduoRecommendation {
+  id: number;
+  title: string;
+  subtitle: string | null;
+  minPrice: number;
+  maxPrice: number;
+  inStock: boolean;
+}
+
+/** 一轮历史对话（回传给服务端做上下文）。role 只认 user / assistant */
+export interface DuoduoChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * 对话响应。
+ *
+ * `recommendations` 每一条都来自真实商品库（服务端先召回再组织话术），
+ * 前端按普通商品卡片渲染即可 —— 不需要再校验真实性，那是服务端的责任。
+ */
+export interface DuoduoChatResponse {
+  reply: string;
+  recommendations: DuoduoRecommendation[];
+  /** mock / llm：一眼看清这句话是谁生成的 */
+  mode: string;
+}
+
 // ---------- 通用 ----------
 
 export interface PageResult<T> {

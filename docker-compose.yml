@@ -170,6 +170,11 @@ services:
       # 服务间调用共享密钥：保护商品服务的库存写接口（/api/products/skus/stock/**）。
       # 生产必须由外部注入真实值（compose 里只提供开发默认值）。
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # A10 · ES 检索：默认开启 ES 优先 + 失败降级 MySQL（ES 未启动时自动回落，
+      # 搜索能力不因 ES 缺席而受损）。本地 IDE 单跑想关掉：DUODUO_SEARCH_ENABLED=false。
+      DUODUO_SEARCH_ENABLED: 'true'
+      DUODUO_ES_URL: 'http://duoduo-es:9200'
+      DUODUO_SEARCH_SWEEP_MS: '15000'
     ports:
       - '8082:8082'
     depends_on:
@@ -270,6 +275,60 @@ services:
       nacos:
         condition: service_healthy
 
+  # ── AI 导购「多多」（A9，第 10 个容器）───────────────────────
+  # 无状态（无数据库）：候选从商品域经内部凭据拉取，LLM 走 DashScope。
+  # 本地 / CI 默认 mock 模式（不调 LLM，推荐仍来自真实商品库）；
+  # 生产注入 DASHSCOPE_API_KEY 并把 DUODUO_AI_MOCK_ENABLED 置 false。
+  duoduo-ai-app:
+    container_name: duoduo-app-ai
+    image: duoduo/duoduo-ai:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-ai/target/duoduo-ai-1.0.0.jar
+        APP_PORT: '8086'
+    restart: unless-stopped
+    environment:
+      DUODUO_AI_PORT: '8086'
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DUODUO_AI_MODEL: ${DUODUO_AI_MODEL:-qwen-plus}
+      DUODUO_AI_MOCK_ENABLED: ${DUODUO_AI_MOCK_ENABLED:-true}
+      DUODUO_AI_RATE_LIMIT: '20'
+    ports:
+      - '8086:8086'
+    depends_on:
+      nacos:
+        condition: service_healthy
+
+  # ── Elasticsearch（A10，可选加速层，profile=search）────────
+  # 刻意挂 profile：`docker compose up` 默认**不启动** ES ——
+  # CI 与零依赖环境无需 ES（检索自动降级回 MySQL，验收④）；
+  # 本地要启用：`docker compose --profile search up -d duoduo-es`。
+  # 官方镜像 + 应用侧拼音生成，不装插件 —— 不引入「插件装失败→起不来」的运维面。
+  duoduo-es:
+    container_name: duoduo-es
+    image: docker.io/library/elasticsearch:8.11.4
+    profiles: ["search"]
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: 'false'
+      ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+    ports:
+      - '9200:9200'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
   duoduo-gateway-app:
     container_name: duoduo-app-gateway
     image: duoduo/duoduo-gateway:1.0.0
@@ -300,6 +359,8 @@ services:
       duoduo-fulfilment-app:
         condition: service_healthy
       duoduo-marketing-app:
+        condition: service_healthy
+      duoduo-ai-app:
         condition: service_healthy
 
 volumes:

@@ -1,0 +1,67 @@
+server:
+  # 不要用 AI_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_AI_PORT:8086}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 100
+      min-spare: 20
+
+spring:
+  application:
+    name: duoduo-ai
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+duoduo:
+  ai:
+    # DashScope（阿里云百炼）OpenAI 兼容模式。**Key 只走环境变量**，与微信 secret 同纪律。
+    api-key: ${DASHSCOPE_API_KEY:}
+    base-url: ${DUODUO_AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    model: ${DUODUO_AI_MODEL:qwen-plus}
+    # mock 开关（本地 / CI 默认 true）：不调 LLM，用确定性规则组织**真实候选**成回复。
+    # 生产必须关闭 —— mock 的回复不是模型生成的，只是召回结果的结构化拼装。
+    mock-enabled: ${DUODUO_AI_MOCK_ENABLED:true}
+    # LLM 调用超时（秒）：导购对话用户可感知等待，超过就降级提示，不挂死请求线程
+    timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:15}
+    # 每 IP 每分钟对话次数：保护 LLM 配额的第一道闸。超限 429 RATE_LIMITED。
+    rate-limit-per-minute: ${DUODUO_AI_RATE_LIMIT:20}
+  internal:
+    # 调商品域内部候选接口用的共享密钥（与其它服务同一个环境变量）
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-ai","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'
+
+# ── OpenAPI 契约（A6 同款）────────────────────────────────────
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: false
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
