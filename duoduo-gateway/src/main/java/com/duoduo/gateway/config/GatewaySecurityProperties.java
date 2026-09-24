@@ -53,6 +53,12 @@ public class GatewaySecurityProperties {
             // 与商品评价同性质，未登录访客也应看得到。只放行这条精确路径（读接口，无副作用）；
             // 刷新回写走 /api/reviews/internal/**，不经网关，且由履约域 InternalTokenFilter 校验凭据。
             "/api/reviews/seller/*/credit",
+            // AI 导购（A9）：购物咨询本身就是「还没决定买不买」的场景，
+            // 未登录访客先问两句再决定注册，是这个入口存在的意义 —— 强制登录等于把导购废掉。
+            // 只放行 chat（对话）与 capabilities（前端据此决定按钮是否可点）两条精确只读路径；
+            // 白名单按路径、不区分方法，所以绝不能写成 /api/duoduo/**。
+            // 「需登录才能做的操作」（下单/领券/加购）不由网关拦截，而是靠导购回复里的文案引导登录——
+            // 它本身不写任何业务数据，故放行不构成越权面。
             "/api/duoduo/chat",
             "/api/duoduo/capabilities",
             // 渠道回调来自渠道服务器，没有我们的登录态；安全靠验签 + 金额核对 + CAS 幂等
