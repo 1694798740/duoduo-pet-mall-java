@@ -50,11 +50,15 @@
     </dependency>
 
     <!-- A10 · 拼音检索：应用侧生成拼音字段（免 ES 插件 —— 官方镜像即可跑，
-         不引入「装插件失败→起不来」的运维面）。 -->
+         不引入「装插件失败→起不来」的运维面）。
+         用 pinyin4j 而不是 TinyPinyin（com.github.promeg:tinypinyin）——
+         后者只发布在已停服的 JCenter，Maven Central 上没有（groupId 整个 404），
+         本地靠镜像缓存看不出来，CI 直连 Central 必挂（T-59）。
+         选 pinyin4j：Central 在架十余年、零传递依赖、单字转拼音无音调输出即够用。 -->
     <dependency>
-      <groupId>com.github.promeg</groupId>
-      <artifactId>tinypinyin</artifactId>
-      <version>2.0.3</version>
+      <groupId>com.belerweb</groupId>
+      <artifactId>pinyin4j</artifactId>
+      <version>2.5.1</version>
     </dependency>
 
     <dependency>

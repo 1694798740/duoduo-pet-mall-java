@@ -14,7 +14,7 @@
 未配置或超时 → **503 `DEGRADED`**，每 IP 限流 → **429 `RATE_LIMITED`**（客户端不应自动重试）。
 前端新增 `/ai` 对话页（**刻意不套 `RequireAuth`**）：气泡 + 推荐卡片直链商品详情 + 带角色回传历史。
 ② **A10 · 商品域接入单索引 `duoduo-search`**（ES 作为**可选加速层**，`profile=search` 默认不起）：
-**拼音与同义词都在应用侧**（TinyPinyin + 应用侧同义词替换 —— 按 ES 实测，查询侧挂 `synonym_graph`
+**拼音与同义词都在应用侧**（pinyin4j + 应用侧同义词替换 —— 按 ES 实测，查询侧挂 `synonym_graph`
 会把 or 语义收成 phrase、**反而降低召回**）；`SearchSyncJob` 15s 扫 `updated_at` 变更（**兼补偿**）+
 启动全量对齐 + 清孤儿；运营可查 `GET /api/admin/search/reconcile`、可 `POST /api/admin/search/reindex`；
 **ES 不可用原地降级 MySQL**（并**禁用 ES 健康指示器** —— 否则 ES 一停会因容器 unhealthy 被健康门杀掉降级链路本身）。

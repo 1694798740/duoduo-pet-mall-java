@@ -138,7 +138,7 @@
 | ✅ **M11 剩余块：优惠券营销（A5）已交付**（2026-09-23，第十三轮） | **新增第 6 个业务服务 `duoduo-marketing`（:8085，雪花 worker-id=5）**：领券中心 / 券包 / 内部锁·解·核销 / TTL 补偿调度 + 前端领券中心与结算选券；容器 **8 → 9**（3 中间件 + 6 业务服务）。v1 边界：券不随退款退回、只实现满减、一张券只作用于拆单后商品总额最大的那一单 |
 | M11 其他：ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job | 都需要新中间件或新服务，建议按「检索 → 削峰 → 压测」顺序推进 |
 | **A9 AI 导购「多多」（已交付，仅剩凭据联调）** | ✅ **第十七轮已交付**：新建 `duoduo-ai`（:8086，容器 `duoduo-app-ai`，**无状态**——不连库、v1 不落对话历史）；`POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`（网关白名单含这两条，**未登录可问答**）；Feign 调商品域 `GET /api/products/internal/candidates` 取**真实候选**（视图**不含 `sellerId`**），系统提示硬约束「只推荐候选内商品」；三形态 `mock`/`llm`/`unconfigured`，未配或超时 → **503 `DEGRADED`**，每 IP 限流 → **429 `RATE_LIMITED`**；前端 `/ai` 免登录对话页。**自测 `ai-smoke.ps1` 16/0**。**待用户提供**百炼 DashScope API Key（仅影响 `llm` 形态联调） |
-| **A10 ES 检索（已交付）** | ✅ **第十七轮已交付**：商品域单索引 `duoduo-search`（`docType` ∈ PRODUCT/LISTING）；**拼音与同义词都在应用侧**（TinyPinyin + `SearchSynonyms.variants()`，**按 ES 实测不挂同义词分析器**）；`SearchSyncJob` 15s 增量兼补偿 + 启动全量对齐 + 清孤儿；`GET /api/admin/search/reconcile` / `POST /api/admin/search/reindex`（`OperatorGuard`）；ES 不可用**原地降级 MySQL**（`ObjectProvider` 可选注入 + 写操作前置 `ready()` 守卫 + **禁用 ES 健康指示器**以免健康门杀掉降级链路）；ES 只返回 id 页、卡片回库装配（权威数据只有库一份）。**自测 `search-smoke.ps1` 40/0**（需 ES） |
+| **A10 ES 检索（已交付）** | ✅ **第十七轮已交付**：商品域单索引 `duoduo-search`（`docType` ∈ PRODUCT/LISTING）；**拼音与同义词都在应用侧**（pinyin4j 2.5.1 + `SearchSynonyms.variants()`，**按 ES 实测不挂同义词分析器**；**拼音库必须选 Central 上存在的 —— T-59**）；`SearchSyncJob` 15s 增量兼补偿 + 启动全量对齐 + 清孤儿；`GET /api/admin/search/reconcile` / `POST /api/admin/search/reindex`（`OperatorGuard`）；ES 不可用**原地降级 MySQL**（`ObjectProvider` 可选注入 + 写操作前置 `ready()` 守卫 + **禁用 ES 健康指示器**以免健康门杀掉降级链路）；ES 只返回 id 页、卡片回库装配（权威数据只有库一份）。**自测 `search-smoke.ps1` 40/0**（需 ES） |
 | ✅ **A7 运营账号管理页已交付**（2026-09-24，第十六轮） | 用户域两端点（`GET /api/admin/users` 脱敏分页列表 + `POST /api/admin/users/{id}/role` 仅 ADMIN 改角色）+ `t_audit_log` 审计落库 + 网关 `/api/admin/users/**` 路由 + 前端 `/admin/operators`（AdminTabs 第 7 页签）；三条硬规则：自己降权 422 / 最后一个 ADMIN 不可降 422 / 每次变更写审计；提权后需重新登录生效（notice 提示）。**自测 `admin-smoke.ps1` 49→72 项全绿（PS5.1）** |
 | ✅ **A6 契约导出与 CI 已交付**（2026-09-23，第十五轮） | **OpenAPI 导出**：knife4j starter 挂 `duoduo-common-web`（5 业务服务自动获得，网关不受影响；`/v3/api-docs` 与 `/doc.html` 不进网关白名单）+ `scripts/export-openapi.ps1` → `docs/openapi/`（5 份 JSON + endpoints.md，**116 端点**与 04 篇核对一致）；**CI**：`.github/workflows/ci.yml` 双 job（编译 + Docker 全栈冒烟子集 smoke/trade/order/address/id-precision 共 **356 项**，失败即 job 失败 + 日志 artifact）+ `scripts/ci-run.ps1` 通用子集执行器（本地实跑 356/0 全绿） |
 | ✅ **A13 小程序骨架已落地**（2026-09-23，第十五轮，测试号阶段） | 用户批准「代码先写」：`miniprogram/` 5 页面 + 请求封装，**零后端改动**跑通「浏览 → 加购 → 取默认地址下单 → 沙箱支付轮询」（登录暂用手机号回退）；**余下**：后端 `POST /api/auth/wechat`（code2Session，凭据走环境变量）+ openid 绑定 + 冒烟；真机预览（待 AppID） |
@@ -225,7 +225,7 @@
 
 | 文件 | 变更 |
 |---|---|
-| `duoduo-product/pom.xml`（**改**） | 加 `spring-boot-starter-data-elasticsearch` + `com.github.promeg:tinypinyin:2.0.3`（**拼音在应用侧生成，免 ES 插件**） |
+| `duoduo-product/pom.xml`（**改**） | 加 `spring-boot-starter-data-elasticsearch` + 拼音库（先引 `com.github.promeg:tinypinyin:2.0.3`，**同轮内改判为 `com.belerweb:pinyin4j:2.5.1`** —— 前者不在 Maven Central，见第十七轮「CI 三连红」记录与 T-59） |
 | `duoduo-product/.../application.yml`（**改**） | `spring.elasticsearch.uris`（连接超时 300ms / socket 2s）；`duoduo.search.{enabled:false, sweep-interval-ms:15000, synonyms:…}`；**`management.health.elasticsearch.enabled=false`**（ES 缺席不得拖垮容器健康检查，否则健康门会杀掉降级链路本身） |
 | `duoduo-product/.../ProductApplication.java`（**改**） | 加 `@EnableScheduling` |
 | `duoduo-product/.../support/search/SearchSynonyms.java`（**新增**） | 同义词分组解析 + `variants(keyword)` 生成**不含原文**的替换变体（去重、上限 8）。类注释记录「为什么不挂 ES 同义词分析器」的实测依据 |
@@ -256,7 +256,18 @@
 | `docs/agent/02 · 04 · 05 · 06 · 07 · 08`（**改**） | 代码地图（AI 域 + 检索支撑件 + 新增脚本）、契约（§7.1 AI 域、候选召回、对账/重建、错误码 `RATE_LIMITED`/`DEGRADED`）、任务手册（无状态服务参照）、门禁表（AI 与检索两行）、A9/A10 验收落地、**新增 T-47~T-56 十个坑** |
 | `docs/handover/00 · 01 · 02 · 05 · 07 · 08`（**改**） | 交接包口径与自测资产同步（10 容器 / 125 端点 / 开关 ES 的说明 / AI 与检索章节 / 历史缺陷表） |
 
-**自测**：全量 `mvn -DskipTests clean install` **10 模块 BUILD SUCCESS**；改公共模块后按 T-41 走 `build --no-cache` + `up -d --force-recreate`（6 个依赖 `common-web` 的服务）→ **10 个容器全 healthy**；`scripts/run-all-smoke.ps1` **共 19 套 / 通过 19 套 / 失败 0 套（`ALL_EXIT=0`，合计 1424 项）** —— 含 `smoke.ps1` 55/0（**修复前它从未被"一键全量"跑过，且有一条失败断言**）、`ai-smoke` 16/0、`search-smoke` 40/0；product 启动日志 `ES 索引已创建 index=duoduo-search（同义词由应用侧替换，不挂分析器）` + `ES 全量对齐完成 实体总数=28 成功=28`；ES `_settings` 确认 `max_ngram_diff: 10` 与三分析器；`search-smoke` 实测下架 **15.3s** 消失 / 重新上架 **15.3s** 回归、停 ES 仍 200、恢复 **1.6s** 自动重生效；序列化修复实况核验：`"total":15`（数字）、`marketPrice` 数字；OpenAPI 重导出 **125 端点**；前端 `tsc --noEmit` 零错误。
+#### CI 三连红与修复（同轮内发现，T-59）
+
+A10 落库后的三次 push（`0927f7c` / `b713fd9` / `993d46f`）CI **全部失败、且都在 46s~1min 内**（正常 4m51s），全部挂在 build job 的「后端编译」——而本地全绿。这才是本轮真正要紧的缺陷：
+
+| 环节 | 结论 |
+|---|---|
+| 根因 | 新依赖 `com.github.promeg:tinypinyin:2.0.3` **不在 Maven Central**（`repo1.maven.org/maven2/com/github/promeg/` 整个 404 —— TinyPinyin 只发布在已停服的 JCenter）。本机不报错是因为**全局 `settings.xml`（`maven/conf/settings.xml`）配了 aliyun 镜像且已缓存**（`_remote.repositories` 记录来源 `aliyunmaven`）——**「依赖不存在」被本地镜像与暖缓存完全掩盖** |
+| 修复 | `duoduo-product` 换 `com.belerweb:pinyin4j:2.5.1`（Central 在架十余年、零传递依赖）；`SearchIndexer.pinyin()` 改 `PinyinHelper.toHanyuPinyinStringArray`（无音调、小写、多音字取首个读音）。**不选「给 pom 加第三方仓库」来绕** —— 那是把「依赖不存在」转嫁给每个构建环境 |
+| 验证 | 重建 product 容器后 `search-smoke.ps1` **40/0**（拼音召回 `youquanliang`、非子串负例、停/启 ES 降级全过 —— 多音字行为与原库一致）、`smoke.ps1` **55/0**；再以「**`-gs` 压掉全局镜像 + 全新 localRepository**」复刻 CI 的 Central-only 解析路径验证（见 08 篇 T-59 的做法） |
+| 排障判据 | **本地绿 + CI 秒挂 + 挂在 mvn package → 先怀疑依赖在 Central 不存在，而不是怀疑代码**。验真一步到位：`curl -o /dev/null -w "%{http_code}" https://repo1.maven.org/maven2/<groupId路径>/<artifactId>/<version>/<artifactId>-<version>.pom` |
+
+**自测**：全量 `mvn -DskipTests clean install` **10 模块 BUILD SUCCESS**；改公共模块后按 T-41 走 `build --no-cache` + `up -d --force-recreate`（6 个依赖 `common-web` 的服务）→ **10 个容器全 healthy**；`scripts/run-all-smoke.ps1` **共 19 套 / 通过 19 套 / 失败 0 套（`ALL_EXIT=0`，合计 1424 项）** —— 含 `smoke.ps1` 55/0（**修复前它从未被"一键全量"跑过，且有一条失败断言**）、`ai-smoke` 16/0、`search-smoke` 40/0；product 启动日志 `ES 索引已创建 index=duoduo-search（同义词由应用侧替换，不挂分析器）` + `ES 全量对齐完成 实体总数=28 成功=28`；ES `_settings` 确认 `max_ngram_diff: 10` 与三分析器；`search-smoke` 实测下架 **15.3s** 消失 / 重新上架 **15.3s** 回归、停 ES 仍 200、恢复 **1.6s** 自动重生效；序列化修复实况核验：`"total":15`（数字）、`marketPrice` 数字；OpenAPI 重导出 **125 端点**；前端 `tsc --noEmit` 零错误。**以上在 pinyin4j 替换后全部复跑过一遍（见 CI 三连红与修复）**。
 
 **遗留**：① A9 的 `llm` 形态**待用户提供**百炼（DashScope）**API Key** 联调（`mock`/`unconfigured` 为设计内行为，不阻塞）；② `admin-smoke` 仍未入 CI 子集（维持 356 项口径）；③ `docs/openapi/*.json` 中 AI 域的 schema 以 `mock` 形态导出，凭据接入后建议重导一次。
 
@@ -942,7 +953,7 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | 05 | 开发任务手册（6 个配方 + 代码骨架，照抄即可） |
 | 06 | 测试与验收门禁（按改动类型选必跑脚本 + 断言写法约定） |
 | 07 | 待办事项与验收标准（A1~A13，逐项含接口草案与可执行验收标准） |
-| 08 | 环境运维与踩坑禁忌（T-01~T-58 症状→根因→做法、10 条禁忌） |
+| 08 | 环境运维与踩坑禁忌（T-01~T-59 症状→根因→做法、10 条禁忌） |
 
 ---
 

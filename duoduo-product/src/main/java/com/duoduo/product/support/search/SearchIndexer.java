@@ -10,7 +10,11 @@ import com.duoduo.product.mapper.ListingMapper;
 import com.duoduo.product.mapper.SkuMapper;
 import com.duoduo.product.mapper.SpuMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.github.promeg.pinyinhelper.Pinyin;
+import net.sourceforge.pinyin4j.PinyinHelper;
+import net.sourceforge.pinyin4j.format.HanyuPinyinCaseType;
+import net.sourceforge.pinyin4j.format.HanyuPinyinOutputFormat;
+import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
+import net.sourceforge.pinyin4j.format.HanyuPinyinVCharType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -31,7 +35,7 @@ import java.util.Map;
  *
  * <p><b>两个刻意的设计决定</b>：
  * <ul>
- *   <li><b>拼音应用侧生成</b>（TinyPinyin）：不用 analysis-pinyin 插件 ——
+ *   <li><b>拼音应用侧生成</b>（pinyin4j，见 T-59：TinyPinyin 不在 Maven Central）：不用 analysis-pinyin 插件 ——
  *       插件意味着「官方镜像 + 启动时装插件」，装失败 ES 就起不来，
  *       把一个可选加速层变成新的运维面。应用侧生成后官方镜像开箱即用；</li>
  *   <li><b>SKU 属性冗余进 SPU 文档</b>（species / lifeStage / inStock）：
@@ -336,15 +340,29 @@ public class SearchIndexer {
         return s == null ? "" : s;
     }
 
-    /** 拼音串（仅保留字母数字，小写）：应用侧生成，免 ES 插件 */
+    /** 拼音串（仅保留字母数字，小写）：应用侧生成，免 ES 插件。
+     *  pinyin4j：无音调输出。多音字取其字典里的首个读音（与 TinyPinyin 的「最常见读音」行为一致）。 */
     public static String pinyin(String text) {
         if (text == null || text.isBlank()) {
             return "";
         }
+        HanyuPinyinOutputFormat fmt = new HanyuPinyinOutputFormat();
+        fmt.setCaseType(HanyuPinyinCaseType.LOWERCASE);
+        fmt.setToneType(HanyuPinyinToneType.WITHOUT_TONE);
+        fmt.setVCharType(HanyuPinyinVCharType.WITH_V);
         StringBuilder sb = new StringBuilder();
         for (char c : text.toCharArray()) {
-            if (Pinyin.isChinese(c)) {
-                sb.append(Pinyin.toPinyin(c).toLowerCase());
+            String[] py;
+            try {
+                // 非汉字返回 null（含全角标点等），此时落到「仅保留字母数字」分支
+                py = PinyinHelper.toHanyuPinyinStringArray(c, fmt);
+            } catch (net.sourceforge.pinyin4j.format.exception.BadHanyuPinyinOutputFormatCombination e) {
+                // 该异常只在输出格式组合非法时抛出；本方法的三项设置是文档认可的合法组合，
+                // 到不了这里 —— 但 checked 异常必须接住，兜底按「非汉字」处理
+                py = null;
+            }
+            if (py != null && py.length > 0) {
+                sb.append(py[0]);
             } else if (Character.isLetterOrDigit(c)) {
                 sb.append(Character.toLowerCase(c));
             }
