@@ -299,7 +299,9 @@ services:
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DUODUO_AI_MODEL: ${DUODUO_AI_MODEL:-qwen-plus}
       DUODUO_AI_MOCK_ENABLED: ${DUODUO_AI_MOCK_ENABLED:-true}
-      DUODUO_AI_RATE_LIMIT: '20'
+      # 限流阈值是**运维要按流量调的**量，与相邻变量保持一致走环境变量覆盖，
+      # 不写死 —— 否则改阈值必须动 compose 文件，容器编排与调参耦合在一起。
+      DUODUO_AI_RATE_LIMIT: ${DUODUO_AI_RATE_LIMIT:-20}
     ports:
       - '8086:8086'
     depends_on:
