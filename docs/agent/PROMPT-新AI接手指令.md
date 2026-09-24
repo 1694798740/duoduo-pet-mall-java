@@ -29,7 +29,7 @@
 7. D:\智能体项目\duoduo-pet-mall-java\docs\agent\05-开发任务手册.md    ← 六类开发场景的配方与代码骨架
 8. D:\智能体项目\duoduo-pet-mall-java\docs\agent\06-测试与验收门禁.md  ← 什么改动跑哪些测试、断言怎么写
 9. D:\智能体项目\duoduo-pet-mall-java\docs\agent\07-待办事项与验收标准.md ← 待办 A1~A13（含接口草案与验收标准）
-10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-62 症状→根因→做法、禁忌
+10. D:\智能体项目\duoduo-pet-mall-java\docs\agent\08-环境运维与踩坑禁忌.md ← T-01~T-64 症状→根因→做法、禁忌
 11. D:\智能体项目\duoduo-pet-mall-java\AGENTS.md 同级：docs\PLAN.md   ← 进度权威（里程碑/任务/变更记录/命令速查）
 12. D:\智能体项目\duoduo-pet-mall-java\README.md                     ← 运行方式 + 全量接口清单
 13. D:\智能体项目\.workbuddy\memory\MEMORY.md 与 memory\2026-09-*.md  ← 项目长期记忆与「值钱的坑」

@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；余下：RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job；A9 仅剩 `llm` 形态待百炼 API Key 联调 |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；**A9 `llm` 形态已用真实百炼 Key 联调通过并切 `qwen-max`**（T-60/T-61 两缺陷修复）；**A11 RocketMQ 削峰 + Sentinel 限流已落地**（异步下单通道 `POST /api/orders/queued` + 任务台账 + 死信可查可重放 + `order-place` 资源 QPS 限流，MQ 容器挂 `profile: mq`）；余下：压测（A12）/ XXL-Job；A13 真机预览待用户 AppID |
 
 ---
 
@@ -180,6 +180,7 @@
 | I-17 | 履约域（M11/P2-1）自测暴露**三个工具层隐患** | **已自愈**（2026-09-18） | 无需操作 | ① 内部接口断言**打错服务端口**（连履约 8084 打用户域路径 → 无路由 500，看着像过滤器坏了）；② **PowerShell 把 `$SPU?page=1` 整体当变量名**（`?` 是合法的变量名字符），展开成 `=1&pageSize=50`，服务端收到 `spuId="=1&pageSize=50"` → 必须写 `${SPU}?`；③ **19 位雪花主键经 `ConvertFrom-Json` 丢精度**，出现「数据在库里、断言找不到」的假失败 → 断言改用业务键，需要主键时从**原始响应文本**正则提取 |
 | I-18 | **`git push` 通道受阻**：`github.com` 的 git 端点报 `CONNECT tunnel failed, response 502` / `Empty reply from server`（代理只放通 `api.github.com`） | **已自愈**（2026-09-18） | 无需操作 | 改走 **REST Git Data API** 推送成功（远端 `main = af28bba`）；工具 `.workbuddy/tools/push_via_api.py`（令牌取自 git 凭据管理器，不落盘、不回显）。注意：本地与远端 **SHA 分叉但内容一致**，网络恢复后执行 `git fetch origin main && git reset --hard origin/main` 对齐即可 |
 | I-19 | 信用分（A4）自测暴露**四个工具层隐患 + 两个实现问题** | **已自愈**（2026-09-20） | 无需操作 | **工具层**：① 冒烟辅助函数少取一层 `.body`（响应包络是 `{status,body,…}`，数据在 `body.data` 下）→ 一批断言假失败；② 跨库 `INSERT…SELECT` 未写库限定名（`FROM t_order` 打到不存在的表）→ **插 0 行且不报错**，改 `FROM duoduo_trade.t_order`；③ 前端 TS `noUncheckedIndexedAccess` 下 `Record` 取值可空，`?? FALLBACK` 压不住 → 用**独立声明的非空常量**兜底；④ **`trade-smoke.ps1` 的 `Call` 少声明 `$headers` 参数**，调用处多传的实参被 PowerShell 静默丢弃 → 内部凭据头从未发出、内部批量 SKU 接口恒 403（7 条断言连带失败）→ 补齐参数后 87/0。**实现层**：⑤ 注册默认分硬编码 `100`，与 `CreditModel` 基础分 60 不一致 → 改可配置 `credit-default`（默认 60）并同步 DDL；⑥ `AfterSaleMapper` 漏 `@Select` import（编译期即失败），顺带把 `parseIds` 的 `NumberFormatException` 转 400。以上均已由 82 项冒烟 + **回归 13 套全绿**固定（详见 `08` 篇 **T-33 ~ T-36**）；顺带修正 `seller-smoke` 旧口径 84 → **101**（累计 935/1017 → **1034**） |
+| I-20 | A11 死信链路自测暴露**两个工具层隐患 + 一个运维盲区** | **已自愈**（2026-09-24） | 无需操作 | ① **PS 5.1 给原生 exe 传参剥内嵌引号**：`curl.exe -d '{"a":"b"}'` 到 curl 手里变 `{a:b}` → 服务端 400；`mq-smoke.ps1` 首版**登录 JSON 被剥 → 登录失败 → burst 全 401**，限流断言「limited=0 且 ok=0」差点被误读成"限流没生效" → body 一律落临时文件走 `-d @file`，cookie jar 校验改为查**非 `#` 会话行**（详见 `08` 篇 **T-63**）；② **`docker stop` 误用 compose 服务名**（`duoduo-product-app`）→ `No such container`，报错又被 `Out-Null` 吞掉 → 商品域根本没停，死信断言连环假失败 → 原生命令只用**容器名**，停完必须显式断言（**T-64**）；③ **网关 404 的一次误判**：`/api/admin/mq/**` 路由加进 `duoduo-gateway` 的 yml 后只重打了**镜像**没重打 **jar**（Dockerfile 复制 `target/*.jar`）→ 重建容器仍是旧路由 → 教训：**改 yml 先 `mvn -pl <module> package` 再 `docker compose build`**，缺一不可 |
 
 <details>
 <summary><b>附：真实渠道备查（当前不需要你提供，将来要接真实收款时再取）</b></summary>
@@ -194,6 +195,31 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-24（第十八轮 · A11 RocketMQ 削峰 + Sentinel 限流）
+
+> 用户指令：「那按照开发计划完成接下来的开发任务吧。」—— 按手册顺序（A11~A13 最后做、A12 依赖 A11 定型）锁定 **A11**。
+> 口径变化：容器 **10 → 12**（`profile: mq` 增 namesrv+broker，默认 `docker compose up -d` 仍 10）、OpenAPI **125 → 129 端点**（trade 37 → 41）、冒烟 **19 套 → 20 套**（新增 `mq-smoke.ps1` 47 项）。
+
+#### A11 · RocketMQ 削峰 + Sentinel 限流（交易域）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-trade/pom.xml`（**改**） | 加 `rocketmq-client` / `rocketmq-tools 4.9.8`（原生 client，**刻意不用 spring starter** —— Boot3 兼容轮换频繁，本域只需一 topic 的生产/消费/DLQ 查询）+ `sentinel-core 1.8.6`（版本对齐 SCA 2023.0.1.0） |
+| `duoduo-trade/.../application.yml`（**改**） | `duoduo.trade.{order-mode:${DUODUO_TRADE_ORDER_MODE:sync}, mq.{namesrv,topic,consumer-group,max-reconsume}, place-qps-limit:${DUODUO_TRADE_PLACE_QPS:100}}` |
+| `.../entity/OrderPlaceTaskEntity` + `mapper/OrderPlaceTaskMapper`（**新**） | 任务台账 `t_order_place_task`（`PENDING/PLACED/FAILED`，唯一键 `uk_place_task_user_idem`）；`markPlaced` / `markFailed`（只认 PENDING，幂等兜底） |
+| `.../mq/OrderPlaceProducer`（**新**） | `@ConditionalOnProperty(order-mode=queue)` + `SmartLifecycle`；同步发送 3s 超时重试 2；`sendRaw(byte[], keys)` 供死信重放复用；keys = idempotentKey（DLQ 按键查询的前提） |
+| `.../mq/OrderPlaceConsumer`（**新**） | group `duoduo-trade-order-place`，`maxReconsumeTimes=2`；失败**分类**：业务性（`BizException` 非 DEGRADED）→ `markFailed` + CONSUME_SUCCESS 不重试；系统类 → RECONSUME_LATER（10s+30s）→ 耗尽进 `%DLQ%duoduo-trade-order-place` |
+| `.../support/OrderPlaceGuard`（**新**） | Sentinel `FlowRule` **代码定义**（资源 `order-place`，QPS 来自环境变量），`SphU.entry` + BlockException → 既有 `RATE_LIMITED`(429)；同步与队列端点**共用同一资源**（防"限流把用户赶到队列端点"） |
+| `.../service/OrderPlaceService`（**新**，queue only） | `enqueue`（幂等快查 → insert PENDING → DuplicateKey 返回已有 → 发 MQ，发送失败 markFailed+503）+ `placement` 任务查询 |
+| `.../service/DlqService`（**新**，queue only） | `DefaultMQAdminExt.queryMessage`（独立 instanceName `System.nanoTime()`，响应码 208 → 空表）按 key 查 DLQ；`replay` = `sendRaw` 原文发回主 topic（重放安全由订单幂等键唯一索引兜底） |
+| `.../service/OrderService`（**改**） | 重构出 `placeOrder(userId, request)` 带 `@Transactional` 重载 —— 控制器与消费者**共用同一份**下单代码（验收④靠复用保证，不靠"两处写一致"） |
+| `.../controller/OrderController` + `controller/AdminMqController`（**新/改**） | `place()` 包 Guard；新增 `POST /api/orders/queued`（受理即入队返回 PENDING）与 `GET /api/orders/placement/{key}`；`/api/admin/mq` 死信查询/重放（`OperatorGuard`，网关路由显式补 `/api/admin/mq/**`） |
+| `docker-compose.yml` + `docs/mq/broker.conf`（**新/改**） | `rocketmq-namesrv`/`rocketmq-broker` 挂 `profile: ["mq"]`（`apache/rocketmq:5.3.2`，`JAVA_OPT_EXT` 压内存 256m/512m，healthcheck 就绪门）；trade 环境变量三件套；`brokerIP1` 指向服务名 |
+| `docs/sql/03-duoduo-trade.sql` + `incremental/10-a11-order-place-task.sql` + `db/schema.sql`（**新/改**） | `t_order_place_task` 建表三处同步（全量 DDL / 增量幂等脚本 / H2 测试 schema） |
+| `scripts/mq-smoke.ps1`（**新**） | **47/0 全绿**；脚本**自管** profile mq 起停、trade queue↔sync 切换与结尾复原；覆盖主链路/入队幂等/业务失败/死信查+重放/429 限流/自证非破坏 |
+
+**自测**：`mq-smoke.ps1` 47/0；全量回归 **20 套全绿**（详见「十二、变更记录」口径）；`mvn -q -DskipTests package` 通过。工具层教训沉淀 `08` 篇 **T-63（PS 5.1 原生传参剥引号）**、**T-64（容器名 vs 服务名）**，见 **I-20**。
 
 ### 2026-09-24（第十七轮 · A9 AI 导购「多多」+ A10 Elasticsearch 检索）
 
@@ -970,7 +996,7 @@ curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-
 | 05 | 开发任务手册（6 个配方 + 代码骨架，照抄即可） |
 | 06 | 测试与验收门禁（按改动类型选必跑脚本 + 断言写法约定） |
 | 07 | 待办事项与验收标准（A1~A13，逐项含接口草案与可执行验收标准） |
-| 08 | 环境运维与踩坑禁忌（T-01~T-62 症状→根因→做法、10 条禁忌） |
+| 08 | 环境运维与踩坑禁忌（T-01~T-64 症状→根因→做法、10 条禁忌） |
 
 ---
 

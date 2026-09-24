@@ -76,6 +76,20 @@ duoduo:
     platform-fee-bps: ${PLATFORM_FEE_BPS:100}
     # 发货后多少天自动确认收货并放款给卖家；配 0 或负数即关闭（仅手动确认收货）
     auto-receipt-days: ${AUTO_RECEIPT_DAYS:7}
+    # ── A11 · 削峰队列（RocketMQ）────────────────────────────
+    # order-mode=queue：POST /api/orders/queued 入队，消费者异步执行与同步端点
+    #   完全相同的 placeOrder（幂等/状态机代码级复用）；sync（默认）：MQ 相关 Bean
+    #   不创建，行为与 A11 之前完全一致 —— CI 与本地开发零依赖 MQ。
+    order-mode: ${DUODUO_TRADE_ORDER_MODE:sync}
+    mq:
+      namesrv: ${ROCKETMQ_NAMESRV:rocketmq-namesrv:9876}
+      topic: ${ROCKETMQ_ORDER_TOPIC:duoduo-order-place}
+      consumer-group: ${ROCKETMQ_ORDER_GROUP:duoduo-trade-order-place}
+      # 消费失败（系统类异常）的最大重试次数；耗尽后由 broker 移入死信 %DLQ%<consumer-group>
+      max-reconsume: ${ROCKETMQ_MAX_RECONSUME:2}
+    # Sentinel 限流：下单入口 QPS 上限（同步与队列端点共用同一资源「order-place」）。
+    # 触发后返回全站既有 RATE_LIMITED(429)。压测/冒烟可用环境变量调低验证 429 路径。
+    place-qps-limit: ${DUODUO_TRADE_PLACE_QPS:100}
   pay:
     sandbox:
       # 沙箱收银台地址（预下单返回的二维码内容指向这里）。

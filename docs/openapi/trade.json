@@ -415,6 +415,36 @@
                                                                                   }
                                                                 }
                                                    },
+                  "/api/orders/queued":  {
+                                             "post":  {
+                                                          "tags":  [
+                                                                       "order-controller"
+                                                                   ],
+                                                          "operationId":  "placeQueued",
+                                                          "requestBody":  {
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/PlaceOrderRequest"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          },
+                                                                              "required":  true
+                                                                          },
+                                                          "responses":  {
+                                                                            "200":  {
+                                                                                        "description":  "OK",
+                                                                                        "content":  {
+                                                                                                        "*/*":  {
+                                                                                                                    "schema":  {
+                                                                                                                                   "$ref":  "#/components/schemas/ApiResponsePlaceTaskView"
+                                                                                                                               }
+                                                                                                                }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                         },
                   "/api/orders/internal/{orderNo}/refund":  {
                                                                 "post":  {
                                                                              "tags":  [
@@ -574,6 +604,36 @@
                                                                                              }
                                                                            }
                                                               },
+                  "/api/admin/mq/dlq/replay":  {
+                                                   "post":  {
+                                                                "tags":  [
+                                                                             "admin-mq-controller"
+                                                                         ],
+                                                                "operationId":  "replay",
+                                                                "requestBody":  {
+                                                                                    "content":  {
+                                                                                                    "application/json":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/DlqReplayRequest"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                },
+                                                                                    "required":  true
+                                                                                },
+                                                                "responses":  {
+                                                                                  "200":  {
+                                                                                              "description":  "OK",
+                                                                                              "content":  {
+                                                                                                              "*/*":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ApiResponseDlqReplayResult"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                                          }
+                                                                                          }
+                                                                              }
+                                                            }
+                                               },
                   "/api/cart/items/{skuId}":  {
                                                   "delete":  {
                                                                  "tags":  [
@@ -955,6 +1015,36 @@
                                                                                      }
                                                                    }
                                                        },
+                  "/api/orders/placement/{idempotentKey}":  {
+                                                                "get":  {
+                                                                            "tags":  [
+                                                                                         "order-controller"
+                                                                                     ],
+                                                                            "operationId":  "placement",
+                                                                            "parameters":  [
+                                                                                               {
+                                                                                                   "name":  "idempotentKey",
+                                                                                                   "in":  "path",
+                                                                                                   "required":  true,
+                                                                                                   "schema":  {
+                                                                                                                  "type":  "string"
+                                                                                                              }
+                                                                                               }
+                                                                                           ],
+                                                                            "responses":  {
+                                                                                              "200":  {
+                                                                                                          "description":  "OK",
+                                                                                                          "content":  {
+                                                                                                                          "*/*":  {
+                                                                                                                                      "schema":  {
+                                                                                                                                                     "$ref":  "#/components/schemas/ApiResponsePlaceTaskView"
+                                                                                                                                                 }
+                                                                                                                                  }
+                                                                                                                      }
+                                                                                                      }
+                                                                                          }
+                                                                        }
+                                                            },
                   "/api/orders/internal/{orderNo}/fact":  {
                                                               "get":  {
                                                                           "tags":  [
@@ -1204,6 +1294,36 @@
                                                                                 }
                                                               }
                                                   },
+                  "/api/admin/mq/dlq":  {
+                                            "get":  {
+                                                        "tags":  [
+                                                                     "admin-mq-controller"
+                                                                 ],
+                                                        "operationId":  "list_3",
+                                                        "parameters":  [
+                                                                           {
+                                                                               "name":  "key",
+                                                                               "in":  "query",
+                                                                               "required":  true,
+                                                                               "schema":  {
+                                                                                              "type":  "string"
+                                                                                          }
+                                                                           }
+                                                                       ],
+                                                        "responses":  {
+                                                                          "200":  {
+                                                                                      "description":  "OK",
+                                                                                      "content":  {
+                                                                                                      "*/*":  {
+                                                                                                                  "schema":  {
+                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseListDlqMessageView"
+                                                                                                                             }
+                                                                                                              }
+                                                                                                  }
+                                                                                  }
+                                                                      }
+                                                    }
+                                        },
                   "/api/cart/selected":  {
                                              "delete":  {
                                                             "tags":  [
@@ -1661,6 +1781,44 @@
                                                                                            }
                                                                             }
                                                          },
+                                       "ApiResponsePlaceTaskView":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "code":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                           "message":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                           "data":  {
+                                                                                                        "$ref":  "#/components/schemas/PlaceTaskView"
+                                                                                                    },
+                                                                                           "requestId":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                           "timestamp":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         }
+                                                                                       }
+                                                                    },
+                                       "PlaceTaskView":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "idempotentKey":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                "status":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                "failReason":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                                "createdAt":  {
+                                                                                                  "type":  "string"
+                                                                                              }
+                                                                            }
+                                                         },
                                        "ApiResponseSweepResult":  {
                                                                       "type":  "object",
                                                                       "properties":  {
@@ -1915,6 +2073,52 @@
                                                                                                }
                                                                                 }
                                                              },
+                                       "DlqReplayRequest":  {
+                                                                "required":  [
+                                                                                 "idempotentKey"
+                                                                             ],
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "idempotentKey":  {
+                                                                                                         "maxLength":  64,
+                                                                                                         "minLength":  0,
+                                                                                                         "type":  "string"
+                                                                                                     }
+                                                                               }
+                                                            },
+                                       "ApiResponseDlqReplayResult":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/DlqReplayResult"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "DlqReplayResult":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "idempotentKey":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                  "replayed":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int32"
+                                                                                               }
+                                                                              }
+                                                           },
                                        "UpdateQuantityRequest":  {
                                                                      "required":  [
                                                                                       "quantity"
@@ -2502,6 +2706,52 @@
                                                                                                        }
                                                                                      }
                                                                   },
+                                       "ApiResponseListDlqMessageView":  {
+                                                                             "type":  "object",
+                                                                             "properties":  {
+                                                                                                "code":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                                "message":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                "data":  {
+                                                                                                             "type":  "array",
+                                                                                                             "items":  {
+                                                                                                                           "$ref":  "#/components/schemas/DlqMessageView"
+                                                                                                                       }
+                                                                                                         },
+                                                                                                "requestId":  {
+                                                                                                                  "type":  "string"
+                                                                                                              },
+                                                                                                "timestamp":  {
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              }
+                                                                                            }
+                                                                         },
+                                       "DlqMessageView":  {
+                                                              "type":  "object",
+                                                              "properties":  {
+                                                                                 "msgId":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                 "idempotentKey":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                 "reconsumeTimes":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32"
+                                                                                                    },
+                                                                                 "payload":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                 "storeTimestamp":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    }
+                                                                             }
+                                                          },
                                        "ApiResponseVoid":  {
                                                                "type":  "object",
                                                                "properties":  {

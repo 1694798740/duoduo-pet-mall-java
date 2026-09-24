@@ -205,3 +205,20 @@ CREATE TABLE t_settlement (
 );
 CREATE UNIQUE INDEX uk_settle_order ON t_settlement (order_id);
 CREATE INDEX idx_settle_seller ON t_settlement (seller_id, status);
+
+-- ---------- 削峰下单任务台账（A11） ----------
+-- 异步下单的中间态落点：受理 PENDING / 成功 PLACED / 业务失败 FAILED（带原因）。
+-- 幂等靠唯一键（与订单表幂等键同构）：双击/重试重复入队撞索引，返回已有任务。
+-- 系统类失败在重试耗尽进死信期间任务保持 PENDING —— 「还没做完」和「做不成了」是两回事。
+CREATE TABLE t_order_place_task (
+    id             BIGINT       NOT NULL,
+    user_id        BIGINT       NOT NULL,
+    idempotent_key VARCHAR(64)  NOT NULL,
+    status         VARCHAR(16)  NOT NULL,
+    fail_reason    VARCHAR(200),
+    created_at     TIMESTAMP    NOT NULL,
+    updated_at     TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_place_task_user_idem ON t_order_place_task (user_id, idempotent_key);
+CREATE INDEX idx_place_task_user ON t_order_place_task (user_id, created_at);

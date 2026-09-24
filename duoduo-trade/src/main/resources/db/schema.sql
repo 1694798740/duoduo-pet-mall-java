@@ -188,3 +188,18 @@ CREATE TABLE t_settlement (
 );
 CREATE UNIQUE INDEX uk_settle_order ON t_settlement (order_id);
 CREATE INDEX idx_settle_seller ON t_settlement (seller_id, status);
+
+-- ---------- 削峰下单任务台账（A11） ----------
+-- 与 MySQL DDL（docs/sql/03-duoduo-trade.sql / incremental/10）同构，H2 单测/本地口径
+CREATE TABLE t_order_place_task (
+    id             BIGINT       NOT NULL,
+    user_id        BIGINT       NOT NULL,
+    idempotent_key VARCHAR(64)  NOT NULL,
+    status         VARCHAR(16)  NOT NULL,
+    fail_reason    VARCHAR(200),
+    created_at     TIMESTAMP    NOT NULL,
+    updated_at     TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_place_task_user_idem ON t_order_place_task (user_id, idempotent_key);
+CREATE INDEX idx_place_task_user ON t_order_place_task (user_id, created_at);

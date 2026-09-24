@@ -4,7 +4,14 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-24（第十七轮）** — **A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**；**A9 已用真实百炼 Key 跑通 `llm` 形态**。
+**最近更新：2026-09-24（第十八轮）** — **A11 RocketMQ 削峰 + Sentinel 限流 已交付**。
+① **削峰通道（交易域）**：`POST /api/orders/queued`（受理即入队，返回任务视图 PENDING）+ `GET /api/orders/placement/{idempotentKey}`（任务查询）；**同步下单 `POST /api/orders` 一行未动** —— 前端与既有断言零破坏。消费者与控制器**共用同一份** `placeOrder(userId, request)`：削峰**不换**幂等与状态机语义，靠代码级复用而不是"两处写一致"。
+② **任务台账 + 死信**：`t_order_place_task`（PENDING/PLACED/FAILED，唯一键幂等）；消费者失败**分类** —— 业务性失败不重试直接 FAILED，系统类退避重试（10s+30s）耗尽进 `%DLQ%duoduo-trade-order-place`；运营可按幂等键查死信（`GET /api/admin/mq/dlq`）并**一键重放**（原文 `sendRaw` 回主 topic，订单幂等键兜底重放安全）。
+③ **Sentinel 限流**：`sentinel-core 1.8.6`，`FlowRule` 代码定义（资源 `order-place`，QPS 走环境变量），触发 → 既有 `RATE_LIMITED`(429)；**同步与队列端点共用同一资源**（防"限流把用户赶到队列端点绕开"）。
+④ **RocketMQ 用原生 client（4.9.8）刻意不用 spring starter**；容器挂 `profile: mq`（namesrv+broker），`DUODUO_TRADE_ORDER_MODE=queue` 才创建 MQ Bean —— **sync 默认形态下 CI 与零依赖环境不背 MQ**。改形态必须 `up -d --force-recreate`（容器 env 固定）。
+**自测**：新增 `scripts/mq-smoke.ps1` **47/0 全绿**（脚本自管 MQ 起停与 trade 模式切换，覆盖主链路 PENDING→PLACED / 入队幂等 / 业务失败 FAILED / **商品宕机制造死信 → 可查 → 重放 → PLACED 闭环** / 30 并发 burst 必现 429 / 自证非破坏）；全量回归 **20 套 1479 项 0 失败**（`ai-smoke` 24 项改为形态自适应 —— mock/llm 都是正确部署，只锁死绝不 unconfigured）；OpenAPI **125 → 129 端点**；容器 10 + 可选 MQ×2（profile mq）。工具层沉淀 **T-63（PS 5.1 原生传参剥引号）**、**T-64（容器名 vs 服务名）**。
+
+**第十七轮（2026-09-24）** — **A9 AI 导购「多多」+ A10 Elasticsearch 检索 均已交付**；**A9 已用真实百炼 Key 跑通 `llm` 形态并切 `qwen-max`**。
 ① **A9 · 新服务 `duoduo-ai`（:8086，容器 `duoduo-app-ai`）**：**无状态**（不连库、v1 不落对话历史）。
 `POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`，两条都在网关白名单 —— **未登录可问答**是硬需求。
 推荐**基于真实商品库**：Feign（Nacos + `X-Internal-Token`）调商品域
@@ -87,7 +94,7 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
 另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
 与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
-**接口冒烟累计 19 套 1424 项，浏览器 UI 断言累计 6 套 244 项。**
+**接口冒烟累计 20 套 1479 项，浏览器 UI 断言累计 6 套 244 项。**
 详见「十二、变更记录」。
 
 **上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
@@ -143,6 +150,11 @@ docker ps                     # 期望：10 个容器全是 healthy
 
 # 可选：检索加速层（A10）。刻意挂 profile，默认不起 —— 不起时检索自动走 MySQL
 docker compose --profile search up -d duoduo-es
+
+# 可选：削峰队列（A11）。默认 `DUODUO_TRADE_ORDER_MODE=sync` 不需要 MQ；
+# 切 queue：先起 MQ 两容器，再带环境变量重建 trade（改 env 必须 force-recreate）
+docker compose --profile mq up -d rocketmq-namesrv rocketmq-broker
+DUODUO_TRADE_ORDER_MODE=queue docker compose up -d --force-recreate duoduo-trade-app
 ```
 
 | 容器 | 镜像 | 端口 | 说明 |
@@ -158,6 +170,8 @@ docker compose --profile search up -d duoduo-es
 | `duoduo-app-marketing` | duoduo/duoduo-marketing:1.0.0 | 8085 | 营销域：**优惠券**（领券中心 / 我的券包 / 锁·解·核销 / 补偿调度） |
 | `duoduo-app-ai` | duoduo/duoduo-ai:1.0.0 | 8086 | AI 导购「多多」：**候选召回（商品域）+ 对话编排**；未配百炼 Key 时 503 降级，mock 模式可整链跑通 |
 | `duoduo-es`（可选） | elasticsearch:8.11.4 | 9200 | **检索加速层（A10）**，compose `profile=search` 默认不起：`docker compose --profile search up -d duoduo-es`。不起时检索自动降级走 MySQL |
+| `duoduo-mq-namesrv`（可选） | apache/rocketmq:5.3.2 | 9876 | **削峰队列（A11）NameServer**，compose `profile=mq` 默认不起；`JAVA_OPT_EXT` 压内存 |
+| `duoduo-mq-broker`（可选） | apache/rocketmq:5.3.2 | 10911 | **削峰队列 Broker**（挂 `docs/mq/broker.conf`，`brokerIP1` 指向服务名）；trade 切 `queue` 模式才依赖它 |
 
 **从零重建**（连数据卷一起删，会重新执行 `docs/sql/` 里的初始化脚本）：
 
@@ -179,12 +193,12 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（十九套 1424 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（二十套 1479 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
 > CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
-> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**125 个端点**与 `docs/agent/04` 逐条核对）；
+> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
 ```bash
@@ -205,8 +219,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1      # 82 项：收货地址簿（CRUD/默认唯一性与删除顺延/归属统一 404/下单写快照/清理复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1 # 56 项：跨域 ID 精度回归（只断言 JSON 原始文本，绕开反序列化的精度掩盖）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1  # 26 项：微信登录绑定（未绑 422/未配置 503/幂等/抢绑 409/免登 401）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 23 项：AI 导购（推荐真实性/无 sellerId 泄露/匿名可问答/多轮追问/推荐上限/429 限流）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 24 项：AI 导购（形态自适应/推荐真实性/无 sellerId 泄露/匿名可问答/多轮追问/推荐上限/429 限流）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 
 # 六套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，

@@ -203,6 +203,12 @@ services:
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # A11 · 削峰队列：默认 sync（与 A11 之前行为一致，CI/本地零 MQ 依赖）。
+      # 生产切 queue：DUODUO_TRADE_ORDER_MODE=queue + 起 mq profile（rocketmq 两容器）。
+      DUODUO_TRADE_ORDER_MODE: ${DUODUO_TRADE_ORDER_MODE:-sync}
+      ROCKETMQ_NAMESRV: ${ROCKETMQ_NAMESRV:-rocketmq-namesrv:9876}
+      # Sentinel 限流：下单入口 QPS 上限（同步与队列端点共用），运维可调
+      DUODUO_TRADE_PLACE_QPS: ${DUODUO_TRADE_PLACE_QPS:-100}
     ports:
       - '8083:8083'
     depends_on:
@@ -330,6 +336,53 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+
+  # ── A11 · RocketMQ（削峰队列，可选容器，挂 mq profile）─────────────
+  # 刻意挂 profile：`docker compose up` 默认不启动 —— trade 默认 sync 模式，
+  # 不依赖 MQ（CI 与零依赖环境照常跑）。启用：`docker compose --profile mq up -d`
+  # 并把 DUODUO_TRADE_ORDER_MODE=queue 重建 trade。
+  # brokerIP1 指向服务名：broker 会把自己的地址注册进 NameServer，
+  # 客户端（trade 容器）拿到的必须是 compose 网络内可达的名字，写宿主 IP 会连不上。
+  rocketmq-namesrv:
+    container_name: duoduo-mq-namesrv
+    image: apache/rocketmq:5.3.2
+    profiles: ["mq"]
+    restart: unless-stopped
+    command: sh mqnamesrv
+    environment:
+      # 官方脚本默认 -Xms4g，开发机扛不住；用 JAVA_OPT_EXT 覆盖为小内存
+      JAVA_OPT_EXT: '-Xms256m -Xmx256m -Xmn128m'
+    ports:
+      - '9876:9876'
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n 127.0.0.1:9876 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  rocketmq-broker:
+    container_name: duoduo-mq-broker
+    image: apache/rocketmq:5.3.2
+    profiles: ["mq"]
+    restart: unless-stopped
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
+    environment:
+      JAVA_OPT_EXT: '-Xms512m -Xmx512m -Xmn256m'
+    volumes:
+      - ./docs/mq/broker.conf:/home/rocketmq/conf/broker.conf:ro
+    ports:
+      - '10909:10909'
+      - '10911:10911'
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin brokerStatus -n rocketmq-namesrv:9876 -b 127.0.0.1:10911 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
 
   duoduo-gateway-app:
     container_name: duoduo-app-gateway

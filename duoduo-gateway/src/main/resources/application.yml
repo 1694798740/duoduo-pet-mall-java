@@ -64,7 +64,10 @@ spring:
             # 不进白名单 —— 不登录就拿不到 X-User-*，服务端无从判断归属
             # /api/admin/{orders,settlements,reports} = 平台管理后台（M10）的订单干预/对账/报表，
             # 数据在交易库，落回 trade 服务；同样不进白名单（operator 角色由服务端校验）
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**
+            # /api/admin/mq/** = 死信查询与重放（A11）：数据与消费组都在交易域，
+            #   必须显式列出（product / trade 的路由按具体子路径列举，不是 /api/admin/** 兜底），
+            #   漏了会被路由到 404 而不是报错（02 篇显式列举纪律的既有案例）
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

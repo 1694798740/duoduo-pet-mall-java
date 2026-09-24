@@ -72,6 +72,8 @@
 
 ## trade （:8083）
 
+- `GET /api/admin/mq/dlq`
+- `POST /api/admin/mq/dlq/replay`
 - `GET /api/admin/orders`
 - `GET /api/admin/orders/{orderNo}`
 - `POST /api/admin/orders/{orderNo}/force-close`
@@ -99,6 +101,8 @@
 - `POST /api/orders/internal/{orderNo}/refund`
 - `GET /api/orders/internal/seller/{sellerId}/stats`
 - `POST /api/orders/internal/sweep`
+- `GET /api/orders/placement/{idempotentKey}`
+- `POST /api/orders/queued`
 - `GET /api/payments/{payNo}`
 - `POST /api/payments/callback/{channel}`
 - `POST /api/payments/sandbox/{payNo}`
@@ -110,7 +114,7 @@
 - `GET /api/seller/summary`
 - `GET /sandbox/pay/{payNo}`
 
-小计：**37** 个端点。
+小计：**41** 个端点。
 
 ## fulfilment （:8084）
 
@@ -157,4 +161,4 @@
 
 小计：**2** 个端点。
 
-合计：**125** 个端点（6 个业务服务）。
+合计：**129** 个端点（6 个业务服务）。

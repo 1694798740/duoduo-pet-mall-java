@@ -181,6 +181,48 @@ public final class OrderDtos {
     ) {
     }
 
+    /**
+     * 削峰下单任务视图（A11）。
+     *
+     * <p>「已受理」与「已落库」是两个时刻：调用方拿到 PENDING 只代表消息进了队列，
+     * 订单要等消费完成 —— 之后凭幂等键轮询本视图，PLACED 后按常规订单接口查询。
+     * FAILED 时 {@code failReason} 与同步端点会抛的业务异常同文案（库存不足 / 已下架……）。
+     */
+    public record PlaceTaskView(
+            String idempotentKey,
+            String status,
+            String failReason,
+            String createdAt
+    ) {
+    }
+
+    /**
+     * 死信消息视图（A11，运营查询用）。
+     * {@code payload} 是消息原文（JSON：userId + 下单请求）—— 给运维排障看，不进业务展示面。
+     */
+    public record DlqMessageView(
+            String msgId,
+            String idempotentKey,
+            int reconsumeTimes,
+            String payload,
+            long storeTimestamp
+    ) {
+    }
+
+    /** 死信重放请求：按幂等键定位死信（与任务台账、订单幂等键同口径） */
+    public record DlqReplayRequest(
+            @NotBlank(message = "idempotentKey 不能为空")
+            @Size(max = 64, message = "idempotentKey 过长") String idempotentKey
+    ) {
+    }
+
+    /** 死信重放结果 */
+    public record DlqReplayResult(
+            String idempotentKey,
+            int replayed
+    ) {
+    }
+
     /** 取消订单请求 */
     public record CancelRequest(
             @Size(max = 100, message = "取消原因过长") String reason

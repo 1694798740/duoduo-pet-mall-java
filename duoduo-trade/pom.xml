@@ -69,6 +69,31 @@
       <artifactId>mysql-connector-j</artifactId>
       <scope>runtime</scope>
     </dependency>
+
+    <!-- A11 · 削峰队列：RocketMQ 客户端（原生 4.x remoting 协议，自管生命周期）。
+         不用 rocketmq-spring-boot-starter：Boot 3 兼容版本轮换频繁，而本项目只需要
+         「一个 topic 的生产者 + 一个消费者 + DLQ 查询」，自己包一层 lifecycle 反而更少魔法。
+         版本 4.9.8 与服务端 apache/rocketmq:5.x 的 remoting 协议兼容。 -->
+    <dependency>
+      <groupId>org.apache.rocketmq</groupId>
+      <artifactId>rocketmq-client</artifactId>
+      <version>4.9.8</version>
+    </dependency>
+    <!-- 死信查询用 DefaultMQAdminExt（queryMessage 按 keys 检索）在 tools 包里 -->
+    <dependency>
+      <groupId>org.apache.rocketmq</groupId>
+      <artifactId>rocketmq-tools</artifactId>
+      <version>4.9.8</version>
+    </dependency>
+
+    <!-- A11 · 限流：Sentinel 核心（版本对齐 spring-cloud-alibaba 2023.0.1.0 所管理的 1.8.6）。
+         不引 sentinel dashboard / starter：限流规则在代码里按配置定义即可，
+         BlockException 在入口翻译成全站既有的 RATE_LIMITED(429)。 -->
+    <dependency>
+      <groupId>com.alibaba.csp</groupId>
+      <artifactId>sentinel-core</artifactId>
+      <version>1.8.6</version>
+    </dependency>
   </dependencies>
 
   <build>

@@ -85,7 +85,11 @@ Write-Host "> 能力声明（capabilities）"
 $sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $r = Call 'Get' "$Gateway/api/duoduo/capabilities" $sess $null $null
 Check "capabilities 返回 200" ($r.status -eq 200) $r.status
-Check "mock 模式标识正确" ($r.body.data.mode -eq 'mock') ($r.body.data | ConvertTo-Json -Compress)
+# 形态自适应：CI 容器无 Key → mock；本地/生产配了百炼 Key → llm。
+# 两种形态都是"正确部署"，断言只锁死**绝不降级到 unconfigured**（有 Key 却报 503 才是真故障）。
+# 与下方 llm 预算断言同一思路：形态差异用 SKIP/分支消化，不硬编码某一种形态。
+$aiMode = "$($r.body.data.mode)"
+Check "AI 形态标识正确（mock 或 llm，绝不 unconfigured）" (($aiMode -eq 'mock') -or ($aiMode -eq 'llm')) ($r.body.data | ConvertTo-Json -Compress)
 Check "chat 可用" ($r.body.data.chatAvailable -eq $true) ($r.body.data | ConvertTo-Json -Compress)
 
 # ---------- 2. 对话主链路：真实商品库不变式 ----------

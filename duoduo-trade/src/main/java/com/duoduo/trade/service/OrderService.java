@@ -186,9 +186,24 @@ public class OrderService {
 
     // ---------------- 下单 ----------------
 
+    /**
+     * 同步下单入口（网关调用路径）：身份从 {@code UserContext} 取（网关注入的 X-User-*）。
+     * 削峰队列的消费者走下面的重载 —— 两条路径共用同一份下单逻辑（验收④）。
+     */
     @Transactional
     public PlaceOrderResult placeOrder(PlaceOrderRequest request) {
-        Long userId = UserContext.requireUserId();
+        return placeOrder(UserContext.requireUserId(), request);
+    }
+
+    /**
+     * 下单核心（同步端点与削峰消费者共用，A11）。
+     *
+     * <p>userId 显式入参：消费线程没有网关注入的身份上下文，消息体里带谁来。
+     * 幂等（唯一索引快路径）、库存校验、券锁定、状态机全部在本方法内 ——
+     * 无论从哪条路径进来，语义严格一致。
+     */
+    @Transactional
+    public PlaceOrderResult placeOrder(Long userId, PlaceOrderRequest request) {
 
         // 1) 幂等快路径：同一用户同一幂等键 → 直接返回首次产生的订单
         OrderEntity existing = findByIdempotentKey(userId, request.idempotentKey());

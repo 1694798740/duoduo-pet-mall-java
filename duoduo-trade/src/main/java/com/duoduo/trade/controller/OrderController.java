@@ -2,18 +2,25 @@ package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.context.UserContext;
+import com.duoduo.common.enums.ErrorCode;
+import com.duoduo.common.exception.BizException;
 import com.duoduo.trade.dto.OrderDtos.CancelRequest;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.PayRequest;
 import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.PlaceTaskView;
 import com.duoduo.trade.dto.OrderDtos.RefundRequest;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
+import com.duoduo.trade.service.OrderPlaceService;
 import com.duoduo.trade.service.OrderService;
+import com.duoduo.trade.support.OrderPlaceGuard;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,9 +42,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class OrderController {
 
     private final OrderService orderService;
+    private final OrderPlaceGuard placeGuard;
+    private final ObjectProvider<OrderPlaceService> placeServiceProvider;
 
-    public OrderController(OrderService orderService) {
+    public OrderController(OrderService orderService,
+                           OrderPlaceGuard placeGuard,
+                           ObjectProvider<OrderPlaceService> placeServiceProvider) {
         this.orderService = orderService;
+        this.placeGuard = placeGuard;
+        this.placeServiceProvider = placeServiceProvider;
     }
 
     /**
@@ -46,10 +59,46 @@ public class OrderController {
      * <p>必须带 {@code idempotentKey}：同一用户用同一个键重复提交只会产生一个订单
      * （网络重试、用户连点两次都靠它兜住）。命中幂等键时返回首次的订单，
      * 响应里的 {@code idempotentReplay=true} 可用于区分。
+     *
+     * <p>A11：入口挂 Sentinel 限流（资源 order-place，与削峰端点共用），超限 429。
      */
     @PostMapping
     public ApiResponse<PlaceOrderResult> place(@Valid @RequestBody PlaceOrderRequest request) {
-        return ApiResponse.ok(orderService.placeOrder(request));
+        return ApiResponse.ok(placeGuard.call(() -> orderService.placeOrder(request)));
+    }
+
+    /**
+     * 削峰下单（A11）：受理即入队，消费者异步执行与同步端点<b>同一份</b>下单逻辑。
+     *
+     * <p>返回的是任务视图（PENDING）而非订单 —— 凭 {@code idempotentKey} 轮询
+     * {@code GET /api/orders/placement/{idempotentKey}}，PLACED 后按常规订单接口查询；
+     * FAILED 时 {@code failReason} 与同步端点的业务异常同文案。
+     * 默认部署 order-mode=sync（本端点 503），生产按流量决策切换。
+     */
+    @PostMapping("/queued")
+    public ApiResponse<PlaceTaskView> placeQueued(@Valid @RequestBody PlaceOrderRequest request) {
+        Long userId = UserContext.requireUserId();
+        return ApiResponse.ok(placeGuard.call(() -> placeService().enqueue(userId, request)));
+    }
+
+    /** 削峰下单任务查询（本人）：PENDING / PLACED / FAILED（带原因） */
+    @GetMapping("/placement/{idempotentKey}")
+    public ApiResponse<PlaceTaskView> placement(@PathVariable String idempotentKey) {
+        Long userId = UserContext.requireUserId();
+        PlaceTaskView view = placeService().placement(userId, idempotentKey);
+        if (view == null) {
+            throw BizException.notFound("下单任务");
+        }
+        return ApiResponse.ok(view);
+    }
+
+    /** 削峰服务仅在 order-mode=queue 时存在；sync 部署下调用按 503 如实告知 */
+    private OrderPlaceService placeService() {
+        OrderPlaceService service = placeServiceProvider.getIfAvailable();
+        if (service == null) {
+            throw new BizException(ErrorCode.DEGRADED, "当前部署未开启削峰队列（order-mode=sync）");
+        }
+        return service;
     }
 
     /** 我的订单列表；status 可按状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / CLOSED） */
