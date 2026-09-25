@@ -15,6 +15,12 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+  servlet:
+    multipart:
+      # 上传上限 = 业务上限(5MB) + multipart 编码开销的余量；超了由 UploadController 给友好文案
+      max-file-size: ${UPLOADS_MAX_FILE:6MB}
+      max-request-size: ${UPLOADS_MAX_REQUEST:12MB}
+
   datasource:
     url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_fulfilment?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${DB_USERNAME:duoduo}
@@ -56,6 +62,14 @@ duoduo:
   internal:
     # 服务间调用共享密钥（调交易域的内部订单查询接口）
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+  uploads:
+    # 图片落盘目录（A15）。容器里通过卷挂载持久化，见 docker-compose.yml
+    dir: ${UPLOADS_DIR:./data/uploads}
+    # 拼图片对外 URL 的 base。留空 = 按请求的 X-Forwarded-*（网关场景）或 Host（直连调试）推断；
+    # 生产若图片走独立域名 / CDN，在这里配（如 https://img.example.com）
+    public-base-url: ${UPLOADS_PUBLIC_BASE_URL:}
+    # 单图大小上限（MB）。0 表示不限制（仍受 spring.servlet.multipart 硬顶约束）
+    max-size-mb: ${UPLOADS_MAX_MB:5}
   review:
     # 评价内容最大长度（与 DDL 的 VARCHAR(1000) 对齐）
     max-content-length: ${REVIEW_MAX_CONTENT:1000}

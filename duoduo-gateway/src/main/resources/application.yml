@@ -84,7 +84,11 @@ spring:
             #   为它插一条更高优先级的路由，正是历史上造成过「新增端点只 404」的写法。
             #   也不进白名单：轨迹能反映「谁买了什么、寄到哪个城市」，属当事人信息，
             #   不登录就拿不到 X-User-*，服务端无从判断资格。
-            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**,/api/logistics/**
+            # /api/uploads/** = 图片上传（A15），POST 需登录（不进白名单）；
+            #   /uploads/** = 图片公开读（A15），<image> 标签发不出 Authorization 头，必须免登。
+            #   两段必须同时列出且白名单只放 /uploads/**：白名单按路径匹配、不区分方法，
+            #   若 /api/uploads/** 进白名单，匿名 POST 上传会把磁盘变成公共网盘。
+            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**,/api/logistics/**,/api/uploads/**,/uploads/**
         - id: duoduo-marketing
           uri: lb://duoduo-marketing
           predicates:

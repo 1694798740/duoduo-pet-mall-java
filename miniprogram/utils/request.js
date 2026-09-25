@@ -146,6 +146,63 @@ const put = (path, data, opts) => request('PUT', path, data, opts);
 const patch = (path, data, opts) => request('PATCH', path, data, opts);
 const del = (path, opts) => request('DELETE', path, null, opts);
 
+/**
+ * 文件上传（A15）：wx.uploadFile 与 wx.request 是两套 API，包一层对齐 request 的行为 ——
+ *  * 同一 BASE_URL、同一 Authorization: Bearer 头；
+ *  * 同一响应包络（code === 'SUCCESS' 算成功，resolve body.data）；
+ *  * 401 同样清登录态并走统一处理器（uploadFile 不支持重试，静默重登后由调用方重试一次）。
+ * 后端：POST /api/uploads（multipart 字段名 file），返回 { url }。
+ */
+function upload(filePath, opts) {
+  const options = opts || {};
+  return new Promise((resolve, reject) => {
+    const token = getToken();
+    const header = {};
+    if (token) header.Authorization = 'Bearer ' + token;
+    wx.uploadFile({
+      url: BASE_URL + '/api/uploads',
+      filePath,
+      name: 'file',
+      header,
+      timeout: options.timeout || 30000, // 图片比 JSON 大，超时放宽到 30s
+      success(res) {
+        let body = {};
+        try {
+          body = typeof res.data === 'string' ? JSON.parse(res.data) : res.data || {};
+        } catch (e) {
+          reject({ status: res.statusCode, code: 'PARSE', message: '上传响应解析失败' });
+          return;
+        }
+        if (res.statusCode >= 200 && res.statusCode < 300 && body.code === 'SUCCESS') {
+          resolve(body.data);
+          return;
+        }
+        if (res.statusCode === 401 || body.code === 'UNAUTHORIZED') {
+          clearSession();
+          if (!options.silent) {
+            if (unauthorizedHandler) unauthorizedHandler();
+            else openLoginPage();
+          }
+        }
+        reject({
+          status: res.statusCode,
+          code: body.code,
+          message: friendlyMessage(body.code, body.message),
+        });
+      },
+      fail(err) {
+        const errMsg = (err && err.errMsg) || '';
+        const timeout = errMsg.indexOf('timeout') >= 0;
+        reject({
+          status: 0,
+          code: timeout ? 'TIMEOUT' : 'NETWORK',
+          message: timeout ? '上传超时，请稍后重试' : '网络不可用，请检查网络后重试',
+        });
+      },
+    });
+  });
+}
+
 /** 统一错误提示（页面 catch 里一行搞定） */
 function toastError(err) {
   wx.showToast({ title: (err && err.message) || '操作失败', icon: 'none' });
@@ -158,6 +215,7 @@ module.exports = {
   put,
   patch,
   del,
+  upload,
   getToken,
   getRefreshToken,
   setToken,

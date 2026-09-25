@@ -23,6 +23,10 @@ ENV APP_PORT=${APP_PORT} \
 
 RUN addgroup -g 10001 duoduo && adduser -D -u 10001 -G duoduo duoduo
 
+# 上传目录（A15）：预建并归属运行用户 —— 命名卷首次挂载为空卷时，Docker 会把
+# 镜像内挂载点目录的属主复制进卷，否则卷归 root，非 root 进程写盘直接 AccessDenied。
+RUN mkdir -p /data/uploads && chown -R duoduo:duoduo /data/uploads
+
 WORKDIR /app
 COPY ${JAR_FILE} /app/app.jar
 RUN chown duoduo:duoduo /app/app.jar

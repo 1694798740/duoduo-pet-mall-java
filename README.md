@@ -4,7 +4,14 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第三十五轮）** — **登录/注册提示按路径各自准确 + 给可执行下一步**。
+**最近更新：2026-09-26（第三十六轮）** — **多类型售后放开 + 售后举证图直传（A15）**。
+① **多类型售后**：后端唯一键是 `(order_id, type)`，不同类型本就可各自立案 —— 小程序从「有任何售后就收起申请入口」改为**按已提交类型过滤可选类型**；订单详情售后进度改列表展示，入口只在两种类型都提交过才收起。Node stub 验证 4 路径全过。
+② **图片上传链路（全站第一个 multipart 端点）**：`POST /api/uploads`（**需登录**；扩展名+Content-Type 双白名单 jpg/jpeg/png/webp/gif、≤5MB、UUID 落盘不信任原文件名）返回可直塞 `images` 的**绝对 http(s) 直链**；`GET /uploads/{filename}` **公开读**（`<image>` 标签发不出 Authorization 头，安全防线=服务端生成的 UUID 文件名 + 正则锁死防穿越）。**双前缀是安全设计**：网关白名单按路径、不区分方法，读写同前缀时给 GET 开白名单=匿名 POST。
+存储为本地盘卷 `fulfilment-uploads:/data/uploads`（对象存储前的过渡态；Dockerfile 已预建目录并 chown，否则非 root 进程写卷 AccessDenied）。
+小程序售后页新增举证图网格（选图→逐张上传→预览/删除；失败图原地标「上传失败」**不挪位**——中途 splice 会让在途上传回写错位），提交只带成功直链。
+**验证**：新增 `scripts/upload-smoke.ps1` **8/8 全绿**（匿名 401 / 白名单只放读 / 上传→回读 roundtrip / 扩展名白名单）+ 探针证明上传直链被售后创建接口接受；小程序静态自检 0 错误。
+
+**第三十五轮（2026-09-26）** — **登录/注册提示按路径各自准确 + 给可执行下一步**。
 **根因**：前端 `friendlyMessage` 把**所有 401 一刀切**成「请先登录」，把后端的准确文案「手机号或密码不正确」盖掉了 → 用未注册手机号登录也会提示"请先登录"。
 **修复**：① 401 **透出后端文案**（同一条修复让登录接口与业务接口都变准确）；② 手机号登录失败 → 页面内引导「可能未注册或密码错」+「**去注册新账号**」（**保留已填手机号**）+ modal；③ 注册撞号 → 「该手机号已注册」+「**去登录**」；④ 微信未绑定 422 → 未登录走「用手机号**登录或注册**并绑定」、已登录走「绑定到当前账号」。页面内引导卡片统一承载 4 种动作（bind/phone/register/login），**不依赖系统弹窗**。
 **验证**：5 条路径 stub 驱动全通（含切页签保留手机号）。**设计取舍**：后端对"手机号不存在/密码错误"统一 401 是防枚举的刻意设计，前端不猜、只把两种可能与入口都摆出来。
@@ -265,7 +272,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十一套 1505 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（二十二套 1513 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
@@ -295,6 +302,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1        
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 26 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\upload-smoke.ps1      # 8 项：图片上传（白名单只放 GET/匿名上传 401/上传→回读 roundtrip/扩展名白名单）
 
 # 六套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
@@ -549,6 +557,8 @@ duoduo-pet-mall-java/
 | POST | `/api/aftersales/{id}/escalate` | **买家申请平台仲裁**（`PENDING` 或 `SELLER_REJECTED` 时可进入） | 该单买家 |
 | GET | `/api/admin/aftersales` | 运营：全平台售后列表（`status` 过滤 + 分页） | 运营 |
 | POST | `/api/admin/aftersales/{id}/arbitrate` | 运营裁定：`{result: APPROVE_REFUND\|REJECT, note}`，**`note` 必填**；`APPROVE_REFUND` 会真的执行退款 | 运营 |
+
+**图片上传（A15，`duoduo-fulfilment` `/api/uploads`）**：`POST /api/uploads`（multipart `file`，需登录）→ `{url}` 绝对直链（评价晒单图 / 售后举证图共用）；`GET /uploads/{filename}` 公开读（UUID 文件名，正则防穿越）。白名单只放 `/uploads/**`，**上传必须登录**（白名单按路径不区分方法，别把上传也放进去）。
 
 **状态机**：`PENDING`（待卖家处理）→ 卖家 `AGREE` 执行退款 / `REJECT` → `SELLER_REJECTED`；
 买家可从 `PENDING` 或 `SELLER_REJECTED` `escalate` → `ARBITRATING`；运营裁定 → `REFUNDED` 或 `CLOSED`（两者都是终态）。

@@ -241,6 +241,11 @@ services:
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # 图片上传落盘目录（A15）：指向卷挂载点，容器重建后图片不丢
+      UPLOADS_DIR: /data/uploads
+    volumes:
+      # 上传图片持久化：本地盘存储是对象存储接入前的过渡态，卷挂载保证生命周期独立于容器
+      - fulfilment-uploads:/data/uploads
     ports:
       - '8084:8084'
     depends_on:
@@ -424,3 +429,4 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  fulfilment-uploads:

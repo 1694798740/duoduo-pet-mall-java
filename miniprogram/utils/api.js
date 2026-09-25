@@ -248,9 +248,11 @@ const address = {
 
 // ── 售后（A3，履约域） ──────────────────────────────────────────────────────
 const aftersale = {
-  /** 申请售后：type 为 REFUND_ONLY（仅退款）或 RETURN_REFUND（退货退款） */
-  create(orderNo, type, reason) {
-    return req.post('/api/aftersales', { orderNo, type, reason });
+  /** 申请售后：type 为 REFUND_ONLY（仅退款）或 RETURN_REFUND（退货退款）；images 为 http(s) 直链数组（可空） */
+  create(orderNo, type, reason, images) {
+    const payload = { orderNo, type, reason };
+    if (images && images.length > 0) payload.images = images;
+    return req.post('/api/aftersales', payload);
   },
   /** 我的售后单（分页） */
   mine(page, pageSize) {
@@ -325,6 +327,7 @@ module.exports = {
   put: req.put,
   patch: req.patch,
   del: req.del,
+  upload: req.upload,
   getToken: req.getToken,
   setToken: req.setToken,
   setTokens: req.setTokens,

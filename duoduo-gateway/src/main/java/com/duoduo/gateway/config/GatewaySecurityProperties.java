@@ -85,6 +85,11 @@ public class GatewaySecurityProperties {
             "/api/payments/sandbox/**",
             // 沙箱收银台页面（服务端渲染，与上一条同理由放行）
             "/sandbox/pay/**",
+            // 图片公开读（A15）：<image>/<img> 标签发不出 Authorization 头，必须免登才能显示。
+            // 文件名是服务端生成的 UUID（不可枚举、无业务语义），公开读不泄露归属信息。
+            // 上传走的 /api/uploads 在白名单之外 —— 白名单按路径、不区分方法，
+            // 把上传接口也放进来等于匿名 POST，磁盘就成了公共网盘。
+            "/uploads/**",
             "/actuator/**",
             "/health/**"
     );

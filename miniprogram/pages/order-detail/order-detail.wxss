@@ -191,3 +191,10 @@
   font-size: 24rpx;
   padding: 22rpx 0;
 }
+
+/* 售后进度：多条售后单之间留间隔 */
+.as-row + .as-row {
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #f0f0f0;
+}

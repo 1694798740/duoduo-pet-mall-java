@@ -52,8 +52,8 @@ Page({
     tracks: [],
     tracksError: '',
     paying: false,
-    // 该订单的售后单（有则展示状态、不再给申请入口）
-    aftersale: null,
+    // 该订单的售后单列表（同订单最多两种类型各一份，全部提交后才收起申请入口）
+    aftersales: [],
   },
 
   onLoad(query) {
@@ -124,10 +124,10 @@ Page({
       .mine(1, 50)
       .then((data) => {
         const list = (data && data.items) || [];
-        const hit = list.find((a) => a.orderNo === this.data.orderNo);
-        this.setData({ aftersale: hit || null });
+        const hits = list.filter((a) => a.orderNo === this.data.orderNo);
+        this.setData({ aftersales: hits });
       })
-      .catch(() => this.setData({ aftersale: null }));
+      .catch(() => this.setData({ aftersales: [] }));
   },
 
   /** 申请售后 */
