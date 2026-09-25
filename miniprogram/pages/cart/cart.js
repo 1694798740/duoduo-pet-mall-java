@@ -6,6 +6,7 @@
 //  * 失效条目（下架/售罄/库存不足）单独标注原因并禁止勾选，不再混进合计；
 //  * 删除前二次确认（此前只有「数量减到 0」才有确认）。
 const api = require('../../utils/api');
+const images = require('../../utils/images');
 
 const REASON_LABEL = {
   SKU_NOT_FOUND: '商品已不存在',
@@ -37,6 +38,7 @@ Page({
       .then((view) => {
         const items = ((view && view.items) || []).map((it) =>
           Object.assign({}, it, {
+            imageSrc: images.skuImage(it.skuId, it.spuId, it.image),
             priceText: api.fen2yuan(it.price),
             amountText: api.fen2yuan(it.amount),
             reasonText: it.valid ? '' : REASON_LABEL[it.invalidReason] || '已失效',

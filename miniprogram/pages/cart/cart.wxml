@@ -14,6 +14,8 @@
       </view>
     </view>
 
+    <image class="ci-thumb" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+
     <view class="ci-main">
       <view class="ci-title ellipsis-2">{{item.title}}</view>
       <view class="t3 ci-spec">{{item.specText}}</view>

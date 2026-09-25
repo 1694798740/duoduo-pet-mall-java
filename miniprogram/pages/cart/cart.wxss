@@ -26,6 +26,15 @@
   border-color: var(--accent);
 }
 
+/* 商品缩略图：与列表/详情同一套图，保证「同商品同图」 */
+.ci-thumb {
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 14rpx;
+  flex: none;
+  align-self: center;
+  background: var(--bg);
+}
 .ci-main { flex: 1; }
 .ci-title { font-size: 28rpx; font-weight: 500; }
 .ci-spec { font-size: 22rpx; margin: 8rpx 0; }

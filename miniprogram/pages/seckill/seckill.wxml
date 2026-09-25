@@ -17,6 +17,7 @@
     <view class="t3 act-time">{{act.startText}} ~ {{act.endText}}</view>
 
     <view wx:for="{{act.skus}}" wx:for-item="sku" wx:key="skuId" class="sk-sku">
+      <image class="sk-thumb" src="{{sku.imageSrc}}" mode="aspectFill" lazy-load />
       <view class="sk-info">
         <view class="ellipsis sk-name">{{sku.spuTitle}}</view>
         <view class="sk-price-row">

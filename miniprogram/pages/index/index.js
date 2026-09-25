@@ -1,12 +1,10 @@
 // 首页：搜索 + 快捷入口 + 秒杀预告 + 商品流（公开接口，无需登录）
 //
-// A14 修复要点：
-//  * 商品卡字段按后端 ProductCard 规范：mainImage / salesCount / id（此前用的
-//    image / sales / spuId 都不存在，导致图片不显示、已售恒为 0、wx:key 失效）；
-//  * 秒杀预告只展示**未结束**的活动，状态读 phase（后端按当前时间计算，没有 status 字段）；
-//  * 金额在 JS 侧一次性转成展示串（fen2yuan），避免 WXML 里做除法；
-//  * 分页有 hasMore 与 loading 双重护栏：不会越界请求，也不会重复请求同一页。
+// 图片说明（A14 修复轮）：后端 mainImage 是 `/img/products/1001.svg` 这类相对路径 SVG，
+// 小程序 <image> 既解析不了相对路径、也不支持 SVG，因此统一经 utils/images 映射为本地位图。
 const api = require('../../utils/api');
+const images = require('../../utils/images');
+const bannerConfig = require('../../config/banners');
 
 const PAGE_SIZE = 10;
 // tabBar 页面必须用 switchTab 跳转，其余用 navigateTo
@@ -14,17 +12,27 @@ const TAB_PAGES = ['/pages/index/index', '/pages/category/category', '/pages/car
 
 function decorate(list) {
   return (list || []).map((it) =>
-    Object.assign({}, it, { priceText: api.fen2yuan(it.minPrice) })
+    Object.assign({}, it, {
+      priceText: api.fen2yuan(it.minPrice),
+      imageSrc: images.productImage(it.id, it.mainImage),
+    })
   );
 }
 
 Page({
   data: {
     keyword: '',
+    // 轮播图：内容与节奏全部来自 config/banners.js（改配置即换图，页面不动）
+    banners: bannerConfig.list || [],
+    bannerCurrent: 0,
+    bannerAutoplay: bannerConfig.autoplay !== false,
+    bannerInterval: bannerConfig.interval || 4000,
+    bannerDuration: bannerConfig.duration || 400,
     entries: [
-      { icon: '⚡', label: '限时秒杀', url: '/pages/seckill/seckill', color: '#fff1ec' },
-      { icon: '🎫', label: '领券中心', url: '/pages/coupons/coupons', color: '#eef1fe' },
-      { icon: '🤖', label: 'AI 助手', url: '/pages/ai/ai', color: '#e8f7ee' },
+      { iconSrc: '/images/entry/seckill.png', label: '限时秒杀', url: '/pages/seckill/seckill' },
+      { iconSrc: '/images/entry/coupon.png', label: '领券中心', url: '/pages/coupons/coupons' },
+      { iconSrc: '/images/entry/ai.png', label: 'AI 助手', url: '/pages/ai/ai' },
+      { iconSrc: '/images/entry/category.png', label: '全部分类', url: '/pages/category/category' },
     ],
     skeletons: [1, 2, 3, 4],
     seckillSkus: [],
@@ -35,7 +43,11 @@ Page({
     page: 1,
     total: 0,
     hasMore: false,
+    hasSeckill: false,
   },
+
+  // 请求序号：关键词/刷新切换时丢弃过期响应，避免「列表短暂混排」
+  _seq: 0,
 
   onLoad() {
     this.fetchProducts(true);
@@ -63,12 +75,13 @@ Page({
 
   /** @param {boolean} reset true=从第一页重来 */
   fetchProducts(reset) {
-    if (this.data.loading) return Promise.resolve();
+    const seq = ++this._seq;
     const page = reset ? 1 : this.data.page;
     this.setData(reset ? { loading: true, error: '', page: 1, firstLoading: true } : { loading: true, error: '' });
     return api.product
       .list({ page, pageSize: PAGE_SIZE, keyword: this.data.keyword })
       .then((data) => {
+        if (seq !== this._seq) return;
         const items = decorate(data && data.items);
         const merged = page === 1 ? items : this.data.items.concat(items);
         const total = Number((data && data.total) || merged.length);
@@ -81,6 +94,7 @@ Page({
         });
       })
       .catch((err) => {
+        if (seq !== this._seq) return;
         this.setData({
           loading: false,
           firstLoading: false,
@@ -96,7 +110,7 @@ Page({
       .then((list) => {
         const skus = [];
         (list || []).forEach((act) => {
-          if (act.phase === 'ENDED') return; // 已结束的活动不进预告条
+          if (act.phase === 'ENDED') return;
           (act.skus || []).slice(0, 2).forEach((s) => {
             skus.push(
               Object.assign({}, s, {
@@ -104,11 +118,13 @@ Page({
                 phaseLabel: act.phase === 'ONGOING' ? '抢购中' : '即将开始',
                 priceText: api.fen2yuan(s.seckillPrice),
                 originText: api.fen2yuan(s.originalPrice),
+                imageSrc: images.skuImage(s.skuId, null, s.image),
               })
             );
           });
         });
-        this.setData({ seckillSkus: skus.slice(0, 4) });
+        const picked = skus.slice(0, 4);
+        this.setData({ seckillSkus: picked, hasSeckill: picked.length > 0 });
       })
       .catch(() => {});
   },
@@ -123,10 +139,44 @@ Page({
     wx.navigateTo({ url: '/pages/product/product?id=' + e.currentTarget.dataset.id });
   },
 
+  // ── 首页轮播 ─────────────────────────────────────────────
+  /** 手势滑动 / 自动播放都会触发：把真实下标同步回来，箭头与指示器才不会错位 */
+  onBannerChange(e) {
+    this.setData({ bannerCurrent: e.detail.current });
+  },
+
+  bannerPrev() {
+    this.stepBanner(-1);
+  },
+
+  bannerNext() {
+    this.stepBanner(1);
+  },
+
+  /** 左右箭头：环形步进（与 swiper 的 circular 行为保持一致） */
+  stepBanner(delta) {
+    const total = this.data.banners.length;
+    if (total <= 1) return;
+    const next = (this.data.bannerCurrent + delta + total) % total;
+    this.setData({ bannerCurrent: next });
+  },
+
+  onBannerTap(e) {
+    const item = this.data.banners[Number(e.currentTarget.dataset.index)];
+    if (!item || !item.url) return; // 未配置 url：纯展示图，点了不跳
+    const isTab = TAB_PAGES.some((p) => item.url.indexOf(p) === 0);
+    if (isTab) wx.switchTab({ url: item.url });
+    else wx.navigateTo({ url: item.url });
+  },
+
   goEntry(e) {
     const url = e.currentTarget.dataset.url;
     const isTab = TAB_PAGES.some((p) => url.indexOf(p) === 0);
     if (isTab) wx.switchTab({ url });
     else wx.navigateTo({ url });
+  },
+
+  onShareAppMessage() {
+    return { title: '多多宠物商店 · 好物推荐', path: '/pages/index/index' };
   },
 });

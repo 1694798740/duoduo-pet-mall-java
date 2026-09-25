@@ -191,7 +191,8 @@ public class AuthService {
         String openid = wechatGateway.codeToOpenid(code);
         UserEntity entity = findByOpenid(openid);
         if (entity == null) {
-            throw BizException.businessRule("该微信未绑定账号，请先用手机号登录，再在「账号与安全」中绑定");
+            // 文案对两端都要准确：小程序端没有「账号与安全」入口，客户端会自行给出可操作的引导
+            throw BizException.businessRule("该微信未绑定账号，请先用手机号登录或注册，登录成功后即可绑定微信");
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");

@@ -5,8 +5,40 @@
 <view wx:elif="{{loading}}" class="empty">加载中…</view>
 
 <block wx:elif="{{detail}}">
+  <!-- 商品图集：统一 1:1 出图，点击可全屏预览 -->
+  <view class="card p-media">
+    <swiper
+      class="p-swiper"
+      indicator-dots="{{detail.gallery.length > 1}}"
+      indicator-color="rgba(35,38,47,0.15)"
+      indicator-active-color="#4f6ef7"
+      circular="{{detail.gallery.length > 1}}"
+      bindchange="onSwiperChange"
+    >
+      <swiper-item wx:for="{{detail.gallery}}" wx:key="*this">
+        <image
+          class="p-swiper-img"
+          src="{{item}}"
+          mode="aspectFill"
+          data-src="{{item}}"
+          bindtap="previewImage"
+          lazy-load
+        />
+      </swiper-item>
+    </swiper>
+    <view wx:if="{{detail.gallery.length > 1}}" class="p-thumbs">
+      <image
+        wx:for="{{detail.gallery}}"
+        wx:key="*this"
+        class="p-thumb {{swiperIndex === index ? 'p-thumb-on' : ''}}"
+        src="{{item}}"
+        mode="aspectFill"
+        lazy-load
+      />
+    </view>
+  </view>
+
   <view class="card">
-    <image wx:if="{{detail.mainImage}}" src="{{detail.mainImage}}" mode="aspectFill" class="p-image" lazy-load />
     <view class="p-title">{{detail.title}}</view>
     <view wx:if="{{detail.subtitle}}" class="t3">{{detail.subtitle}}</view>
     <view class="p-price-row">
@@ -27,7 +59,9 @@
         data-index="{{index}}"
         bindtap="selectSku"
       >
-        {{item.specText}}（¥{{item.priceText}}）
+        <image class="sku-thumb" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+        <text class="sku-text">{{item.specText}}</text>
+        <text class="sku-price">¥{{item.priceText}}</text>
       </view>
     </view>
   </view>

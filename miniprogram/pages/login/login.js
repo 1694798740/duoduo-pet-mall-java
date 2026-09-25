@@ -1,13 +1,15 @@
-// 登录页：微信一键登录 + 手机号登录/注册（A14 修复：两条路都必须可见可用）
+// 登录页：微信一键登录 + 手机号登录/注册（含「未绑定微信」闭环）
 //
-// 为什么两条路都要有：
-//  * 微信一键登录走 /api/auth/wechat/token（code 换令牌，令牌随响应体下发）。
-//    但后端对**未绑定**的微信身份返回 422（不做自动注册，避免造出无手机号的孤儿账号），
-//    所以新用户必须能走手机号注册 —— 把手机号入口藏起来等于把新用户挡在门外。
-//  * 手机号登录/注册走 /api/auth/login/token、/api/auth/register（注册后自动登录换令牌）。
+// 四种情形都要走得通（A14 修复：此前只有第 1/2 种，后两种是死路）：
+//   ① 微信已绑定        → 一键登录拿到令牌
+//   ② 微信未绑定 + 未登录 → 弹窗引导手机号；**登录成功后自动用新 code 绑定当前微信**，
+//                          下次即可一键登录（code 一次性，必须重新 wx.login）
+//   ③ 微信未绑定 + 已登录 → 直接绑定（一次点击完成，不用再走一遍登录）
+//   ④ 该微信已属他人     → 409，明确提示换账号
 //
-// 令牌写入与等待方结算都交给 app：app.finishLogin(user) 会唤醒
-// ensureLogin() 里等待的页面 Promise，登录页只管界面与提示。
+// 后端的刻意设计（不要在页面上绕开）：/api/auth/wechat 对未绑定微信返回 422，
+// 不做自动注册 —— 微信授权拿不到手机号，自动注册会造出无手机号的孤儿账号。
+const api = require('../../utils/api');
 const { WECHAT_LOGIN_READY } = require('../../config');
 
 const PHONE_REGEX = /^1[3-9]\d{9}$/;
@@ -21,6 +23,8 @@ Page({
     password: '',
     nickname: '',
     submitting: false,
+    // 是否处于「手机号登录后将自动绑定微信」流程（用于界面文案）
+    pendingWechatBind: false,
   },
 
   // 是否已登录成功：用于 onUnload 判断要不要唤醒等待方（失败退出）
@@ -43,7 +47,7 @@ Page({
     if (mode && mode !== this.data.mode) this.setData({ mode });
   },
 
-  /** 微信一键登录 */
+  // ── 微信一键登录 ─────────────────────────────────────────
   wechatLogin() {
     if (this.data.submitting) return;
     this.setData({ submitting: true });
@@ -60,19 +64,29 @@ Page({
       });
   },
 
-  /** 微信登录失败的分类提示：未绑定要引导去手机号，别让用户以为是「登录坏了」 */
+  /** 微信登录失败的分类处理：未绑定要给出**可走通的下一步**，别让用户反复点 */
   handleWechatError(err) {
     const status = err && err.status;
+
     if (status === 422) {
+      // 情形③：已经登录了 → 一次点击直接绑定，不必再走登录
+      if (api.getToken()) {
+        this.bindCurrentWechat();
+        return;
+      }
+      // 情形②：未登录 → 引导手机号，登录后自动绑定
       wx.showModal({
-        title: '微信未绑定账号',
-        content: '该微信还没有绑定多多账号。请用手机号登录/注册，再在「我的」页面绑定微信。',
+        title: '微信还没绑定账号',
+        content: '用手机号登录或注册后，会自动把当前微信绑定到该账号；以后就能一键登录了。',
         confirmText: '去手机号登录',
-        showCancel: false,
-        success: () => this.setData({ mode: 'phone' }),
+        cancelText: '取消',
+        success: (res) => {
+          if (res.confirm) this.setData({ mode: 'phone', pendingWechatBind: true });
+        },
       });
       return;
     }
+
     if (status === 409) {
       wx.showToast({ title: '该微信已绑定其他账号', icon: 'none' });
       return;
@@ -84,7 +98,28 @@ Page({
     wx.showToast({ title: (err && err.message) || '登录失败，请重试', icon: 'none' });
   },
 
-  /** 手机号登录 / 注册（同一个按钮，按 mode 分流） */
+  /** 把当前微信绑定到「已登录账号」：重新 wx.login 取新 code（旧 code 已用过） */
+  bindCurrentWechat() {
+    if (this.data.submitting) return;
+    this.setData({ submitting: true });
+    return new Promise((resolve, reject) => {
+      wx.login({
+        success: (res) => (res.code ? resolve(res.code) : reject({ message: '微信授权未返回 code' })),
+        fail: () => reject({ message: '微信授权失败，请重试' }),
+      });
+    })
+      .then((code) => api.wechatBind(code))
+      .then(() => {
+        this.setData({ submitting: false, pendingWechatBind: false });
+        wx.showToast({ title: '已绑定微信，下次可一键登录', icon: 'success' });
+      })
+      .catch((err) => {
+        this.setData({ submitting: false });
+        wx.showToast({ title: (err && err.message) || '绑定失败，请重试', icon: 'none' });
+      });
+  },
+
+  // ── 手机号登录 / 注册 ───────────────────────────────────
   submitPhone() {
     if (this.data.submitting) return;
     const { phone, password, nickname, mode } = this.data;
@@ -102,11 +137,18 @@ Page({
       return;
     }
     const app = getApp();
+    const bindAfter = this.data.pendingWechatBind;
     this.setData({ submitting: true });
     const action =
       mode === 'register' ? app.registerBy(phone, password, nickname) : app.loginByPhone(phone, password);
     action
-      .then(() => this.afterLogin(mode === 'register' ? '注册成功' : '登录成功'))
+      .then(() => {
+        // 登录/注册成功：若本次是从「微信未绑定」转过来的，顺手完成绑定
+        if (bindAfter && this.data.wechatReady) {
+          return this.bindCurrentWechat().then(() => this.afterLogin('已登录并绑定微信'));
+        }
+        return this.afterLogin(mode === 'register' ? '注册成功' : '登录成功');
+      })
       .catch((err) => {
         this.setData({ submitting: false });
         wx.showToast({ title: (err && err.message) || '操作失败，请重试', icon: 'none' });

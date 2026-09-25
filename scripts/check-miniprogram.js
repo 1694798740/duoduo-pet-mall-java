@@ -9,6 +9,8 @@
  *                                「方法名集合」比对（本次排查里 coupons 的 goLogin 就是这样漏的）
  *   4. WXML 引用了未定义的数据字段 → 只做「顶层字段」粗筛：{{x}} / {{x.y}} 的 x 必须出现在
  *                                data 初始值或 setData 调用的顶层键里（避免误报，仅告警不失败）
+ *   5. 引用的本地图片不存在   → 扫描 wxml/js/json 里的 images/xxx.(png|jpg|jpeg|webp)，
+ *                                与磁盘比对（tabBar 图标在 app.json 里，同一条规则覆盖）
  *
  * 用法：node scripts/check-miniprogram.js [miniprogramDir]
  * 退出码：有 error 级问题 → 1；仅 warning → 0（便于先接入 CI 再逐步收紧）
@@ -181,10 +183,31 @@ for (const wxml of wxmlFiles) {
   }
 }
 
+// ---------- 5. 本地图片存在性 ----------
+// 图片路径写错在开发者工具里只表现为「图不显示」，不会编译报错，因此单列一条硬检查。
+const imgRe = /['"](?:\.\.\/)*\/?images\/([A-Za-z0-9_\-./]+\.(?:png|jpg|jpeg|gif|webp))['"]/g;
+const imgChecked = new Set();
+for (const file of files) {
+  if (!/\.(wxml|js|json)$/.test(file)) continue;
+  const src = fs.readFileSync(file, 'utf8');
+  let m;
+  while ((m = imgRe.exec(src))) {
+    const rel = m[1];
+    if (imgChecked.has(rel)) continue;
+    imgChecked.add(rel);
+    const target = path.join(ROOT, 'images', rel);
+    if (!fs.existsSync(target)) {
+      errors.push(
+        `[图片缺失] ${path.relative(ROOT, file)} 引用了 images/${rel}，但文件不存在`
+      );
+    }
+  }
+}
+
 // ---------- 输出 ----------
 const rel = (s) => s.replace(/\\/g, '/');
 console.log('=== 小程序静态自检 ===');
-console.log(`扫描：${jsFiles.length} 个 js / ${wxmlFiles.length} 个 wxml / ${files.length} 个文件`);
+console.log(`扫描：${jsFiles.length} 个 js / ${wxmlFiles.length} 个 wxml / ${files.length} 个文件 / ${imgChecked.size} 个图片引用`);
 if (errors.length) {
   console.log(`\n错误（${errors.length}）：`);
   errors.forEach((e) => console.log('  ✗ ' + rel(e)));

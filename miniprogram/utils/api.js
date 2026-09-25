@@ -38,6 +38,16 @@ function wxLogin() {
   });
 }
 
+/**
+ * 绑定当前微信到已登录账号（A13 端点 /api/auth/wechat/bind，需登录态）。
+ *
+ * 场景：微信一键登录返回 422「未绑定」时，引导用户用手机号登录，登录成功后立刻
+ * 用**新拿的 code**绑定当前微信 —— code 是一次性的，不能复用失败那次。
+ */
+function wechatBind(code) {
+  return req.post('/api/auth/wechat/bind', { code });
+}
+
 function phoneLogin(phone, password) {
   return req.post('/api/auth/login/token', { phone, password }).then((data) => acceptSession(data));
 }
@@ -240,6 +250,7 @@ module.exports = {
   onUnauthorized: req.onUnauthorized,
   toastError: req.toastError,
   wxLogin,
+  wechatBind,
   phoneLogin,
   register,
   ensureSession,

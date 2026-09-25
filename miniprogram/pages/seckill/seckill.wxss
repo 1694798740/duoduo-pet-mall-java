@@ -15,6 +15,13 @@
   padding: 20rpx;
   margin-top: 16rpx;
 }
+.sk-thumb {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 14rpx;
+  flex: none;
+  background: #fff;
+}
 .sk-info { flex: 1; min-width: 0; }
 .sk-name { font-size: 27rpx; font-weight: 500; }
 .sk-price-row { display: flex; align-items: baseline; gap: 12rpx; margin-top: 8rpx; font-size: 22rpx; }

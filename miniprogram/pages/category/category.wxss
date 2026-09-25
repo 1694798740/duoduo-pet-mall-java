@@ -1,6 +1,7 @@
 /* 分类页：左右分栏，整页不滚动（列表在右侧 scroll-view 内滚动）
-   用 position:fixed + inset 撑满**可见视口**（自动扣掉 tabBar 与安全区），
-   比 height:100vh 可靠：100vh 在部分机型上会把最后一行压到 tabBar 下面 */
+   高度用 position:fixed + 四向 0 撑满**可见视口**（自动扣掉 tabBar 与安全区），
+   比 height:100vh 可靠：vh 是屏幕高，会把最后一行压到 tabBar 下面 */
+
 .cat-wrap {
   position: fixed;
   left: 0;
@@ -10,41 +11,95 @@
   display: flex;
   background: var(--bg);
 }
+
+/* ── 左栏：固定宽度且**不允许被压缩**（flex: none）
+   此前只写了 width，没有禁止收缩：右侧固定宽卡片一撑，左栏就被挤窄 → 分类名逐字竖排 */
 .cat-side {
-  width: 180rpx;
-  background: #fff;
+  flex: 0 0 200rpx;
+  width: 200rpx;
   height: 100%;
+  background: #fff;
 }
+
+/* 每一项：图标 + 单行文案；左内边距与选中态左条对齐，切换时文字不跳动 */
 .cat-item {
-  padding: 32rpx 16rpx;
-  text-align: center;
-  font-size: 26rpx;
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  padding: 26rpx 12rpx 26rpx 14rpx;
+  font-size: 25rpx;
   color: var(--text-2);
   border-left: 6rpx solid transparent;
+  white-space: nowrap;   /* 关键：禁止逐字换行 */
+  overflow: hidden;
 }
+.cat-item-icon {
+  width: 36rpx;
+  height: 36rpx;
+  flex: none;
+  border-radius: 10rpx;
+  background: var(--bg);
+}
+.cat-item-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 选中态：浅蓝底 + 蓝色左条 + 主色加粗 —— 所有分类共用同一套规则 */
 .cat-active {
+  background: var(--brand-weak);
   color: var(--brand);
   font-weight: 700;
-  background: var(--bg);
   border-left-color: var(--brand);
 }
+
+/* ── 右栏 */
 .cat-main {
   flex: 1;
   height: 100%;
-  padding: 20rpx;
+  padding: 20rpx 20rpx 0;
   box-sizing: border-box;
 }
-.cat-children { white-space: nowrap; margin-bottom: 20rpx; }
+
+.cat-children {
+  white-space: nowrap;
+  margin-bottom: 20rpx;
+}
 .cat-chip {
-  display: inline-block;
-  padding: 8rpx 24rpx;
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 22rpx;
   background: #fff;
   border-radius: 28rpx;
   font-size: 24rpx;
   color: var(--text-2);
   margin-right: 12rpx;
 }
-.chip-active { background: var(--brand); color: #fff; }
-/* 双列卡片在 180rpx 侧栏的剩余宽度里收窄，避免换行错位 */
-.cat-main .goods-card { width: 320rpx; }
-.cat-main .goods-cover { width: 320rpx; height: 320rpx; }
+.chip-icon {
+  width: 28rpx;
+  height: 28rpx;
+  flex: none;
+  border-radius: 8rpx;
+}
+.chip-active {
+  background: var(--brand);
+  color: #fff;
+}
+
+/* ── 商品卡：宽度按容器百分比（与分类内容无关，永远两列）
+   此前写死 320rpx：左栏 180rpx + 2×320rpx 超出可用宽度 → 有时挤成单列、有时两列 */
+.cat-main .goods-grid {
+  padding: 0;
+}
+.cat-main .goods-card {
+  width: 48.6%;
+}
+.cat-main .goods-cover {
+  width: 100%;
+  /* 卡片宽 ≈248rpx（510rpx 内容区的 48.6%），高度取 250rpx 让封面接近 1:1，
+     与随包商品图（600×600）比例一致，aspectFill 裁切最少 */
+  height: 250rpx;
+}

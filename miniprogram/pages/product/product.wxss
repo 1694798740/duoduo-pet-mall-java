@@ -1,23 +1,70 @@
+/* ── 商品图集 ── */
+.p-media {
+  padding: 16rpx 16rpx 12rpx;
+}
+.p-swiper {
+  width: 100%;
+  height: 640rpx;
+}
+.p-swiper-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 16rpx;
+  background: var(--bg);
+}
+.p-thumbs {
+  display: flex;
+  justify-content: center;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+.p-thumb {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 12rpx;
+  background: var(--bg);
+  border: 2rpx solid transparent;
+}
+.p-thumb-on {
+  border-color: var(--brand);
+}
+
 .p-title { font-size: 34rpx; font-weight: 700; margin-bottom: 12rpx; }
 .p-price-row { display: flex; align-items: center; justify-content: space-between; }
 .p-price { font-size: 40rpx; }
 .sec-title { font-weight: 700; margin-bottom: 16rpx; }
-.sku-list { display: flex; flex-wrap: wrap; gap: 16rpx; }
+
+/* ── 规格：缩略图 + 规格名 + 价格（三列信息一眼看清） ── */
+.sku-list { display: flex; flex-direction: column; gap: 16rpx; }
 .sku {
-  padding: 10rpx 24rpx;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 12rpx 18rpx;
   border: 2rpx solid var(--line);
-  border-radius: 12rpx;
+  border-radius: 14rpx;
   font-size: 26rpx;
 }
-.sku-active { border-color: var(--brand); color: var(--brand); background: var(--brand-weak); }
-.sku-disabled { color: var(--text-3); text-decoration: line-through; }
+.sku-thumb {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 10rpx;
+  flex: none;
+  background: var(--bg);
+}
+.sku-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sku-price { color: var(--accent); font-weight: 600; }
+.sku-active { border-color: var(--brand); background: var(--brand-weak); color: var(--brand); }
+.sku-disabled { color: var(--text-3); background: var(--bg); }
+.sku-disabled .sku-price { color: var(--text-3); }
+
 .review-item { border-bottom: 1rpx solid var(--line); padding: 16rpx 0; }
 .review-item:last-child { border-bottom: none; }
 .review-head { display: flex; justify-content: space-between; margin-bottom: 8rpx; font-size: 24rpx; }
 .review-content { font-size: 26rpx; color: var(--text); line-height: 1.6; }
 .p-desc { color: var(--text-2); line-height: 1.7; }
 
-/* 底部操作栏：分享（open-type=share）+ 加购 */
+/* ── 底部操作栏：分享（open-type=share）+ 加购 ── */
 .footer {
   position: fixed;
   left: 0;
@@ -37,12 +84,3 @@
   margin: 0;
 }
 .footer-btn { flex: 1; height: 76rpx; }
-
-/* 详情主图：整宽圆角卡片图 */
-.p-image {
-  width: 100%;
-  height: 480rpx;
-  border-radius: 16rpx;
-  margin-bottom: 16rpx;
-  background: var(--bg);
-}

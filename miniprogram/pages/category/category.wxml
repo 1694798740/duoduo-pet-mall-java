@@ -1,4 +1,5 @@
 <view class="cat-wrap">
+  <!-- 左栏：固定宽度不收缩，每项「图标 + 单行文案」，选中态全部分类一致 -->
   <scroll-view scroll-y class="cat-side">
     <view
       wx:for="{{categories}}"
@@ -7,30 +8,37 @@
       data-index="{{index}}"
       bindtap="selectMain"
     >
-      {{item.name}}
+      <image class="cat-item-icon" src="{{item.iconSrc}}" mode="aspectFit" lazy-load />
+      <text class="cat-item-text">{{item.name}}</text>
     </view>
   </scroll-view>
 
-  <!-- 列表在 scroll-view 内滚动：分页必须靠 bindscrolltolower（页面级 onReachBottom 不会触发） -->
   <scroll-view
     scroll-y
     class="cat-main"
     lower-threshold="120"
     bindscrolltolower="onScrollToLower"
   >
+    <!-- 子分类 chips：同样带图标，选中态与左栏同一套配色 -->
     <scroll-view scroll-x wx:if="{{activeChildren.length > 0}}" class="cat-children">
       <view
         class="cat-chip {{activeChildId === '' ? 'chip-active' : ''}}"
         data-id=""
         bindtap="selectChild"
-      >全部</view>
+      >
+        <image class="chip-icon" src="/images/category/default.png" mode="aspectFit" />
+        <text>全部</text>
+      </view>
       <view
         wx:for="{{activeChildren}}"
         wx:key="id"
         class="cat-chip {{activeChildId === item.id ? 'chip-active' : ''}}"
         data-id="{{item.id}}"
         bindtap="selectChild"
-      >{{item.name}}</view>
+      >
+        <image class="chip-icon" src="{{item.iconSrc}}" mode="aspectFit" />
+        <text>{{item.name}}</text>
+      </view>
     </scroll-view>
 
     <view wx:if="{{error}}" class="error-box">
@@ -43,7 +51,7 @@
       <view>该分类下暂无商品</view>
     </view>
 
-    <view wx:else class="goods-grid" style="padding: 0">
+    <view wx:else class="goods-grid">
       <view
         wx:for="{{items}}"
         wx:key="id"
@@ -52,8 +60,7 @@
         bindtap="goDetail"
       >
         <view class="goods-cover">
-          <image wx:if="{{item.mainImage}}" src="{{item.mainImage}}" mode="aspectFill" lazy-load />
-          <text wx:else>🐱</text>
+          <image src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
         </view>
         <view class="goods-body">
           <view class="goods-name ellipsis-2">{{item.title}}</view>

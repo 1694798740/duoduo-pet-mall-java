@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-25（第二十一轮：**A14 排查修复轮**——按排查报告修掉 28 项问题中的 P0/P1/P2/P3；**根因是「小程序拿不到登录令牌」**（登录端点只回扁平 UserView、令牌走 Cookie），新增 `/api/auth/{login,refresh,wechat}/token` 三个**纯增量**令牌端点 + 网关白名单，小程序改为 Bearer 通道；并修复支付缺 idempotentKey、支付结果字段（codeUrl/payStatus）、秒杀 phase 字段、商品图 mainImage、分页失效、券包 goLogin 缺失等；新增 `scripts/check-miniprogram.js` 静态自检（14 js / 10 wxml / 50 文件 **0 错误 0 告警**）。上一轮第二十轮交付 A14 小程序重构 + 限时秒杀）
+> 更新时间：2026-09-25（第二十三轮 · 微信一键登录「未绑定」闭环）——用户反馈微信一键登录报错：服务端日志显示 `jscode2session 成功`（微信侧换码正常）后紧跟 `code=BUSINESS_RULE 该微信未绑定账号`（422）——即 A13 刻意不做微信自动注册（微信授权拿不到手机号，自动注册会造出无手机号的孤儿账号）；**真缺陷是引导不闭环**：后端文案指向小程序里不存在的「账号与安全」入口，客户端只弹提示无可执行下一步。已补：`api.wechatBind()` + 登录页四情形闭环（已绑定→一键登录／未绑定+未登录→手机号登录后**自动绑定**／未绑定+已登录→一次点击直接绑定／属他人→409 提示），并把 422 文案改为两端都准确的说法。实测 6 步全通（含 mock 通道）：未绑定 422 → 绑定 200 → 再一键登录 **200 且同一 userId + 拿到令牌** → 幂等 200 → 抢占 409，临时账号已清理。上一轮第二十二轮完成分类栏统一 + 图片补齐 + 首页轮播）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -195,6 +195,62 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-25（第二十三轮 · 微信一键登录「未绑定」闭环 + 文案校正）
+
+> 用户反馈：微信一键登录报错（附截图）。**诊断结论：登录链路完好，是「该微信未绑定账号」（422）。**
+
+#### 证据链（服务端日志）
+
+- `19:13:08 WechatGateway: jscode2session 成功 openidPrefix=oqYQ len=28` —— 微信侧换码成功（AppID/Secret、工具链路均正常）
+- `19:13:08 GlobalExceptionHandler: code=BUSINESS_RULE msg=该微信未绑定账号…` —— 用户所见「报错」= HTTP 422
+- 19:25 / 19:30 两次点击同样结果 → 说明引导无法执行，用户只能反复点
+
+#### 根因
+
+`/api/auth/wechat` 对未绑定微信**不做自动注册**（A13 刻意设计：微信授权拿不到手机号，自动注册会造出无手机号孤儿账号）。
+真缺陷在**引导不闭环**：后端 422 文案让用户「去『账号与安全』绑定」——小程序端没有该入口；客户端仅弹提示，无下一步。
+
+#### 修复
+
+| 文件 | 改动 |
+|---|---|
+| `miniprogram/utils/api.js` | 新增 `wechatBind(code)` → `POST /api/auth/wechat/bind`（登录态；后端 A13 已有此端点） |
+| `miniprogram/pages/login/login.js` | 四情形闭环：①已绑定→一键登录 ②未绑定+未登录→引导手机号，**登录成功后自动 `wx.login` 取新 code 绑定当前微信**（code 一次性，不可复用失败那次） ③未绑定+已登录→**一次点击直接绑定** ④该微信属他人→409 提示 |
+| `miniprogram/pages/login/login.wxml/.wxss` | 绑定流程顶部提示条「用手机号登录/注册后，会自动把当前微信绑定到这个账号」 |
+| `duoduo-user/…/AuthService.java` | 422 文案改为「请先用手机号登录或注册，登录成功后即可绑定微信」（对 Web 与小程序两端都准确） |
+
+#### 自测（真实 HTTP，含 mock 通道；临时账号已清理）
+
+`未绑定一键登录 422` → `登录态绑定 200` → **`绑定后再一键登录 200 + 同一 userId + accessToken`** → `重复绑定 200 幂等` → `他人抢占 409`；`mvn -pl duoduo-user -am package` BUILD SUCCESS + 容器重建；小程序静态自检 0 错误 / 0 告警。
+
+### 2026-09-25（第二十二轮 · A14 界面修复与资源补齐：分类栏统一 + 图片 + 首页轮播）
+
+> 用户反馈：①点击不同分类时选中态/高亮/排版各不相同；②商品列表、详情页、分类图标、首页标签图标缺图（允许用网上素材），要求尺寸比例统一、风格一致；③首页限时秒杀/领券栏目上方加轮播图（自动播放、平滑切换、指示器、左右控制、手势滑动、配置数组、大屏适配）。
+
+#### 分类栏不一致 · 三处根因与修法
+
+| 现象 | 根因 | 修复（文件） |
+|---|---|---|
+| 某些分类下左栏文字**逐字竖排** | `.cat-side` 只有 width、没有 `flex: none`，被右侧内容挤窄；`.cat-item` 无 `white-space: nowrap` | `category.wxss`：左栏 `flex: 0 0 200rpx` 不收缩；每项改 flex 横排（图标+单行文案 ellipsis） |
+| 商品卡**有时单列有时双列** | `.cat-main .goods-card` 写死 320rpx，与左栏宽度相加超出可用宽度 → 换行结果随内容变化 | 卡片宽度改**容器百分比 48.6%**（248rpx × 2 + 14rpx 间距 = 510rpx），封面 250rpx 近 1:1 |
+| 连点分类「点了没反应/停在旧分类」 | `fetchProducts` 开头 `if (loading) return` 丢弃的是**新请求** | 改**请求序号** `_seq`：新请求照发，过期响应丢弃 |
+| 选中态观感不统一 | 旧选中态仅左蓝条+灰底 | 统一「浅蓝底 + 蓝左条 6rpx + 主色加粗」，未选中左条透明（切换不跳动）；chips 同步同一套配色 |
+
+#### 图片补齐 · 34 张 / 397.5 KB（主包 19.4%）
+
+- **根因**：后端 `t_spu.main_image` = `/img/products/1001.svg` —— 相对路径（`<image>` 不拼域名）、网关(8080)/商品服务(8082) **均不托管 `/img`**（实测 404/500）、且 `<image>` **不支持 SVG**。三者叠加 → 全站白图 + 控制台 `Failed to load`。
+- **修法**：新增 `miniprogram/utils/images.js` 解析层（**绝对 https URL 原样使用**，将来接 CDN 前端零改动；其余按 id 稳定映射随包位图）+ `scripts/gen-miniprogram-images.py` 统一模板生成（色板与 CSS 变量对齐）。
+- **产物**：`products/p01–p12.jpg`（600×600）、`category/{bowl,bone,box,medical,chip,heart,default}.png`（键名对齐后端 `t_category.icon`）、`tabbar/*.png`（5 tab 双态 81×81）、`entry/*.png`（4 张）、`banners/b01–b04.jpg`（1000×427）、`share/cover.jpg`。
+- **接入**：首页/分类商品流、购物车缩略图、**详情页图集（swiper 3 图 + 缩略图条 + 全屏预览）**、秒杀 SKU 缩略图、`app.json` tabBar 双态图标。
+
+#### 首页轮播（Banner）
+
+`swiper` 自动播放（4s / 420ms 过渡）+ 手势滑动 + 左右圆形箭头（环形步进）+ 自绘胶囊指示器；配置集中在 **`miniprogram/config/banners.js`**（`interval/duration/autoplay/list[{id,image,title,subtitle,url,overlay}]`）；点击自动识别 tabBar 页；高度 320rpx 与素材同比例，`@media (min-width:500px)` 加高到 400rpx 适配平板/桌面。位置在搜索栏下、快捷入口上，**下方秒杀预告与商品流零改动**。
+
+#### 自测
+
+`node scripts/check-miniprogram.js` → **0 错误 / 0 告警**（16 js / 10 wxml / 90 文件 / **26 个图片引用**）；自检新增第 5 条规则：**引用的 `images/**` 必须真实存在**（含 app.json 的 tabBar 图标）。所有 34 张图生成对照表逐张目视确认（`logs/mp-images-check.png`，不入库）。
 
 ### 2026-09-25（第二十一轮 · A14 排查修复：小程序全面体检后的缺陷修复）
 

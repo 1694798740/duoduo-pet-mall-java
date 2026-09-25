@@ -9,6 +9,17 @@
   text-align: center;
 }
 
+/* 「登录后将自动绑定微信」提示条 */
+.login-bind-tip {
+  background: var(--brand-weak);
+  color: var(--brand);
+  font-size: 24rpx;
+  line-height: 1.6;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 24rpx;
+}
+
 /* 手机号登录 / 注册 切换 */
 .login-mode {
   display: flex;

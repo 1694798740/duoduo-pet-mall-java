@@ -15,6 +15,11 @@
       <view class="login-tip">首次使用请用下方手机号注册，登录后在「我的」绑定微信，之后即可一键登录</view>
     </block>
 
+    <!-- 从「微信未绑定」转过来时，明确告诉用户这步会顺手完成绑定 -->
+    <view wx:if="{{pendingWechatBind}}" class="login-bind-tip">
+      用手机号登录/注册后，会自动把当前微信绑定到这个账号
+    </view>
+
     <!-- 手机号登录 / 注册：始终可见（新用户唯一的开户入口） -->
     <view class="login-mode">
       <view

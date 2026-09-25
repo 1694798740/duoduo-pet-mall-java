@@ -6,6 +6,7 @@
 //  * dataset 只传 id/phase 等标量，不再把整个活动对象（含 skus 数组）塞进 dataset；
 //  * 登录引导与失败分支都有 catch：不会静默无响应。
 const api = require('../../utils/api');
+const images = require('../../utils/images');
 
 const PHASE_LABEL = { ONGOING: '抢购中', UPCOMING: '即将开始', ENDED: '已结束' };
 
@@ -16,6 +17,7 @@ function decorate(act) {
     endText: api.shortTime(act.endAt),
     skus: (act.skus || []).map((s) =>
       Object.assign({}, s, {
+        imageSrc: images.skuImage(s.skuId, null, s.image),
         seckillPriceText: api.fen2yuan(s.seckillPrice),
         originalPriceText: api.fen2yuan(s.originalPrice),
         soldOut: Number(s.availableStock) <= 0,

@@ -14,6 +14,128 @@
 }
 .search-btn { width: 132rpx; height: 64rpx; }
 
+/* ── 首页轮播（Banner）─────────────────────────────────────
+   结构：swiper（自动播放 + 手势滑动）+ 左右箭头 + 自绘指示器
+   高度：750:320 与随包素材同比例；大屏（iPad / 平板）用媒体查询加高，避免留白 */
+.banner {
+  position: relative;
+  margin: 20rpx 24rpx 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.banner-swiper {
+  width: 100%;
+  height: 320rpx;
+}
+.banner-item {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.banner-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--brand-weak);
+}
+/* 换成纯图片素材（overlay: true）时的文案层：底部渐变遮罩 + 白字 */
+.banner-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 36rpx 28rpx 24rpx;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.42) 100%);
+}
+.banner-title {
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 700;
+}
+.banner-subtitle {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 22rpx;
+  margin-top: 6rpx;
+}
+
+/* 左右切换控制 */
+.banner-arrow {
+  position: absolute;
+  top: 50%;
+  width: 56rpx;
+  height: 56rpx;
+  margin-top: -28rpx;
+  border-radius: 50%;
+  background: rgba(35, 38, 47, 0.28);
+  color: #fff;
+  font-size: 40rpx;
+  line-height: 52rpx;
+  text-align: center;
+  z-index: 3;
+}
+.banner-arrow-prev { left: 16rpx; }
+.banner-arrow-next { right: 16rpx; }
+.banner-arrow-hover { background: rgba(35, 38, 47, 0.5); }
+
+/* 指示器：当前项拉长为胶囊 */
+.banner-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18rpx;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10rpx;
+  z-index: 3;
+}
+.banner-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 6rpx;
+  background: rgba(255, 255, 255, 0.62);
+  transition: width 0.24s ease;
+}
+.banner-dot-on {
+  width: 32rpx;
+  background: #fff;
+}
+
+/* 大屏（平板/桌面端开发者工具预览）：等比放大轮播区，保持图片比例不变形 */
+@media (min-width: 500px) {
+  .banner-swiper { height: 400rpx; }
+  .banner-title { font-size: 36rpx; }
+}
+
+/* ── 快捷入口（宫格）：图标改为随包 PNG，四等分不挤压 ── */
+.entry-grid {
+  display: flex;
+  justify-content: space-around;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 28rpx 10rpx;
+  margin: 20rpx 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.entry-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10rpx;
+}
+.entry-icon {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 28rpx;
+}
+.entry-label {
+  font-size: 24rpx;
+  color: var(--text-2);
+}
+
+/* ── 秒杀预告条 ── */
 .seckill-strip {
   background: var(--card);
   border-radius: var(--radius);
@@ -27,17 +149,25 @@
 .seckill-scroll { white-space: nowrap; }
 .seckill-item {
   display: inline-block;
-  width: 200rpx;
+  width: 220rpx;
+  vertical-align: top;
   background: var(--accent-weak);
   border-radius: 16rpx;
-  padding: 16rpx;
+  padding: 14rpx;
   margin-right: 16rpx;
+}
+.seckill-thumb {
+  width: 100%;
+  height: 150rpx;
+  border-radius: 12rpx;
+  margin-bottom: 10rpx;
+  background: #fff;
 }
 .seckill-name { font-size: 22rpx; color: var(--text-2); }
 .seckill-price { color: var(--accent); font-weight: 700; font-size: 34rpx; }
 .seckill-price::before { content: '¥'; font-size: 22rpx; }
 .seckill-origin { color: var(--text-3); font-size: 20rpx; text-decoration: line-through; }
-/* 预告条上的状态角标：抢购中 / 即将开始 */
+/* 预告条状态角标：抢购中 / 即将开始 */
 .seckill-tag {
   display: inline-block;
   margin-top: 8rpx;
