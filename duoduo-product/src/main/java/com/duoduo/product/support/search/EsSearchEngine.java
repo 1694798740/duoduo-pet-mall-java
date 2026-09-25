@@ -38,8 +38,13 @@ import java.util.Map;
 @ConditionalOnProperty(name = "duoduo.search.enabled", havingValue = "true")
 public class EsSearchEngine {
 
-    /** ES 命中页：id 已按请求的排序排好，total 为过滤后的总数 */
-    public record EsHits(List<Long> ids, long total) {
+    /**
+     * ES 命中页：id 已按请求的排序排好，total 为过滤后的总数。
+     *
+     * @param looseFallback 本次结果是否来自「严格召回为零后的逐字兜底」——
+     *                      调用方据此打日志/埋点，用于持续观察「哪些词搜不到精确结果」。
+     */
+    public record EsHits(List<Long> ids, long total, boolean looseFallback) {
     }
 
     private final ElasticsearchClient es;
@@ -120,11 +125,12 @@ public class EsSearchEngine {
      */
     private EsHits searchStrictThenLoose(List<Object> filters, String keyword, int from, int size,
                                          List<SortOptions> sorts) throws Exception {
-        EsHits strict = run(buildRequest(filters, buildKeywordShould(keyword, false), from, size, sorts));
+        EsHits strict = run(buildRequest(filters, buildKeywordClauses(keyword, false), from, size, sorts));
         if (strict.total() > 0 || !StringUtils.hasText(keyword)) {
             return strict;
         }
-        return run(buildRequest(filters, buildKeywordShould(keyword, true), from, size, sorts));
+        EsHits loose = run(buildRequest(filters, buildKeywordClauses(keyword, true), from, size, sorts));
+        return new EsHits(loose.ids(), loose.total(), true);
     }
 
     /**
@@ -151,17 +157,29 @@ public class EsSearchEngine {
      *
      * <p>权重只有在<b>默认排序含 {@code _score}</b> 时才有意义，见 {@link #applyProductSort}。
      */
-    private List<Object> buildKeywordShould(String keyword, boolean includeLoose) {
-        List<Object> should = new ArrayList<>();
+    private List<Object> buildKeywordClauses(String keyword, boolean includeLoose) {
+        List<Object> clauses = new ArrayList<>();
         if (!StringUtils.hasText(keyword)) {
-            return should;
+            return clauses;
         }
-        String kw = keyword.trim();
-        addKeywordBranch(should, kw, 1.0, includeLoose);
-        for (String variant : synonyms.variants(kw)) {
-            addKeywordBranch(should, variant, 0.5, includeLoose);   // 变体权重减半
+        // 多词查询（空格/逗号/顿号分隔）按 **AND** 处理：「猫粮 2kg」要求两个词都命中；
+        // 单词内部仍是多分支 OR + 分层权重。此前多词会被当成一个整体去做逐字 OR，
+        // 既容易召回噪音，也搜不准（如「冻干 鸡肉」只按"冻干 鸡肉"整串匹配）。
+        String[] words = keyword.trim().split("[\\s,，、]+");
+        for (String word : words) {
+            String w = word.trim();
+            if (w.isEmpty()) {
+                continue;
+            }
+            List<Object> should = new ArrayList<>();
+            addKeywordBranch(should, w, 1.0, includeLoose);
+            for (String variant : synonyms.variants(w)) {
+                addKeywordBranch(should, variant, 0.5, includeLoose);   // 变体权重减半
+            }
+            // 一个词 = 一个 bool(minimum_should_match=1) 子句；词与词之间由调用方以 must 串联
+            clauses.add(Map.of("bool", Map.of("minimum_should_match", 1, "should", should)));
         }
-        return should;
+        return clauses;
     }
 
     /** 单个查询串的召回分支：按「匹配强度」分档加权（weight 为整体缩放系数） */
@@ -216,7 +234,7 @@ public class EsSearchEngine {
         return opts;
     }
 
-    private SearchRequest.Builder buildRequest(List<Object> filters, List<Object> should, int from, int size,
+    private SearchRequest.Builder buildRequest(List<Object> filters, List<Object> keywordClauses, int from, int size,
                                                List<SortOptions> sorts) {
         SearchRequest.Builder b = new SearchRequest.Builder()
                 .index(SearchIndexer.INDEX)
@@ -224,11 +242,12 @@ public class EsSearchEngine {
                 .trackTotalHits(t -> t.enabled(true))
                 .sort(sorts);
         b.query(q -> {
-            if (should.isEmpty()) {
+            if (keywordClauses.isEmpty()) {
                 q.bool(bb -> bb.filter(queryList(filters)));
             } else {
-                q.bool(bb -> bb.filter(queryList(filters))
-                        .must(m -> m.bool(mb -> mb.minimumShouldMatch("1").should(queryList(should)))));
+                // 关键词子句之间是 must（AND）：多词的每个词都必须命中；
+                // 单/多分支与权重在 buildKeywordClauses 里已经包好
+                q.bool(bb -> bb.filter(queryList(filters)).must(queryList(keywordClauses)));
             }
             return q;
         });
@@ -246,7 +265,7 @@ public class EsSearchEngine {
             }
         }
         long total = resp.hits().total() == null ? ids.size() : resp.hits().total().value();
-        return new EsHits(ids, total);
+        return new EsHits(ids, total, false);
     }
 
     /**
@@ -273,6 +292,8 @@ public class EsSearchEngine {
             case "sales" -> sorts.add(fieldSort("salesCount", "desc"));
             case "rating" -> sorts.add(fieldSort("rating", "desc"));
             case "newest" -> sorts.add(fieldSort("createdAt", "desc"));
+            // 兜底分支同时承担两种输入：未传 sort（"default"）与显式 sort=relevance
+            // —— 两者语义相同（相关性优先、同分看销量），不需要两套代码。
             default -> {
                 sorts.add(fieldSort("_score", "desc"));      // 相关性优先（关键词检索的默认直觉）
                 sorts.add(fieldSort("salesCount", "desc"));  // 同分再按销量

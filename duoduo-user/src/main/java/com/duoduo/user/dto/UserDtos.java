@@ -289,7 +289,14 @@ public final class UserDtos {
             String realName,
             String idCardMasked,
             Integer creditScore,
-            String createdAt
+            String createdAt,
+            /**
+             * 是否已绑定微信（A14）。
+             *
+             * <p>只下发**布尔**、绝不下发 openid 本体：前端需要它来决定「绑定/解绑」入口的文案，
+             * 而 openid 属于可用于跨应用关联用户的标识，没有下发必要（与手机号只发掩码同一纪律）。
+             */
+            boolean wechatBound
     ) {
     }
 

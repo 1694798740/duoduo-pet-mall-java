@@ -51,6 +51,9 @@ import java.util.stream.Collectors;
 @Service
 public class ProductService {
 
+    /** 与 ES 的 index.max_result_window 默认值对齐；超出即拒绝，避免深分页把 ES 打爆 */
+    private static final int MAX_RESULT_WINDOW = 10000;
+
     private static final Logger log = LoggerFactory.getLogger(ProductService.class);
 
     private static final String STATUS_ON_SALE = "ON_SALE";
@@ -102,8 +105,18 @@ public class ProductService {
         }
         bannedWordGuard.rejectIfHit(query.keyword(), "搜索词");
 
+        // 深分页保护：ES 的 index.max_result_window 默认 10000，from+size 超出会**直接抛错**。
+        // 两套实现统一在入口拦，避免「开 ES 报 5xx、关 ES 正常」的口径分裂；
+        // 真要做更深的分页应改用 search_after（游标），而不是放大 max_result_window。
+        long offset = (long) (pageNo - 1) * pageSize;
+        if (offset + pageSize > MAX_RESULT_WINDOW) {
+            throw BizException.validation("结果过多，请缩小范围或增加筛选条件（最多翻到第 "
+                    + (MAX_RESULT_WINDOW / pageSize) + " 页）");
+        }
+
         // A10 · ES 优先：同义词 / 拼音容错在这里兑现；**任何 ES 异常都原地降级回 MySQL**（验收④）——
         // 降级不是错误分支，是检索的常规运行形态之一，因此只记 WARN 不抛 5xx
+        long startedAt = System.nanoTime();
         var esSearch = esSearchProvider.getIfAvailable();
         if (esSearch != null && StringUtils.hasText(query.keyword())) {
             try {
@@ -113,13 +126,24 @@ public class ProductService {
                 List<SpuEntity> records = hits.ids().isEmpty()
                         ? List.of()
                         : orderByIds(spuMapper.selectBatchIds(hits.ids()), hits.ids());
+                // 检索行为日志：分析"哪些词搜不到精确结果""搜索慢在哪一步"的第一手数据
+                // （looseFallback=true 表示严格召回为零、结果来自逐字兜底 —— 这类词值得补同义词）
+                log.info("商品检索 keyword={} 引擎=es 命中={} 兜底={} 页={}/{} 返回={} 耗时={}ms",
+                        query.keyword(), hits.total(), hits.looseFallback(), pageNo, pageSize,
+                        records.size(), (System.nanoTime() - startedAt) / 1_000_000);
                 return PageResult.of(toCards(records), hits.total(), pageNo, pageSize);
             } catch (Exception ex) {
                 log.warn("ES 检索失败，降级 MySQL（设计内行为）: {}", ex.getMessage());
             }
         }
 
-        return searchByMysql(query, pageNo, pageSize);
+        PageResult<ProductCard> fallback = searchByMysql(query, pageNo, pageSize);
+        if (StringUtils.hasText(query.keyword())) {
+            log.info("商品检索 keyword={} 引擎=mysql 命中={} 页={}/{} 耗时={}ms",
+                    query.keyword(), fallback.total(), pageNo, pageSize,
+                    (System.nanoTime() - startedAt) / 1_000_000);
+        }
+        return fallback;
     }
 
     /** MySQL 权威路径（ES 未启用 / 降级时的实现，与 ES 查询语义一一对应） */

@@ -216,7 +216,8 @@ public class AuthService {
      *   <li><b>冲突</b>：openid 已绑在**其他**账号上 → 409。正常路径由
      *       {@code uk_user_wxopenid} 唯一索引兜底（先查后插只是给出友好提示，
      *       并发抢绑的最终防线是数据库约束 —— 与手机号唯一性同一套姿势）。</li>
-     *   <li><b>换绑</b>：本方案暂不支持一个微信号在两个账号间迁移，A13 不做解绑。</li>
+     *   <li><b>换绑 / 解绑</b>：见 {@link #wechatRebind} 与 {@link #wechatUnbind}（A14 补齐）。
+     *       绑定本身不允许"抢占"，迁移必须由**持有该微信的一方**显式发起。</li>
      * </ul>
      */
     @Transactional
@@ -248,6 +249,105 @@ public class AuthService {
         log.info("微信绑定成功 userId={} openidPrefix={} len={}",
                 userId, openid.substring(0, Math.min(4, openid.length())), openid.length());
         return toView(entity);
+    }
+
+    /**
+     * A14 · 解绑当前账号的微信。
+     *
+     * <p><b>为什么必须带 code 而不能「有令牌就解绑」</b>：解绑是破坏性动作（解绑后该微信可被别人绑定）。
+     * 只验登录态的话，任何拿到令牌的人都能解绑账号上的微信；因此用 code2Session 换出 openid，
+     * 并要求它**正是当前账号绑定的那个**——即"操作者确实持有这个微信"。
+     *
+     * <p>校验与响应：
+     * <table>
+     *   <tr><td>未登录</td><td>401 UNAUTHORIZED（网关拦截）</td></tr>
+     *   <tr><td>code 无效/已用过</td><td>401 UNAUTHORIZED（微信侧 errcode≠0，同登录口径）</td></tr>
+     *   <tr><td>AppID/Secret 未配置且非 mock</td><td>503 DEGRADED</td></tr>
+     *   <tr><td>当前账号本来就未绑定</td><td><b>200 幂等</b>（已是目标状态，不报错）</td></tr>
+     *   <tr><td>code 对应的微信 ≠ 当前绑定的微信</td><td><b>422</b> BUSINESS_RULE（不能解绑别人的微信）</td></tr>
+     * </table>
+     *
+     * <p>实现要点：置空必须走 {@code LambdaUpdateWrapper.set(field, null)} ——
+     * MyBatis-Plus 的 {@code updateById} 默认**忽略 null 字段**，直接 {@code entity.setWxOpenid(null)}
+     * 再 updateById 会"看起来成功但库里没清"，是这类解绑逻辑最常见的坑。
+     */
+    @Transactional
+    public UserView wechatUnbind(Long userId, String code) {
+        UserEntity entity = requireUser(userId);
+        String openid = wechatGateway.codeToOpenid(code);
+
+        if (entity.getWxOpenid() == null || entity.getWxOpenid().isBlank()) {
+            return toView(entity); // 幂等：本来就是未绑定状态
+        }
+        if (!openid.equals(entity.getWxOpenid())) {
+            throw BizException.businessRule("该微信不是当前账号绑定的微信，无法解绑");
+        }
+
+        // 显式 set null：updateById 不会把字段更新为 null
+        userMapper.update(null, Wrappers.<UserEntity>lambdaUpdate()
+                .eq(UserEntity::getId, userId)
+                .set(UserEntity::getWxOpenid, null)
+                .set(UserEntity::getUpdatedAt, LocalDateTime.now(ZoneOffset.UTC)));
+        entity.setWxOpenid(null);
+
+        log.info("微信解绑成功 userId={} openidPrefix={}",
+                userId, openid.substring(0, Math.min(4, openid.length())));
+        return toView(entity);
+    }
+
+    /**
+     * A14 · 换绑：把当前账号的微信换成另一个微信（当前未绑定时等价于首次绑定）。
+     *
+     * <p>入参 {@code code} 是**新微信**的 code；旧绑定随字段覆盖自动失效，无需单独清理。
+     *
+     * <p>校验与响应（与 {@link #wechatUnbind} 同口径的部分不重复）：
+     * <ul>
+     *   <li>新 openid == 当前绑定 → <b>200 幂等</b>（重复提交不该报错）；</li>
+     *   <li>新 openid 已绑在**其他**账号 → <b>409 CONFLICT</b>；正常路径由
+     *       {@code uk_user_wxopenid} 唯一索引兜底（先查后写只是给出友好提示，
+     *       并发抢绑的最终防线是数据库约束）；</li>
+     *   <li>当前账号未绑定 → 直接绑上（不要求先走 {@code /wechat/bind}）。</li>
+     * </ul>
+     *
+     * <p><b>安全边界</b>：换绑只会把"当前登录账号"的绑定换成 code 所属微信，
+     * 无法把别人的账号换绑出去 —— 即不存在"用令牌迁移他人绑定"的入口。
+     */
+    @Transactional
+    public UserView wechatRebind(Long userId, String code) {
+        UserEntity entity = requireUser(userId);
+        String newOpenid = wechatGateway.codeToOpenid(code);
+
+        if (newOpenid.equals(entity.getWxOpenid())) {
+            return toView(entity); // 幂等：新微信就是当前绑定的那个
+        }
+
+        UserEntity holder = findByOpenid(newOpenid);
+        if (holder != null && !holder.getId().equals(userId)) {
+            throw BizException.conflict("该微信已绑定其他账号");
+        }
+
+        String oldOpenid = entity.getWxOpenid();
+        entity.setWxOpenid(newOpenid);
+        entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        try {
+            userMapper.updateById(entity);
+        } catch (DuplicateKeyException ex) {
+            throw BizException.conflict("该微信已绑定其他账号");
+        }
+
+        log.info("微信换绑成功 userId={} oldPrefix={} newPrefix={}", userId,
+                oldOpenid == null ? "none" : oldOpenid.substring(0, Math.min(4, oldOpenid.length())),
+                newOpenid.substring(0, Math.min(4, newOpenid.length())));
+        return toView(entity);
+    }
+
+    /** 取用户，不存在即 404（多处复用） */
+    private UserEntity requireUser(Long userId) {
+        UserEntity entity = userMapper.selectById(userId);
+        if (entity == null) {
+            throw BizException.notFound("用户");
+        }
+        return entity;
     }
 
     public UserView profile(Long userId) {
@@ -410,7 +510,8 @@ public class AuthService {
                 entity.getRealName(),
                 entity.getIdCardMasked(),
                 entity.getCreditScore(),
-                entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString()
+                entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
+                entity.getWxOpenid() != null && !entity.getWxOpenid().isBlank()
         );
     }
 

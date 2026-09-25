@@ -39,6 +39,9 @@ public class GatewaySecurityProperties {
             // 因此与 /api/auth/refresh 同级免登。
             "/api/auth/refresh/token",
             // 微信小程序登录（A13）：wx.login 的 code 换令牌，此时自然没有登录态。
+            // A14 新增的 /api/auth/wechat/unbind 与 /api/auth/wechat/rebind **刻意不进白名单**：
+            // 解绑/换绑是破坏性动作（解绑后该微信可被他人绑定），必须持有登录令牌才能做；
+            // 白名单是精确路径匹配，/api/auth/wechat 不会连带放行它们。
             // 只放行 这**两条精确路径**（浏览器版 + 移动端令牌版）；
             // /api/auth/wechat/bind 是「登录态下绑定微信」，需要 Bearer 令牌，
             // 绝不能进白名单 —— 否则拿到任意令牌前缀即可把别人的微信绑到自己的账号上。

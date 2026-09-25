@@ -139,6 +139,27 @@ public class AuthController {
         return ApiResponse.ok(authService.wechatBind(UserContext.requireUserId(), request.code()));
     }
 
+    /**
+     * A14 · 解绑当前账号的微信（需登录，**不在网关白名单**）。
+     *
+     * <p>code 用来证明"操作者持有这个微信"；解绑的是 {@code UserContext} 里的当前账号，
+     * 与"别人的微信"无关。
+     */
+    @PostMapping("/wechat/unbind")
+    public ApiResponse<UserView> wechatUnbind(@Valid @RequestBody WechatLoginRequest request) {
+        return ApiResponse.ok(authService.wechatUnbind(UserContext.requireUserId(), request.code()));
+    }
+
+    /**
+     * A14 · 换绑：把当前账号的微信换成 code 对应的新微信（需登录，**不在网关白名单**）。
+     *
+     * <p>面向"换手机/换微信号"场景；新微信已被他人绑定 → 409。
+     */
+    @PostMapping("/wechat/rebind")
+    public ApiResponse<UserView> wechatRebind(@Valid @RequestBody WechatLoginRequest request) {
+        return ApiResponse.ok(authService.wechatRebind(UserContext.requireUserId(), request.code()));
+    }
+
     @PostMapping("/logout")
     public ApiResponse<Void> logout(@RequestBody(required = false) RefreshRequest request,
                                     HttpServletRequest servletRequest,
