@@ -878,11 +878,26 @@ npm run build      # tsc --noEmit && vite build
 | **P1-f** | **商家端 Web ✅ + 平台管理后台 Web ✅（M10：报表/对账/审核/类目品牌/订单干预）** | ✅ 完成 |
 | **P2** | 履约服务（**评价与晒单 ✅ / 物流轨迹 ✅ / 售后仲裁 ✅ / 信用分 ✅**）+ 营销（**优惠券 ✅ A5**）+ XXL-Job 分布式任务 | 🔄 履约四块 + 营销已上线，XXL-Job 待做 |
 | **P3** | AI 服务「多多」+ Elasticsearch 检索 + RocketMQ 削峰 + Sentinel 限流 + Seata 分布式事务 | ⏳ |
-| **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + JMeter 压测（对齐容量验收标准） | ⏳ |
+| **P4** | SkyWalking / Prometheus 可观测 + K8s 编排 + ~~JMeter 压测~~（**A12 已完成**：单机基线压测报告见 `docs/perf/A12-load-test-report.md`，sync ~100 单/s、queued 入队 ~1000 单/s、热点行实验 +40%） | 🔄 压测已完成，可观测与编排待做 |
 
 ---
 
 ## 十二、变更记录
+
+### 2026-09-25（第十九轮 · A12 压测：sync/queued 双通道 + 瓶颈定位）
+
+- **压测落地（A12）**：JMeter 5.6.3 无头运行（`java -jar ApacheJMeter.jar` 直启，绕开 `jmeter.bat` 的
+  Java 检测挂死），三份脚本入库 `scripts/perf/`：`order-pay-confirm.jmx`（注册→登录→加购→下单→
+  支付→发货→确认全链路，每线程独立用户）、`order-queued-enqueue.jmx`（入队）、
+  `order-pay-confirm-multisku.jmx`（热点行验证）+ `summarize_jtl.py`（分位数汇总）。
+- **核心结论**：同步下单 **~100 单/s**（P99 1156ms @100 线程，瓶颈=订单落库链路）；
+  queued 入队 **~1000 单/s** 全程 0 错误（P99 <130ms），消费排空 ≈112 单/s；
+  **热点行实验**：库存扣减按 SKU 分散 3 行后吞吐 +40%、延迟减半（`t_sku` 热点行锁是主要串行点）。
+  详见 `docs/perf/A12-load-test-report.md`；HTML 报告在 `logs/perf/*-report/`（gitignore 不入库）。
+- **测试伪影（如实记录，非缺陷）**：队列档加购 422 系购物车同 SKU 累加（上限 200）在积压场景撞限；
+  任务 FAILED 全部为「购物车中没有已勾选的商品」（消费耗时读购物车，高频连续入队所致）。
+- **夹具已复原**：SKU 2001/2002/2003 库存写回 272/96/210、冻结归零；trade 限流与 order-mode 恢复
+  compose 默认（100 QPS / sync）。
 
 ### 2026-09-23（第十四轮 · A8 收货地址簿 + T-39 雪花 ID 精度根治）
 

@@ -31,7 +31,7 @@
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；**A9 `llm` 形态已用真实百炼 Key 联调通过并切 `qwen-max`**（T-60/T-61 两缺陷修复）；**A11 RocketMQ 削峰 + Sentinel 限流已落地**（异步下单通道 `POST /api/orders/queued` + 任务台账 + 死信可查可重放 + `order-place` 资源 QPS 限流，MQ 容器挂 `profile: mq`）；余下：压测（A12）/ XXL-Job；A13 真机预览待用户 AppID |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；**A9 `llm` 形态已用真实百炼 Key 联调通过并切 `qwen-max`**（T-60/T-61 两缺陷修复）；**A11 RocketMQ 削峰 + Sentinel 限流已落地**（异步下单通道 `POST /api/orders/queued` + 任务台账 + 死信可查可重放 + `order-place` 资源 QPS 限流，MQ 容器挂 `profile: mq`）；**A12 压测已完成**（sync ~100 单/s / queued 入队 ~1000 单/s / 热点行 +40%，报告 `docs/perf/A12-load-test-report.md`）；余下：XXL-Job；A13 真机预览待用户 AppID |
 
 ---
 
@@ -136,7 +136,7 @@
 |---|---|
 | ✅ **M11 剩余块：信用分（A4）已交付**（2026-09-20，第十二轮） | 履约域**四块已全部落地**：评价与晒单、售后仲裁（A3，含三端页面）、物流轨迹（A2，含买卖双方时间线）、**信用分（A4）** —— 同域内已无低成本可做项，下一项须新起服务或中间件 |
 | ✅ **M11 剩余块：优惠券营销（A5）已交付**（2026-09-23，第十三轮） | **新增第 6 个业务服务 `duoduo-marketing`（:8085，雪花 worker-id=5）**：领券中心 / 券包 / 内部锁·解·核销 / TTL 补偿调度 + 前端领券中心与结算选券；容器 **8 → 9**（3 中间件 + 6 业务服务）。v1 边界：券不随退款退回、只实现满减、一张券只作用于拆单后商品总额最大的那一单 |
-| M11 其他：ES 检索（A10）/ RocketMQ + Sentinel（A11）/ 压测（A12）/ XXL-Job | 都需要新中间件或新服务，建议按「检索 → 削峰 → 压测」顺序推进 |
+| M11 其他：XXL-Job（~~ES 检索（A10）~~ ✅ / ~~RocketMQ + Sentinel（A11）~~ ✅ / ~~压测（A12）~~ ✅） | A10/A11/A12 均已交付（第十七/十八/十九轮）；仅剩 XXL-Job（B-05） |
 | **A9 AI 导购「多多」（已交付，仅剩凭据联调）** | ✅ **第十七轮已交付**：新建 `duoduo-ai`（:8086，容器 `duoduo-app-ai`，**无状态**——不连库、v1 不落对话历史）；`POST /api/duoduo/chat` + `GET /api/duoduo/capabilities`（网关白名单含这两条，**未登录可问答**）；Feign 调商品域 `GET /api/products/internal/candidates` 取**真实候选**（视图**不含 `sellerId`**），系统提示硬约束「只推荐候选内商品」；三形态 `mock`/`llm`/`unconfigured`，未配或超时 → **503 `DEGRADED`**，每 IP 限流 → **429 `RATE_LIMITED`**；前端 `/ai` 免登录对话页。**自测 `ai-smoke.ps1` 16/0**。**待用户提供**百炼 DashScope API Key（仅影响 `llm` 形态联调） |
 | **A10 ES 检索（已交付）** | ✅ **第十七轮已交付**：商品域单索引 `duoduo-search`（`docType` ∈ PRODUCT/LISTING）；**拼音与同义词都在应用侧**（pinyin4j 2.5.1 + `SearchSynonyms.variants()`，**按 ES 实测不挂同义词分析器**；**拼音库必须选 Central 上存在的 —— T-59**）；`SearchSyncJob` 15s 增量兼补偿 + 启动全量对齐 + 清孤儿；`GET /api/admin/search/reconcile` / `POST /api/admin/search/reindex`（`OperatorGuard`）；ES 不可用**原地降级 MySQL**（`ObjectProvider` 可选注入 + 写操作前置 `ready()` 守卫 + **禁用 ES 健康指示器**以免健康门杀掉降级链路）；ES 只返回 id 页、卡片回库装配（权威数据只有库一份）。**自测 `search-smoke.ps1` 40/0**（需 ES） |
 | ✅ **A7 运营账号管理页已交付**（2026-09-24，第十六轮） | 用户域两端点（`GET /api/admin/users` 脱敏分页列表 + `POST /api/admin/users/{id}/role` 仅 ADMIN 改角色）+ `t_audit_log` 审计落库 + 网关 `/api/admin/users/**` 路由 + 前端 `/admin/operators`（AdminTabs 第 7 页签）；三条硬规则：自己降权 422 / 最后一个 ADMIN 不可降 422 / 每次变更写审计；提权后需重新登录生效（notice 提示）。**自测 `admin-smoke.ps1` 49→72 项全绿（PS5.1）** |
@@ -195,6 +195,29 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-25（第十九轮 · A12 压测与容量验收）
+
+> 用户指令：「驱动已经修复完成了，你现在可以执行了」—— 恢复 A12 执行（此前因蓝屏停机码 0x10E 暂停，显卡驱动已由用户修复）。
+> 交付：`docs/perf/A12-load-test-report.md`（压测报告）+ `scripts/perf/` 四件套；logs/perf 全部 gitignore 不入库。
+
+#### A12 · 压测与容量验收（交易域主链路）
+
+| 文件 | 变更 |
+|---|---|
+| `scripts/perf/order-pay-confirm.jmx`（**新**） | 全链路 6 步：注册（Once Only，409 属预期）→ 登录 → 加购 → 下单（同步）→ 支付 MOCK → 发货（`X-Internal-Token` 头）→ 确认收货；每线程独立用户（JSR223 生成 `139%08d`），`${__P(THREADS/RAMP/DURATION)}` 参数化 |
+| `scripts/perf/order-queued-enqueue.jmx`（**新**） | 队列通道变体：`POST /api/orders/queued` 入队（排空速率由 `t_order_place_task` DB 侧计量） |
+| `scripts/perf/order-pay-confirm-multisku.jmx`（**新**） | 热点行验证：JSR223 按线程分散 3 个 SKU |
+| `scripts/perf/summarize_jtl.py`（**新**） | JTL → 吞吐/P50-P95-P99/错误率（总体 + 分环节 + 错误样例） |
+| `docs/perf/A12-load-test-report.md`（**新**） | 压测报告：双通道阶梯数据、瓶颈定位、容量模型对齐、优化建议、复原记录 |
+
+**核心结论**：① 同步下单 **~100 单/s** 平台期（延迟随并发线性恶化，100 线程下单 P99 1156ms；加购/发货/确认稳定 10-22ms）——瓶颈在订单落库链路，非 Web 层；② queued 入队 **~1000 单/s** 全程 0 错误（P99 20→128ms 平缓），消费排空 ≈**112 单/s**（与同步上限自洽，队列只转移等待不提高落库上限）；③ 热点行实验：3 SKU 分散后吞吐 **+40%**（114→159 单/s）、下单 P99 **128→84ms**——`t_sku` 热点行排他锁是下单串行化的主要来源。
+
+**容量模型对齐（ARCHITECTURE 9.2）**：读路径实测不构成瓶颈 ✅；写服务 500-800 QPS 为独立部署请求口径，本机共宿主（JMeter+13 容器同机）单实例实测订单口径 ~100/s，差距主因=每订单 10+ 次跨域 DB 写 + 热点行锁 + 单实例 MySQL，**不否定模型**，已给出 4 条优化建议（热点拆分 / 事务瘦身 / 消费并发 / 生产复测）。
+
+**测试伪影（如实记录）**：队列档加购 422 = 购物车同 SKU 累加（`MAX_QUANTITY=200`）在积压场景撞限；任务 FAILED 全为「购物车中没有已勾选的商品」——均非系统缺陷。
+
+**自测**：冒烟 931 请求 0 失败；阶梯 8 轮（sync/queued 各 4 档 × 5 分钟）+ 热点实验 1 轮全部完成并出 HTML 报告；夹具复原复核（2001/2002/2003 = 272/96/210、frozen 0、限流 100、sync）。工具层经验：`jmeter.bat` Java 检测失败会 `pause` 挂死（用 `java -jar ApacheJMeter.jar` 直启绕过）；JMX 手写必须守两条铁律（元素后必带 `<hashTree/>`、`HTTPsampler.Files` 必须 `HTTPFileArgs` 类型）。
 
 ### 2026-09-24（第十八轮 · A11 RocketMQ 削峰 + Sentinel 限流）
 
@@ -916,6 +939,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1
 
 # ES 检索（40 项；**需 ES 在跑**：docker compose --profile search up -d duoduo-es）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1
+
+# ---------- A12 压测（JMeter 5.6.3，工具在会话 tools/ 下；jtl 与 HTML 报告落 logs/perf/，不入库） ----------
+# ⚠️ 必须直接 java -jar 启动（jmeter.bat 检测不到 JDK21 时会 pause 挂死）；临时放大限流：DUODUO_TRADE_PLACE_QPS=5000 重建 trade
+cd C:\Users\<会话目录>\tools\apache-jmeter-5.6.3\bin
+java -jar ApacheJMeter.jar -n -t D:\智能体项目\duoduo-pet-mall-java\scripts\perf\order-pay-confirm.jmx `
+     -l D:\智能体项目\duoduo-pet-mall-java\logs\perf\step100.jtl -e -o D:\智能体项目\duoduo-pet-mall-java\logs\perf\step100-report `
+     -JTHREADS=100 -JRAMP=30 -JDURATION=300 -j D:\智能体项目\duoduo-pet-mall-java\logs\perf\step100-run.log
+# 队列通道换 order-queued-enqueue.jmx（trade 需 DUODUO_TRADE_ORDER_MODE=queue）；汇总：python scripts/perf/summarize_jtl.py <jtl...>
 
 # 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
 # curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
