@@ -1,0 +1,116 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="fetch">重试</button>
+</view>
+<view wx:elif="{{loading && !order}}" class="empty">加载中…</view>
+
+<block wx:elif="{{order}}">
+  <!-- 状态卡 -->
+  <view class="card status-card">
+    <view class="status-line">
+      <text class="status-text">{{order.statusText}}</text>
+      <text class="tag {{order.status === 'PENDING_PAYMENT' ? 'tag-accent' : 'tag-brand'}}">共 {{order.quantityText}} 件</text>
+    </view>
+    <view wx:if="{{order.statusHint}}" class="t3 status-hint">{{order.statusHint}}</view>
+    <view wx:if="{{order.status === 'PENDING_PAYMENT' && order.expireText}}" class="t3 status-hint">
+      请在 {{order.expireText}} 前完成支付
+    </view>
+    <view wx:if="{{order.closeReason}}" class="t3 status-hint">关闭原因：{{order.closeReason}}</view>
+  </view>
+
+  <!-- 收货信息 -->
+  <view class="card">
+    <view class="sec-title">收货信息</view>
+    <view class="info-line">
+      <text class="info-name">{{order.receiverName}}</text>
+      <text class="t2">{{order.receiverPhone}}</text>
+    </view>
+    <view class="t2 info-addr">{{order.receiverAddress}}</view>
+    <view wx:if="{{order.remark}}" class="t3 info-addr">备注：{{order.remark}}</view>
+  </view>
+
+  <!-- 商品明细 -->
+  <view class="card">
+    <view class="sec-title">商品明细</view>
+    <view wx:for="{{order.items}}" wx:key="skuId" class="oi-row">
+      <image class="oi-thumb" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+      <view class="oi-main">
+        <view class="oi-title ellipsis-2">{{item.title}}</view>
+        <view class="t3 oi-spec">{{item.specText}}</view>
+        <view class="oi-bottom">
+          <text class="price oi-price">{{item.priceText}}</text>
+          <text class="t3">× {{item.quantity}}</text>
+          <text class="t2 oi-amount">小计 {{item.amountText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 金额 -->
+  <view class="card">
+    <view class="sec-title">金额</view>
+    <view class="fee-row">
+      <text class="t2">商品总额</text>
+      <text class="price">{{order.totalAmountText}}</text>
+    </view>
+    <view class="fee-row">
+      <text class="t2">运费</text>
+      <text class="price">{{order.freightAmountText}}</text>
+    </view>
+    <view class="fee-row">
+      <text class="t2">优惠{{order.couponCode ? '（券 ' + order.couponCode + '）' : ''}}</text>
+      <text class="price">-{{order.discountAmountText}}</text>
+    </view>
+    <view class="fee-row fee-total">
+      <text>实付</text>
+      <text class="price fee-amount">{{order.payAmountText}}</text>
+    </view>
+  </view>
+
+  <!-- 物流轨迹 -->
+  <view wx:if="{{order.status === 'SHIPPED' || order.status === 'COMPLETED'}}" class="card">
+    <view class="sec-title">物流轨迹</view>
+    <view wx:if="{{tracksError}}" class="t3">{{tracksError}}</view>
+    <view wx:elif="{{tracks.length === 0}}" class="t3">暂无物流轨迹</view>
+    <view wx:for="{{tracks}}" wx:key="nodeCode" class="track-row">
+      <view class="track-dot"></view>
+      <view class="track-body">
+        <view class="track-label">{{item.nodeLabel}}</view>
+        <view wx:if="{{item.nodeText}}" class="t3 track-text">{{item.nodeText}}</view>
+        <view class="t3 track-time">{{item.occurredAt}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 订单信息 -->
+  <view class="card">
+    <view class="sec-title">订单信息</view>
+    <view class="kv-row">
+      <text class="t2">订单号</text>
+      <view class="kv-value" bindtap="copyOrderNo">
+        <text class="t2">{{order.orderNo}}</text>
+        <text class="kv-copy">复制</text>
+      </view>
+    </view>
+    <view class="kv-row"><text class="t2">下单时间</text><text class="t2">{{order.createdText}}</text></view>
+    <view wx:if="{{order.paidText}}" class="kv-row"><text class="t2">支付时间</text><text class="t2">{{order.paidText}}</text></view>
+    <view wx:if="{{order.shippedText}}" class="kv-row"><text class="t2">发货时间</text><text class="t2">{{order.shippedText}}</text></view>
+    <view wx:if="{{order.finishedText}}" class="kv-row"><text class="t2">完成时间</text><text class="t2">{{order.finishedText}}</text></view>
+    <view wx:if="{{order.closedText}}" class="kv-row"><text class="t2">关闭时间</text><text class="t2">{{order.closedText}}</text></view>
+    <view wx:if="{{order.orderType}}" class="kv-row"><text class="t2">订单类型</text><text class="t2">{{order.orderType}}</text></view>
+  </view>
+
+  <view style="height: 140rpx"></view>
+  <view class="footer">
+    <block wx:if="{{order.status === 'PENDING_PAYMENT'}}">
+      <button class="btn btn-plain footer-cancel" bindtap="doCancel">取消订单</button>
+      <button class="btn btn-accent footer-btn" bindtap="doPay" loading="{{paying}}" disabled="{{paying}}">去支付</button>
+    </block>
+    <block wx:elif="{{order.status === 'SHIPPED'}}">
+      <button class="btn btn-accent footer-btn" bindtap="doConfirm">确认收货</button>
+    </block>
+    <block wx:else>
+      <view class="t3 footer-tip">该订单暂无待处理操作</view>
+    </block>
+  </view>
+</block>

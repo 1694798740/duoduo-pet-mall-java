@@ -18,6 +18,28 @@ function acceptSession(data) {
   return data.user;
 }
 
+/**
+ * 取微信登录 code（一次性，5 分钟有效）。
+ *
+ * <p>绑定/解绑/换绑都要重新取 code —— 不能复用上一次的（微信侧用过即失效）。
+ */
+function getWxCode() {
+  return new Promise((resolve, reject) => {
+    wx.login({
+      success(res) {
+        if (!res.code) {
+          reject({ message: '微信授权未返回 code，请重试' });
+          return;
+        }
+        resolve(res.code);
+      },
+      fail() {
+        reject({ message: '微信授权失败，请重试' });
+      },
+    });
+  });
+}
+
 function wxLogin() {
   return new Promise((resolve, reject) => {
     wx.login({
@@ -46,6 +68,16 @@ function wxLogin() {
  */
 function wechatBind(code) {
   return req.post('/api/auth/wechat/bind', { code });
+}
+
+/** 解绑当前账号的微信（需登录；code 用于证明"操作者持有该微信"） */
+function wechatUnbind(code) {
+  return req.post('/api/auth/wechat/unbind', { code });
+}
+
+/** 换绑：把当前账号的微信换成 code 对应的新微信 */
+function wechatRebind(code) {
+  return req.post('/api/auth/wechat/rebind', { code });
 }
 
 function phoneLogin(phone, password) {
@@ -157,6 +189,10 @@ const order = {
       idempotentKey: 'pay-' + orderNo + '-' + Date.now(),
     });
   },
+  /** 物流轨迹（履约域，需登录） */
+  logistics(orderNo) {
+    return req.get('/api/logistics/orders/' + orderNo + '/tracks', { silent: true });
+  },
   payStatus(payNo) {
     return req.get('/api/payments/' + payNo, { silent: true });
   },
@@ -170,11 +206,23 @@ const order = {
 };
 
 const address = {
+  list() {
+    return req.get('/api/addresses');
+  },
   default() {
     return req.get('/api/addresses/default');
   },
-  list() {
-    return req.get('/api/addresses');
+  create(payload) {
+    return req.post('/api/addresses', payload);
+  },
+  update(id, payload) {
+    return req.put('/api/addresses/' + id, payload);
+  },
+  setDefault(id) {
+    return req.post('/api/addresses/' + id + '/default');
+  },
+  remove(id) {
+    return req.del('/api/addresses/' + id);
   },
 };
 
@@ -239,6 +287,7 @@ function shortTime(iso) {
 module.exports = {
   get: req.get,
   post: req.post,
+  put: req.put,
   patch: req.patch,
   del: req.del,
   getToken: req.getToken,
@@ -250,7 +299,10 @@ module.exports = {
   onUnauthorized: req.onUnauthorized,
   toastError: req.toastError,
   wxLogin,
+  getWxCode,
   wechatBind,
+  wechatUnbind,
+  wechatRebind,
   phoneLogin,
   register,
   ensureSession,

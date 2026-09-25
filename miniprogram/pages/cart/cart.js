@@ -129,10 +129,15 @@ Page({
       .default()
       .then((addr) => {
         if (!addr) {
+          // 地址簿已在小程序内（pages/address），不再把人赶去 Web 端
           wx.showModal({
             title: '还没有收货地址',
-            content: '当前版本请先在 Web 端「我的 → 收货地址」添加默认地址，再回小程序结算。',
-            showCancel: false,
+            content: '先添加一个收货地址，就可以直接下单了。',
+            confirmText: '去添加',
+            cancelText: '取消',
+            success: (res) => {
+              if (res.confirm) wx.navigateTo({ url: '/pages/address/address' });
+            },
           });
           return null;
         }

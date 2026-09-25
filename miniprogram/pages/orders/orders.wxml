@@ -15,7 +15,13 @@
   <view>还没有相关订单</view>
 </view>
 
-<view wx:for="{{orders}}" wx:key="orderNo" class="card order-item">
+<view
+  wx:for="{{orders}}"
+  wx:key="orderNo"
+  class="card order-item"
+  data-no="{{item.orderNo}}"
+  bindtap="goDetail"
+>
   <view class="o-head">
     <text class="o-no">单号 {{item.orderNo}}</text>
     <text class="o-status">{{item.statusText}}</text>
@@ -30,7 +36,7 @@
       class="btn-mini o-btn-plain"
       size="mini"
       data-no="{{item.orderNo}}"
-      bindtap="cancelOrder"
+      catchtap="cancelOrder"
     >
       取消订单
     </button>
@@ -39,7 +45,7 @@
       class="btn btn-accent o-btn"
       size="mini"
       data-no="{{item.orderNo}}"
-      bindtap="pay"
+      catchtap="pay"
       loading="{{payingOrderNo === item.orderNo}}"
     >
       去支付
@@ -49,7 +55,7 @@
       class="btn-mini o-btn-plain"
       size="mini"
       data-no="{{item.orderNo}}"
-      bindtap="confirmOrder"
+      catchtap="confirmOrder"
     >
       确认收货
     </button>

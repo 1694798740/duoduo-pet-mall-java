@@ -158,12 +158,7 @@ Page({
     const afterLogin = !!(opts && opts.afterLogin);
     if (this.data.submitting && !afterLogin) return Promise.reject({ message: '正在处理中' });
     this.setData({ submitting: true });
-    return new Promise((resolve, reject) => {
-      wx.login({
-        success: (res) => (res.code ? resolve(res.code) : reject({ message: '微信授权未返回 code' })),
-        fail: () => reject({ message: '微信授权失败，请重试' }),
-      });
-    })
+    return api.getWxCode()
       .then((code) => api.wechatBind(code))
       .then(() => {
         // 成功不在这里 toast：调用方紧接着也会给提示，两个 toast 会互相覆盖

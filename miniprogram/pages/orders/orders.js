@@ -8,6 +8,7 @@
 //  * 状态文案直接用服务端 statusLabel（本地映射只作兜底，缺 REFUNDED 等状态时不再显示英文）；
 //  * 加入分页：列表是页面级滚动，onReachBottom 可正常触发。
 const api = require('../../utils/api');
+const pay = require('../../utils/pay');
 
 const FALLBACK_LABEL = {
   PENDING_PAYMENT: '待付款',
@@ -27,8 +28,6 @@ const TABS = [
 ];
 
 const PAGE_SIZE = 10;
-const POLL_INTERVAL = 3000;
-const POLL_MAX = 20; // 3s × 20 = 1 分钟，与 Web 端口径一致
 
 Page({
   data: {
@@ -42,19 +41,16 @@ Page({
     hasMore: false,
   },
 
-  // 轮询句柄：必须挂在实例上并在 onHide/onUnload 清掉
-  _pollTimer: null,
-
   onShow() {
     this.fetchOrders(true);
   },
 
   onHide() {
-    this.stopPoll();
+    pay.stopPolling(this);
   },
 
   onUnload() {
-    this.stopPoll();
+    pay.stopPolling(this);
   },
 
   switchTab(e) {
@@ -108,35 +104,22 @@ Page({
     this.fetchOrders(false);
   },
 
+  /** 支付：发起 + 沙箱收银台 + 轮询（实现抽到 utils/pay.js，与订单详情页共用） */
   pay(e) {
     const orderNo = e.currentTarget.dataset.no; // 业务键 orderNo，不暴露内部 id
     if (this.data.payingOrderNo) return;
     this.setData({ payingOrderNo: orderNo });
-    api.order
-      .pay(orderNo)
-      .then((payResult) => {
-        this.setData({ payingOrderNo: '' });
-        if (payResult && payResult.payStatus === 'SUCCESS') {
+    pay
+      .checkout(orderNo, this, {
+        onSuccess: () => {
           wx.showToast({ title: '支付成功', icon: 'success' });
           this.fetchOrders(true);
-          return;
-        }
-        // 沙箱支付：后端返回收银台地址 codeUrl，复制到浏览器打开完成支付，状态靠轮询
-        const cashierUrl = (payResult && payResult.codeUrl) || '';
-        wx.showModal({
-          title: '沙箱支付',
-          content: cashierUrl
-            ? '收银台链接（复制后在浏览器打开完成支付）：\n' + cashierUrl
-            : '未取得收银台链接，请稍后在订单详情重试',
-          confirmText: cashierUrl ? '复制' : '知道了',
-          cancelText: '关闭',
-          success: (res) => {
-            if (res.confirm && cashierUrl) {
-              wx.setClipboardData({ data: cashierUrl });
-            }
-            if (payResult && payResult.payNo) this.pollPayment(payResult.payNo);
-          },
-        });
+        },
+        onTimeout: () => wx.showToast({ title: '还未检测到支付成功', icon: 'none' }),
+      })
+      .then((state) => {
+        this.setData({ payingOrderNo: '' });
+        if (state === 'SUCCESS') this.fetchOrders(true);
       })
       .catch((err) => {
         this.setData({ payingOrderNo: '' });
@@ -144,34 +127,10 @@ Page({
       });
   },
 
-  /** 轮询支付状态：单一实例、可被 onHide/onUnload 中断 */
-  pollPayment(payNo) {
-    this.stopPoll();
-    let times = 0;
-    this._pollTimer = setInterval(() => {
-      times += 1;
-      api.order
-        .payStatus(payNo)
-        .then((p) => {
-          if (p && p.payStatus === 'SUCCESS') {
-            this.stopPoll();
-            wx.showToast({ title: '支付成功', icon: 'success' });
-            this.fetchOrders(true);
-          } else if (times >= POLL_MAX) {
-            this.stopPoll();
-          }
-        })
-        .catch(() => {
-          if (times >= POLL_MAX) this.stopPoll();
-        });
-    }, POLL_INTERVAL);
-  },
-
-  stopPoll() {
-    if (this._pollTimer) {
-      clearInterval(this._pollTimer);
-      this._pollTimer = null;
-    }
+  /** 点卡片进订单详情 */
+  goDetail(e) {
+    const orderNo = e.currentTarget.dataset.no;
+    wx.navigateTo({ url: '/pages/order-detail/order-detail?orderNo=' + orderNo });
   },
 
   cancelOrder(e) {

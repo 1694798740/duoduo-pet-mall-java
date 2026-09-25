@@ -138,6 +138,7 @@ function request(method, path, data, opts) {
 
 const get = (path, opts) => request('GET', path, null, opts);
 const post = (path, data, opts) => request('POST', path, data, opts);
+const put = (path, data, opts) => request('PUT', path, data, opts);
 const patch = (path, data, opts) => request('PATCH', path, data, opts);
 const del = (path, opts) => request('DELETE', path, null, opts);
 
@@ -150,6 +151,7 @@ module.exports = {
   request,
   get,
   post,
+  put,
   patch,
   del,
   getToken,

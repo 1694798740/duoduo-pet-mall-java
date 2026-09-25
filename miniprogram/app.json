@@ -8,6 +8,8 @@
     "pages/product/product",
     "pages/seckill/seckill",
     "pages/coupons/coupons",
+    "pages/address/address",
+    "pages/order-detail/order-detail",
     "pages/ai/ai",
     "pages/login/login"
   ],

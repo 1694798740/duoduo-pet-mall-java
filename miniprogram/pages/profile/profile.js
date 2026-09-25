@@ -49,12 +49,56 @@ Page({
     }
   },
 
-  /** 地址簿目前只在 Web 端维护：给小程序的明确指引，避免用户在「找不到入口」上卡住 */
-  addressTip() {
+  /** 收货地址：跳小程序内地址簿（pages/address） */
+  goAddress() {
+    wx.navigateTo({ url: '/pages/address/address' });
+  },
+
+  // ── 微信绑定管理（A14）────────────────────────────────────
+  /**
+   * 绑定 / 解绑微信。
+   *
+   * <p>都要重新取 code：解绑必须证明"操作者持有这个微信"（后端据此校验 code 的 openid
+   * 是否等于当前账号绑定的那个），而 code 是一次性的，不能复用登录时那一个。
+   */
+  toggleWechat() {
+    const bound = !!(this.data.user && this.data.user.wechatBound);
+    const doIt = () => {
+      wx.showLoading({ title: bound ? '解绑中…' : '绑定中…', mask: true });
+      api
+        .getWxCode()
+        .then((code) => (bound ? api.wechatUnbind(code) : api.wechatBind(code)))
+        .then((user) => {
+          wx.hideLoading();
+          this.setData({ user });
+          wx.showToast({
+            title: bound ? '已解绑微信' : '已绑定微信',
+            icon: 'success',
+          });
+        })
+        .catch((err) => {
+          wx.hideLoading();
+          if (err && err.needLogin) return; // 已引导登录
+          wx.showModal({
+            title: bound ? '解绑失败' : '绑定失败',
+            content: (err && err.message) || '请稍后重试',
+            showCancel: false,
+          });
+        });
+    };
+
+    if (!bound) {
+      doIt();
+      return;
+    }
     wx.showModal({
-      title: '收货地址',
-      content: '当前版本请在 Web 端「我的 → 收货地址」维护地址；小程序下单使用默认地址。',
-      showCancel: false,
+      title: '解绑微信',
+      content: '解绑后将无法用「微信一键登录」，需要重新绑定才能恢复。确定解绑吗？',
+      confirmText: '解绑',
+      confirmColor: '#e5484d',
+      success: (res) => {
+        if (res.confirm) doIt();
+      },
     });
   },
 

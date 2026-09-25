@@ -36,9 +36,16 @@
     <text>限时秒杀</text>
     <text class="arrow">›</text>
   </view>
-  <view class="menu-item" bindtap="addressTip">
+  <view class="menu-item" bindtap="goAddress">
     <text class="mi-icon">📍</text>
     <text>收货地址</text>
+    <text class="arrow">›</text>
+  </view>
+  <!-- 微信绑定管理：状态来自 UserView.wechatBound（只给布尔，不下发 openid） -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="toggleWechat">
+    <text class="mi-icon">🔗</text>
+    <text>微信绑定</text>
+    <text class="mi-state">{{user.wechatBound ? '已绑定' : '未绑定'}}</text>
     <text class="arrow">›</text>
   </view>
   <view class="menu-item" bindtap="go" data-url="/pages/orders/orders">

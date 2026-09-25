@@ -41,3 +41,11 @@
 .mi-icon { font-size: 36rpx; }
 .arrow { margin-left: auto; color: var(--text-3); }
 .logout-btn { margin: 40rpx 24rpx; }
+
+/* 菜单右侧状态文字（如「微信绑定：已绑定/未绑定」） */
+.mi-state {
+  margin-left: auto;
+  margin-right: 10rpx;
+  font-size: 24rpx;
+  color: var(--text-3);
+}
