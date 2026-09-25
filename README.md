@@ -4,7 +4,12 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-25（第三十三轮）** — **解绑后一键登录「无提示」根治 + 地址表单输入框修复**。
+**最近更新：2026-09-25（第三十四轮）** — **未绑定提示「必然可见」加固（页面内引导 + modal 双保险）**。
+用户复测显示：Console 已有 `[login] 微信登录失败 {status:422, code:BUSINESS_RULE}`（**判断逻辑与 422 分支都已命中**），但 `wx.showModal` 仍未呈现 → **问题在"系统弹窗"这个载体，不在判断逻辑**。
+修复改为**不依赖单一载体**：422 时同时 ① 渲染**页面内引导卡片**（`data.bindTip` → 标题/说明/操作按钮，**不依赖任何 wx API，必然可见**）② 保留 `wx.showModal` 作第二重保险；卡片按钮按登录态给「绑定到当前账号」/「用手机号登录并绑定」。
+**验证**（Node stub 驱动）：未登录 422 / 已登录 422 均 ✅ 落卡片 + 调用 modal，按钮行为正确。
+
+**第三十三轮（2026-09-25）** — **解绑后一键登录「无提示」根治 + 地址表单输入框修复**。
 **根因链**：`wx.login` 在个别环境既不 success 也不 fail → `getWxCode` **永不 settle** → `silentRelogin` 单飞标记 `_silentLoggingIn` **永久锁死** → 后续点击立即 `reject({needLogin:true})`（**无 status**）→ 绕过 422 引导分支只落一句 1.5 秒含糊 toast；叠加 `wechatLogin()` 在 `submitting` 时**静默 return**（锁死后连点毫无反应）。
 **修复**：`getWxCode` 加 **10s 超时**；`submitting` 守卫**不再静默**（给"正在处理中"）；`handleWechatError` **所有失败分支改 modal**（含 needLogin/未知错误）+ `console.warn` 诊断。
 **验证**（Node stub `wx`/`Page` 驱动页面方法）：4 种失败路径**全部产生可见 modal**（未登录 422 / **已登录 422** / 单飞冲突 / 503）；「`wx.login` 永不回调」实测 **1209ms 后正确 reject**，不再悬挂。

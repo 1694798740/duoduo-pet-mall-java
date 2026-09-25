@@ -15,6 +15,18 @@
       <view class="login-tip">若提示「微信还没绑定账号」，点下方「手机号登录 / 注册新账号」即可，<text class="login-tip-strong">登录后会自动绑定当前微信</text>，之后就能一键登录</view>
     </block>
 
+    <!-- 「微信还没绑定账号」的页面内引导（不依赖 wx.showModal，必然可见） -->
+    <view wx:if="{{bindTip}}" class="bind-tip">
+      <view class="bind-tip-head">
+        <text class="bind-tip-title">{{bindTip.title}}</text>
+        <text class="bind-tip-close" bindtap="dismissBindTip">✕</text>
+      </view>
+      <view class="bind-tip-content">{{bindTip.content}}</view>
+      <view class="bind-tip-btn" bindtap="onBindTipAction">
+        {{bindTip.action === 'bind' ? '绑定到当前账号' : '用手机号登录并绑定'}}
+      </view>
+    </view>
+
     <!-- 从「微信未绑定」转过来时，明确告诉用户这步会顺手完成绑定 -->
     <view wx:if="{{pendingWechatBind}}" class="login-bind-tip">
       用手机号登录/注册后，会自动把当前微信绑定到这个账号

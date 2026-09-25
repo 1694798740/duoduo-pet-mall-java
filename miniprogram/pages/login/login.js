@@ -25,6 +25,14 @@ Page({
     submitting: false,
     // 是否处于「手机号登录后将自动绑定微信」流程（用于界面文案）
     pendingWechatBind: false,
+    /**
+     * 「微信还没绑定账号」的**页面内引导**。
+     *
+     * <p>为什么不只依赖 `wx.showModal`：实测出现过"诊断日志已打印 422、但弹窗没出现"——
+     * 关键引导必须有**不依赖任何 wx API** 的载体，所以同时渲染成页面内卡片（一定看得见），
+     * modal 保留作为第二重保险。
+     */
+    bindTip: null,
     // 经服务端校验过的登录态（不是"本地存了令牌字符串"就算登录 —— 令牌可能已过期）
     loggedIn: false,
   },
@@ -103,6 +111,17 @@ Page({
     console.warn('[login] 微信登录失败', { status: status, code: err && err.code, message: err && err.message });
 
     if (status === 422) {
+      // 先落"页面内引导"（不依赖 wx API，必然可见），再补 modal 作第二重保险
+      const bound = !!this.data.loggedIn;
+      this.setData({
+        bindTip: {
+          title: '微信还没绑定账号',
+          content: bound
+            ? '当前账号已登录，把这个微信绑上去就能一键登录了。'
+            : '用手机号登录或注册后，会自动把这个微信绑定到该账号；以后就能一键登录了。',
+          action: bound ? 'bind' : 'phone',
+        },
+      });
       // 情形③：确实已登录（服务端校验过）→ 一次点击直接绑定，不必再走登录
       if (this.data.loggedIn) {
         wx.showModal({
@@ -176,6 +195,32 @@ Page({
    * @param {{afterLogin?: boolean}} opts afterLogin=true 表示处在「登录成功后的绑定」场景：
    *   此时令牌刚刚签发、不该失效，因此失败只提示、不把用户踢回表单。
    */
+  /** 页面内引导卡片上的按钮：「绑定到当前账号」或「去手机号登录」 */
+  onBindTipAction() {
+    const tip = this.data.bindTip;
+    if (!tip) return;
+    if (tip.action === 'bind') {
+      this.setData({ submitting: true });
+      this.bindCurrentWechat().then(
+        () => {
+          this.setData({ submitting: false, bindTip: null });
+          wx.showToast({ title: '已绑定微信，下次可一键登录', icon: 'success' });
+        },
+        (err) => {
+          this.setData({ submitting: false });
+          this.notifyBindFailure(err, null);
+        }
+      );
+      return;
+    }
+    this.setData({ mode: 'phone', pendingWechatBind: true, bindTip: null });
+  },
+
+  /** 关掉页面内引导 */
+  dismissBindTip() {
+    this.setData({ bindTip: null });
+  },
+
   bindCurrentWechat(opts) {
     const afterLogin = !!(opts && opts.afterLogin);
     if (this.data.submitting && !afterLogin) return Promise.reject({ message: '正在处理中' });

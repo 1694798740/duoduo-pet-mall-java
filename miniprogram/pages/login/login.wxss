@@ -66,3 +66,44 @@
   margin-top: 24rpx;
   line-height: 1.6;
 }
+
+/* 「微信还没绑定账号」页面内引导卡片（modal 的第二重保险） */
+.bind-tip {
+  margin-top: 24rpx;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  background: #fff7e6;
+  border: 2rpx solid #ffd591;
+}
+.bind-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bind-tip-title {
+  font-size: 29rpx;
+  font-weight: 700;
+  color: #b45309;
+}
+.bind-tip-close {
+  font-size: 26rpx;
+  color: var(--text-3);
+  padding: 0 8rpx;
+}
+.bind-tip-content {
+  margin-top: 10rpx;
+  font-size: 25rpx;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.bind-tip-btn {
+  margin-top: 18rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  text-align: center;
+  border-radius: 36rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 27rpx;
+  font-weight: 600;
+}

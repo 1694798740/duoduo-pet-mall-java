@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-25（第三十三轮 · 解绑后一键登录「无提示」根治 + 地址表单输入框修复）——①**根因链**：`wx.login` 在个别环境既不 success 也不 fail → `getWxCode` **永不 settle** → `silentRelogin` 的单飞标记 `_silentLoggingIn` **永久锁死** → 后续每次点「微信一键登录」立即 reject `{needLogin:true}`（**没有 status 字段**）→ 绕过 422 专用引导分支、只落到一句 1.5 秒的含糊 toast；叠加第二条静默路径：`wechatLogin()` 在 `submitting===true` 时**直接 return 无任何提示**（submitting 被悬挂 Promise 锁死后就再也点不动）。②**修复**：`getWxCode` 加 **10s 超时**（杜绝永久悬挂）；`submitting` 守卫改为**明确提示**而非静默；`handleWechatError` **所有分支改 modal**（含 needLogin/未知错误），并加 `console.warn` 诊断线索。③**验证方式（可复现）**：Node 里 stub `wx` API 直接驱动页面方法 → 4 种失败路径（未登录 422 / 已登录 422 / 单飞冲突 / 503）**全部产生可见 modal**；另用「`wx.login` 永不回调」验证 1.2s 超时后正确 reject（不再悬挂）。④**地址表单输入框文字被裁**：`box-sizing: border-box` 下小程序 `input` 的默认内容高度被上下 padding 挤掉 → 文字只露上半截；改为**显式 `height:84rpx` + `line-height:84rpx` + padding 只留左右**。上一轮第三十二轮交付 P2 售后入口 + P3 高亮纠错）
+> 更新时间：2026-09-25（第三十四轮 · 未绑定提示「必然可见」加固）——用户复测：解绑后点一键登录，Console 已打印 `[login] 微信登录失败 {status:422, code:BUSINESS_RULE}`（说明**判断逻辑与 422 分支已命中**），但 `wx.showModal` **仍未呈现** → 结论：问题不在判断逻辑，而在「依赖系统弹窗」这个载体本身（可能被环境/竞态吞掉）。**修复策略改为不依赖单一载体**：422 时**同时**①渲染**页面内引导卡片**（`data.bindTip` → WXML 卡片，含标题/说明/操作按钮，**不依赖任何 wx API，必然可见**）与②保留 `wx.showModal` 作第二重保险；卡片按钮按登录态给「绑定到当前账号」或「用手机号登录并绑定」，并支持手动关闭。验证（Node stub 驱动）：未登录 422 → `bindTip` 已设置 + modal 已调用；已登录 422 → `action=bind` 且 modal 已调用；点卡片按钮正确切换 `mode/pendingWechatBind`。上一轮第三十三轮定位根因链（wx.login 悬挂 + 静默 return））
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -223,6 +223,33 @@
 
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
+
+### 2026-09-25（第三十四轮 · 未绑定提示「必然可见」加固：页面内引导 + modal 双保险）
+
+**用户复测反馈**：解绑后点「微信一键登录」，Console 里有两条 —— 一条 `422`，一条 **`[login] 微信登录失败 {status:422, code:'BUSINESS_RULE', message:'该微信未绑定账号…'}`**，但**提示框仍未弹出**。
+
+**这一步的价值**：日志证明**判断逻辑与 422 分支都已命中**（上轮加的诊断日志起作用了），因此问题**不在 `status` 判断**，而在 **`wx.showModal` 这个载体本身没能呈现**（系统弹窗可能被环境状态/竞态吞掉 —— 这类问题在真机上难以稳定复现，也不该靠"再试一次"赌运气）。
+
+**修复策略（不依赖单一载体）**
+
+| 层 | 载体 | 特性 |
+|---|---|---|
+| 第一层（**必然可见**） | `data.bindTip` → **页面内引导卡片**（微信按钮正下方，标题 + 说明 + 操作按钮 + 可关闭） | **不依赖任何 wx API**，只要 `setData` 成功就一定渲染 |
+| 第二层（保险） | `wx.showModal` | 保留，正常环境下体验更轻 |
+
+卡片按钮按登录态自适应：
+- 已登录（`loggedIn=true`）→「**绑定到当前账号**」→ `bindCurrentWechat()`，成功 toast「已绑定微信」
+- 未登录 →「**用手机号登录并绑定**」→ 切 `mode='phone'` 并置 `pendingWechatBind`（登录成功后自动绑定）
+
+**验证（Node stub 驱动页面方法）**
+
+| 场景 | 结果 |
+|---|---|
+| 未登录 + 422 | ✅ `bindTip={title:微信还没绑定账号, content:…, action:phone}` + `wx.showModal` 已调用 |
+| 已登录 + 422 | ✅ `bindTip.action='bind'` + `wx.showModal` 已调用 |
+| 点卡片按钮（bind） | ✅ 走 `bindCurrentWechat()` → 成功清空卡片 + toast |
+| 点卡片按钮（phone） | ✅ 切手机号表单并置 `pendingWechatBind` |
+
 
 ### 2026-09-25（第三十三轮 · 解绑后「微信一键登录无提示」根治 + 地址表单输入框修复）
 
