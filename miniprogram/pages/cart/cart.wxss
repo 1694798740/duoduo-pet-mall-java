@@ -3,9 +3,45 @@
   align-items: stretch;
   gap: 16rpx;
 }
+
+/* 勾选：结算只结已勾选条目，勾选框就是结算口径的可视化 */
+.ci-check {
+  display: flex;
+  align-items: center;
+  padding-right: 4rpx;
+}
+.checkbox {
+  width: 40rpx;
+  height: 40rpx;
+  border: 2rpx solid var(--line);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+  color: #fff;
+}
+.checkbox-on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .ci-main { flex: 1; }
 .ci-title { font-size: 28rpx; font-weight: 500; }
 .ci-spec { font-size: 22rpx; margin: 8rpx 0; }
+/* 失效条目：整行置灰 + 标出原因，不再混进合计 */
+.ci-invalid .ci-title,
+.ci-invalid .ci-spec,
+.ci-invalid .price { color: var(--text-3); }
+.ci-reason {
+  display: inline-block;
+  font-size: 20rpx;
+  color: #e5484d;
+  background: #fff1f0;
+  border-radius: 6rpx;
+  padding: 2rpx 10rpx;
+  margin-bottom: 6rpx;
+}
 .ci-bottom {
   display: flex;
   justify-content: space-between;

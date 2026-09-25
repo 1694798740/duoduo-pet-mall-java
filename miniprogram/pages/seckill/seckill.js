@@ -1,7 +1,28 @@
-// 限时秒杀（A14）：活动列表 + 一键秒杀（Redis 预扣，服务端限流/防超卖）
+// 限时秒杀（A14）：活动列表 + 一键秒杀（服务端 Redis 预扣 + DB 兜底防超卖）
+//
+// A14 修复要点：
+//  * 活动状态读 **phase**（后端按当前时间计算 ONGOING/UPCOMING/ENDED，没有 status 字段）——
+//    此前读 status 恒为 undefined，导致按钮恒禁用、点击恒提示「不在抢购时间内」；
+//  * dataset 只传 id/phase 等标量，不再把整个活动对象（含 skus 数组）塞进 dataset；
+//  * 登录引导与失败分支都有 catch：不会静默无响应。
 const api = require('../../utils/api');
 
-const STATUS_LABEL = { ONGOING: '抢购中', UPCOMING: '即将开始', ENDED: '已结束' };
+const PHASE_LABEL = { ONGOING: '抢购中', UPCOMING: '即将开始', ENDED: '已结束' };
+
+function decorate(act) {
+  return Object.assign({}, act, {
+    phaseLabel: PHASE_LABEL[act.phase] || act.phase,
+    startText: api.shortTime(act.startAt),
+    endText: api.shortTime(act.endAt),
+    skus: (act.skus || []).map((s) =>
+      Object.assign({}, s, {
+        seckillPriceText: api.fen2yuan(s.seckillPrice),
+        originalPriceText: api.fen2yuan(s.originalPrice),
+        soldOut: Number(s.availableStock) <= 0,
+      })
+    ),
+  });
+}
 
 Page({
   data: {
@@ -17,48 +38,59 @@ Page({
 
   fetch() {
     this.setData({ loading: true, error: '' });
-    api.seckill
+    return api.seckill
       .activities()
-      .then((list) => {
-        const activities = (list || []).map((a) =>
-          Object.assign({}, a, { statusLabel: STATUS_LABEL[a.status] || a.status })
-        );
-        this.setData({ activities, loading: false });
-      })
-      .catch((err) => this.setData({ loading: false, error: err.message || '加载失败' }));
+      .then((list) => this.setData({ activities: (list || []).map(decorate), loading: false }))
+      .catch((err) =>
+        this.setData({ loading: false, error: (err && err.message) || '加载失败' })
+      );
   },
 
   buy(e) {
-    const { activity, sku } = e.currentTarget.dataset;
-    if (activity.status !== 'ONGOING') {
+    const activityId = e.currentTarget.dataset.activityId;
+    const skuId = e.currentTarget.dataset.skuId;
+    const phase = e.currentTarget.dataset.phase;
+    if (phase !== 'ONGOING') {
       wx.showToast({ title: '不在抢购时间内', icon: 'none' });
       return;
     }
-    const app = getApp();
-    app.ensureLogin().then(() => {
-      this.setData({ placingSkuId: sku.skuId });
-      api
-        .address.default()
-        .then((addr) => {
-          if (!addr) {
-            wx.showModal({
-              title: '还没有收货地址',
-              content: '请先在 Web 端「我的 → 地址簿」添加收货地址',
-              showCancel: false,
-            });
-            return null;
-          }
-          return api.seckill.place(activity.id, sku.skuId, addr.id).then(() => {
-            wx.showToast({ title: '秒杀成功！', icon: 'success' });
-            wx.switchTab({ url: '/pages/orders/orders' });
-            return null;
+    if (this.data.placingSkuId) return; // 防连点
+    getApp()
+      .ensureLogin()
+      .then(() => this.place(activityId, skuId))
+      .catch((err) => {
+        // needLogin：已引导登录页或用户放弃登录，无需再弹错误
+        if (err && err.needLogin) return;
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
+  },
+
+  place(activityId, skuId) {
+    this.setData({ placingSkuId: skuId });
+    return api.address
+      .default()
+      .then((addr) => {
+        if (!addr) {
+          wx.showModal({
+            title: '还没有收货地址',
+            content: '当前版本请先在 Web 端「我的 → 收货地址」添加默认地址，再回小程序抢购。',
+            showCancel: false,
           });
-        })
-        .catch((err) => {
-          wx.showToast({ title: (err && err.message) || '秒杀失败', icon: 'none' });
-          this.fetch(); // 失败后刷新余量
-        })
-        .then(() => this.setData({ placingSkuId: '' }));
-    });
+          return null;
+        }
+        return api.seckill.place(activityId, skuId, addr.id).then((result) => {
+          wx.showToast({
+            title: result && result.replay ? '你已抢到过该商品' : '秒杀成功！',
+            icon: 'success',
+          });
+          this.fetch();
+          setTimeout(() => wx.switchTab({ url: '/pages/orders/orders' }), 700);
+        });
+      })
+      .catch((err) => {
+        wx.showToast({ title: (err && err.message) || '秒杀失败', icon: 'none' });
+        this.fetch(); // 失败后刷新余量（可能已抢完或触发限购）
+      })
+      .then(() => this.setData({ placingSkuId: '' }));
   },
 });

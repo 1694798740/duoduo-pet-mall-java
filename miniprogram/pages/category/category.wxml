@@ -11,7 +11,13 @@
     </view>
   </scroll-view>
 
-  <scroll-view scroll-y class="cat-main">
+  <!-- 列表在 scroll-view 内滚动：分页必须靠 bindscrolltolower（页面级 onReachBottom 不会触发） -->
+  <scroll-view
+    scroll-y
+    class="cat-main"
+    lower-threshold="120"
+    bindscrolltolower="onScrollToLower"
+  >
     <scroll-view scroll-x wx:if="{{activeChildren.length > 0}}" class="cat-children">
       <view
         class="cat-chip {{activeChildId === '' ? 'chip-active' : ''}}"
@@ -27,7 +33,10 @@
       >{{item.name}}</view>
     </scroll-view>
 
-    <view wx:if="{{error}}" class="error-box">{{error}}</view>
+    <view wx:if="{{error}}" class="error-box">
+      <view>{{error}}</view>
+      <button class="btn btn-plain btn-mini" bindtap="fetchCategories">重试</button>
+    </view>
     <view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
     <view wx:elif="{{items.length === 0}}" class="empty">
       <view class="icon">🛍️</view>
@@ -37,20 +46,23 @@
     <view wx:else class="goods-grid" style="padding: 0">
       <view
         wx:for="{{items}}"
-        wx:key="spuId"
+        wx:key="id"
         class="goods-card"
-        data-id="{{item.spuId}}"
+        data-id="{{item.id}}"
         bindtap="goDetail"
       >
         <view class="goods-cover">
-          <image wx:if="{{item.image}}" src="{{item.image}}" mode="aspectFill" />
+          <image wx:if="{{item.mainImage}}" src="{{item.mainImage}}" mode="aspectFill" lazy-load />
           <text wx:else>🐱</text>
         </view>
         <view class="goods-body">
           <view class="goods-name ellipsis-2">{{item.title}}</view>
-          <view class="price goods-price">{{item.minPrice / 100}}</view>
+          <view class="price goods-price">{{item.priceText}}</view>
         </view>
       </view>
     </view>
+
+    <view wx:if="{{loading && items.length > 0}}" class="empty">加载更多…</view>
+    <view wx:elif="{{!hasMore && items.length > 0}}" class="empty">— 已经到底啦 —</view>
   </scroll-view>
 </view>

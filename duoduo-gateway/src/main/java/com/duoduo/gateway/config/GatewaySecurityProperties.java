@@ -26,14 +26,24 @@ public class GatewaySecurityProperties {
     /** 免认证路径（Ant 风格），其余路径必须携带合法令牌 */
     private List<String> whitelist = List.of(
             "/api/auth/login",
+            // A14 修复 · 移动端（小程序）令牌下发通道：小程序没有 Cookie 语义，
+            // 令牌必须随响应体返回。功能与 /api/auth/login 完全等价（同一 AuthService），
+            // 只是响应体从「扁平 UserView」换成「UserView + accessToken/refreshToken」，
+            // 因此信任级别相同、同样免登。必须**逐条精确列出**（Ant 匹配下
+            // /api/auth/login 不会覆盖 /api/auth/login/token）。
+            "/api/auth/login/token",
             "/api/auth/register",
             "/api/auth/sms/**",
             "/api/auth/refresh",
+            // 移动端刷新：refreshToken 由端侧请求体传入，此时 access token 已过期，
+            // 因此与 /api/auth/refresh 同级免登。
+            "/api/auth/refresh/token",
             // 微信小程序登录（A13）：wx.login 的 code 换令牌，此时自然没有登录态。
-            // 只放行 /api/auth/wechat 这一条；/api/auth/wechat/bind 是「登录态下绑定
-            // 微信」，需要 Bearer 令牌，绝不能进白名单 —— 否则拿到任意令牌前缀即可
-            // 把别人的微信绑到自己的账号上。
+            // 只放行 这**两条精确路径**（浏览器版 + 移动端令牌版）；
+            // /api/auth/wechat/bind 是「登录态下绑定微信」，需要 Bearer 令牌，
+            // 绝不能进白名单 —— 否则拿到任意令牌前缀即可把别人的微信绑到自己的账号上。
             "/api/auth/wechat",
+            "/api/auth/wechat/token",
             "/api/products/**",
             "/api/categories/**",
             "/api/home/**",

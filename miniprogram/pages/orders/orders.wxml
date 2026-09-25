@@ -18,13 +18,22 @@
 <view wx:for="{{orders}}" wx:key="orderNo" class="card order-item">
   <view class="o-head">
     <text class="o-no">单号 {{item.orderNo}}</text>
-    <text class="o-status">{{item.statusLabel}}</text>
+    <text class="o-status">{{item.statusText}}</text>
   </view>
   <view class="o-body">
-    <text>共 {{item.totalQuantity || item.items.length}} 件商品</text>
-    <text class="price">实付 ¥{{item.payAmount / 100}}</text>
+    <text>共 {{item.quantityText}} 件商品</text>
+    <text class="price">实付 {{item.payAmountText}}</text>
   </view>
   <view class="o-actions">
+    <button
+      wx:if="{{item.status === 'PENDING_PAYMENT'}}"
+      class="btn-mini o-btn-plain"
+      size="mini"
+      data-no="{{item.orderNo}}"
+      bindtap="cancelOrder"
+    >
+      取消订单
+    </button>
     <button
       wx:if="{{item.status === 'PENDING_PAYMENT'}}"
       class="btn btn-accent o-btn"
@@ -46,3 +55,6 @@
     </button>
   </view>
 </view>
+
+<view wx:if="{{loading && orders.length > 0}}" class="empty">加载更多…</view>
+<view wx:elif="{{!hasMore && orders.length > 0}}" class="empty">— 已经到底啦 —</view>

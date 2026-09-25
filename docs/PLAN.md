@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-25（第二十轮：**A14 小程序全面重构 + 限时秒杀 已交付**——小程序 TabBar 五页框架（首页/分类/购物车/订单/我的，默认进首页）+ 统一请求层与设计 token + 补齐领券/AI/秒杀三特色页；**详情页「服务器内部异常」根因定位**=旧页面请求不存在的子路径被全局兜底成 500，后端详情端点实测正常，新页面按真实字段对接；**交易域新增限时秒杀模块**：三表 + Redis Lua 预扣（软依赖可降级）+ DB 行锁扣减兜底**绝不超卖** + 关单/取消/强关回补钩子 + C 端 3 端点/运营端 2 端点 + 网关路由与白名单；网页端 `/seckill` 页同步上线。自测 `seckill-smoke.ps1` **26 通过 / 0 失败**，提交 `7f9bf22` 推送 + CI 绿。上一轮第十九轮完成 A12 压测）
+> 更新时间：2026-09-25（第二十一轮：**A14 排查修复轮**——按排查报告修掉 28 项问题中的 P0/P1/P2/P3；**根因是「小程序拿不到登录令牌」**（登录端点只回扁平 UserView、令牌走 Cookie），新增 `/api/auth/{login,refresh,wechat}/token` 三个**纯增量**令牌端点 + 网关白名单，小程序改为 Bearer 通道；并修复支付缺 idempotentKey、支付结果字段（codeUrl/payStatus）、秒杀 phase 字段、商品图 mainImage、分页失效、券包 goLogin 缺失等；新增 `scripts/check-miniprogram.js` 静态自检（14 js / 10 wxml / 50 文件 **0 错误 0 告警**）。上一轮第二十轮交付 A14 小程序重构 + 限时秒杀）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -195,6 +195,56 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-25（第二十一轮 · A14 排查修复：小程序全面体检后的缺陷修复）
+
+> 用户指令：对现有代码全面检查与修复（语法/逻辑/异常/边界/安全/冗余），保持原有功能不变，完成后列出问题、根因、方案与待人工确认项。
+
+#### 后端（duoduo-user / duoduo-gateway）· 纯增量，不动既有契约
+
+| 文件 | 变更 |
+|---|---|
+| `AuthController` | 新增 `POST /api/auth/login/token`、`/api/auth/refresh/token`、`/api/auth/wechat/token`：**令牌随响应体下发**（`LoginResponse`），与浏览器端点共用同一份 `AuthService`。刻意用新增端点而非改既有响应体——后者会让 Web（读扁平 UserView）与既有冒烟断言同时失效 |
+| `GatewaySecurityProperties` | 白名单逐条精确补入上述三条（Ant 匹配下 `/api/auth/login` 不覆盖 `/api/auth/login/token`） |
+| `docs/agent/04` | 白名单清单 + 端点表同步三行（端点总数 129 → **132**） |
+
+#### 小程序（miniprogram/）· 按严重度修复
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| **P0** | 登录拿不到令牌（`setToken(undefined)` → `ensureSession` 恒判未登录） | 改用 `/api/auth/*/token`；`api.js` 增加 `acceptSession` 明确报错，不再静默变「未登录」 |
+| **P0** | 支付缺 `idempotentKey`（后端 `@NotBlank`）必然 400 | `order.pay()` 补幂等键 |
+| **P0** | 支付结果字段错（读 `payUrl`/`status`） | 改用 `codeUrl`/`payStatus`；沙箱立即成功分支也处理 |
+| **P1** | 秒杀读 `status`（后端是 `phase`）→ 页面整体不可用 | 全量改读 `phase` + `phaseLabel`；dataset 只传标量 id/phase |
+| **P1** | 商品图读 `image`（后端 `mainImage`）、`sales`→`salesCount`、`wx:key=spuId`→`id` | 首页/分类页字段与 key 全部对齐 |
+| **P1** | 分类页分页失效（列表在 scroll-view 内，`onReachBottom` 不触发） | 改 `bindscrolltolower`；`.cat-wrap` 改 `position:fixed` 撑满可见视口（自动扣 tabBar 与安全区） |
+| **P1** | 登录页只有微信入口，新用户必 422 无路可走 | 登录页双入口（微信 + 手机号登录/注册），422 引导切手机号；`app.registerBy` 支持小程序内自助开户 |
+| **P1** | 券包「去登录」调用了不存在的 `goLogin` | 补 `goLogin`；不可领时展示服务端 `claimableReason` |
+| **P1** | 订单固定 page=1（超 20 单看不到）、无取消/确认确认框 | 分页 + `onReachBottom`；取消订单/确认收货均二次确认；新增取消入口 |
+| **P1** | 购物车自算合计、忽略 `selected`/`valid` | 合计改用服务端 `selectedAmount`/`selectedCount`；新增勾选交互；失效条目标注原因并禁选 |
+| **P2** | `ensureLogin()` Promise 可能永久悬挂 | `navigateTo` 失败即 reject；登录页 `onUnload` 调 `cancelLogin()` 拒绝等待方 |
+| **P2** | 轮询定时器泄漏、连续支付叠加 | 句柄挂实例 + `onHide/onUnload` 清理 + 防重入 |
+| **P2** | 401 连开多个登录页；评价昵称字段错；订单状态缺 REFUNDED；`totalQuantity` 不存在；profile 把接口失败当未登录；AI 消息无上限/`wx:key=index` | 401 去重与「已在登录页」判断；`nickname`；用服务端 `statusLabel`；件数本地求和；catch 分类处理；消息上限 60 条 + 稳定 id |
+| **P3** | 图片无懒加载、`inset` 兼容性、首页无下拉刷新、骨架屏数组内联、dataset 传大对象、删除无确认、键盘遮挡输入框 | 全部修复（含 AI 页键盘高度适配） |
+| 安全/配置 | `BASE_URL` 硬编码；缺 `lazyCodeLoading`/`networkTimeout`；token 双令牌分离存储 | 三档环境常量（dev/lan/prod）+ 显式注释 HTTPS 要求；补两项配置；新增 `clearSession` 统一清理 |
+
+#### 新增自检工具
+
+`scripts/check-miniprogram.js`：①JS 语法 ②JSON 合法性 ③WXML 事件绑定与 JS 方法对齐（本次「goLogin 未定义」即此类）④WXML 数据字段粗筛。当前结果 **0 错误 / 0 告警**。
+
+#### 自测与验证（实测，非推断）
+
+| 验证项 | 结果 |
+|---|---|
+| `POST /api/auth/login/token`（经网关） | 200，`data` 含 `user/accessToken/refreshToken/expiresInSeconds` |
+| `GET /api/cart` 带 Bearer | 200；不带令牌 → 401（证明小程序通道打通） |
+| `POST /api/orders/{no}/pay` 旧形状 `{channel}` | **400 VALIDATION**「idempotentKey 不能为空」（复现旧缺陷） |
+| 同上 + `idempotentKey` | 通过校验（→ 404 订单不存在），修复生效 |
+| `POST /api/auth/refresh/token` 无效令牌 | 401（白名单放行且逻辑正确） |
+| 小程序静态自检 | 14 js / 10 wxml / 50 文件 **0 错误 0 告警** |
+| `mvn -pl duoduo-user,duoduo-gateway -am package` | BUILD SUCCESS |
+
+**遗留（需人工确认/后续）**：`docs/openapi/*` 需重跑 `scripts/export-openapi.ps1` 刷新（本会话工具集无终端脚本执行能力）；小程序内地址簿页面与订单详情页未做（属新功能）；tabBar 图标需设计资源；真机 UI（分类页布局、安全区）待实机确认。
 
 ### 2026-09-25（第二十轮 · A14 小程序全面重构 + 限时秒杀）
 

@@ -41,4 +41,6 @@
 .cp-mid { flex: 1; }
 .cp-name { font-size: 28rpx; font-weight: 600; margin-bottom: 6rpx; }
 .cp-desc { font-size: 22rpx; margin-bottom: 4rpx; }
+/* 不可领的真实原因（已领过 / 未开始 / 已领完） */
+.cp-reason { color: #e5484d; font-size: 20rpx; margin-top: 4rpx; }
 .cp-btn { width: 130rpx; }

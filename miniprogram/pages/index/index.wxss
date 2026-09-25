@@ -37,3 +37,13 @@
 .seckill-price { color: var(--accent); font-weight: 700; font-size: 34rpx; }
 .seckill-price::before { content: '¥'; font-size: 22rpx; }
 .seckill-origin { color: var(--text-3); font-size: 20rpx; text-decoration: line-through; }
+/* 预告条上的状态角标：抢购中 / 即将开始 */
+.seckill-tag {
+  display: inline-block;
+  margin-top: 8rpx;
+  font-size: 18rpx;
+  color: var(--accent);
+  background: #fff;
+  border-radius: 6rpx;
+  padding: 2rpx 10rpx;
+}

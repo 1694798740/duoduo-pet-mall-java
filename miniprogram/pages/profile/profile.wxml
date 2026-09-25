@@ -36,6 +36,11 @@
     <text>限时秒杀</text>
     <text class="arrow">›</text>
   </view>
+  <view class="menu-item" bindtap="addressTip">
+    <text class="mi-icon">📍</text>
+    <text>收货地址</text>
+    <text class="arrow">›</text>
+  </view>
   <view class="menu-item" bindtap="go" data-url="/pages/orders/orders">
     <text class="mi-icon">📦</text>
     <text>我的订单</text>

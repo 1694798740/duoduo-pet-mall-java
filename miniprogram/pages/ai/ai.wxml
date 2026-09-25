@@ -1,5 +1,5 @@
-<scroll-view scroll-y class="chat-list" scroll-into-view="{{scrollInto}}">
-  <view wx:for="{{messages}}" wx:key="index" wx:for-item="msg" id="msg-{{index}}">
+<scroll-view scroll-y class="chat-list" scroll-into-view="{{scrollInto}}" scroll-with-animation>
+  <view wx:for="{{messages}}" wx:key="id" wx:for-item="msg" id="msg-{{msg.id}}">
     <view class="bubble-row {{msg.role === 'user' ? 'row-user' : ''}}">
       <view wx:if="{{msg.role === 'assistant'}}" class="chat-avatar">🐱</view>
       <view class="bubble {{msg.role === 'user' ? 'bubble-user' : ''}} {{msg.error ? 'bubble-error' : ''}}">
@@ -34,13 +34,16 @@
   <view style="height: 24rpx"></view>
 </scroll-view>
 
-<view class="chat-input-bar">
+<!-- 输入条：键盘弹出时上移（keyboardHeight 由 wx.onKeyboardHeightChange 提供） -->
+<view class="chat-input-bar" style="bottom: {{keyboardHeight}}px">
   <input
     class="chat-input"
     placeholder="想买什么？告诉多多（最多 500 字）"
     value="{{input}}"
     maxlength="500"
     confirm-type="send"
+    adjust-position="{{false}}"
+    cursor-spacing="24"
     bindinput="onInput"
     bindconfirm="send"
   />

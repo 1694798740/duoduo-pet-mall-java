@@ -6,11 +6,11 @@
 
 <block wx:elif="{{detail}}">
   <view class="card">
-    <image wx:if="{{detail.mainImage}}" src="{{detail.mainImage}}" mode="aspectFill" class="p-image" />
+    <image wx:if="{{detail.mainImage}}" src="{{detail.mainImage}}" mode="aspectFill" class="p-image" lazy-load />
     <view class="p-title">{{detail.title}}</view>
     <view wx:if="{{detail.subtitle}}" class="t3">{{detail.subtitle}}</view>
     <view class="p-price-row">
-      <view class="price p-price">{{detail.minPrice / 100}}</view>
+      <view class="price p-price">{{detail.minPriceText}}</view>
       <view class="t3">已售 {{detail.salesCount}}</view>
       <view class="tag tag-brand" bindtap="askAi">🤖 问问 AI</view>
     </view>
@@ -18,7 +18,8 @@
 
   <view class="card">
     <view class="sec-title">选择规格</view>
-    <view class="sku-list">
+    <view wx:if="{{detail.skus.length === 0}}" class="t3">该商品暂无可售规格</view>
+    <view wx:else class="sku-list">
       <view
         wx:for="{{detail.skus}}"
         wx:key="id"
@@ -26,7 +27,7 @@
         data-index="{{index}}"
         bindtap="selectSku"
       >
-        {{item.specText}}（¥{{item.price / 100}}）
+        {{item.specText}}（¥{{item.priceText}}）
       </view>
     </view>
   </view>
@@ -36,7 +37,7 @@
     <view wx:if="{{reviews.length === 0}}" class="t3">暂无评价</view>
     <view wx:for="{{reviews}}" wx:key="id" class="review-item">
       <view class="review-head">
-        <text class="t2">{{item.userNickname || '匿名用户'}}</text>
+        <text class="t2">{{item.nickname || '匿名用户'}}</text>
         <text class="t3">{{item.rating || 5}} 星</text>
       </view>
       <view class="review-content">{{item.content}}</view>
@@ -50,7 +51,13 @@
 
   <view style="height: 140rpx"></view>
   <view class="footer">
-    <button class="btn btn-accent footer-btn" bindtap="addCart" disabled="{{adding}}" loading="{{adding}}">
+    <button class="btn btn-plain footer-share" open-type="share" size="mini">分享</button>
+    <button
+      class="btn btn-accent footer-btn"
+      bindtap="addCart"
+      disabled="{{adding || detail.skus.length === 0}}"
+      loading="{{adding}}"
+    >
       加入购物车
     </button>
   </view>

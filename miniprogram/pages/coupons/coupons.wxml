@@ -6,6 +6,7 @@
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button wx:if="{{tab === 'mine'}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
+  <button wx:else class="btn btn-plain btn-mini" bindtap="fetch">重试</button>
 </view>
 <view wx:elif="{{loading}}" class="empty">加载中…</view>
 
@@ -17,13 +18,15 @@
   </view>
   <view wx:for="{{templates}}" wx:key="id" class="coupon-card {{item.claimable ? '' : 'cp-disabled'}}">
     <view class="cp-left">
-      <view class="cp-discount">{{item.discountAmount / 100}}</view>
-      <view class="cp-threshold">满 {{item.thresholdAmount / 100}} 可用</view>
+      <view class="cp-discount">{{item.discountText}}</view>
+      <view class="cp-threshold">满 {{item.thresholdText}} 可用</view>
     </view>
     <view class="cp-mid">
       <view class="cp-name">{{item.name}}</view>
       <view class="t3 cp-desc">{{item.description || item.typeLabel}}</view>
-      <view class="t3">{{item.endAt}} 前有效 · 剩余 {{item.remainingCount}}</view>
+      <view class="t3">{{item.endText}} 前有效 · 剩余 {{item.remainingCount}} 张</view>
+      <!-- 不可领时展示服务端给出的真实原因（已领过 / 未开始 / 已领完口径不同） -->
+      <view wx:if="{{!item.claimable && item.claimableReason}}" class="t3 cp-reason">{{item.claimableReason}}</view>
     </view>
     <button
       class="btn btn-accent cp-btn"
@@ -33,7 +36,7 @@
       disabled="{{!item.claimable || claimingId === item.id}}"
       loading="{{claimingId === item.id}}"
     >
-      {{item.claimable ? '领取' : '已领完'}}
+      {{item.claimable ? '领取' : '不可领'}}
     </button>
   </view>
 </block>
@@ -46,12 +49,12 @@
   </view>
   <view wx:for="{{mine}}" wx:key="code" class="coupon-card">
     <view class="cp-left">
-      <view class="cp-discount">{{item.discountAmount / 100}}</view>
-      <view class="cp-threshold">满 {{item.thresholdAmount / 100}} 可用</view>
+      <view class="cp-discount">{{item.discountText}}</view>
+      <view class="cp-threshold">满 {{item.thresholdText}} 可用</view>
     </view>
     <view class="cp-mid">
       <view class="cp-name">{{item.name}}</view>
-      <view class="t3">{{item.expireAt}} 前有效</view>
+      <view class="t3">{{item.endText}} 前有效</view>
       <view class="tag {{item.status === 'UNUSED' ? 'tag-accent' : 'tag-gray'}}" style="margin-top: 8rpx">
         {{item.statusLabel}}
       </view>

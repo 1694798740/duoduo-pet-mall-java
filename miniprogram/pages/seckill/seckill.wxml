@@ -12,29 +12,31 @@
   <view wx:for="{{activities}}" wx:for-item="act" wx:key="id" class="card act-card">
     <view class="act-head">
       <view class="act-title">{{act.title}}</view>
-      <view class="tag {{act.status === 'ONGOING' ? 'tag-accent' : 'tag-gray'}}">{{act.statusLabel}}</view>
+      <view class="tag {{act.phase === 'ONGOING' ? 'tag-accent' : 'tag-gray'}}">{{act.phaseLabel}}</view>
     </view>
-    <view class="t3 act-time">{{act.startAt}} ~ {{act.endAt}}</view>
+    <view class="t3 act-time">{{act.startText}} ~ {{act.endText}}</view>
 
     <view wx:for="{{act.skus}}" wx:for-item="sku" wx:key="skuId" class="sk-sku">
       <view class="sk-info">
         <view class="ellipsis sk-name">{{sku.spuTitle}}</view>
         <view class="sk-price-row">
-          <view class="sk-price">{{sku.seckillPrice / 100}}</view>
-          <text class="price-origin">¥{{sku.originalPrice / 100}}</text>
+          <view class="sk-price">{{sku.seckillPriceText}}</view>
+          <text class="price-origin">¥{{sku.originalPriceText}}</text>
           <text class="t3">剩余 {{sku.availableStock}}/{{sku.totalStock}}</text>
         </view>
+        <view class="t3" style="font-size: 20rpx">每人限购 {{sku.perLimit}} 件</view>
       </view>
       <button
         class="btn btn-accent sk-btn"
         size="mini"
-        data-activity="{{act}}"
-        data-sku="{{sku}}"
+        data-activity-id="{{act.id}}"
+        data-sku-id="{{sku.skuId}}"
+        data-phase="{{act.phase}}"
         bindtap="buy"
-        disabled="{{act.status !== 'ONGOING' || sku.availableStock <= 0 || placingSkuId === sku.skuId}}"
+        disabled="{{act.phase !== 'ONGOING' || sku.soldOut || placingSkuId === sku.skuId}}"
         loading="{{placingSkuId === sku.skuId}}"
       >
-        {{sku.availableStock <= 0 ? '已抢光' : (act.status === 'ONGOING' ? '马上抢' : act.statusLabel)}}
+        {{sku.soldOut ? '已抢光' : (act.phase === 'ONGOING' ? '马上抢' : act.phaseLabel)}}
       </button>
     </view>
   </view>

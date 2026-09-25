@@ -16,16 +16,27 @@
 .review-head { display: flex; justify-content: space-between; margin-bottom: 8rpx; font-size: 24rpx; }
 .review-content { font-size: 26rpx; color: var(--text); line-height: 1.6; }
 .p-desc { color: var(--text-2); line-height: 1.7; }
+
+/* 底部操作栏：分享（open-type=share）+ 加购 */
 .footer {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
   background: #fff;
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
-.footer-btn { width: 100%; }
+.footer-share {
+  width: 140rpx;
+  height: 76rpx;
+  flex: none;
+  margin: 0;
+}
+.footer-btn { flex: 1; height: 76rpx; }
 
 /* 详情主图：整宽圆角卡片图 */
 .p-image {
@@ -33,5 +44,5 @@
   height: 480rpx;
   border-radius: 16rpx;
   margin-bottom: 16rpx;
-  background: var(--surface-alt, #f5f5f5);
+  background: var(--bg);
 }

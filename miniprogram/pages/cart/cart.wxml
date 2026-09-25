@@ -6,12 +6,20 @@
 </view>
 
 <block wx:else>
-  <view wx:for="{{items}}" wx:key="skuId" class="card cart-item">
+  <view wx:for="{{items}}" wx:key="skuId" class="card cart-item {{item.valid ? '' : 'ci-invalid'}}">
+    <!-- 勾选：下单只结已勾选条目，因此这里的勾选就是结算口径 -->
+    <view class="ci-check" data-sku="{{item.skuId}}" bindtap="toggleSelect">
+      <view class="checkbox {{item.selected && item.valid ? 'checkbox-on' : ''}}">
+        {{item.selected && item.valid ? '✓' : ''}}
+      </view>
+    </view>
+
     <view class="ci-main">
       <view class="ci-title ellipsis-2">{{item.title}}</view>
       <view class="t3 ci-spec">{{item.specText}}</view>
+      <view wx:if="{{!item.valid}}" class="ci-reason">{{item.reasonText}}</view>
       <view class="ci-bottom">
-        <view class="price">¥{{item.price / 100}}</view>
+        <view class="price">{{item.priceText}}</view>
         <view class="stepper">
           <view class="step-btn" data-sku="{{item.skuId}}" bindtap="dec">−</view>
           <view class="step-num">{{item.quantity}}</view>
@@ -19,19 +27,20 @@
         </view>
       </view>
     </view>
+
     <view class="ci-del" data-sku="{{item.skuId}}" bindtap="removeItem">删除</view>
   </view>
 
   <view style="height: 140rpx"></view>
   <view class="footer">
     <view class="footer-total">
-      合计 <text class="price">¥{{totalAmount / 100}}</text>
-      <text class="t3">（{{totalCount}} 件）</text>
+      合计 <text class="price">{{selectedAmountText}}</text>
+      <text class="t3">（已选 {{selectedCount}} 件）</text>
     </view>
     <button
       class="btn btn-accent footer-btn"
       bindtap="placeOrder"
-      disabled="{{ordering || items.length === 0}}"
+      disabled="{{ordering || selectedCount === 0}}"
       loading="{{ordering}}"
     >
       去结算

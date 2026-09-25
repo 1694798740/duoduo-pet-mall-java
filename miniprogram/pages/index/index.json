@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "多多宠物商店"
+  "navigationBarTitleText": "多多宠物商店",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
 }

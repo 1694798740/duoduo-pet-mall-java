@@ -2,23 +2,69 @@
   <view class="card">
     <view class="login-title">登录多多宠物商店</view>
 
+    <!-- 微信一键登录：AppID 已配置时可用；未绑定的微信会引导到下方手机号入口 -->
+    <block wx:if="{{wechatReady}}">
+      <button
+        class="btn-primary login-btn"
+        bindtap="wechatLogin"
+        disabled="{{submitting}}"
+        loading="{{submitting}}"
+      >
+        微信一键登录
+      </button>
+      <view class="login-tip">首次使用请用下方手机号注册，登录后在「我的」绑定微信，之后即可一键登录</view>
+    </block>
+
+    <!-- 手机号登录 / 注册：始终可见（新用户唯一的开户入口） -->
+    <view class="login-mode">
+      <view
+        class="mode-item {{mode === 'phone' ? 'mode-active' : ''}}"
+        data-mode="phone"
+        bindtap="switchMode"
+      >手机号登录</view>
+      <view
+        class="mode-item {{mode === 'register' ? 'mode-active' : ''}}"
+        data-mode="register"
+        bindtap="switchMode"
+      >注册新账号</view>
+    </view>
+
+    <input
+      class="login-input"
+      type="number"
+      maxlength="11"
+      placeholder="手机号"
+      value="{{phone}}"
+      bindinput="onPhone"
+    />
+    <input
+      class="login-input"
+      password
+      maxlength="64"
+      placeholder="{{mode === 'register' ? '密码（8-64 位）' : '密码'}}"
+      value="{{password}}"
+      bindinput="onPassword"
+    />
+    <input
+      wx:if="{{mode === 'register'}}"
+      class="login-input"
+      maxlength="20"
+      placeholder="昵称（选填）"
+      value="{{nickname}}"
+      bindinput="onNickname"
+    />
+
     <button
-      wx:if="{{wechatReady}}"
       class="btn-primary login-btn"
-      bindtap="submit"
+      bindtap="submitPhone"
       disabled="{{submitting}}"
       loading="{{submitting}}"
     >
-      微信一键登录
+      {{mode === 'register' ? '注册并登录' : '登录'}}
     </button>
 
-    <block wx:else>
-      <input class="login-input" type="number" placeholder="手机号" value="{{phone}}" bindinput="onPhone" />
-      <input class="login-input" password placeholder="密码" value="{{password}}" bindinput="onPassword" />
-      <button class="btn-primary login-btn" bindtap="submit" disabled="{{submitting}}" loading="{{submitting}}">
-        登录
-      </button>
-      <view class="login-tip">测试号阶段：使用 Web 端注册的账号密码登录；AppID 就绪后切换为微信一键登录</view>
-    </block>
+    <view class="login-tip">
+      {{mode === 'register' ? '注册即创建多多账号，手机号将作为登录账号' : '忘记密码？当前版本请通过 Web 端「我的」重置'}}
+    </view>
   </view>
 </view>

@@ -9,6 +9,29 @@
   text-align: center;
 }
 
+/* 手机号登录 / 注册 切换 */
+.login-mode {
+  display: flex;
+  background: #f5f6fa;
+  border-radius: 32rpx;
+  padding: 6rpx;
+  margin-bottom: 28rpx;
+}
+.mode-item {
+  flex: 1;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--text-2);
+  padding: 14rpx 0;
+  border-radius: 28rpx;
+}
+.mode-active {
+  background: #fff;
+  color: var(--brand);
+  font-weight: 700;
+  box-shadow: 0 2rpx 8rpx rgba(35, 38, 47, 0.06);
+}
+
 .login-input {
   background: #f5f6fa;
   border-radius: 12rpx;

@@ -3,6 +3,7 @@
     class="search-input"
     placeholder="搜索宠物用品"
     value="{{keyword}}"
+    confirm-type="search"
     bindinput="onKeywordInput"
     bindconfirm="onSearch"
   />
@@ -22,7 +23,7 @@
   </view>
 </view>
 
-<!-- 秒杀预告条 -->
+<!-- 秒杀预告条：只展示未结束的活动（phase 由服务端计算） -->
 <view wx:if="{{seckillSkus.length > 0}}" class="seckill-strip">
   <view class="seckill-head" bindtap="goEntry" data-url="/pages/seckill/seckill">
     <text class="seckill-title">⚡ 限时秒杀</text>
@@ -37,8 +38,9 @@
       bindtap="goEntry"
     >
       <view class="seckill-name ellipsis">{{item.spuTitle}}</view>
-      <view class="seckill-price">{{item.seckillPrice / 100}}</view>
-      <view class="seckill-origin">¥{{item.originalPrice / 100}}</view>
+      <view class="seckill-price">{{item.priceText}}</view>
+      <view class="seckill-origin">¥{{item.originText}}</view>
+      <view class="seckill-tag">{{item.phaseLabel}}</view>
     </view>
   </scroll-view>
 </view>
@@ -50,7 +52,7 @@
 
 <!-- 骨架屏 -->
 <view wx:elif="{{firstLoading}}" class="goods-grid">
-  <view wx:for="{{[1,2,3,4]}}" wx:key="*this" class="goods-card">
+  <view wx:for="{{skeletons}}" wx:key="*this" class="goods-card">
     <view class="skeleton sk-cover"></view>
     <view class="skeleton sk-line"></view>
     <view class="skeleton sk-line w40"></view>
@@ -65,23 +67,24 @@
 <view wx:else class="goods-grid">
   <view
     wx:for="{{items}}"
-    wx:key="spuId"
+    wx:key="id"
     class="goods-card"
-    data-id="{{item.spuId}}"
+    data-id="{{item.id}}"
     bindtap="goDetail"
   >
     <view class="goods-cover">
-      <image wx:if="{{item.image}}" src="{{item.image}}" mode="aspectFill" />
+      <image wx:if="{{item.mainImage}}" src="{{item.mainImage}}" mode="aspectFill" lazy-load />
       <text wx:else>🐱</text>
     </view>
     <view class="goods-body">
       <view class="goods-name ellipsis-2">{{item.title}}</view>
       <view class="goods-price-row">
-        <view class="price goods-price">{{item.minPrice / 100}}</view>
-        <text class="t3" style="font-size: 22rpx">已售 {{item.sales || 0}}</text>
+        <view class="price goods-price">{{item.priceText}}</view>
+        <text class="t3" style="font-size: 22rpx">已售 {{item.salesCount || 0}}</text>
       </view>
     </view>
   </view>
 </view>
 
 <view wx:if="{{loading && items.length > 0}}" class="empty">加载更多…</view>
+<view wx:elif="{{!hasMore && items.length > 0}}" class="empty">— 已经到底啦 —</view>

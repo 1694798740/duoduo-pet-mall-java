@@ -1,41 +1,71 @@
 // A14 · API 分域封装（页面只 import 本文件，按域调用）
-// 形状约定：分页一律 { items, total }；ID 全字符串；金额单位为「分」（展示层用 fen2yuan 转换）。
+// 形状约定：分页一律 { items, total }；ID 全字符串；金额单位为「分」（展示层用 fen2yuan 或 /100）。
+//
+// 令牌通道（A14 修复）：小程序没有 Cookie 语义，登录/刷新必须用**令牌版端点**
+// （/api/auth/*/token，响应体含 accessToken/refreshToken）；浏览器版的
+// /api/auth/login、/api/auth/wechat 只回扁平 UserView、令牌走 httpOnly Cookie，小程序用不了。
 const req = require('./request');
 
 // ── 登录态 ───────────────────────────────────────────────────────────────────
+
+/** 把令牌对与用户一次性落盘（登录/刷新共用） */
+function acceptSession(data) {
+  if (!data || !data.accessToken) {
+    // 端点用错或后端未部署令牌版端点时会走到这里：报明确原因，而不是静默变成「未登录」
+    throw { code: 'NO_TOKEN', message: '登录响应缺少令牌，请确认后端已部署 /api/auth/*/token' };
+  }
+  req.setTokens(data.accessToken, data.refreshToken);
+  return data.user;
+}
+
 function wxLogin() {
   return new Promise((resolve, reject) => {
     wx.login({
       success(res) {
         if (!res.code) {
-          reject({ message: 'wx.login 未返回 code' });
+          reject({ message: 'wx.login 未返回 code，请重试' });
           return;
         }
         req
-          .post('/api/auth/wechat', { code: res.code })
-          .then((data) => {
-            req.setToken(data.accessToken);
-            resolve(data.user);
-          })
+          .post('/api/auth/wechat/token', { code: res.code })
+          .then((data) => resolve(acceptSession(data)))
           .catch(reject);
       },
       fail() {
-        reject({ message: 'wx.login 调用失败' });
+        reject({ message: 'wx.login 调用失败，请重试' });
       },
     });
   });
 }
 
 function phoneLogin(phone, password) {
-  return req.post('/api/auth/login', { phone, password }).then((data) => {
-    req.setToken(data.accessToken);
-    return data.user;
-  });
+  return req.post('/api/auth/login/token', { phone, password }).then((data) => acceptSession(data));
 }
 
+/**
+ * 注册并直接登录（小程序内自助开户）。
+ *
+ * <p>后端 /api/auth/register 的响应体是扁平 UserView（浏览器契约，令牌走 Cookie），
+ * 因此这里「注册 + 换令牌」两步走：先建号，再用密码登录拿令牌对 —— 不新增后端端点，
+ * 也不改动既有契约。
+ */
+function register(phone, password, nickname) {
+  return req
+    .post('/api/auth/register', { phone, password, nickname })
+    .then(() => phoneLogin(phone, password));
+}
+
+/** 静默探测登录态：无令牌直接判定未登录（不发请求） */
 function ensureSession() {
   if (!req.getToken()) return Promise.reject({ needLogin: true });
   return req.get('/api/users/me', { silent: true });
+}
+
+/** 用 refreshToken 换新的令牌对（访问令牌过期时调用，失败即需要重新登录） */
+function refreshSession() {
+  const refreshToken = req.getRefreshToken();
+  if (!refreshToken) return Promise.reject({ needLogin: true });
+  return req.post('/api/auth/refresh/token', { refreshToken }, { silent: true }).then((data) => acceptSession(data));
 }
 
 // ── 商品域（公开） ──────────────────────────────────────────────────────────
@@ -54,8 +84,10 @@ const product = {
   categories() {
     return req.get('/api/categories');
   },
-  reviews(spuId, page) {
-    return req.get('/api/reviews/product/' + spuId + '?page=' + (page || 1) + '&pageSize=5');
+  reviews(spuId, page, pageSize) {
+    return req.get(
+      '/api/reviews/product/' + spuId + '?page=' + (page || 1) + '&pageSize=' + (pageSize || 5)
+    );
   },
   reviewSummary(spuId) {
     return req.get('/api/reviews/product/' + spuId + '/summary');
@@ -67,6 +99,7 @@ const product = {
 
 // ── 交易域 ───────────────────────────────────────────────────────────────────
 const cart = {
+  /** 购物车视图：含 items / selectedAmount / selectedCount / totalQuantity / invalidReasons */
   view() {
     return req.get('/api/cart');
   },
@@ -79,15 +112,19 @@ const cart = {
   updateQuantity(skuId, quantity) {
     return req.patch('/api/cart/items/' + skuId, { quantity });
   },
+  /** 勾选 / 取消勾选（下单只结已勾选条目，因此这是结算口径的一部分） */
+  setSelection(skuId, selected) {
+    return req.patch('/api/cart/items/' + skuId + '/selection', { selected: !!selected });
+  },
   remove(skuId) {
     return req.del('/api/cart/items/' + skuId);
   },
 };
 
 const order = {
-  list(page, status) {
+  list(page, status, pageSize) {
     const s = status && status !== 'ALL' ? '&status=' + status : '';
-    return req.get('/api/orders?page=' + (page || 1) + '&pageSize=20' + s);
+    return req.get('/api/orders?page=' + (page || 1) + '&pageSize=' + (pageSize || 20) + s);
   },
   detail(orderNo) {
     return req.get('/api/orders/' + orderNo);
@@ -98,11 +135,24 @@ const order = {
       idempotentKey: 'mp-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
     });
   },
+  /**
+   * 发起支付（沙箱渠道）。
+   *
+   * <p>payNo/idempotentKey 都是后端 @NotBlank 的必填项：幂等键保证「重复点支付只入账一次」，
+   * 缺了会直接 400 —— 这是 A14 排查发现的缺陷之一。
+   */
   pay(orderNo) {
-    return req.post('/api/orders/' + orderNo + '/pay', { channel: 'sandbox' });
+    return req.post('/api/orders/' + orderNo + '/pay', {
+      channel: 'sandbox',
+      idempotentKey: 'pay-' + orderNo + '-' + Date.now(),
+    });
   },
   payStatus(payNo) {
     return req.get('/api/payments/' + payNo, { silent: true });
+  },
+  /** 取消订单（仅待付款可取消；请求体可省略） */
+  cancel(orderNo, reason) {
+    return req.post('/api/orders/' + orderNo + '/cancel', { reason: reason || '用户取消' });
   },
   confirm(orderNo) {
     return req.post('/api/orders/' + orderNo + '/confirm');
@@ -112,6 +162,9 @@ const order = {
 const address = {
   default() {
     return req.get('/api/addresses/default');
+  },
+  list() {
+    return req.get('/api/addresses');
   },
 };
 
@@ -140,6 +193,7 @@ const ai = {
 
 // ── 秒杀（A14 新增，C 端） ───────────────────────────────────────────────────
 const seckill = {
+  /** 活动列表：phase 由服务端按当前时间计算（ONGOING / UPCOMING / ENDED） */
   activities() {
     return req.get('/api/seckill/activities');
   },
@@ -162,6 +216,16 @@ function fen2yuan(fen) {
   return (n / 100).toFixed(n % 100 === 0 ? 0 : 2);
 }
 
+// ── 时间工具（后端下发 ISO-8601 UTC 串，直接展示不友好） ─────────────────────
+/** ISO 串 → MM-DD HH:mm（本地时区）；无法解析时原样返回，绝不显示 undefined */
+function shortTime(iso) {
+  if (!iso) return '';
+  const text = String(iso).replace('T', ' ').replace('Z', '');
+  const m = text.match(/^(\d{4})-(\d{2})-(\d{2})[ ]?(\d{2}):(\d{2})/);
+  if (!m) return String(iso);
+  return m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+}
+
 module.exports = {
   get: req.get,
   post: req.post,
@@ -169,11 +233,17 @@ module.exports = {
   del: req.del,
   getToken: req.getToken,
   setToken: req.setToken,
+  setTokens: req.setTokens,
   clearToken: req.clearToken,
+  clearSession: req.clearSession,
+  openLoginPage: req.openLoginPage,
+  onUnauthorized: req.onUnauthorized,
   toastError: req.toastError,
   wxLogin,
   phoneLogin,
+  register,
   ensureSession,
+  refreshSession,
   product,
   cart,
   order,
@@ -182,4 +252,5 @@ module.exports = {
   ai,
   seckill,
   fen2yuan,
+  shortTime,
 };

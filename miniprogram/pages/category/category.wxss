@@ -1,6 +1,13 @@
+/* 分类页：左右分栏，整页不滚动（列表在右侧 scroll-view 内滚动）
+   用 position:fixed + inset 撑满**可见视口**（自动扣掉 tabBar 与安全区），
+   比 height:100vh 可靠：100vh 在部分机型上会把最后一行压到 tabBar 下面 */
 .cat-wrap {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
-  height: 100vh;
   background: var(--bg);
 }
 .cat-side {
@@ -21,7 +28,12 @@
   background: var(--bg);
   border-left-color: var(--brand);
 }
-.cat-main { flex: 1; height: 100%; padding: 20rpx; box-sizing: border-box; }
+.cat-main {
+  flex: 1;
+  height: 100%;
+  padding: 20rpx;
+  box-sizing: border-box;
+}
 .cat-children { white-space: nowrap; margin-bottom: 20rpx; }
 .cat-chip {
   display: inline-block;
@@ -33,3 +45,6 @@
   margin-right: 12rpx;
 }
 .chip-active { background: var(--brand); color: #fff; }
+/* 双列卡片在 180rpx 侧栏的剩余宽度里收窄，避免换行错位 */
+.cat-main .goods-card { width: 320rpx; }
+.cat-main .goods-cover { width: 320rpx; height: 320rpx; }

@@ -29,5 +29,11 @@
     ]
   },
   "style": "v2",
+  "lazyCodeLoading": "requiredComponents",
+  "networkTimeout": {
+    "request": 15000,
+    "downloadFile": 30000,
+    "uploadFile": 30000
+  },
   "sitemapLocation": "sitemap.json"
 }
