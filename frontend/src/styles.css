@@ -1368,3 +1368,84 @@ button.link:hover {
   max-width: 420px;
   margin: 40px auto;
 }
+
+/* ---------- 限时秒杀（A14） ---------- */
+.seckill-card {
+  margin-bottom: 16px;
+}
+
+.seckill-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.seckill-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.seckill-sku-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.seckill-sku {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border, #eee);
+  border-radius: 10px;
+}
+
+.seckill-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-alt, #f5f5f5);
+  flex: none;
+}
+
+.seckill-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.seckill-title {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seckill-title:hover {
+  color: var(--brand, #e05a2b);
+}
+
+.seckill-price-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.seckill-price {
+  font-size: 1.15rem;
+}
+
+.seckill-original {
+  font-size: 0.85rem;
+}

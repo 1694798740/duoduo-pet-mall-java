@@ -76,6 +76,8 @@ import type {
   TrackListView,
   UsableCouponResult,
   UserView,
+  PlaceSeckillResult,
+  SeckillActivityView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -559,4 +561,28 @@ export const duoduoApi = {
   /** 对话；history 为最近 6 轮的带角色历史（服务端上限 6 条） */
   chat: (body: { message: string; history?: DuoduoChatTurn[] }) =>
     api.post<DuoduoChatResponse>('/api/duoduo/chat', body),
+};
+
+// ---------- 限时秒杀（/api/seckill，交易域 A14） ----------
+
+/**
+ * 秒杀接口。
+ *
+ * 网关白名单只放行 activities 两级只读路径：活动列表 / 详情未登录可读（导流页），
+ * 下单 `place` 需要登录。防超卖的正确性在服务端（Redis 预扣挡量 + DB 原子扣减兜底），
+ * 前端不做任何余量判断之外的本地限制 —— 余量显示可能与真实值有瞬间偏差，以服务端为准。
+ */
+export const seckillApi = {
+  activities: (options?: { signal?: AbortSignal }) =>
+    api.get<SeckillActivityView[]>('/api/seckill/activities', options),
+
+  detail: (id: string, options?: { signal?: AbortSignal }) =>
+    api.get<SeckillActivityView>(`/api/seckill/activities/${id}`, options),
+
+  /**
+   * 秒杀下单。idempotentKey 由前端生成（uuid）：双击 / 网络重试都会被服务端幂等去重，
+   * 返回 replay=true 与首次订单号，不会重复扣配额。
+   */
+  place: (body: { activityId: string; skuId: string; addressId: string; idempotentKey: string }) =>
+    api.post<PlaceSeckillResult>('/api/seckill/orders', body),
 };

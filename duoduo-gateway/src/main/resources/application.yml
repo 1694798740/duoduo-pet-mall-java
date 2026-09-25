@@ -67,7 +67,10 @@ spring:
             # /api/admin/mq/** = 死信查询与重放（A11）：数据与消费组都在交易域，
             #   必须显式列出（product / trade 的路由按具体子路径列举，不是 /api/admin/** 兜底），
             #   漏了会被路由到 404 而不是报错（02 篇显式列举纪律的既有案例）
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**
+            # /api/seckill/** 与 /api/admin/seckill/** = 限时秒杀（A14）：活动表与配额在交易库。
+            #   列表/详情不进白名单（网关统一鉴权，未登录只影响下单不影响浏览看实现取舍，
+            #   这里与 cart/orders 同口径处理）；下单与管理端由服务端校验登录/operator
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

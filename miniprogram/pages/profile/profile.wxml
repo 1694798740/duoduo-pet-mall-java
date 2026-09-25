@@ -1,0 +1,51 @@
+<view class="profile-head">
+  <view class="avatar">{{logged ? '🐱' : '👤'}}</view>
+  <view class="head-info">
+    <block wx:if="{{logged}}">
+      <view class="nick">{{user.nickname}}</view>
+      <view class="t3">{{user.phoneMasked}}</view>
+    </block>
+    <block wx:else>
+      <view class="nick" bindtap="goLogin">点击登录</view>
+      <view class="t3">登录后享更多服务</view>
+    </block>
+  </view>
+</view>
+
+<view class="coupon-strip" bindtap="go" data-url="/pages/coupons/coupons?tab=mine">
+  <view>
+    <view class="coupon-num">{{couponCount}}</view>
+    <view class="t3">可用优惠券</view>
+  </view>
+  <view class="tag tag-accent">去领券 ›</view>
+</view>
+
+<view class="card menu">
+  <view class="menu-item" bindtap="go" data-url="/pages/coupons/coupons">
+    <text class="mi-icon">🎫</text>
+    <text>领券中心 / 我的券包</text>
+    <text class="arrow">›</text>
+  </view>
+  <view class="menu-item" bindtap="go" data-url="/pages/ai/ai">
+    <text class="mi-icon">🤖</text>
+    <text>AI 导购「多多」</text>
+    <text class="arrow">›</text>
+  </view>
+  <view class="menu-item" bindtap="go" data-url="/pages/seckill/seckill">
+    <text class="mi-icon">⚡</text>
+    <text>限时秒杀</text>
+    <text class="arrow">›</text>
+  </view>
+  <view class="menu-item" bindtap="go" data-url="/pages/orders/orders">
+    <text class="mi-icon">📦</text>
+    <text>我的订单</text>
+    <text class="arrow">›</text>
+  </view>
+  <view class="menu-item" bindtap="go" data-url="/pages/cart/cart">
+    <text class="mi-icon">🛒</text>
+    <text>购物车</text>
+    <text class="arrow">›</text>
+  </view>
+</view>
+
+<button wx:if="{{logged}}" class="btn btn-plain logout-btn" bindtap="logout">退出登录</button>

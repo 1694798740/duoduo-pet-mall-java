@@ -27,11 +27,11 @@
 | M4 | **Docker 化开发环境** | ✅ **已完成** | **7 容器全健康**；Nacos 注册 **4 服务**；从零重建数据卷可复现 |
 | M5 | **P1-b 交易服务** | ✅ 已完成 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / 支付幂等 / C2C 担保交易 / **卖家中心（M5-9）** |
 | M6 | 买家端 · **Web 商城** | ✅ 已完成 | 主交易闭环 10 页（React 18 + TS + Vite）；PC 端二维码扫码支付 + 3 秒轮询；**真实浏览器逐页验证通过** |
-| M7 | 买家端 · **微信小程序** | 🔄 进行中 | 骨架 + 后端 code2Session 登录均已交付（第十五轮）；**AppID/Secret 已配置（2026-09-25）**：user 容器已注入凭据、`project.config.json` 换真实 AppID、`WECHAT_LOGIN_READY=true`、真实通道验证通过（假 code → 401 非 503）；待用户在微信开发者工具完成 wx.login 真机联调 |
+| M7 | 买家端 · **微信小程序** | 🔄 进行中 | 骨架 + 后端 code2Session 登录均已交付（第十五轮）；**AppID/Secret 已配置（2026-09-25）**：user 容器已注入凭据、`project.config.json` 换真实 AppID、`WECHAT_LOGIN_READY=true`、真实通道验证通过（假 code → 401 非 503）；**A14 全面重构已落地（第二十轮）**：TabBar 五页框架 + 领券中心 / AI 导购 / 限时秒杀三特色页 + 请求层与设计 token 统一；待用户在微信开发者工具完成 wx.login 真机联调 |
 | M8 | **沙箱支付渠道** | ✅ 完成 | 渠道抽象 + 扫码预下单 + 收银台 + 回调验签 + 幂等（M8-1 自测 62 项全绿）；真实渠道留接口位 |
 | M9 | 商家端 · **Web（商家服务平台）** | ✅ 已完成 | 概览 / 订单 / 订单详情 / 结算对账 4 页；发货与售后退款走真实权限校验；自测 **82 通过 / 0 失败** |
 | M10 | 平台管理后台 · **Web** | ✅ 完成 | 类目品牌维护、内容审核、订单干预、资金对账、报表 |
-| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；**A9 `llm` 形态已用真实百炼 Key 联调通过并切 `qwen-max`**（T-60/T-61 两缺陷修复）；**A11 RocketMQ 削峰 + Sentinel 限流已落地**（异步下单通道 `POST /api/orders/queued` + 任务台账 + 死信可查可重放 + `order-place` 资源 QPS 限流，MQ 容器挂 `profile: mq`）；**A12 压测已完成**（sync ~100 单/s / queued 入队 ~1000 单/s / 热点行 +40%，报告 `docs/perf/A12-load-test-report.md`）；余下：XXL-Job；A13 AppID 已配置、真机联调中 |
+| M11 | 营销 / AI 导购 / 履约 / 检索 / 压测 | 🔄 进行中 | **履约域四块已落地**（新建 `duoduo-fulfilment`）：P2-1 评价与晒单、**A3 售后仲裁（含三端页面）**、**A2 物流轨迹（含买卖双方时间线）**、**A4 信用分（权重模型 + 前端展示）**；**A5 优惠券营销已落地**（新建第 6 个业务服务 `duoduo-marketing`，:8085，含前端领券中心 / 券包 / 结算选券）；**A8 收货地址簿已落地**（用户域地址簿 + 交易域下单写收货快照 + 前端 `/addresses` 与结算页二选一），同轮**根治 T-39 雪花 ID 精度缺陷**（`LongToStringJacksonModule` 全站统一按字符串下发 64 位标识，金额/计数/时间戳按字段名白名单保持数字）；**A9 AI 导购「多多」已落地**（新建第 7 个业务服务 `duoduo-ai`，:8086，**无状态**；真实候选召回 + 三形态 + 限流/降级 + 前端 `/ai` 免登录可用）；**A10 ES 检索已落地**（商品域单索引 `duoduo-search`，拼音/同义词应用侧容错、增量兼补偿、对账与重建、**ES 不可用降级 MySQL**）；**A9 `llm` 形态已用真实百炼 Key 联调通过并切 `qwen-max`**（T-60/T-61 两缺陷修复）；**A11 RocketMQ 削峰 + Sentinel 限流已落地**（异步下单通道 `POST /api/orders/queued` + 任务台账 + 死信可查可重放 + `order-place` 资源 QPS 限流，MQ 容器挂 `profile: mq`）；**A12 压测已完成**（sync ~100 单/s / queued 入队 ~1000 单/s / 热点行 +40%，报告 `docs/perf/A12-load-test-report.md`）；**A14 限时秒杀已落地（第二十轮）**：交易域三表 + Redis Lua 预扣（软依赖可降级）+ DB 原子扣减兜底防超卖 + C 端 3 端点 / 运营端 2 端点 + 关单回补钩子 + Web `/seckill` 页，自测 `seckill-smoke.ps1` **26 通过 / 0 失败**；余下：XXL-Job；A13 AppID 已配置、真机联调中 |
 
 ---
 
@@ -195,6 +195,39 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-09-25（第二十轮 · A14 小程序全面重构 + 限时秒杀）
+
+> 用户指令：小程序存在结构性缺陷与功能缺失，要求 ①TabBar 五页框架 ②修复详情页「服务器内部异常」③补齐券/AI/秒杀等缺失功能 ④同步补后端接口 ⑤网页端同步。方案确认后选「全部含秒杀」。
+
+#### A14-1~3 · 小程序重构（纯前端，miniprogram/）
+
+| 文件 | 变更 |
+|---|---|
+| `app.json` | 重写：10 页注册 + 5 Tab（首页/分类/购物车/订单/我的），启动默认首页 |
+| `utils/request.js` / `utils/api.js` | 新建请求层（错误映射 / 401 跳登录 / token 管理）+ 全量 API 分域封装 |
+| `app.wxss` | 重写：CSS 变量设计 token + 卡片/骨架屏/空态等公共样式 |
+| 首页/分类/我的 | 重写或新建：搜索条 + 三宫格入口（秒杀/领券/AI）+ 秒杀预告横滑 + 分类树 + 渐变头部 |
+| 购物车/订单 | 重写：步进器 + 状态 Tab 筛选 + 沙箱支付轮询 |
+| 商品详情 | 重写 + **字段归一化**：后端 `{card, detail, images, skus}` 映射为页面 shape（需求②修复） |
+| 领券/秒杀/AI | 新建三特色页，契约与后端 DTO 逐一核对；14 个 JS 语法检查全过 |
+
+#### A14-4 · 限时秒杀后端（交易域）
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-trade/pom.xml` + `application.yml` + compose | 新增 `spring-boot-starter-data-redis`（**软依赖**：Redis 不可用自动降级纯 DB 路径） |
+| `docs/sql/03-duoduo-trade.sql` / `incremental/11-a14-seckill.sql` / `db/schema.sql` | 三处同步：`t_seckill_activity` / `t_seckill_sku` / `t_seckill_order`，并已在 duoduo-mysql 执行 |
+| `SeckillService` 等 8 个新类 | 实体×3 / Mapper×3 / DTO / Service / C 端 Controller / 运营端 Controller |
+| `OrderService` | 超时关单 / 用户取消 / 运营强关三路径挂 `seckillService.onOrderClosed()` 回补配额钩子 |
+| 网关 | trade 路由补 `/api/seckill/**`、`/api/admin/seckill/**`；白名单补 activities 两级**精确只读**路径 |
+| `frontend/src/pages/Seckill.tsx` 等 | Web 端 `/seckill` 页 + 路由 + 导航「秒杀」+ API/类型/样式；`npm run build` 通过 |
+
+**秒杀架构要点**：Redis Lua 预扣（余量 + 单人限购一次判掉）挡量是**优化**；正确性由 `UPDATE t_seckill_sku SET available_stock=available_stock-1 WHERE available_stock>0` 单条 UPDATE 行锁兜底，**绝不超卖**。活动配额独立于商品库存（下单不冻结商品库存），关单/取消回补配额。秒杀单 order_type=SECKILL，支付/关单/状态机复用既有链路。
+
+**自测**：`seckill-smoke.ps1` **26 通过 / 0 失败**（匿名边界 / 运营准入 / 下单幂等 / 限购 / 售罄兜底 / DB 不负数 / 取消回补 / 再抢成功 / 最终配额=0）。需求②根因定位：详情页报错来自旧页面请求不存在的子路径（被全局兜底成 500）；后端 `GET /api/products/{id}` 实测正常，新详情页已按真实字段对接。
+
+**遗留**：运营端建活动页（Web 管理后台）暂缺，可先用接口/SQL 建活动；真机联调仍待用户微信开发者工具操作。
 
 ### 2026-09-25（第十九轮 · A12 压测与容量验收）
 
@@ -939,6 +972,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1
 
 # ES 检索（40 项；**需 ES 在跑**：docker compose --profile search up -d duoduo-es）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1
+
+# 限时秒杀（26 项；匿名边界 / 运营准入 / 下单幂等 replay / 限购 / 售罄 / 取消回补）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1
 
 # ---------- A12 压测（JMeter 5.6.3，工具在会话 tools/ 下；jtl 与 HTML 报告落 logs/perf/，不入库） ----------
 # ⚠️ 必须直接 java -jar 启动（jmeter.bat 检测不到 JDK21 时会 pause 挂死）；临时放大限流：DUODUO_TRADE_PLACE_QPS=5000 重建 trade

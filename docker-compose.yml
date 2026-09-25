@@ -209,6 +209,9 @@ services:
       ROCKETMQ_NAMESRV: ${ROCKETMQ_NAMESRV:-rocketmq-namesrv:9876}
       # Sentinel 限流：下单入口 QPS 上限（同步与队列端点共用），运维可调
       DUODUO_TRADE_PLACE_QPS: ${DUODUO_TRADE_PLACE_QPS:-100}
+      # A14 · 秒杀 Redis（原子预扣挡量；Redis 不可用时 SeckillService 自动降级纯 DB 路径）
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
     ports:
       - '8083:8083'
     depends_on:

@@ -1,37 +1,183 @@
-/* A13 · 全局样式 */
+/* A14 · 全局设计 token 与公共样式 */
 page {
-  background: #f5f6fa;
+  --brand: #4f6ef7;
+  --brand-weak: #eef1fe;
+  --accent: #ff5b2c;
+  --accent-weak: #fff1ec;
+  --success: #1aad19;
+  --text: #23262f;
+  --text-2: #6b7280;
+  --text-3: #9ca3af;
+  --bg: #f5f6fa;
+  --card: #ffffff;
+  --line: #eceef2;
+  --radius: 20rpx;
+  background: var(--bg);
+  color: var(--text);
   font-size: 28rpx;
-  color: #222;
 }
 
+/* ── 卡片 ── */
 .card {
-  background: #fff;
-  border-radius: 16rpx;
-  margin: 20rpx;
+  background: var(--card);
+  border-radius: var(--radius);
   padding: 24rpx;
+  margin: 20rpx 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
 }
 
-.btn-primary {
-  background: #4f6ef7;
-  color: #fff;
-  border-radius: 12rpx;
+/* ── 按钮 ── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 84rpx;
+  border-radius: 42rpx;
   font-size: 30rpx;
-  padding: 8rpx 0;
+  font-weight: 600;
+  border: none;
+}
+.btn::after { border: none; }
+.btn-primary { background: var(--brand); color: #fff; }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-plain { background: var(--brand-weak); color: var(--brand); }
+.btn-disabled { opacity: 0.5; }
+.btn-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 56rpx;
+  padding: 0 28rpx;
+  border-radius: 28rpx;
+  font-size: 24rpx;
+  font-weight: 500;
 }
 
-.btn-primary[disabled] {
-  background: #b9c4fb;
-  color: #fff;
+/* ── 文本 ── */
+.t2 { color: var(--text-2); }
+.t3 { color: var(--text-3); }
+.price { color: var(--accent); font-weight: 700; }
+.price::before { content: '¥'; font-size: 0.75em; }
+.price-origin { color: var(--text-3); text-decoration: line-through; font-size: 22rpx; }
+.ellipsis { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ellipsis-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
-.price {
-  color: #e5484d;
-  font-weight: 700;
+/* ── 徽标 / 标签 ── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2rpx 12rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  line-height: 34rpx;
 }
+.tag-brand { background: var(--brand-weak); color: var(--brand); }
+.tag-accent { background: var(--accent-weak); color: var(--accent); }
+.tag-gray { background: #f3f4f6; color: var(--text-3); }
 
+/* ── 空态 / 错误态 ── */
 .empty {
   text-align: center;
-  color: #999;
-  padding: 120rpx 0;
+  padding: 120rpx 40rpx;
+  color: var(--text-3);
+}
+.empty .icon { font-size: 88rpx; margin-bottom: 16rpx; }
+.error-box {
+  text-align: center;
+  padding: 80rpx 40rpx;
+  color: var(--text-2);
+}
+.error-box button { margin-top: 24rpx; }
+
+/* ── 骨架屏（加载占位，shimmer 动画） ── */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #eef0f4;
+  border-radius: 12rpx;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: shimmer 1.2s infinite;
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* ── 商品卡（双列流） ── */
+.goods-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 0 24rpx;
+}
+.goods-card {
+  width: 340rpx;
+  background: var(--card);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.goods-cover {
+  width: 340rpx;
+  height: 340rpx;
+  background: var(--brand-weak);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 72rpx;
+}
+.goods-cover image { width: 100%; height: 100%; }
+.goods-body { padding: 16rpx 20rpx 20rpx; }
+.goods-name { font-size: 26rpx; line-height: 36rpx; min-height: 72rpx; }
+.goods-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+  margin-top: 8rpx;
+}
+.goods-price { font-size: 34rpx; }
+
+/* ── 骨架商品卡 ── */
+.goods-card .sk-cover { width: 340rpx; height: 340rpx; border-radius: 0; }
+.goods-card .sk-line { height: 28rpx; margin-top: 16rpx; }
+.goods-card .sk-line.w60 { width: 60%; }
+.goods-card .sk-line.w40 { width: 40%; }
+
+/* ── 快捷入口（首页宫格） ── */
+.entry-grid {
+  display: flex;
+  justify-content: space-around;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 28rpx 10rpx;
+  margin: 20rpx 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.entry-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10rpx;
+  font-size: 24rpx;
+  color: var(--text-2);
+}
+.entry-icon {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44rpx;
 }

@@ -6,24 +6,81 @@
     bindinput="onKeywordInput"
     bindconfirm="onSearch"
   />
-  <button class="btn-primary search-btn" size="mini" bindtap="onSearch">搜索</button>
+  <button class="btn btn-primary search-btn" size="mini" bindtap="onSearch">搜索</button>
 </view>
 
-<view wx:if="{{error}}" class="empty">{{error}}</view>
-<view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
-<view wx:elif="{{items.length === 0}}" class="empty">没有找到相关商品</view>
+<view class="entry-grid">
+  <view
+    wx:for="{{entries}}"
+    wx:key="label"
+    class="entry-item"
+    data-url="{{item.url}}"
+    bindtap="goEntry"
+  >
+    <view class="entry-icon" style="background: {{item.color}}">{{item.icon}}</view>
+    <view>{{item.label}}</view>
+  </view>
+</view>
 
-<view
-  wx:for="{{items}}"
-  wx:key="spuId"
-  class="card product-item"
-  data-id="{{item.spuId}}"
-  bindtap="goDetail"
->
-  <view class="product-title">{{item.title}}</view>
-  <view class="product-meta">
-    <text class="price">¥{{item.minPrice / 100}}</text>
-    <text class="sales">已售 {{item.sales || 0}}</text>
+<!-- 秒杀预告条 -->
+<view wx:if="{{seckillSkus.length > 0}}" class="seckill-strip">
+  <view class="seckill-head" bindtap="goEntry" data-url="/pages/seckill/seckill">
+    <text class="seckill-title">⚡ 限时秒杀</text>
+    <text class="seckill-more">全部 ›</text>
+  </view>
+  <scroll-view scroll-x class="seckill-scroll">
+    <view
+      wx:for="{{seckillSkus}}"
+      wx:key="skuId"
+      class="seckill-item"
+      data-url="/pages/seckill/seckill"
+      bindtap="goEntry"
+    >
+      <view class="seckill-name ellipsis">{{item.spuTitle}}</view>
+      <view class="seckill-price">{{item.seckillPrice / 100}}</view>
+      <view class="seckill-origin">¥{{item.originalPrice / 100}}</view>
+    </view>
+  </scroll-view>
+</view>
+
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="onSearch">重试</button>
+</view>
+
+<!-- 骨架屏 -->
+<view wx:elif="{{firstLoading}}" class="goods-grid">
+  <view wx:for="{{[1,2,3,4]}}" wx:key="*this" class="goods-card">
+    <view class="skeleton sk-cover"></view>
+    <view class="skeleton sk-line"></view>
+    <view class="skeleton sk-line w40"></view>
+  </view>
+</view>
+
+<view wx:elif="{{items.length === 0}}" class="empty">
+  <view class="icon">🐾</view>
+  <view>没有找到相关商品</view>
+</view>
+
+<view wx:else class="goods-grid">
+  <view
+    wx:for="{{items}}"
+    wx:key="spuId"
+    class="goods-card"
+    data-id="{{item.spuId}}"
+    bindtap="goDetail"
+  >
+    <view class="goods-cover">
+      <image wx:if="{{item.image}}" src="{{item.image}}" mode="aspectFill" />
+      <text wx:else>🐱</text>
+    </view>
+    <view class="goods-body">
+      <view class="goods-name ellipsis-2">{{item.title}}</view>
+      <view class="goods-price-row">
+        <view class="price goods-price">{{item.minPrice / 100}}</view>
+        <text class="t3" style="font-size: 22rpx">已售 {{item.sales || 0}}</text>
+      </view>
+    </view>
   </view>
 </view>
 

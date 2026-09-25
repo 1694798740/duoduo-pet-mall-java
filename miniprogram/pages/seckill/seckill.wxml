@@ -1,0 +1,41 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="fetch">重试</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+<view wx:elif="{{activities.length === 0}}" class="empty">
+  <view class="icon">⚡</view>
+  <view>暂无秒杀活动，敬请期待</view>
+</view>
+
+<block wx:else>
+  <view wx:for="{{activities}}" wx:for-item="act" wx:key="id" class="card act-card">
+    <view class="act-head">
+      <view class="act-title">{{act.title}}</view>
+      <view class="tag {{act.status === 'ONGOING' ? 'tag-accent' : 'tag-gray'}}">{{act.statusLabel}}</view>
+    </view>
+    <view class="t3 act-time">{{act.startAt}} ~ {{act.endAt}}</view>
+
+    <view wx:for="{{act.skus}}" wx:for-item="sku" wx:key="skuId" class="sk-sku">
+      <view class="sk-info">
+        <view class="ellipsis sk-name">{{sku.spuTitle}}</view>
+        <view class="sk-price-row">
+          <view class="sk-price">{{sku.seckillPrice / 100}}</view>
+          <text class="price-origin">¥{{sku.originalPrice / 100}}</text>
+          <text class="t3">剩余 {{sku.availableStock}}/{{sku.totalStock}}</text>
+        </view>
+      </view>
+      <button
+        class="btn btn-accent sk-btn"
+        size="mini"
+        data-activity="{{act}}"
+        data-sku="{{sku}}"
+        bindtap="buy"
+        disabled="{{act.status !== 'ONGOING' || sku.availableStock <= 0 || placingSkuId === sku.skuId}}"
+        loading="{{placingSkuId === sku.skuId}}"
+      >
+        {{sku.availableStock <= 0 ? '已抢光' : (act.status === 'ONGOING' ? '马上抢' : act.statusLabel)}}
+      </button>
+    </view>
+  </view>
+</block>

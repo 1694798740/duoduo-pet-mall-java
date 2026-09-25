@@ -1,9 +1,14 @@
 {
   "pages": [
     "pages/index/index",
-    "pages/product/product",
+    "pages/category/category",
     "pages/cart/cart",
     "pages/orders/orders",
+    "pages/profile/profile",
+    "pages/product/product",
+    "pages/seckill/seckill",
+    "pages/coupons/coupons",
+    "pages/ai/ai",
     "pages/login/login"
   ],
   "window": {
@@ -13,12 +18,14 @@
     "backgroundColor": "#f5f6fa"
   },
   "tabBar": {
-    "color": "#999999",
+    "color": "#9ca3af",
     "selectedColor": "#4f6ef7",
     "list": [
       { "pagePath": "pages/index/index", "text": "首页" },
+      { "pagePath": "pages/category/category", "text": "分类" },
       { "pagePath": "pages/cart/cart", "text": "购物车" },
-      { "pagePath": "pages/orders/orders", "text": "订单" }
+      { "pagePath": "pages/orders/orders", "text": "订单" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
     ]
   },
   "style": "v2",

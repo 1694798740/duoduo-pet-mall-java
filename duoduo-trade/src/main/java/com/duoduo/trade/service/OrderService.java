@@ -152,6 +152,12 @@ public class OrderService {
     @Value("${duoduo.trade.auto-receipt-days:7}")
     private int autoReceiptDays;
 
+    /**
+     * 秒杀域回补钩子（A14）：订单关闭时把秒杀配额吐回去。
+     * SeckillService 只依赖 Mapper 与网关，不反向依赖本类，无循环依赖。
+     */
+    private final SeckillService seckillService;
+
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
                         OrderStatusLogMapper statusLogMapper,
@@ -166,7 +172,8 @@ public class OrderService {
                         SnowflakeIdGenerator idGenerator,
                         OrderNoGenerator orderNoGenerator,
                         ApplicationEventPublisher eventPublisher,
-                        LogisticsNotifier logisticsNotifier) {
+                        LogisticsNotifier logisticsNotifier,
+                        SeckillService seckillService) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -182,6 +189,7 @@ public class OrderService {
         this.orderNoGenerator = orderNoGenerator;
         this.eventPublisher = eventPublisher;
         this.logisticsNotifier = logisticsNotifier;
+        this.seckillService = seckillService;
     }
 
     // ---------------- 下单 ----------------
@@ -600,6 +608,8 @@ public class OrderService {
         // 同步解锁优惠券：与释放冻结同一时点。用户取消后最关心的就是「我的券回来了吗」，
         // 只靠营销域的 TTL 兜底会让他等上三十多分钟。
         releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "用户取消");
+        // A14：秒杀订单取消同样回补活动配额
+        seckillService.onOrderClosed(order);
         return toViews(List.of(order)).get(0);
     }
 
@@ -635,6 +645,8 @@ public class OrderService {
 
         paymentMapper.markClosedByOrder(order.getId(), "平台干预关单：" + closeReason, now);
         releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "运营强制关单");
+        // A14：运营强关秒杀订单时回补活动配额
+        seckillService.onOrderClosed(order);
         int[] release = releaseOrderFreeze(order.getId(), now);
         if (release[1] > 0) {
             log.error("订单 {} 运营强关后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
@@ -1392,6 +1404,8 @@ public class OrderService {
                     OPERATOR_SYSTEM, null, reason, now);
             paymentMapper.markClosedByOrder(order.getId(), reason, now);
             releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "超时关单");
+            // A14：秒杀订单关单时回补活动配额（非秒杀单在此方法内直接短路返回）
+            seckillService.onOrderClosed(order);
             closed++;
         }
 

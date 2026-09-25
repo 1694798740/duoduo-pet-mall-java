@@ -1,0 +1,61 @@
+.chat-list {
+  height: calc(100vh - 120rpx);
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+.bubble-row { display: flex; gap: 16rpx; margin-bottom: 24rpx; align-items: flex-start; }
+.row-user { flex-direction: row-reverse; }
+.chat-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: var(--brand-weak);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  flex-shrink: 0;
+}
+.bubble {
+  max-width: 70%;
+  background: #fff;
+  border-radius: 4rpx 24rpx 24rpx 24rpx;
+  padding: 20rpx 24rpx;
+  font-size: 27rpx;
+  line-height: 1.6;
+  box-shadow: 0 2rpx 8rpx rgba(35, 38, 47, 0.04);
+  word-break: break-all;
+}
+.bubble-user { background: var(--brand); color: #fff; border-radius: 24rpx 4rpx 24rpx 24rpx; }
+.bubble-error { color: #e5484d; background: #fff1f0; }
+.rec-list { margin: -8rpx 0 24rpx 80rpx; }
+.rec-card {
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+  padding: 20rpx;
+  margin-bottom: 12rpx;
+}
+.rec-title { font-size: 27rpx; font-weight: 600; }
+.rec-sub { font-size: 22rpx; margin: 6rpx 0; }
+.rec-bottom { display: flex; justify-content: space-between; align-items: center; }
+.chat-input-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
+}
+.chat-input {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 36rpx;
+  padding: 14rpx 28rpx;
+  font-size: 26rpx;
+}
+.chat-send { width: 130rpx; height: 68rpx; }

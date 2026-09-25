@@ -956,3 +956,37 @@ export interface PageResult<T> {
   pageSize: number;
   pageCount: number;
 }
+
+// ---------- 限时秒杀（A14，交易域 duoduo-trade） ----------
+
+/** 秒杀 SKU 视图：金额单位为分 */
+export interface SeckillSkuView {
+  skuId: string;
+  spuTitle: string;
+  specText: string | null;
+  image: string | null;
+  seckillPrice: number;
+  originalPrice: number;
+  totalStock: number;
+  availableStock: number;
+  perLimit: number;
+}
+
+/** 活动视图：phase 由服务端按当前时间计算（ONGOING / UPCOMING / ENDED） */
+export interface SeckillActivityView {
+  id: string;
+  title: string;
+  startAt: string;
+  endAt: string;
+  phase: 'ONGOING' | 'UPCOMING' | 'ENDED';
+  skus: SeckillSkuView[];
+}
+
+/** 秒杀下单结果：拿 orderNo 去订单详情走沙箱支付 */
+export interface PlaceSeckillResult {
+  orderNo: string;
+  payAmount: number;
+  seckillPrice: number;
+  /** true = 同幂等键重放，返回的是首次订单 */
+  replay: boolean;
+}

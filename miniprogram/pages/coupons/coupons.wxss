@@ -1,0 +1,44 @@
+.cp-tabs {
+  display: flex;
+  background: #fff;
+  padding: 16rpx;
+  gap: 12rpx;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.tab-item {
+  flex: 1;
+  text-align: center;
+  padding: 14rpx 0;
+  border-radius: 32rpx;
+  font-size: 28rpx;
+  color: var(--text-2);
+}
+.tab-active { background: var(--brand-weak); color: var(--brand); font-weight: 700; }
+.coupon-card {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  background: #fff;
+  border-radius: var(--radius);
+  margin: 20rpx 24rpx;
+  padding: 28rpx;
+  border-left: 8rpx solid var(--accent);
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.cp-disabled { opacity: 0.55; }
+.cp-left {
+  text-align: center;
+  color: var(--accent);
+  min-width: 140rpx;
+  border-right: 1rpx dashed var(--line);
+  padding-right: 20rpx;
+}
+.cp-discount { font-size: 44rpx; font-weight: 700; }
+.cp-discount::before { content: '¥'; font-size: 24rpx; }
+.cp-threshold { font-size: 20rpx; color: var(--text-3); }
+.cp-mid { flex: 1; }
+.cp-name { font-size: 28rpx; font-weight: 600; margin-bottom: 6rpx; }
+.cp-desc { font-size: 22rpx; margin-bottom: 4rpx; }
+.cp-btn { width: 130rpx; }

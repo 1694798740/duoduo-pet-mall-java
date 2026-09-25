@@ -28,6 +28,7 @@ import { AiGuruPage } from './pages/AiGuru';
 import { CartPage } from './pages/Cart';
 import { CheckoutPage } from './pages/Checkout';
 import { CouponsPage } from './pages/Coupons';
+import { SeckillPage } from './pages/Seckill';
 import { HomePage } from './pages/Home';
 import { ListingDetailPage } from './pages/ListingDetail';
 import { ListingsPage } from './pages/Listings';
@@ -232,6 +233,12 @@ export const App: React.FC = () => (
           未登录时页面自己在领券按钮上引导去登录，比先把人拦在门外转化高。
           券包页签同样在页内处理未登录态（渲染「去登录」引导）。 */}
       <Route path="/coupons" element={<CouponsPage />} />
+
+      {/* ---------- 限时秒杀（A14，交易域 duoduo-trade） ----------
+          与领券中心同口径：**不加** RequireAuth，活动列表未登录可读（导流页）；
+          抢购需要登录 + 收货地址，页面内引导，比把人拦在门外转化高。
+          下单成功跳 /orders/:orderNo 走既有沙箱支付。 */}
+      <Route path="/seckill" element={<SeckillPage />} />
 
       {/* ---------- AI 导购「多多」（A9，duoduo-ai :8086） ----------
           刻意**不加** RequireAuth：`/api/duoduo/chat` 在网关白名单里，对话本身不承载身份，

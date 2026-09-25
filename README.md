@@ -4,7 +4,13 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-24（第十八轮）** — **A11 RocketMQ 削峰 + Sentinel 限流 已交付**。
+**最近更新：2026-09-25（第二十轮）** — **A14 小程序全面重构 + 限时秒杀 已交付**。
+① **小程序重构**：TabBar 五页（首页/分类/购物车/订单/我的）默认进首页；统一请求层（错误映射 / 401 跳登录）+ 设计 token；补齐**领券中心 / AI 导购 / 限时秒杀**三特色页；详情页「服务器内部异常」根因=旧页面请求不存在的子路径（被兜底成 500），新页面已按真实字段对接。
+② **限时秒杀后端（交易域）**：三表 + Redis Lua 预扣（**软依赖可降级**）+ `UPDATE ... WHERE available_stock > 0` 行锁兜底**绝不超卖**；活动配额独立于商品库存，关单/取消回补；C 端 3 端点 + 运营端 2 端点；网关路由 + activities 精确只读白名单。
+③ **网页端**：`/seckill` 页（浏览公开、抢购需登录 → 默认地址下单 → 订单详情付款）+ 导航入口。
+**自测**：`scripts/seckill-smoke.ps1` **26/0 全绿**（幂等 replay / 限购 / 售罄 / 取消回补闭环）；Web `tsc` + `vite build` 通过；冒烟口径 20 → **21 套 1505 项**。
+
+**第十八轮（2026-09-24）** — **A11 RocketMQ 削峰 + Sentinel 限流 已交付**。
 ① **削峰通道（交易域）**：`POST /api/orders/queued`（受理即入队，返回任务视图 PENDING）+ `GET /api/orders/placement/{idempotentKey}`（任务查询）；**同步下单 `POST /api/orders` 一行未动** —— 前端与既有断言零破坏。消费者与控制器**共用同一份** `placeOrder(userId, request)`：削峰**不换**幂等与状态机语义，靠代码级复用而不是"两处写一致"。
 ② **任务台账 + 死信**：`t_order_place_task`（PENDING/PLACED/FAILED，唯一键幂等）；消费者失败**分类** —— 业务性失败不重试直接 FAILED，系统类退避重试（10s+30s）耗尽进 `%DLQ%duoduo-trade-order-place`；运营可按幂等键查死信（`GET /api/admin/mq/dlq`）并**一键重放**（原文 `sendRaw` 回主 topic，订单幂等键兜底重放安全）。
 ③ **Sentinel 限流**：`sentinel-core 1.8.6`，`FlowRule` 代码定义（资源 `order-place`，QPS 走环境变量），触发 → 既有 `RATE_LIMITED`(429)；**同步与队列端点共用同一资源**（防"限流把用户赶到队列端点绕开"）。
@@ -193,7 +199,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十套 1479 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（二十一套 1505 项接口断言 + 六套真实浏览器 UI 断言 244 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
@@ -222,6 +228,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 24 项：AI 导购（形态自适应/推荐真实性/无 sellerId 泄露/匿名可问答/多轮追问/推荐上限/429 限流）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 26 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补）
 
 # 六套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，

@@ -86,6 +86,15 @@
       <version>4.9.8</version>
     </dependency>
 
+    <!-- A14 · 秒杀：Redis 原子预扣（Lua 脚本扣活动余量 + 记个人限购次数）。
+         刻意做成**软依赖**：Redis 只挡流量，正确性由 t_seckill_sku 的
+         「UPDATE ... WHERE available_stock > 0」原子扣减兜底 —— Redis 不可用
+         （本地零依赖开发 / CI）时自动降级为纯 DB 路径，语义不变只损失吞吐。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
     <!-- A11 · 限流：Sentinel 核心（版本对齐 spring-cloud-alibaba 2023.0.1.0 所管理的 1.8.6）。
          不引 sentinel dashboard / starter：限流规则在代码里按配置定义即可，
          BlockException 在入口翻译成全站既有的 RATE_LIMITED(429)。 -->

@@ -1,0 +1,43 @@
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  padding: 60rpx 40rpx 40rpx;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand) 70%, var(--bg) 100%);
+}
+.avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 60rpx;
+}
+.head-info .nick { color: #fff; font-size: 34rpx; font-weight: 700; }
+.head-info .t3 { color: rgba(255, 255, 255, 0.75); }
+.coupon-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border-radius: var(--radius);
+  margin: -30rpx 24rpx 0;
+  padding: 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.06);
+}
+.coupon-num { font-size: 40rpx; font-weight: 700; color: var(--accent); }
+.menu { padding: 0 24rpx; }
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 30rpx 0;
+  border-bottom: 1rpx solid var(--line);
+  font-size: 28rpx;
+}
+.menu-item:last-child { border-bottom: none; }
+.mi-icon { font-size: 36rpx; }
+.arrow { margin-left: auto; color: var(--text-3); }
+.logout-btn { margin: 40rpx 24rpx; }

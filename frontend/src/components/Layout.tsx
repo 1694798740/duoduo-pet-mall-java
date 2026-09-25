@@ -29,6 +29,7 @@ const NAV = [
   { to: '/ai', label: 'AI 导购' },
   { to: '/listings', label: '二手闲置' },
   { to: '/coupons', label: '优惠券' },
+  { to: '/seckill', label: '秒杀' },
   { to: '/pets', label: '我的宠物' },
   { to: '/addresses', label: '收货地址' },
   { to: '/orders', label: '我的订单' },

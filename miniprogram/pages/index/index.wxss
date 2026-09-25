@@ -1,34 +1,39 @@
 .search-bar {
   display: flex;
   align-items: center;
-  padding: 20rpx;
+  padding: 20rpx 24rpx;
   background: #fff;
 }
-
 .search-input {
   flex: 1;
-  background: #f5f6fa;
-  border-radius: 12rpx;
-  padding: 12rpx 20rpx;
+  background: var(--bg);
+  border-radius: 36rpx;
+  padding: 14rpx 28rpx;
+  margin-right: 16rpx;
+  font-size: 26rpx;
+}
+.search-btn { width: 132rpx; height: 64rpx; }
+
+.seckill-strip {
+  background: var(--card);
+  border-radius: var(--radius);
+  margin: 20rpx 24rpx;
+  padding: 20rpx;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.seckill-head { display: flex; justify-content: space-between; margin-bottom: 16rpx; }
+.seckill-title { font-weight: 700; color: var(--accent); }
+.seckill-more { color: var(--text-3); font-size: 24rpx; }
+.seckill-scroll { white-space: nowrap; }
+.seckill-item {
+  display: inline-block;
+  width: 200rpx;
+  background: var(--accent-weak);
+  border-radius: 16rpx;
+  padding: 16rpx;
   margin-right: 16rpx;
 }
-
-.search-btn {
-  width: 140rpx;
-}
-
-.product-title {
-  font-size: 30rpx;
-  margin-bottom: 12rpx;
-}
-
-.product-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.sales {
-  color: #999;
-  font-size: 24rpx;
-}
+.seckill-name { font-size: 22rpx; color: var(--text-2); }
+.seckill-price { color: var(--accent); font-weight: 700; font-size: 34rpx; }
+.seckill-price::before { content: '¥'; font-size: 22rpx; }
+.seckill-origin { color: var(--text-3); font-size: 20rpx; text-decoration: line-through; }

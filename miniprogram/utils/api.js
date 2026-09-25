@@ -1,78 +1,8 @@
-// A13 · 统一请求封装
-// 约定与 Web 端 api/client.ts 保持一致：
-//  * 响应包络 { code, message, data, requestId }，code === 'SUCCESS' 才算成功；
-//  * 令牌放 Authorization: Bearer（存 storage，**不进 URL**）；
-//  * 401 → 清登录态并跳登录页；4xx 不重试（错误文案透出 message）；5xx 提示「服务暂时不可用」。
-//  * ID 一律字符串（T-39 后端已全局字符串化，前端不做数值运算，只拼 URL / 相等比较）。
-const { BASE_URL } = require('../config');
+// A14 · API 分域封装（页面只 import 本文件，按域调用）
+// 形状约定：分页一律 { items, total }；ID 全字符串；金额单位为「分」（展示层用 fen2yuan 转换）。
+const req = require('./request');
 
-const TOKEN_KEY = 'duoduo_access_token';
-
-function getToken() {
-  return wx.getStorageSync(TOKEN_KEY) || '';
-}
-
-function setToken(token) {
-  wx.setStorageSync(TOKEN_KEY, token || '');
-}
-
-function clearToken() {
-  wx.removeStorageSync(TOKEN_KEY);
-}
-
-function friendlyMessage(code, message) {
-  if (code === 'UNAUTHORIZED') return '请先登录';
-  if (code === 'FORBIDDEN') return '没有权限执行该操作';
-  if (code === 'NOT_FOUND') return '内容不存在或已删除';
-  if (code === 'BUSINESS_RULE') return message || '当前状态不允许该操作';
-  return message || '请求失败，请稍后重试';
-}
-
-function request(method, path, data, opts) {
-  const options = opts || {};
-  return new Promise((resolve, reject) => {
-    wx.request({
-      url: BASE_URL + path,
-      method,
-      data: data || {},
-      timeout: 10000,
-      header: Object.assign(
-        { 'Content-Type': 'application/json' },
-        getToken() ? { Authorization: 'Bearer ' + getToken() } : {}
-      ),
-      success(res) {
-        const body = res.data || {};
-        if (res.statusCode >= 200 && res.statusCode < 300 && body.code === 'SUCCESS') {
-          resolve(body.data);
-          return;
-        }
-        if (res.statusCode === 401 || body.code === 'UNAUTHORIZED') {
-          clearToken();
-          if (!options.silent) {
-            wx.navigateTo({ url: '/pages/login/login' });
-          }
-        }
-        reject({
-          status: res.statusCode,
-          code: body.code,
-          message: friendlyMessage(body.code, body.message),
-        });
-      },
-      fail() {
-        reject({ status: 0, code: 'NETWORK', message: '网络不可用，请检查网络后重试' });
-      },
-    });
-  });
-}
-
-const get = (path, opts) => request('GET', path, null, opts);
-const post = (path, data, opts) => request('POST', path, data, opts);
-const patch = (path, data, opts) => request('PATCH', path, data, opts);
-const del = (path, opts) => request('DELETE', path, null, opts);
-
-// ── 登录 ─────────────────────────────────────────────────────────────────────
-// 微信登录（A13 正式形态）：wx.login 拿 js_code → 后端 code2Session → 换 JWT。
-// 测试号阶段 WECHAT_LOGIN_READY=false，直接走手机号登录（复用既有账号体系）。
+// ── 登录态 ───────────────────────────────────────────────────────────────────
 function wxLogin() {
   return new Promise((resolve, reject) => {
     wx.login({
@@ -81,9 +11,10 @@ function wxLogin() {
           reject({ message: 'wx.login 未返回 code' });
           return;
         }
-        post('/api/auth/wechat', { code: res.code })
+        req
+          .post('/api/auth/wechat', { code: res.code })
           .then((data) => {
-            setToken(data.accessToken);
+            req.setToken(data.accessToken);
             resolve(data.user);
           })
           .catch(reject);
@@ -95,29 +26,160 @@ function wxLogin() {
   });
 }
 
-// 手机号登录（测试号阶段的开发回退）
 function phoneLogin(phone, password) {
-  return post('/api/auth/login', { phone, password }).then((data) => {
-    setToken(data.accessToken);
+  return req.post('/api/auth/login', { phone, password }).then((data) => {
+    req.setToken(data.accessToken);
     return data.user;
   });
 }
 
-// 登录态探测：有 token 且 /api/users/me 可用才算已登录（与 Web 端同一判据）
 function ensureSession() {
-  if (!getToken()) return Promise.reject({ needLogin: true });
-  return get('/api/users/me', { silent: true });
+  if (!req.getToken()) return Promise.reject({ needLogin: true });
+  return req.get('/api/users/me', { silent: true });
+}
+
+// ── 商品域（公开） ──────────────────────────────────────────────────────────
+const product = {
+  list(params) {
+    // params: { page, pageSize, keyword, categoryId }
+    const qs = Object.keys(params || {})
+      .filter((k) => params[k] !== undefined && params[k] !== '')
+      .map((k) => k + '=' + encodeURIComponent(params[k]))
+      .join('&');
+    return req.get('/api/products' + (qs ? '?' + qs : ''));
+  },
+  detail(id) {
+    return req.get('/api/products/' + id);
+  },
+  categories() {
+    return req.get('/api/categories');
+  },
+  reviews(spuId, page) {
+    return req.get('/api/reviews/product/' + spuId + '?page=' + (page || 1) + '&pageSize=5');
+  },
+  reviewSummary(spuId) {
+    return req.get('/api/reviews/product/' + spuId + '/summary');
+  },
+  home() {
+    return req.get('/api/home');
+  },
+};
+
+// ── 交易域 ───────────────────────────────────────────────────────────────────
+const cart = {
+  view() {
+    return req.get('/api/cart');
+  },
+  count() {
+    return req.get('/api/cart/count');
+  },
+  add(skuId, quantity) {
+    return req.post('/api/cart/items', { skuId, quantity: quantity || 1 });
+  },
+  updateQuantity(skuId, quantity) {
+    return req.patch('/api/cart/items/' + skuId, { quantity });
+  },
+  remove(skuId) {
+    return req.del('/api/cart/items/' + skuId);
+  },
+};
+
+const order = {
+  list(page, status) {
+    const s = status && status !== 'ALL' ? '&status=' + status : '';
+    return req.get('/api/orders?page=' + (page || 1) + '&pageSize=20' + s);
+  },
+  detail(orderNo) {
+    return req.get('/api/orders/' + orderNo);
+  },
+  place(addressId) {
+    return req.post('/api/orders', {
+      addressId,
+      idempotentKey: 'mp-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
+    });
+  },
+  pay(orderNo) {
+    return req.post('/api/orders/' + orderNo + '/pay', { channel: 'sandbox' });
+  },
+  payStatus(payNo) {
+    return req.get('/api/payments/' + payNo, { silent: true });
+  },
+  confirm(orderNo) {
+    return req.post('/api/orders/' + orderNo + '/confirm');
+  },
+};
+
+const address = {
+  default() {
+    return req.get('/api/addresses/default');
+  },
+};
+
+// ── 营销域（A5） ─────────────────────────────────────────────────────────────
+const coupon = {
+  templates() {
+    return req.get('/api/coupons/templates');
+  },
+  claim(templateId) {
+    return req.post('/api/coupons/templates/' + templateId + '/claim');
+  },
+  mine(status) {
+    return req.get('/api/coupons/mine' + (status ? '?status=' + status : ''));
+  },
+};
+
+// ── AI 导购（A9，免登录可用，限流 429 / 降级 503 友好提示） ──────────────────
+const ai = {
+  chat(message, history) {
+    return req.post('/api/duoduo/chat', { message, history }, { timeout: 20000 });
+  },
+  capabilities() {
+    return req.get('/api/duoduo/capabilities', { silent: true });
+  },
+};
+
+// ── 秒杀（A14 新增，C 端） ───────────────────────────────────────────────────
+const seckill = {
+  activities() {
+    return req.get('/api/seckill/activities');
+  },
+  detail(id) {
+    return req.get('/api/seckill/activities/' + id);
+  },
+  place(activityId, skuId, addressId) {
+    return req.post('/api/seckill/orders', {
+      activityId,
+      skuId,
+      addressId,
+      idempotentKey: 'sk-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
+    });
+  },
+};
+
+// ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────
+function fen2yuan(fen) {
+  const n = Number(fen) || 0;
+  return (n / 100).toFixed(n % 100 === 0 ? 0 : 2);
 }
 
 module.exports = {
-  get,
-  post,
-  patch,
-  del,
-  getToken,
-  setToken,
-  clearToken,
+  get: req.get,
+  post: req.post,
+  patch: req.patch,
+  del: req.del,
+  getToken: req.getToken,
+  setToken: req.setToken,
+  clearToken: req.clearToken,
+  toastError: req.toastError,
   wxLogin,
   phoneLogin,
   ensureSession,
+  product,
+  cart,
+  order,
+  address,
+  coupon,
+  ai,
+  seckill,
+  fen2yuan,
 };

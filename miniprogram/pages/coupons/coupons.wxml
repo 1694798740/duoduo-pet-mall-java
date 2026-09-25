@@ -1,0 +1,60 @@
+<view class="cp-tabs">
+  <view class="tab-item {{tab === 'center' ? 'tab-active' : ''}}" data-tab="center" bindtap="switchTab">领券中心</view>
+  <view class="tab-item {{tab === 'mine' ? 'tab-active' : ''}}" data-tab="mine" bindtap="switchTab">我的券包</view>
+</view>
+
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button wx:if="{{tab === 'mine'}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+
+<!-- 领券中心 -->
+<block wx:elif="{{tab === 'center'}}">
+  <view wx:if="{{templates.length === 0}}" class="empty">
+    <view class="icon">🎫</view>
+    <view>暂无可领的优惠券</view>
+  </view>
+  <view wx:for="{{templates}}" wx:key="id" class="coupon-card {{item.claimable ? '' : 'cp-disabled'}}">
+    <view class="cp-left">
+      <view class="cp-discount">{{item.discountAmount / 100}}</view>
+      <view class="cp-threshold">满 {{item.thresholdAmount / 100}} 可用</view>
+    </view>
+    <view class="cp-mid">
+      <view class="cp-name">{{item.name}}</view>
+      <view class="t3 cp-desc">{{item.description || item.typeLabel}}</view>
+      <view class="t3">{{item.endAt}} 前有效 · 剩余 {{item.remainingCount}}</view>
+    </view>
+    <button
+      class="btn btn-accent cp-btn"
+      size="mini"
+      data-tpl="{{item}}"
+      bindtap="claim"
+      disabled="{{!item.claimable || claimingId === item.id}}"
+      loading="{{claimingId === item.id}}"
+    >
+      {{item.claimable ? '领取' : '已领完'}}
+    </button>
+  </view>
+</block>
+
+<!-- 我的券包 -->
+<block wx:else>
+  <view wx:if="{{mine.length === 0}}" class="empty">
+    <view class="icon">🐰</view>
+    <view>券包还是空的，去领几张吧</view>
+  </view>
+  <view wx:for="{{mine}}" wx:key="code" class="coupon-card">
+    <view class="cp-left">
+      <view class="cp-discount">{{item.discountAmount / 100}}</view>
+      <view class="cp-threshold">满 {{item.thresholdAmount / 100}} 可用</view>
+    </view>
+    <view class="cp-mid">
+      <view class="cp-name">{{item.name}}</view>
+      <view class="t3">{{item.expireAt}} 前有效</view>
+      <view class="tag {{item.status === 'UNUSED' ? 'tag-accent' : 'tag-gray'}}" style="margin-top: 8rpx">
+        {{item.statusLabel}}
+      </view>
+    </view>
+  </view>
+</block>

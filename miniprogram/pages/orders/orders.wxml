@@ -1,11 +1,24 @@
-<view wx:if="{{error}}" class="empty">{{error}}</view>
+<scroll-view scroll-x class="order-tabs">
+  <view
+    wx:for="{{tabs}}"
+    wx:key="key"
+    class="tab-item {{activeTab === item.key ? 'tab-active' : ''}}"
+    data-key="{{item.key}}"
+    bindtap="switchTab"
+  >{{item.label}}</view>
+</scroll-view>
+
+<view wx:if="{{error}}" class="error-box">{{error}}</view>
 <view wx:elif="{{loading && orders.length === 0}}" class="empty">加载中…</view>
-<view wx:elif="{{orders.length === 0}}" class="empty">还没有订单</view>
+<view wx:elif="{{orders.length === 0}}" class="empty">
+  <view class="icon">📦</view>
+  <view>还没有相关订单</view>
+</view>
 
 <view wx:for="{{orders}}" wx:key="orderNo" class="card order-item">
   <view class="o-head">
     <text class="o-no">单号 {{item.orderNo}}</text>
-    <text class="o-status">{{item.status}}</text>
+    <text class="o-status">{{item.statusLabel}}</text>
   </view>
   <view class="o-body">
     <text>共 {{item.totalQuantity || item.items.length}} 件商品</text>
@@ -14,7 +27,7 @@
   <view class="o-actions">
     <button
       wx:if="{{item.status === 'PENDING_PAYMENT'}}"
-      class="btn-primary o-btn"
+      class="btn btn-accent o-btn"
       size="mini"
       data-no="{{item.orderNo}}"
       bindtap="pay"
@@ -24,7 +37,7 @@
     </button>
     <button
       wx:if="{{item.status === 'SHIPPED'}}"
-      class="o-btn o-btn-plain"
+      class="btn-mini o-btn-plain"
       size="mini"
       data-no="{{item.orderNo}}"
       bindtap="confirmOrder"

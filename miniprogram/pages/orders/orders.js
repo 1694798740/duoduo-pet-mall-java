@@ -1,8 +1,26 @@
-// 订单列表 + 沙箱支付（预下单 + 轮询，与 Web 端同一套后端契约）
+// 订单列表：状态筛选 + 沙箱支付（预下单 + 轮询，与 Web 端同一套后端契约）
 const api = require('../../utils/api');
+
+const STATUS_LABEL = {
+  PENDING_PAYMENT: '待付款',
+  PAID: '待发货',
+  SHIPPED: '待收货',
+  COMPLETED: '已完成',
+  CLOSED: '已关闭',
+};
+
+const TABS = [
+  { key: 'ALL', label: '全部' },
+  { key: 'PENDING_PAYMENT', label: '待付款' },
+  { key: 'PAID', label: '待发货' },
+  { key: 'SHIPPED', label: '待收货' },
+  { key: 'COMPLETED', label: '已完成' },
+];
 
 Page({
   data: {
+    tabs: TABS,
+    activeTab: 'ALL',
     orders: [],
     loading: false,
     error: '',
@@ -13,15 +31,23 @@ Page({
     this.fetchOrders();
   },
 
+  switchTab(e) {
+    this.setData({ activeTab: e.currentTarget.dataset.key, orders: [] });
+    this.fetchOrders();
+  },
+
   fetchOrders() {
     api
       .ensureSession()
       .then(() => {
         this.setData({ loading: true, error: '' });
-        return api.get('/api/orders?page=1&pageSize=20');
+        return api.order.list(1, this.data.activeTab);
       })
       .then((data) => {
-        this.setData({ orders: (data && data.items) || [], loading: false });
+        const orders = ((data && data.items) || []).map((o) =>
+          Object.assign({}, o, { statusLabel: STATUS_LABEL[o.status] || o.status })
+        );
+        this.setData({ orders, loading: false });
       })
       .catch((err) => {
         if (err && err.needLogin) {
@@ -34,18 +60,16 @@ Page({
 
   pay(e) {
     const orderNo = e.currentTarget.dataset.no; // 业务键 orderNo，不暴露内部 id
-    const order = this.data.orders.find((o) => o.orderNo === orderNo);
-    if (!order) return;
     this.setData({ payingOrderNo: orderNo });
     api
-      .post('/api/orders/' + orderNo + '/pay', { channel: 'sandbox' })
+      .order.pay(orderNo)
       .then((payResult) => {
-        // 沙箱支付：预下单返回 payNo 与收银台地址。小程序内不能直接打开外部 H2 页面，
-        // 测试号阶段把收银台链接展示出来（可复制到浏览器完成支付），支付状态靠轮询。
         this.setData({ payingOrderNo: '' });
+        // 沙箱支付：预下单返回 payNo 与收银台地址；复制链接到浏览器完成支付，状态靠轮询。
         wx.showModal({
           title: '沙箱支付',
-          content: '收银台链接（可复制）：' + (payResult.payUrl || '/sandbox/pay/' + payResult.payNo),
+          content:
+            '收银台链接（可复制）：' + (payResult.payUrl || '/sandbox/pay/' + payResult.payNo),
           confirmText: '复制',
           cancelText: '关闭',
           success: (res) => {
@@ -67,8 +91,8 @@ Page({
     let times = 0;
     const timer = setInterval(() => {
       times += 1;
-      api
-        .get('/api/payments/' + payNo, { silent: true })
+      api.order
+        .payStatus(payNo)
         .then((p) => {
           if (p && p.status === 'SUCCESS') {
             clearInterval(timer);
@@ -86,14 +110,12 @@ Page({
 
   confirmOrder(e) {
     const orderNo = e.currentTarget.dataset.no;
-    api
-      .post('/api/orders/' + orderNo + '/confirm')
+    api.order
+      .confirm(orderNo)
       .then(() => {
         wx.showToast({ title: '已确认收货', icon: 'success' });
         this.fetchOrders();
       })
-      .catch((err) => {
-        wx.showToast({ title: (err && err.message) || '操作失败', icon: 'none' });
-      });
+      .catch(api.toastError);
   },
 });

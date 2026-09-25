@@ -203,3 +203,50 @@ CREATE TABLE t_order_place_task (
 );
 CREATE UNIQUE INDEX uk_place_task_user_idem ON t_order_place_task (user_id, idempotent_key);
 CREATE INDEX idx_place_task_user ON t_order_place_task (user_id, created_at);
+
+-- ---------- 限时秒杀（A14） ----------
+-- 活动与秒杀价独立于商品价：秒杀下单不走购物车，金额直接取秒杀价快照。
+-- 活动配额（available_stock）是秒杀自己的「货」，与商品服务库存相互独立 ——
+-- 秒杀下单不冻结商品库存，超时关单/取消时回补的是这里的配额。
+DROP TABLE IF EXISTS t_seckill_order;
+DROP TABLE IF EXISTS t_seckill_sku;
+DROP TABLE IF EXISTS t_seckill_activity;
+CREATE TABLE t_seckill_activity (
+    id          BIGINT       NOT NULL,
+    title       VARCHAR(100) NOT NULL,
+    start_at    TIMESTAMP    NOT NULL,
+    end_at      TIMESTAMP    NOT NULL,
+    status      VARCHAR(16)  NOT NULL DEFAULT 'ENABLED',
+    created_at  TIMESTAMP    NOT NULL,
+    updated_at  TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_seckill_act_start ON t_seckill_activity (start_at);
+CREATE TABLE t_seckill_sku (
+    id              BIGINT       NOT NULL,
+    activity_id     BIGINT       NOT NULL,
+    sku_id          BIGINT       NOT NULL,
+    seckill_price   BIGINT       NOT NULL,
+    original_price  BIGINT       NOT NULL,
+    total_stock     INT          NOT NULL,
+    available_stock INT          NOT NULL,
+    per_limit       INT          NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP    NOT NULL,
+    updated_at      TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_seckill_sku_act_sku ON t_seckill_sku (activity_id, sku_id);
+CREATE INDEX idx_seckill_sku_sku ON t_seckill_sku (sku_id);
+-- 秒杀下单台账：订单与活动配额的关联（回补配额的依据）+ 单人限购判重
+CREATE TABLE t_seckill_order (
+    id              BIGINT       NOT NULL,
+    user_id         BIGINT       NOT NULL,
+    activity_id     BIGINT       NOT NULL,
+    seckill_sku_id  BIGINT       NOT NULL,
+    sku_id          BIGINT       NOT NULL,
+    order_no        VARCHAR(32)  NOT NULL,
+    created_at      TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_seckill_order_no ON t_seckill_order (order_no);
+CREATE INDEX idx_seckill_order_user ON t_seckill_order (user_id, activity_id);

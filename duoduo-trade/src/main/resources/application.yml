@@ -33,6 +33,16 @@ spring:
       # 绝不能在启动时自动执行 —— schema.sql 内有 DROP TABLE。
       mode: never
 
+  # A14 · 秒杀用 Redis（原子预扣挡量）。连接失败不影响启动：
+  # SeckillService 对 Redis 全链路 try/catch 降级，正确性由 DB 原子扣减兜底。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      # 本机零依赖开发没起 Redis 时也不能拖死请求：连接/命令超时都要短
+      timeout: 500ms
+      connect-timeout: 500ms
+
   cloud:
     nacos:
       discovery:

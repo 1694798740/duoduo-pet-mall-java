@@ -61,6 +61,11 @@ public class GatewaySecurityProperties {
             // 它本身不写任何业务数据，故放行不构成越权面。
             "/api/duoduo/chat",
             "/api/duoduo/capabilities",
+            // 限时秒杀（A14）：活动浏览与领券中心同性质 —— 未登录也要看到「正在抢什么」才有导流意义。
+            // 只放行 activities 两级**只读**路径；POST /api/seckill/orders 在路径之外，仍由网关强制登录
+            // （白名单按路径、不区分方法，所以绝不能写成 /api/seckill/**）。
+            "/api/seckill/activities",
+            "/api/seckill/activities/*",
             // 渠道回调来自渠道服务器，没有我们的登录态；安全靠验签 + 金额核对 + CAS 幂等
             "/api/payments/callback/**",
             // 沙箱收银台：扫码设备上没有买家登录态（现实中谁扫码谁付款）

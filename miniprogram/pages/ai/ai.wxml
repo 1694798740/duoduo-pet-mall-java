@@ -1,0 +1,50 @@
+<scroll-view scroll-y class="chat-list" scroll-into-view="{{scrollInto}}">
+  <view wx:for="{{messages}}" wx:key="index" wx:for-item="msg" id="msg-{{index}}">
+    <view class="bubble-row {{msg.role === 'user' ? 'row-user' : ''}}">
+      <view wx:if="{{msg.role === 'assistant'}}" class="chat-avatar">🐱</view>
+      <view class="bubble {{msg.role === 'user' ? 'bubble-user' : ''}} {{msg.error ? 'bubble-error' : ''}}">
+        {{msg.content}}
+      </view>
+    </view>
+    <!-- 推荐商品卡片 -->
+    <view wx:if="{{msg.recs && msg.recs.length > 0}}" class="rec-list">
+      <view
+        wx:for="{{msg.recs}}"
+        wx:for-item="rec"
+        wx:key="id"
+        class="rec-card"
+        data-id="{{rec.id}}"
+        bindtap="goDetail"
+      >
+        <view class="rec-title ellipsis">{{rec.title}}</view>
+        <view class="t3 rec-sub ellipsis">{{rec.subtitle}}</view>
+        <view class="rec-bottom">
+          <text class="price">¥{{rec.priceText}}</text>
+          <text class="tag {{rec.inStock ? 'tag-brand' : 'tag-gray'}}">
+            {{rec.inStock ? '有货' : '缺货'}}
+          </text>
+        </view>
+      </view>
+    </view>
+  </view>
+  <view wx:if="{{sending}}" class="bubble-row">
+    <view class="chat-avatar">🐱</view>
+    <view class="bubble">多多思考中…</view>
+  </view>
+  <view style="height: 24rpx"></view>
+</scroll-view>
+
+<view class="chat-input-bar">
+  <input
+    class="chat-input"
+    placeholder="想买什么？告诉多多（最多 500 字）"
+    value="{{input}}"
+    maxlength="500"
+    confirm-type="send"
+    bindinput="onInput"
+    bindconfirm="send"
+  />
+  <button class="btn btn-primary chat-send" size="mini" bindtap="send" disabled="{{sending}}">
+    发送
+  </button>
+</view>

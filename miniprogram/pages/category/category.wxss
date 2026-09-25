@@ -1,0 +1,35 @@
+.cat-wrap {
+  display: flex;
+  height: 100vh;
+  background: var(--bg);
+}
+.cat-side {
+  width: 180rpx;
+  background: #fff;
+  height: 100%;
+}
+.cat-item {
+  padding: 32rpx 16rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--text-2);
+  border-left: 6rpx solid transparent;
+}
+.cat-active {
+  color: var(--brand);
+  font-weight: 700;
+  background: var(--bg);
+  border-left-color: var(--brand);
+}
+.cat-main { flex: 1; height: 100%; padding: 20rpx; box-sizing: border-box; }
+.cat-children { white-space: nowrap; margin-bottom: 20rpx; }
+.cat-chip {
+  display: inline-block;
+  padding: 8rpx 24rpx;
+  background: #fff;
+  border-radius: 28rpx;
+  font-size: 24rpx;
+  color: var(--text-2);
+  margin-right: 12rpx;
+}
+.chip-active { background: var(--brand); color: #fff; }

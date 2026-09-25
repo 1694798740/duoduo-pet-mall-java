@@ -1,0 +1,23 @@
+.act-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+.act-title { font-size: 32rpx; font-weight: 700; }
+.act-time { font-size: 22rpx; margin-bottom: 20rpx; }
+.sk-sku {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  background: var(--accent-weak);
+  border-radius: 16rpx;
+  padding: 20rpx;
+  margin-top: 16rpx;
+}
+.sk-info { flex: 1; min-width: 0; }
+.sk-name { font-size: 27rpx; font-weight: 500; }
+.sk-price-row { display: flex; align-items: baseline; gap: 12rpx; margin-top: 8rpx; font-size: 22rpx; }
+.sk-price { color: var(--accent); font-weight: 700; font-size: 36rpx; }
+.sk-price::before { content: '¥'; font-size: 22rpx; }
+.sk-btn { flex-shrink: 0; width: 150rpx; }

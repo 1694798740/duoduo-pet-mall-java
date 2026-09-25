@@ -1,0 +1,56 @@
+<view class="cat-wrap">
+  <scroll-view scroll-y class="cat-side">
+    <view
+      wx:for="{{categories}}"
+      wx:key="id"
+      class="cat-item {{index === activeIndex ? 'cat-active' : ''}}"
+      data-index="{{index}}"
+      bindtap="selectMain"
+    >
+      {{item.name}}
+    </view>
+  </scroll-view>
+
+  <scroll-view scroll-y class="cat-main">
+    <scroll-view scroll-x wx:if="{{activeChildren.length > 0}}" class="cat-children">
+      <view
+        class="cat-chip {{activeChildId === '' ? 'chip-active' : ''}}"
+        data-id=""
+        bindtap="selectChild"
+      >全部</view>
+      <view
+        wx:for="{{activeChildren}}"
+        wx:key="id"
+        class="cat-chip {{activeChildId === item.id ? 'chip-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="selectChild"
+      >{{item.name}}</view>
+    </scroll-view>
+
+    <view wx:if="{{error}}" class="error-box">{{error}}</view>
+    <view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
+    <view wx:elif="{{items.length === 0}}" class="empty">
+      <view class="icon">🛍️</view>
+      <view>该分类下暂无商品</view>
+    </view>
+
+    <view wx:else class="goods-grid" style="padding: 0">
+      <view
+        wx:for="{{items}}"
+        wx:key="spuId"
+        class="goods-card"
+        data-id="{{item.spuId}}"
+        bindtap="goDetail"
+      >
+        <view class="goods-cover">
+          <image wx:if="{{item.image}}" src="{{item.image}}" mode="aspectFill" />
+          <text wx:else>🐱</text>
+        </view>
+        <view class="goods-body">
+          <view class="goods-name ellipsis-2">{{item.title}}</view>
+          <view class="price goods-price">{{item.minPrice / 100}}</view>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+</view>
