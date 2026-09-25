@@ -26,7 +26,10 @@ Page({
     // 是否处于「手机号登录后将自动绑定微信」流程（用于界面文案）
     pendingWechatBind: false,
     /**
-     * 「微信还没绑定账号」的**页面内引导**。
+     * **页面内引导**（通用）：微信未绑定 / 手机号未注册 / 手机号已注册 都往这里写。
+     *
+     * action 取值：'bind'（绑定到当前账号）/ 'phone'（去手机号登录并绑定）
+     *            / 'register'（去注册）/ 'login'（去登录）
      *
      * <p>为什么不只依赖 `wx.showModal`：实测出现过"诊断日志已打印 422、但弹窗没出现"——
      * 关键引导必须有**不依赖任何 wx API** 的载体，所以同时渲染成页面内卡片（一定看得见），
@@ -120,6 +123,7 @@ Page({
             ? '当前账号已登录，把这个微信绑上去就能一键登录了。'
             : '用手机号登录或注册后，会自动把这个微信绑定到该账号；以后就能一键登录了。',
           action: bound ? 'bind' : 'phone',
+          actionText: bound ? '绑定到当前账号' : '用手机号登录并绑定',
         },
       });
       // 情形③：确实已登录（服务端校验过）→ 一次点击直接绑定，不必再走登录
@@ -195,10 +199,23 @@ Page({
    * @param {{afterLogin?: boolean}} opts afterLogin=true 表示处在「登录成功后的绑定」场景：
    *   此时令牌刚刚签发、不该失效，因此失败只提示、不把用户踢回表单。
    */
-  /** 页面内引导卡片上的按钮：「绑定到当前账号」或「去手机号登录」 */
+  /**
+   * 页面内引导卡片上的按钮，按 action 分流：
+   * bind（绑定当前微信）/ phone（去手机号登录并绑定）/ register（去注册）/ login（去登录）。
+   *
+   * 切换登录/注册页签时**保留用户已填的手机号**：他已经输入过一次，不该让他重打。
+   */
   onBindTipAction() {
     const tip = this.data.bindTip;
     if (!tip) return;
+    if (tip.action === 'register' || tip.action === 'login') {
+      this.setData({ mode: tip.action === 'register' ? 'register' : 'phone', bindTip: null });
+      return;
+    }
+    if (tip.action === 'phone') {
+      this.setData({ mode: 'phone', pendingWechatBind: true, bindTip: null });
+      return;
+    }
     if (tip.action === 'bind') {
       this.setData({ submitting: true });
       this.bindCurrentWechat().then(
@@ -213,7 +230,6 @@ Page({
       );
       return;
     }
-    this.setData({ mode: 'phone', pendingWechatBind: true, bindTip: null });
   },
 
   /** 关掉页面内引导 */
@@ -289,8 +305,68 @@ Page({
       })
       .catch((err) => {
         this.setData({ submitting: false });
-        wx.showToast({ title: (err && err.message) || '操作失败，请重试', icon: 'none' });
+        this.handlePhoneAuthError(err, mode);
       });
+  },
+
+  /**
+   * 手机号登录 / 注册失败：**给可执行的下一步**，而不是一句含糊提示。
+   *
+   * <p>后端对「手机号不存在」与「密码错误」统一返回 401 +「手机号或密码不正确」
+   * ——这是防用户枚举的**刻意设计**，前端不能去猜是哪种，但可以把两种可能都摆出来，
+   * 并把对应的入口直接放到提示里（未注册 → 去注册；已注册请检查密码）。
+   */
+  handlePhoneAuthError(err, mode) {
+    const status = err && err.status;
+    const message = (err && err.message) || '操作失败，请重试';
+
+    if (status === 401) {
+      const tip = {
+        title: '手机号登录失败',
+        content: message + '。如果是第一次使用，先去注册；已注册过请检查密码是否输错。',
+        action: 'register',
+        actionText: '去注册新账号',
+      };
+      this.setData({ bindTip: tip });
+      wx.showModal({
+        title: '手机号或密码不正确',
+        content: '如果这个手机号还没注册过，点「去注册」用同一手机号创建账号即可。',
+        confirmText: '去注册',
+        cancelText: '重试',
+        success: (res) => {
+          if (res.confirm) this.setData({ mode: 'register' });
+        },
+      });
+      return;
+    }
+
+    if (status === 409 && mode === 'register') {
+      // 注册撞号：直接把人送到登录，并保留手机号
+      this.setData({
+        bindTip: {
+          title: '该手机号已注册',
+          content: '这个手机号已经注册过了，直接登录即可；忘记密码可在 Web 端「我的」重置。',
+          action: 'login',
+          actionText: '去登录',
+        },
+      });
+      wx.showModal({
+        title: '该手机号已注册',
+        content: '直接登录即可，手机号已经帮你填好了。',
+        confirmText: '去登录',
+        cancelText: '知道了',
+        success: (res) => {
+          if (res.confirm) this.setData({ mode: 'phone' });
+        },
+      });
+      return;
+    }
+
+    // 其余（网络、校验、限流…）：页面内提示 + toast 双通道
+    this.setData({
+      bindTip: { title: '操作未完成', content: message, action: null, actionText: '' },
+    });
+    wx.showToast({ title: message, icon: 'none' });
   },
 
   /**

@@ -48,7 +48,11 @@ function clearSession() {
 }
 
 function friendlyMessage(code, message) {
-  if (code === 'UNAUTHORIZED') return '请先登录';
+  // 401 的语义取决于接口，别一刀切：
+  //   · 业务接口 401 = 令牌过期/未登录 → 后端文案是「身份未认证或登录已过期」；
+  //   · 登录接口 401 = 手机号或密码不正确 → 后端文案是「手机号或密码不正确」。
+  // 一律透出后端文案，否则会出现「用未注册手机号登录却提示『请先登录』」这种误导。
+  if (code === 'UNAUTHORIZED') return message || '登录已过期，请重新登录';
   if (code === 'FORBIDDEN') return '没有权限执行该操作';
   if (code === 'NOT_FOUND') return '内容不存在或已删除';
   if (code === 'RATE_LIMITED') return message || '操作太频繁啦，请稍等再试';

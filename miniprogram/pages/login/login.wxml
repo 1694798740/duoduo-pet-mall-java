@@ -22,8 +22,8 @@
         <text class="bind-tip-close" bindtap="dismissBindTip">✕</text>
       </view>
       <view class="bind-tip-content">{{bindTip.content}}</view>
-      <view class="bind-tip-btn" bindtap="onBindTipAction">
-        {{bindTip.action === 'bind' ? '绑定到当前账号' : '用手机号登录并绑定'}}
+      <view wx:if="{{bindTip.action}}" class="bind-tip-btn" bindtap="onBindTipAction">
+        {{bindTip.actionText || '继续'}}
       </view>
     </view>
 
