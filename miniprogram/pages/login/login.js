@@ -104,12 +104,22 @@ Page({
           confirmText: '绑定',
           cancelText: '换个账号',
           success: (res) => {
-            if (res.confirm) {
-              this.bindCurrentWechat();
-            } else {
+            if (!res.confirm) {
               // 给退路：换账号登录，登录后同样自动绑定
               this.setData({ mode: 'phone', pendingWechatBind: true, loggedIn: false });
+              return;
             }
+            this.setData({ submitting: true });
+            this.bindCurrentWechat().then(
+              () => {
+                this.setData({ submitting: false });
+                wx.showToast({ title: '已绑定微信，下次可一键登录', icon: 'success' });
+              },
+              (bindErr) => {
+                this.setData({ submitting: false });
+                this.notifyBindFailure(bindErr, null); // null = 不跳转（本页场景）
+              }
+            );
           },
         });
         return;
@@ -156,31 +166,26 @@ Page({
     })
       .then((code) => api.wechatBind(code))
       .then(() => {
+        // 成功不在这里 toast：调用方紧接着也会给提示，两个 toast 会互相覆盖
         this.setData({ submitting: false, pendingWechatBind: false });
-        wx.showToast({ title: '已绑定微信，下次可一键登录', icon: 'success' });
       })
       .catch((err) => {
         this.setData({ submitting: false });
         const tokenGone = !!(err && (err.needLogin || err.status === 401 || err.code === 'UNAUTHORIZED'));
-        if (tokenGone && afterLogin) {
-          // 刚登录成功却令牌失效：属于异常情况，提示但不打断（登录本身已成立）
-          wx.showToast({ title: '绑定失败：登录态异常，请重进小程序再试', icon: 'none' });
-          return Promise.reject(err);
-        }
         if (tokenGone) {
-          // 令牌已失效：不能只在原地报一句错，直接切到可执行的路径
+          // 令牌失效：同类动作是「清会话 + 回到可执行的路径」，展示交给调用方统一处理
           api.clearSession();
-          this.setData({ loggedIn: false, mode: 'phone', pendingWechatBind: true });
-          wx.showModal({
-            title: '登录已过期',
-            content: '请用手机号登录/注册，登录成功后会自动把当前微信绑定到该账号。',
-            confirmText: '好的',
-            showCancel: false,
+          this.setData({ loggedIn: false });
+          if (!afterLogin) this.setData({ mode: 'phone', pendingWechatBind: true });
+          throw Object.assign({}, err, {
+            friendly: afterLogin
+              ? '登录态异常，本次没有绑定微信（你已登录成功，可稍后重试）。'
+              : '登录已过期，请重新用手机号登录后再绑定微信。',
           });
-          return;
         }
-        wx.showToast({ title: (err && err.message) || '绑定失败，请重试', icon: 'none' });
-        throw err; // 让调用方（maybeBindWechat）知道没绑上，但不影响登录结果
+        // 其余失败（409 该微信已绑定其他账号 / 503 微信服务不可用 / 网络…）统一向上抛，
+        // 由调用方用 modal 明确展示原因 —— 绝不静默。
+        throw err;
       });
   },
 
@@ -208,7 +213,18 @@ Page({
       mode === 'register' ? app.registerBy(phone, password, nickname) : app.loginByPhone(phone, password);
     action
       .then(() => this.maybeBindWechat())   // 登录成功后统一处理「要不要绑微信」
-      .then((bound) => this.afterLogin(bound ? '已登录并绑定微信' : doneTitle))
+      .then((res) => {
+        if (res.bound) {
+          this.afterLogin('已登录并绑定微信');
+          return;
+        }
+        if (res.error) {
+          // 绑定失败不影响登录成功，但**必须把原因告诉用户**（模态提示，不被 toast 覆盖）
+          this.notifyBindFailure(res.error, doneTitle);
+          return;
+        }
+        this.afterLogin(doneTitle);
+      })
       .catch((err) => {
         this.setData({ submitting: false });
         wx.showToast({ title: (err && err.message) || '操作失败，请重试', icon: 'none' });
@@ -247,11 +263,42 @@ Page({
       });
     const go = needAsk ? ask() : Promise.resolve(true);
     return go.then((confirmed) => {
-      if (!confirmed) return false;
+      if (!confirmed) return { bound: false, error: null };
       return this.bindCurrentWechat({ afterLogin: true }).then(
-        () => true,
-        () => false
+        () => ({ bound: true, error: null }),
+        // **必须保留错误对象**：此前失败被归一成 false，409（该微信已绑定其他账号）
+        // 就这样被丢掉了 —— 用户只看到「登录成功」，以为系统没检测到占用。
+        (err) => ({ bound: false, error: err })
       );
+    });
+  },
+
+  /**
+   * 展示绑定失败的**真实原因**。
+   *
+   * <p>用 modal 而不是 toast：绑定之后紧接着就是「登录成功」的 toast，
+   * 两个 toast 会互相覆盖，导致失败原因一闪而过（这正是线上看到「直接显示登录成功」的原因）。
+   * modal 必须用户确认，不会被顶掉。
+   *
+   * @param {object} err 绑定失败的错误对象（含 status / message / friendly）
+   * @param {string|null} doneTitle 关闭弹窗后要跳转的登录成功文案；null 表示不做跳转（页面内绑定场景）
+   */
+  notifyBindFailure(err, doneTitle) {
+    const status = err && err.status;
+    let content = (err && (err.friendly || err.message)) || '绑定失败，请稍后重试。';
+    if (status === 409) {
+      content = '这个微信已经绑定过其他账号，本次没有绑定。\n\n你的登录仍然成功，可以继续使用；如需换绑，请先在原账号解除绑定后再试。';
+    } else if (status === 503) {
+      content = '微信服务暂时不可用，本次没有绑定。稍后可再试一次。';
+    }
+    wx.showModal({
+      title: '微信未绑定成功',
+      content: content,
+      showCancel: false,
+      confirmText: '知道了',
+      complete: () => {
+        if (doneTitle) this.afterLogin(doneTitle);
+      },
     });
   },
 
