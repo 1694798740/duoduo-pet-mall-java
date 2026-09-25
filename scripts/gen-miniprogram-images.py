@@ -118,21 +118,24 @@ def linear_bg(size, c1, c2, radius=48):
     return out
 
 
-def make_product(path, glyph, label, palette):
+def make_product(path, glyph, _label, palette):
+    """商品占位图（600×600，1:1）。
+
+    刻意**不画任何文字**：早期版本在图上画了品类名（如「猫主粮」），
+    但图片是按商品 id 稳定映射的，与真实商品并非一一对应 ——
+    搜索结果里就出现过「猫罐头」配「领养关注」标签这种图文不符，
+    反而让人误以为「搜索结果与关键词不匹配」。只保留图形与配色，交给页面渲染真实商品名。
+    """
     S = 600
     img = linear_bg((S, S), palette[0], palette[1], radius=64)
-    # 中心圆形留白，让图形更聚焦
     d = ImageDraw.Draw(img)
-    d.ellipse((S * 0.14, S * 0.10, S * 0.86, S * 0.78), fill=(255, 255, 255, 46))
-    draw_glyph(img, glyph, int(S * 0.42), (S / 2, S * 0.44))
-    # 底部标签条：白底圆角 + 主色文字，统一商品图的“说明书”观感
-    f = cjk_font(40)
-    tw = d.textlength(label, font=f)
-    bar_w, bar_h = tw + 72, 78
-    bx, by = (S - bar_w) / 2, S - bar_h - 56
-    d.rounded_rectangle((bx, by, bx + bar_w, by + bar_h), radius=bar_h / 2,
-                        fill=(255, 255, 255, 235))
-    d.text((S / 2 - tw / 2, by + bar_h / 2 - 28), label, font=f, fill=BRAND)
+    # 中心柔光白圆 + 大图形 + 底部两道装饰弧（构图饱满但不抢戏）
+    d.ellipse((S * 0.10, S * 0.08, S * 0.90, S * 0.88), fill=(255, 255, 255, 52))
+    draw_glyph(img, glyph, int(S * 0.46), (S / 2, S * 0.48))
+    d.arc((S * 0.22, S * 0.70, S * 0.78, S * 1.04), start=200, end=340,
+          fill=(255, 255, 255, 120), width=6)
+    d.arc((S * 0.32, S * 0.78, S * 0.68, S * 1.02), start=205, end=335,
+          fill=(255, 255, 255, 90), width=5)
     img.convert('RGB').save(path, 'JPEG', quality=88, optimize=True)
     return os.path.getsize(path)
 

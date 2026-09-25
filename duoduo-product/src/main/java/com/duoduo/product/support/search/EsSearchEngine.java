@@ -29,8 +29,10 @@ import java.util.Map;
  *
  * <p>筛选条件的<strong>全量平移</strong>（与 MySQL 版逐一对应）是硬要求：
  * 两套实现只允许差「谁先跑」，不允许差「谁能查出来」——否则开 ES 和关 ES
- * 看到两个商品世界，比慢更难排查。中文用 pet_text 分析器（standard 分词 + 内置同义词，
- * 验收①），纯 ASCII / 中文查询词额外拼一路 pinyin 字段匹配（验收①拼音容错）。
+ * 看到两个商品世界，比慢更难排查。中文用 pet_text 分析器（standard 分词 → 中文逐字切分；
+ * 同义词在**应用侧**替换，索引侧不挂 synonym filter，见 {@link SearchSynonyms}），
+ * 纯 ASCII / 中文查询词额外拼一路 pinyin 字段匹配（验收①拼音容错）。
+ * 召回与排序共同保证「精确命中排最前」，见 {@link #buildKeywordShould} 与 {@link #applyProductSort}。
  */
 @Component
 @ConditionalOnProperty(name = "duoduo.search.enabled", havingValue = "true")
@@ -77,8 +79,8 @@ public class EsSearchEngine {
         if (q.inStockOnly()) {
             filters.add(term("inStock", true));
         }
-        return run(buildRequest(filters, buildKeywordShould(q.keyword()),
-                (pageNo - 1) * pageSize, pageSize, applyProductSort(q.sort())));
+        return searchStrictThenLoose(filters, q.keyword(),
+                (pageNo - 1) * pageSize, pageSize, applyProductSort(q.sort()));
     }
 
     /** 闲置检索（筛选平移自 ListingService.search 的 MySQL 实现，可见性同 visibleWrapper） */
@@ -102,42 +104,116 @@ public class EsSearchEngine {
         if (q.maxPrice() != null) {
             filters.add(range("maxPrice", null, q.maxPrice()));
         }
-        return run(buildRequest(filters, buildKeywordShould(q.keyword()),
-                (pageNo - 1) * pageSize, pageSize, applyListingSort(q.sort())));
+        return searchStrictThenLoose(filters, q.keyword(),
+                (pageNo - 1) * pageSize, pageSize, applyListingSort(q.sort()));
     }
 
     /**
-     * 关键词召回：
-     * <ol>
-     *   <li><b>原文</b>走 pet_text（standard 分词 + 索引侧同义词）；</li>
-     *   <li><b>同义词变体</b>（应用侧扩展，见 {@link SearchSynonyms}）—— 逐字分词下
-     *       索引侧 synonym filter 覆盖不到多字词，只能在这里补；</li>
-     *   <li><b>拼音</b>：中文转拼音、纯 ASCII 直通，走 ngram 字段；
-     *       两侧都 ngram 切分，长拼音串才能命中（见 {@code SearchIndexer.ensureIndex}）。</li>
-     * </ol>
+     * 两段式检索：**先严格召回；只有严格召回一条都没有时，才放宽到逐字兜底**。
+     *
+     * <p>为什么不是「一次查询里把兜底也带上、靠 boost 排后面」：那样第一屏仍会混进
+     * 噪音（搜「喂食器」会带回含「食」的零食/罐头）。用户对搜索的第一判断就是第一屏，
+     * 宁可给它 1 条精确结果、也不要 4 条里只对 1 条。
+     *
+     * <p>代价是零结果时多一次往返 —— 只在「严格命中 0 条」这个低频分支发生，
+     * 换来的是「零结果 → 给相关推荐」的兜底体验（否则用户什么都搜不到）。
      */
-    private List<Object> buildKeywordShould(String keyword) {
+    private EsHits searchStrictThenLoose(List<Object> filters, String keyword, int from, int size,
+                                         List<SortOptions> sorts) throws Exception {
+        EsHits strict = run(buildRequest(filters, buildKeywordShould(keyword, false), from, size, sorts));
+        if (strict.total() > 0 || !StringUtils.hasText(keyword)) {
+            return strict;
+        }
+        return run(buildRequest(filters, buildKeywordShould(keyword, true), from, size, sorts));
+    }
+
+    /**
+     * 关键词召回：**分层加权，精确优先**（修复「搜『喂食器』出零食/罐头」）。
+     *
+     * <p>为什么必须分层：{@code pet_text} 用 standard 分词器，中文是**逐字切分**
+     * （「喂食器」→ 喂／食／器）。若直接对三个字做 {@code operator: or} 召回，
+     * 任何含「食」的商品（零食、主食罐…）都会进来 —— 这正是线上看到的现象。
+     * 因此按「匹配强度」分五档，各自给权重，由 ES 求和打分决定顺序：
+     *
+     * <ol>
+     *   <li><b>标题整串短语</b>（boost 6）：{@code match_phrase} 要求「喂 食 器」相邻出现，
+     *       语义等价 MySQL 的 {@code title LIKE '%喂食器%'} —— 最强信号；</li>
+     *   <li><b>标题分词全命中</b>（boost 3）：三个字都在标题里（可能不相邻）；</li>
+     *   <li><b>副标题/描述整串短语</b>（boost 2 / 1）：等价 MySQL 的 subtitle LIKE，
+     *       描述命中是 A10 有意的额外召回（弱信号，分数低）；</li>
+     *   <li><b>跨字段分词全命中</b>（boost 2）+ <b>拼音</b>（boost 1.5，走 titlePinyin ngram 字段）；</li>
+     *   <li><b>逐字宽松兜底</b>（boost 0.1）：**只在严格召回为零时启用**
+     *       （见 {@link #searchStrictThenLoose}），保证「搜不到」不比「搜不准」更糟。</li>
+     * </ol>
+     *
+     * <p>同义词变体（{@link SearchSynonyms}）复用同一套分层，但权重减半 ——
+     * 变体是「猜用户可能想搜的词」，可信度低于原文。
+     *
+     * <p>权重只有在<b>默认排序含 {@code _score}</b> 时才有意义，见 {@link #applyProductSort}。
+     */
+    private List<Object> buildKeywordShould(String keyword, boolean includeLoose) {
         List<Object> should = new ArrayList<>();
         if (!StringUtils.hasText(keyword)) {
             return should;
         }
         String kw = keyword.trim();
-        addKeywordBranch(should, kw);
+        addKeywordBranch(should, kw, 1.0, includeLoose);
         for (String variant : synonyms.variants(kw)) {
-            addKeywordBranch(should, variant);
+            addKeywordBranch(should, variant, 0.5, includeLoose);   // 变体权重减半
         }
         return should;
     }
 
-    /** 单个查询串的召回分支：文本路 + 拼音路 */
-    private static void addKeywordBranch(List<Object> should, String text) {
-        should.add(Map.of("multi_match", Map.of("query", text,
-                "fields", List.of("title", "subtitle", "description"), "operator", "or")));
+    /** 单个查询串的召回分支：按「匹配强度」分档加权（weight 为整体缩放系数） */
+    private static void addKeywordBranch(List<Object> should, String text, double weight, boolean includeLoose) {
+        // ① 标题整串短语（最强）：等价 MySQL 的 title LIKE '%text%'
+        should.add(phrase("title", text, 6.0 * weight));
+        // ② 标题分词全命中：喂 AND 食 AND 器 都在标题里
+        should.add(multiMatch(text, List.of("title"), "and", 3.0 * weight));
+        // ③ 副标题整串短语（等价 MySQL 的 subtitle LIKE）
+        should.add(phrase("subtitle", text, 2.0 * weight));
+        // ④ 描述整串短语（A10 有意的额外召回，弱于标题/副标题）
+        should.add(phrase("description", text, 1.0 * weight));
+        // ⑤ 跨字段分词全命中
+        should.add(multiMatch(text, List.of("title", "subtitle", "description"), "and", 2.0 * weight));
+        // ⑥ 拼音路：中文转拼音、纯 ASCII 直通，两侧都 ngram 切分（见 SearchIndexer.ensureIndex）
         String py = SearchIndexer.pinyin(text);
         // 短于 2 字符的拼音切不出 gram（min_gram=2），该分支必然 0 命中，直接不生成
         if (py.length() >= 2) {
-            should.add(Map.of("match", Map.of("titlePinyin", Map.of("query", py, "operator", "and"))));
+            should.add(match("titlePinyin", py, "and", 1.5 * weight));
         }
+        // ⑦ 逐字宽松兜底：仅原文加（变体再加一层会把噪音放大两倍）。
+        //    由 searchStrictThenLoose 控制在「严格召回为零」时才启用，避免第一屏混入噪音。
+        if (includeLoose && weight >= 1.0) {
+            should.add(multiMatch(text, List.of("title", "subtitle", "description"), "or", 0.1));
+        }
+    }
+
+    private static Map<String, Object> phrase(String field, String text, double boost) {
+        return Map.of("match_phrase", Map.of(field, matchOptions(text, boost)));
+    }
+
+    private static Map<String, Object> match(String field, String text, String operator, double boost) {
+        Map<String, Object> opts = matchOptions(text, boost);
+        opts.put("operator", operator);
+        return Map.of("match", Map.of(field, opts));
+    }
+
+    private static Map<String, Object> multiMatch(String text, List<String> fields, String operator, double boost) {
+        Map<String, Object> opts = new LinkedHashMap<>();
+        opts.put("query", text);
+        opts.put("fields", fields);
+        opts.put("operator", operator);
+        opts.put("boost", boost);
+        return Map.of("multi_match", opts);
+    }
+
+    /** match / match_phrase 的公共选项（LinkedHashMap 以便继续追加 operator） */
+    private static Map<String, Object> matchOptions(String text, double boost) {
+        Map<String, Object> opts = new LinkedHashMap<>();
+        opts.put("query", text);
+        opts.put("boost", boost);
+        return opts;
     }
 
     private SearchRequest.Builder buildRequest(List<Object> filters, List<Object> should, int from, int size,
@@ -173,7 +249,21 @@ public class EsSearchEngine {
         return new EsHits(ids, total);
     }
 
-    /** 与 MySQL applySort 同语义（price 用 minPrice，default = 销量降序），末位恒加 refId 降序保证稳定分页 */
+    /**
+     * 排序：末位恒加 refId 降序保证稳定分页。
+     *
+     * <p><b>修复点</b>：默认排序（用户没指定 sort）改为
+     * {@code _score desc → salesCount desc → refId desc}。
+     * 之前只有 {@code salesCount desc}，而 ES 一旦显式 sort 就**不再按相关性排** ——
+     * 搜「喂食器」时唯一精确命中「霍曼 自动喂食器」（销量最低）会被挤到最后一名，
+     * 第一屏全是逐字召回的零食/罐头，用户看到的就是「结果与关键词不匹配」。
+     *
+     * <p>无关键词时（纯浏览）所有文档 {@code _score} 相同（filter-only 查询），
+     * 排序自动退化为销量降序 —— 与旧行为一致，不影响导航页。
+     *
+     * <p>用户显式指定 price/sales/newest/rating 时**尊重其选择**（不加 _score）：
+     * 召回已由分层权重收紧，不需要再靠排序纠偏。
+     */
     private List<SortOptions> applyProductSort(String sort) {
         String value = (sort == null || sort.isBlank()) ? "default" : sort.trim();
         List<Map<String, Object>> sorts = new ArrayList<>();
@@ -183,7 +273,10 @@ public class EsSearchEngine {
             case "sales" -> sorts.add(fieldSort("salesCount", "desc"));
             case "rating" -> sorts.add(fieldSort("rating", "desc"));
             case "newest" -> sorts.add(fieldSort("createdAt", "desc"));
-            default -> sorts.add(fieldSort("salesCount", "desc"));
+            default -> {
+                sorts.add(fieldSort("_score", "desc"));      // 相关性优先（关键词检索的默认直觉）
+                sorts.add(fieldSort("salesCount", "desc"));  // 同分再按销量
+            }
         }
         sorts.add(fieldSort("refId", "desc"));
         return toSortOptions(sorts);
