@@ -51,20 +51,23 @@
       <view>该分类下暂无商品</view>
     </view>
 
-    <view wx:else class="goods-grid">
+    <!-- 商品列表：单列横向卡（用 cg-* 独立类名，**不复用全局 .goods-***）。
+         原因：全局 .goods-card 是固定 340rpx 的双列基线，与左栏 200rpx 相加 = 880rpx > 750rpx，
+         一旦页面级宽度覆盖失效（样式缓存/编译顺序），右列就会被挤出屏幕、封面被放大到 340rpx。 -->
+    <view wx:else class="cg-grid">
       <view
         wx:for="{{items}}"
         wx:key="id"
-        class="goods-card"
+        class="cg-card"
         data-id="{{item.id}}"
         bindtap="goDetail"
       >
-        <view class="goods-cover">
-          <image src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+        <view class="cg-cover">
+          <image class="cg-img" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
         </view>
-        <view class="goods-body">
-          <view class="goods-name ellipsis-2">{{item.title}}</view>
-          <view class="price goods-price">{{item.priceText}}</view>
+        <view class="cg-body">
+          <view class="cg-name ellipsis-2">{{item.title}}</view>
+          <view class="cg-price">{{item.priceText}}</view>
         </view>
       </view>
     </view>

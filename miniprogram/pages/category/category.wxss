@@ -89,17 +89,59 @@
   color: #fff;
 }
 
-/* ── 商品卡：宽度按容器百分比（与分类内容无关，永远两列）
-   此前写死 320rpx：左栏 180rpx + 2×320rpx 超出可用宽度 → 有时挤成单列、有时两列 */
-.cat-main .goods-grid {
+/* ── 商品列表：单列横向卡 ──────────────────────────────────────
+   **刻意不复用全局 .goods-***：全局 `.goods-card` 是固定 340rpx 的双列基线，
+   而本页左栏占 200rpx —— 340×2 + 200 = 880rpx 已超出 750rpx 屏宽，
+   一旦页面级的宽度覆盖失效（样式缓存、编译顺序、后续有人改了全局类），
+   右列就会被挤出屏幕、封面被放大到 340rpx（表现为「图标过大、超出屏幕」）。
+   自带一套类名 = 与全局解耦，任何全局改动都不会再影响这一页。
+
+   宽度全部交给 flex（不写百分比/固定 rpx），单列天然占满一行，不可能横向溢出。 */
+.cg-grid {
+  display: block;
   padding: 0;
 }
-.cat-main .goods-card {
-  width: 48.6%;
+.cg-card {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin-bottom: 20rpx;
+  padding: 16rpx;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+  overflow: hidden;   /* 兜底：任何内容都不越出圆角卡片 */
 }
-.cat-main .goods-cover {
+.cg-cover {
+  flex: none;
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 16rpx;
+  overflow: hidden;
+  background: var(--brand-weak);
+}
+.cg-img {
   width: 100%;
-  /* 卡片宽 ≈248rpx（510rpx 内容区的 48.6%），高度取 250rpx 让封面接近 1:1，
-     与随包商品图（600×600）比例一致，aspectFill 裁切最少 */
-  height: 250rpx;
+  height: 100%;
+  display: block;
+}
+.cg-body {
+  flex: 1;
+  /* flex 子项默认 min-width:auto，长标题会把整行撑破 → 必须显式压到 0 */
+  min-width: 0;
+}
+.cg-name {
+  font-size: 27rpx;
+  line-height: 38rpx;
+  color: var(--text);
+}
+.cg-price {
+  margin-top: 12rpx;
+  font-size: 34rpx;
+  font-weight: 700;
+  color: var(--accent);
+}
+.cg-price::before {
+  content: '¥';
+  font-size: 22rpx;
 }
