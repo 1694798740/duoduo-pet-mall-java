@@ -138,9 +138,15 @@ Page({
     wx.showToast({ title: (err && err.message) || '登录失败，请重试', icon: 'none' });
   },
 
-  /** 把当前微信绑定到「已登录账号」：重新 wx.login 取新 code（旧 code 已用过） */
-  bindCurrentWechat() {
-    if (this.data.submitting) return;
+  /**
+   * 把当前微信绑定到「已登录账号」：重新 wx.login 取新 code（旧 code 已用过）。
+   *
+   * @param {{afterLogin?: boolean}} opts afterLogin=true 表示处在「登录成功后的绑定」场景：
+   *   此时令牌刚刚签发、不该失效，因此失败只提示、不把用户踢回表单。
+   */
+  bindCurrentWechat(opts) {
+    const afterLogin = !!(opts && opts.afterLogin);
+    if (this.data.submitting && !afterLogin) return Promise.reject({ message: '正在处理中' });
     this.setData({ submitting: true });
     return new Promise((resolve, reject) => {
       wx.login({
@@ -156,6 +162,11 @@ Page({
       .catch((err) => {
         this.setData({ submitting: false });
         const tokenGone = !!(err && (err.needLogin || err.status === 401 || err.code === 'UNAUTHORIZED'));
+        if (tokenGone && afterLogin) {
+          // 刚登录成功却令牌失效：属于异常情况，提示但不打断（登录本身已成立）
+          wx.showToast({ title: '绑定失败：登录态异常，请重进小程序再试', icon: 'none' });
+          return Promise.reject(err);
+        }
         if (tokenGone) {
           // 令牌已失效：不能只在原地报一句错，直接切到可执行的路径
           api.clearSession();
@@ -169,6 +180,7 @@ Page({
           return;
         }
         wx.showToast({ title: (err && err.message) || '绑定失败，请重试', icon: 'none' });
+        throw err; // 让调用方（maybeBindWechat）知道没绑上，但不影响登录结果
       });
   },
 
@@ -190,22 +202,57 @@ Page({
       return;
     }
     const app = getApp();
-    const bindAfter = this.data.pendingWechatBind;
+    const doneTitle = mode === 'register' ? '注册成功' : '登录成功';
     this.setData({ submitting: true });
     const action =
       mode === 'register' ? app.registerBy(phone, password, nickname) : app.loginByPhone(phone, password);
     action
-      .then(() => {
-        // 登录/注册成功：若本次是从「微信未绑定」转过来的，顺手完成绑定
-        if (bindAfter && this.data.wechatReady) {
-          return this.bindCurrentWechat().then(() => this.afterLogin('已登录并绑定微信'));
-        }
-        return this.afterLogin(mode === 'register' ? '注册成功' : '登录成功');
-      })
+      .then(() => this.maybeBindWechat())   // 登录成功后统一处理「要不要绑微信」
+      .then((bound) => this.afterLogin(bound ? '已登录并绑定微信' : doneTitle))
       .catch((err) => {
         this.setData({ submitting: false });
         wx.showToast({ title: (err && err.message) || '操作失败，请重试', icon: 'none' });
       });
+  },
+
+  /**
+   * 登录成功后的「绑定微信」步骤。
+   *
+   * <p>为什么不能只在「先点微信一键登录被 422 拦下」时才绑：用户更自然的做法是**直接点手机号登录**
+   * （或手动切到「手机号登录」tab）—— 那条路不会设置 pendingWechatBind，于是登录成功却从未绑定，
+   * 之后他再点微信一键登录依旧 422，体感就是"登录了也没用"。
+   *
+   * <p>所以这里分两种触发：
+   * <ul>
+   *   <li>用户此前点过「微信一键登录」并被 422 拦下（pendingWechatBind=true）→ 意图明确，直接绑定；</li>
+   *   <li>其余情况 → 弹一次询问（「去绑定」/「暂不」），把选择权交给用户。</li>
+   * </ul>
+   * 绑定失败**不影响登录成功**：409（已绑他人）/微信不可用，都只是少一种便捷登录方式。
+   *
+   * @return {Promise<boolean>} 是否绑定成功（用于决定提示文案）
+   */
+  maybeBindWechat() {
+    if (!this.data.wechatReady) return Promise.resolve(false);
+    const needAsk = !this.data.pendingWechatBind;
+    const ask = () =>
+      new Promise((resolve) => {
+        wx.showModal({
+          title: '绑定当前微信？',
+          content: '绑定后下次可以直接用「微信一键登录」，不必再输手机号密码。',
+          confirmText: '去绑定',
+          cancelText: '暂不',
+          success: (res) => resolve(!!res.confirm),
+          fail: () => resolve(false),
+        });
+      });
+    const go = needAsk ? ask() : Promise.resolve(true);
+    return go.then((confirmed) => {
+      if (!confirmed) return false;
+      return this.bindCurrentWechat({ afterLogin: true }).then(
+        () => true,
+        () => false
+      );
+    });
   },
 
   afterLogin(title) {
