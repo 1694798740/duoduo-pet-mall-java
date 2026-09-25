@@ -191,6 +191,15 @@ if ($ran -ne $declared) {
     Write-Host "  [GUARD-OK] 断言总数守卫：$ran 项全部执行，无静默跳过"
 }
 Write-Host ""
+# ---------- 清理夹具（避免历史账号堆积；A14 补）----------
+# 之前每次运行都会留下 A/B 两个账号，长期跑下来库里堆了几十个「微信冒烟-A/B」。
+# 这里按手机号精确删除本次创建的两个夹具 —— 只删自己建的，不碰他人数据。
+Write-Host ""
+Write-Host "> 清理夹具"
+Sql 'duoduo_user' "DELETE FROM t_user WHERE phone IN ('$phoneA', '$phoneB');" | Out-Null
+$left = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE phone IN ('$phoneA', '$phoneB');"
+Check "夹具账号已清理（不留历史垃圾）" ("$left" -eq '0') $left
+
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
 if ($fail -gt 0) {
     Write-Host "失败项："

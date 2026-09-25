@@ -84,13 +84,23 @@ Page({
           });
           return null;
         }
+        // 秒杀讲「快」，所以不在流程里插"选地址"这一步；但下单后要把收货信息摆给用户看，
+        // 避免手快抢到却寄错地方（要换地址可去「购物车 → 地址」或「我的 → 收货地址」）
         return api.seckill.place(activityId, skuId, addr.id).then((result) => {
           wx.showToast({
             title: result && result.replay ? '你已抢到过该商品' : '秒杀成功！',
             icon: 'success',
           });
-          this.fetch();
-          setTimeout(() => wx.switchTab({ url: '/pages/orders/orders' }), 700);
+          wx.showModal({
+            title: '收货信息',
+            content: (addr.receiverName || '') + ' ' + (addr.receiverPhone || '') + '\n' + (addr.fullAddress || ''),
+            showCancel: false,
+            confirmText: '查看订单',
+            complete: () => {
+              this.fetch();
+              wx.switchTab({ url: '/pages/orders/orders' });
+            },
+          });
         });
       })
       .catch((err) => {

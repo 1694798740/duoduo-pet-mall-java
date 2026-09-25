@@ -17,6 +17,9 @@ const REASON_LABEL = {
 
 Page({
   data: {
+    // 收货地址：默认取「默认地址」，也可在结算前临时换（pick 模式）
+    address: null,
+    addressText: '',
     items: [],
     loading: false,
     error: '',
@@ -50,6 +53,8 @@ Page({
           selectedAmountText: api.fen2yuan(view ? view.selectedAmount : 0),
           selectedCount: (view && view.selectedCount) || 0,
         });
+        // 地址独立刷新：失败不影响购物车主体
+        this.fetchAddress();
       })
       .catch((err) => {
         if (err && err.needLogin) {
@@ -58,6 +63,39 @@ Page({
         }
         this.setData({ loading: false, error: (err && err.message) || '加载失败' });
       });
+  },
+
+  /** 拉默认地址（用户没手动选过时用它） */
+  fetchAddress() {
+    return api.address
+      .default()
+      .then((addr) => {
+        if (!this.data.address && addr) this.applyAddress(addr);
+        return addr;
+      })
+      .catch(() => null);
+  },
+
+  applyAddress(addr) {
+    this.setData({
+      address: addr || null,
+      addressText: addr
+        ? (addr.receiverName || '') + '  ' + (addr.receiverPhone || '') + '\n' + (addr.fullAddress || '')
+        : '',
+    });
+  },
+
+  /** 打开地址簿「选择模式」，选中后回填（本次结算就用它） */
+  chooseAddress() {
+    wx.navigateTo({
+      url: '/pages/address/address?pick=1',
+      events: {
+        pickAddress: (addr) => {
+          this.applyAddress(addr);
+          wx.showToast({ title: '已切换收货地址', icon: 'none' });
+        },
+      },
+    });
   },
 
   toggleSelect(e) {
@@ -124,12 +162,11 @@ Page({
       return;
     }
     this.setData({ ordering: true });
-    api
-      .address
-      .default()
+    // 优先用页面上选中的地址；没有则回落到默认地址（两者都没有才引导去添加）
+    Promise.resolve(this.data.address || null)
+      .then((picked) => picked || api.address.default())
       .then((addr) => {
         if (!addr) {
-          // 地址簿已在小程序内（pages/address），不再把人赶去 Web 端
           wx.showModal({
             title: '还没有收货地址',
             content: '先添加一个收货地址，就可以直接下单了。',

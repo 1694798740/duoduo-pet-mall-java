@@ -28,6 +28,8 @@ function emptyForm() {
 
 Page({
   data: {
+    // 选择模式：从结算页（购物车）以 ?pick=1 进入，选中地址后回传并返回
+    pickMode: false,
     list: [],
     loading: false,
     error: '',
@@ -39,8 +41,26 @@ Page({
     labels: LABELS,
   },
 
-  onLoad() {
+  onLoad(query) {
+    this.setData({ pickMode: !!(query && query.pick === '1') });
     this.fetchList();
+  },
+
+  /**
+   * 选择模式：把地址回传给上一页（购物车），用于「本次结算临时换地址」。
+   *
+   * <p>用 navigateTo 的 eventChannel 回传而不是全局变量：生命周期清清楚楚，
+   * 返回时不会留下"下一次结算还沿用上一次选的地址"这种幽灵状态。
+   */
+  pickAddress(e) {
+    if (!this.data.pickMode) return;
+    const item = this.data.list[Number(e.currentTarget.dataset.index)];
+    if (!item) return;
+    const channel = this.getOpenerEventChannel && this.getOpenerEventChannel();
+    if (channel && channel.emit) {
+      channel.emit('pickAddress', item);
+    }
+    wx.navigateBack();
   },
 
   fetchList() {

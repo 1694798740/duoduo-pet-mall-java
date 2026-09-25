@@ -1,3 +1,32 @@
+/* 收货地址行（可点：临时切换地址） */
+.addr-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.addr-icon {
+  font-size: 34rpx;
+  flex: none;
+}
+.addr-body {
+  flex: 1;
+  min-width: 0;
+}
+.addr-name {
+  font-size: 28rpx;
+  font-weight: 600;
+}
+.addr-full {
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-top: 4rpx;
+}
+.addr-arrow {
+  color: var(--text-3);
+  font-size: 34rpx;
+  flex: none;
+}
+
 .cart-item {
   display: flex;
   align-items: stretch;

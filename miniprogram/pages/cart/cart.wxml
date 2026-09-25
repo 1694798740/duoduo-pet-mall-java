@@ -6,6 +6,19 @@
 </view>
 
 <block wx:else>
+  <!-- 收货地址：点击可临时切换（选择模式），下单用这里显示的地址 -->
+  <view class="card addr-row" bindtap="chooseAddress">
+    <text class="addr-icon">📍</text>
+    <view class="addr-body">
+      <block wx:if="{{address}}">
+        <view class="addr-name">{{address.receiverName}} {{address.receiverPhone}}</view>
+        <view class="t3 addr-full">{{address.fullAddress}}</view>
+      </block>
+      <view wx:else class="t3">请选择收货地址</view>
+    </view>
+    <text class="addr-arrow">›</text>
+  </view>
+
   <view wx:for="{{items}}" wx:key="skuId" class="card cart-item {{item.valid ? '' : 'ci-invalid'}}">
     <!-- 勾选：下单只结已勾选条目，因此这里的勾选就是结算口径 -->
     <view class="ci-check" data-sku="{{item.skuId}}" bindtap="toggleSelect">
