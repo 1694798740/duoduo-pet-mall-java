@@ -76,7 +76,12 @@ Page({
 
   // ── 微信一键登录 ─────────────────────────────────────────
   wechatLogin() {
-    if (this.data.submitting) return;
+    // 不静默忽略：以前这里直接 return，一旦 submitting 被悬挂的 Promise 锁死，
+    // 用户会连点多次都"毫无反应"，看起来就像按钮坏了。
+    if (this.data.submitting) {
+      wx.showToast({ title: '正在处理中，请稍候', icon: 'none' });
+      return;
+    }
     this.setData({ submitting: true });
     const app = getApp();
     app
@@ -94,6 +99,8 @@ Page({
   /** 微信登录失败的分类处理：未绑定要给出**可走通的下一步**，别让用户反复点 */
   handleWechatError(err) {
     const status = err && err.status;
+    // 诊断线索：手机端没法看堆栈，把关键字段打出来，下次定位不用猜
+    console.warn('[login] 微信登录失败', { status: status, code: err && err.code, message: err && err.message });
 
     if (status === 422) {
       // 情形③：确实已登录（服务端校验过）→ 一次点击直接绑定，不必再走登录
@@ -142,10 +149,25 @@ Page({
       return;
     }
     if (status === 503) {
-      wx.showToast({ title: '微信登录暂不可用，请用手机号登录', icon: 'none' });
+      wx.showModal({
+        title: '微信登录暂不可用',
+        content: '请改用手机号登录（微信侧配置就绪后即可恢复一键登录）。',
+        showCancel: false,
+      });
       return;
     }
-    wx.showToast({ title: (err && err.message) || '登录失败，请重试', icon: 'none' });
+    // 兜底：任何没被上面分类的失败（含单飞冲突的 {needLogin:true}、网络异常、超时）
+    // 都必须给**可见**提示 —— 用 modal 而不是 toast，保证不会被后续操作顶掉。
+    const hint = (err && err.message) || '登录失败，请重试';
+    wx.showModal({
+      title: '一键登录未完成',
+      content: hint + '\n\n可以稍后重试，或直接用手机号登录。',
+      confirmText: '用手机号登录',
+      cancelText: '知道了',
+      success: (res) => {
+        if (res.confirm) this.setData({ mode: 'phone' });
+      },
+    });
   },
 
   /**

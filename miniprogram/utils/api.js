@@ -23,19 +23,32 @@ function acceptSession(data) {
  *
  * <p>绑定/解绑/换绑都要重新取 code —— 不能复用上一次的（微信侧用过即失效）。
  */
-function getWxCode() {
+function getWxCode(timeoutMs) {
+  const limit = timeoutMs || 10000;
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // wx.login 在个别环境（工具权限异常/网络切换）会出现「既不 success 也不 fail」，
+      // 没有超时的话调用方的 loading/submitting 会被永久锁死 —— 表现就是"再点也没反应"。
+      reject({ message: '微信授权超时，请重试' });
+    }, limit);
+    const done = (fn) => (arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(arg);
+    };
     wx.login({
-      success(res) {
+      success: done((res) => {
         if (!res.code) {
           reject({ message: '微信授权未返回 code，请重试' });
           return;
         }
         resolve(res.code);
-      },
-      fail() {
-        reject({ message: '微信授权失败，请重试' });
-      },
+      }),
+      fail: done(() => reject({ message: '微信授权失败，请重试' })),
     });
   });
 }

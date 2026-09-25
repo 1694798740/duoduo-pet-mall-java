@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-25（第三十二轮 · P2 售后入口 + P3 搜索高亮纠错）——①**P2 订单售后入口**：新增 `pages/after-sale`（类型选择：仅退款/退货退款 + 诉求 ≤500 字 + 已提过则展示进度不再给重复入口）、订单详情页展示售后进度并在 **SHIPPED/COMPLETED** 给出「申请售后」——**实测发现并修正**：后端规则是「**发货后**才能申请」（PAID 状态点了必然 422），因此 PAID 改为提示「卖家发货后可申请售后」，避免用户填完表单才失败。②**P3 搜索高亮 + 纠错**：新增 `GET /api/products/search/suggestion`（词表 = 品牌/分类/在售标题 + **2~4 字连续子串**，**同音优先**（拼音索引 O(1)）→ 形近（长度±1 桶 + 共享字 + 编辑距离）；给不出靠谱候选就返回空，不硬凑）；前端标题按命中片段高亮（`utils/highlight.js` 分段渲染，**不用 rich-text，零注入面**）+ 零结果时「你是不是想搜 X」一键改搜。实测：纠错 6/6（猫良→猫粮、喂食气→喂食器、冻千→冻干；正确词不乱建议）；售后 7/7（预下单→沙箱确认支付 SUCCESS→发货→申请 200→重复 409）。上一轮第三十一轮交付地址选择模式 + IK 实测结论）
+> 更新时间：2026-09-25（第三十三轮 · 解绑后一键登录「无提示」根治 + 地址表单输入框修复）——①**根因链**：`wx.login` 在个别环境既不 success 也不 fail → `getWxCode` **永不 settle** → `silentRelogin` 的单飞标记 `_silentLoggingIn` **永久锁死** → 后续每次点「微信一键登录」立即 reject `{needLogin:true}`（**没有 status 字段**）→ 绕过 422 专用引导分支、只落到一句 1.5 秒的含糊 toast；叠加第二条静默路径：`wechatLogin()` 在 `submitting===true` 时**直接 return 无任何提示**（submitting 被悬挂 Promise 锁死后就再也点不动）。②**修复**：`getWxCode` 加 **10s 超时**（杜绝永久悬挂）；`submitting` 守卫改为**明确提示**而非静默；`handleWechatError` **所有分支改 modal**（含 needLogin/未知错误），并加 `console.warn` 诊断线索。③**验证方式（可复现）**：Node 里 stub `wx` API 直接驱动页面方法 → 4 种失败路径（未登录 422 / 已登录 422 / 单飞冲突 / 503）**全部产生可见 modal**；另用「`wx.login` 永不回调」验证 1.2s 超时后正确 reject（不再悬挂）。④**地址表单输入框文字被裁**：`box-sizing: border-box` 下小程序 `input` 的默认内容高度被上下 padding 挤掉 → 文字只露上半截；改为**显式 `height:84rpx` + `line-height:84rpx` + padding 只留左右**。上一轮第三十二轮交付 P2 售后入口 + P3 高亮纠错）
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -223,6 +223,48 @@
 
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
+
+### 2026-09-25（第三十三轮 · 解绑后「微信一键登录无提示」根治 + 地址表单输入框修复）
+
+#### 一、解绑后点一键登录：只有 422、界面无提示（根因链与修复）
+
+**现象**：解绑微信 → 再点「微信一键登录」→ Console 有 `POST /api/auth/wechat/token 422`，但界面**没有任何提示**。
+
+**根因链（两条静默路径叠加）**
+
+| 环节 | 问题 | 后果 |
+|---|---|---|
+| `api.getWxCode()` | `wx.login` 在个别环境**既不回调 success 也不回调 fail**，Promise **永不 settle** | 调用方的 loading/submitting 被永久锁死 |
+| `app.silentRelogin()` | 单飞标记 `_silentLoggingIn` 因此**永久为 true**，后续调用直接 `reject({needLogin:true})` —— **该错误没有 `status` 字段** | 绕过 422 的专用引导分支 |
+| `login.handleWechatError()` | 未特判 `needLogin`，落到末尾 `wx.showToast(...)` | toast 仅 1.5 秒且易被后续操作顶掉 → 观感"无任何提示" |
+| `login.wechatLogin()` | `if (this.data.submitting) return;` —— **静默返回** | submitting 一旦被锁死，**之后每次点击都毫无反应**（像按钮坏了） |
+
+**修复**
+
+| 文件 | 改动 |
+|---|---|
+| `utils/api.js` | `getWxCode(timeoutMs=10000)` 加**超时保护**：`wx.login` 不回调时 10 秒后 reject「微信授权超时」（带 settled 标记防重复 settle） |
+| `pages/login/login.js` | ① `submitting` 守卫改为 `wx.showToast('正在处理中，请稍候')`，**不再静默**；② `handleWechatError` 的 **503 / 未知错误（含单飞冲突）全部改用 `wx.showModal`**（modal 不会被顶掉），未知错误并给「用手机号登录」出口；③ 加 `console.warn('[login] 微信登录失败', {status, code, message})` 作为诊断线索 |
+
+**验证方式（可复现，不依赖真机）**：Node 里 stub `wx` API + `Page`，直接驱动 `handleWechatError` —— 4 种失败路径**全部产生可见提示**：
+
+| 场景 | 结果 |
+|---|---|
+| 未登录 + 422 | ✅ MODAL「微信还没绑定账号 / 用手机号登录或注册后，会自动把这个微信绑定到该账号」 |
+| **已登录 + 422（本次用户情形）** | ✅ MODAL「微信还没绑定账号 / 当前账号已登录。要把这个微信绑定到当前账号吗？」 |
+| 单飞冲突（无 status 的 `needLogin`） | ✅ MODAL「一键登录未完成 / 正在重新登录」（修复前是含糊 toast） |
+| 503 未配置 | ✅ MODAL「微信登录暂不可用 / 请改用手机号登录」 |
+
+另用「`wx.login` 永不回调」实测：**1209ms 后正确 reject**（测试用 1.2s 超时）→ 不再存在永久悬挂。
+
+#### 二、收货地址表单：输入框文字显示不完整（修复）
+
+**根因**：`.field-input` 写了 `width:100% + box-sizing: border-box`，而小程序 `input` 的**默认内容高度**在 border-box 下会被上下 `padding: 20rpx` 挤占 → 文字只露出上半截（截图里"请填写收货人姓名""11 位手机号""如 广东省"都被裁）。
+
+**修复**（`pages/address/address.wxss`）：input 改用**显式高度**——`height: 84rpx; line-height: 84rpx; padding: 0 24rpx`（高度已给定，padding 只管左右）；`textarea` 保持 `min-height: 160rpx + padding`（其行为正常，截图可证）。
+
+> 说明：登录页 / AI 页的 input 用的是 `padding` 撑高且**未加 box-sizing**，实测显示正常（截图佐证），故**不动**，避免引入视觉回归。
+
 
 ### 2026-09-25（第三十二轮 · P2 订单售后入口 + P3 搜索高亮与纠错）
 
