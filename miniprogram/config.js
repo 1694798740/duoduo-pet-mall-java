@@ -7,5 +7,5 @@ module.exports = {
   //  - 后端 /api/auth/wechat 端点在 A13 下一轮落地（AppID/secret 走环境变量，绝不落盘）；
   //  - 端点未就绪或未配置 AppID 时，登录回退到「手机号 + 密码」（复用既有 /api/auth/login），
   //    保证测试号阶段整条主交易闭环可走通。
-  WECHAT_LOGIN_READY: false,
+  WECHAT_LOGIN_READY: true,
 };

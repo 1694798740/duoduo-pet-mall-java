@@ -1,25 +1,24 @@
 {
-  // A13 · 微信小程序（买家端）。AppID 未提供前用开发者工具「测试号」占位：
-  // touristappid = 微信开发者工具的官方测试号，可本地预览但无法真机预览/发布。
-  // 用户提供真实 AppID 后：改本文件的 appid + 在后台配置服务器域名（当前 BASE_URL 是 localhost，
-  // 开发阶段在开发者工具里勾选「不校验合法域名」即可直连本机网关）。
-  "appid": "touristappid",
-  "compileType": "miniprogram",
-  "libVersion": "3.4.10",
   "setting": {
     "es6": true,
     "postcss": true,
     "minified": true,
-    "urlCheck": false,
+    "uglifyFileName": false,
+    "enhance": true,
+    "packNpmRelationList": [],
     "babelSetting": {
       "ignore": [],
       "disablePlugins": [],
       "outputPath": ""
-    }
+    },
+    "useCompilerPlugins": false
   },
-  "condition": {},
-  "editorSetting": {
-    "tabIndent": "insertSpaces",
-    "tabSize": 2
-  }
+  "compileType": "miniprogram",
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "appid": "wx8d12dd3403959180",
+  "editorSetting": {}
 }

@@ -54,7 +54,7 @@ ES 只返回 **id 顺序页**、卡片装配回 MySQL —— **权威数据只�
 ③ **WechatGateway 三分支**：mock（`DUODUO_WECHAT_MOCK_ENABLED=true` 显式开启 + code 前缀 `mock:`，生产禁开）/
 real（jscode2session）/ 未配置（503）；secret 只走环境变量，日志只记 openid 前 4 位。
 **自测**：`scripts/wechat-auth-smoke.ps1` **26/26 全绿**（GUARD-OK）+ CI 子集回归 **356/0 无回归**。
-小程序侧待 `config.js` 开 `WECHAT_LOGIN_READY` 联调；真机预览待用户提供 AppID。
+**2026-09-25 更新**：用户已提供 AppID/Secret——user 容器已注入（`.env` 不入库）、`project.config.json` 换真实 AppID、`WECHAT_LOGIN_READY=true`，真实通道验证通过（假 code → 401）；待用户在微信开发者工具完成 wx.login 联调与真机预览。
 
 **GitHub Actions 首跑已打通（2026-09-24，Run #5 ✅）**：编译检查 + 冒烟子集 356 项双 job 全绿。
 首跑连续 4 轮失败暴露并修复两个真缺陷（详见 `docs/agent/08` **T-44/T-45/T-46**）：
