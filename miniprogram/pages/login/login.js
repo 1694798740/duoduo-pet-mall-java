@@ -25,10 +25,37 @@ Page({
     submitting: false,
     // 是否处于「手机号登录后将自动绑定微信」流程（用于界面文案）
     pendingWechatBind: false,
+    // 经服务端校验过的登录态（不是"本地存了令牌字符串"就算登录 —— 令牌可能已过期）
+    loggedIn: false,
   },
 
   // 是否已登录成功：用于 onUnload 判断要不要唤醒等待方（失败退出）
   _logged: false,
+
+  /**
+   * 进页面先校验一次本地会话。
+   *
+   * <p>必要性：本地 storage 里的令牌可能已过期/失效，若不清掉，"微信未绑定"(422) 的后续处理
+   * 会误判成"已登录"→ 直接去 bind → 401 → 静默重登 → 又 422，把用户卡在一个什么都不提示的死循环里。
+   */
+  onLoad() {
+    this.verifySession();
+  },
+
+  verifySession() {
+    return api
+      .ensureSession()
+      .then((user) => {
+        getApp().globalData.user = user;
+        this.setData({ loggedIn: true });
+        return user;
+      })
+      .catch(() => {
+        api.clearSession(); // 清掉无效令牌，让本地状态与真实登录态一致
+        this.setData({ loggedIn: false });
+        return null;
+      });
+  },
 
   onPhone(e) {
     this.setData({ phone: e.detail.value });
@@ -69,16 +96,29 @@ Page({
     const status = err && err.status;
 
     if (status === 422) {
-      // 情形③：已经登录了 → 一次点击直接绑定，不必再走登录
-      if (api.getToken()) {
-        this.bindCurrentWechat();
+      // 情形③：确实已登录（服务端校验过）→ 一次点击直接绑定，不必再走登录
+      if (this.data.loggedIn) {
+        wx.showModal({
+          title: '微信还没绑定账号',
+          content: '当前账号已登录。要把这个微信绑定到当前账号吗？绑定后就能一键登录了。',
+          confirmText: '绑定',
+          cancelText: '换个账号',
+          success: (res) => {
+            if (res.confirm) {
+              this.bindCurrentWechat();
+            } else {
+              // 给退路：换账号登录，登录后同样自动绑定
+              this.setData({ mode: 'phone', pendingWechatBind: true, loggedIn: false });
+            }
+          },
+        });
         return;
       }
       // 情形②：未登录 → 引导手机号，登录后自动绑定
       wx.showModal({
         title: '微信还没绑定账号',
-        content: '用手机号登录或注册后，会自动把当前微信绑定到该账号；以后就能一键登录了。',
-        confirmText: '去手机号登录',
+        content: '用手机号登录或注册后，会自动把这个微信绑定到该账号；以后就能一键登录了。',
+        confirmText: '用手机号登录并绑定',
         cancelText: '取消',
         success: (res) => {
           if (res.confirm) this.setData({ mode: 'phone', pendingWechatBind: true });
@@ -115,6 +155,19 @@ Page({
       })
       .catch((err) => {
         this.setData({ submitting: false });
+        const tokenGone = !!(err && (err.needLogin || err.status === 401 || err.code === 'UNAUTHORIZED'));
+        if (tokenGone) {
+          // 令牌已失效：不能只在原地报一句错，直接切到可执行的路径
+          api.clearSession();
+          this.setData({ loggedIn: false, mode: 'phone', pendingWechatBind: true });
+          wx.showModal({
+            title: '登录已过期',
+            content: '请用手机号登录/注册，登录成功后会自动把当前微信绑定到该账号。',
+            confirmText: '好的',
+            showCancel: false,
+          });
+          return;
+        }
         wx.showToast({ title: (err && err.message) || '绑定失败，请重试', icon: 'none' });
       });
   },
@@ -157,7 +210,7 @@ Page({
 
   afterLogin(title) {
     this._logged = true;
-    this.setData({ submitting: false });
+    this.setData({ submitting: false, loggedIn: true });
     wx.showToast({ title: title, icon: 'success' });
     // 稍等提示可见再回跳；tab 页用 switchTab，非 tab 页 navigateBack 回到来源页
     setTimeout(() => {
