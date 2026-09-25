@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 商品接口（公开）。
@@ -49,6 +50,18 @@ public class ProductController {
         ProductQuery query = new ProductQuery(keyword, categoryId, brandId, supplyType,
                 minPrice, maxPrice, species, lifeStage, inStockOnly, sort, page, pageSize);
         return ApiResponse.ok(productService.search(query));
+    }
+
+    /**
+     * A14 · P3 搜索纠错建议：`GET /api/products/search/suggestion?keyword=猫良` → `{"suggestion":"猫粮"}`。
+     *
+     * <p>路径刻意用**两段**（`/search/suggestion`）：`/{spuId}` 只匹配单段，这样不会与商品详情冲突。
+     * 词表来自库内品牌/分类/在售标题，给不出靠谱建议时返回空对象（前端不显示提示）。
+     */
+    @GetMapping("/search/suggestion")
+    public ApiResponse<Map<String, String>> suggestKeyword(@RequestParam("keyword") String keyword) {
+        String suggestion = productService.suggestKeyword(keyword);
+        return ApiResponse.ok(suggestion == null ? Map.of() : Map.of("suggestion", suggestion));
     }
 
     @GetMapping("/{spuId}")

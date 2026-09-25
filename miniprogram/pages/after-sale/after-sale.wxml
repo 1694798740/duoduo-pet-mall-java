@@ -1,0 +1,59 @@
+<view wx:if="{{error}}" class="error-box">{{error}}</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+
+<block wx:else>
+  <!-- 已提过售后：不给重复入口，直接把状态说清楚 -->
+  <view wx:if="{{existing}}" class="card">
+    <view class="sec-title">该订单已提交售后</view>
+    <view class="kv-row"><text class="t2">售后类型</text><text class="t2">{{existing.typeLabel || existing.type}}</text></view>
+    <view class="kv-row"><text class="t2">当前状态</text><text class="tag tag-accent">{{existing.statusLabel || existing.status}}</text></view>
+    <view wx:if="{{existing.reason}}" class="t3 existing-reason">{{existing.reason}}</view>
+    <view wx:if="{{existing.sellerReply}}" class="t3 existing-reason">卖家回复：{{existing.sellerReply}}</view>
+  </view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="sec-title">订单号</view>
+      <view class="t2">{{orderNo}}</view>
+    </view>
+
+    <view class="card">
+      <view class="sec-title">售后类型</view>
+      <view class="type-list">
+        <view
+          wx:for="{{types}}"
+          wx:key="key"
+          class="type-item {{type === item.key ? 'type-on' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickType"
+        >
+          <view class="type-label">{{item.label}}</view>
+          <view class="t3 type-desc">{{item.desc}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="sec-title">售后诉求</view>
+      <textarea
+        class="reason-input"
+        maxlength="{{reasonMax}}"
+        placeholder="请说明遇到的问题，例如商品破损、与描述不符等（最多 500 字）"
+        value="{{reason}}"
+        bindinput="onReason"
+      />
+      <view class="t3 reason-count">{{reason.length}}/{{reasonMax}}</view>
+      <view class="t3 reason-tip">如需补充凭证图片，可在 Web 端「我的 → 售后」里追加</view>
+    </view>
+
+    <view style="height: 140rpx"></view>
+    <view class="footer">
+      <button
+        class="btn btn-accent footer-btn"
+        bindtap="submit"
+        loading="{{submitting}}"
+        disabled="{{submitting}}"
+      >提交售后申请</button>
+    </view>
+  </block>
+</block>

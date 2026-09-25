@@ -157,7 +157,9 @@ for (const wxml of wxmlFiles) {
   // 数据字段粗筛：只查 {{ identifier }} / {{ identifier.x }} 的第一个标识符
   const exprRe = /\{\{([^}]*)\}\}/g;
   const allowed = new Set([
-    'true', 'false', 'null', 'undefined', 'item', 'index', 'idx', 'msg', 'rec', 'sku', 'act',
+    'true', 'false', 'null', 'undefined',
+    // wx:for-item / wx:for-index 的自定义别名（WXML 里内联定义的循环变量）
+    'item', 'index', 'idx', 'msg', 'rec', 'sku', 'act', 'seg', 'part', 'node', 'val', 'row', 'col',
   ]);
   const seenWarn = new Set();
   while ((m = exprRe.exec(content))) {

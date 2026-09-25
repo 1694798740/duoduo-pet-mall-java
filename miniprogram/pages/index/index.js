@@ -4,17 +4,20 @@
 // 小程序 <image> 既解析不了相对路径、也不支持 SVG，因此统一经 utils/images 映射为本地位图。
 const api = require('../../utils/api');
 const images = require('../../utils/images');
+const hl = require('../../utils/highlight');
 const bannerConfig = require('../../config/banners');
 
 const PAGE_SIZE = 10;
 // tabBar 页面必须用 switchTab 跳转，其余用 navigateTo
 const TAB_PAGES = ['/pages/index/index', '/pages/category/category', '/pages/cart/cart', '/pages/orders/orders', '/pages/profile/profile'];
 
-function decorate(list) {
+function decorate(list, keyword) {
   return (list || []).map((it) =>
     Object.assign({}, it, {
       priceText: api.fen2yuan(it.minPrice),
       imageSrc: images.productImage(it.id, it.mainImage),
+      // 关键词高亮：拆成片段交给 WXML 渲染（不用 rich-text，零注入面）
+      titleSegs: hl.segments(it.title, keyword),
     })
   );
 }
@@ -44,6 +47,8 @@ Page({
     total: 0,
     hasMore: false,
     hasSeckill: false,
+    // 零结果时的纠错建议（"你是不是想搜 X"）
+    suggestion: '',
   },
 
   // 请求序号：关键词/刷新切换时丢弃过期响应，避免「列表短暂混排」
@@ -82,7 +87,7 @@ Page({
       .list({ page, pageSize: PAGE_SIZE, keyword: this.data.keyword })
       .then((data) => {
         if (seq !== this._seq) return;
-        const items = decorate(data && data.items);
+        const items = decorate(data && data.items, this.data.keyword);
         const merged = page === 1 ? items : this.data.items.concat(items);
         const total = Number((data && data.total) || merged.length);
         this.setData({
@@ -91,7 +96,12 @@ Page({
           loading: false,
           firstLoading: false,
           hasMore: merged.length < total,
+          suggestion: merged.length === 0 ? this.data.suggestion : '',
         });
+        // 完全搜不到时问后端要一个纠错建议（给不出建议则保持空，不硬凑）
+        if (page === 1 && merged.length === 0 && this.data.keyword) {
+          this.fetchSuggestion(this.data.keyword);
+        }
       })
       .catch((err) => {
         if (seq !== this._seq) return;
@@ -101,6 +111,27 @@ Page({
           error: (err && err.message) || '加载失败',
         });
       });
+  },
+
+  /** 纠错建议：完全搜不到时调一次；失败静默（绝不因为"建议"打扰主流程） */
+  fetchSuggestion(keyword) {
+    return api.product
+      .suggest(keyword)
+      .then((data) => {
+        const s = (data && data.suggestion) || '';
+        // 只在用户还没重新搜索（关键词未变）时才应用，避免慢响应覆盖新结果
+        if (s && s !== keyword && this.data.keyword === keyword) {
+          this.setData({ suggestion: s });
+        }
+      })
+      .catch(() => {});
+  },
+
+  /** 采纳建议：用建议词重新搜索 */
+  useSuggestion() {
+    if (!this.data.suggestion) return;
+    this.setData({ keyword: this.data.suggestion, suggestion: '' });
+    this.fetchProducts(true);
   },
 
   // 秒杀预告：只取未结束活动的头两个 SKU（静默失败，不打扰首页）

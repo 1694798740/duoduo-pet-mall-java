@@ -52,6 +52,8 @@ Page({
     tracks: [],
     tracksError: '',
     paying: false,
+    // 该订单的售后单（有则展示状态、不再给申请入口）
+    aftersale: null,
   },
 
   onLoad(query) {
@@ -88,6 +90,10 @@ Page({
         if (order && (order.status === 'SHIPPED' || order.status === 'COMPLETED')) {
           this.fetchTracks();
         }
+        // 售后状态：只有发货后才可能申请（后端规则），静默失败（不影响订单主体展示）
+        if (order && ['SHIPPED', 'COMPLETED'].indexOf(order.status) >= 0) {
+          this.fetchAfterSale();
+        }
         return order;
       })
       .catch((err) => {
@@ -110,6 +116,23 @@ Page({
         })
       )
       .catch(() => this.setData({ tracks: [], tracksError: '物流信息暂时取不到' }));
+  },
+
+  /** 拉该订单的售后单（接口是"我的售后"分页，这里本地筛 orderNo） */
+  fetchAfterSale() {
+    return api.aftersale
+      .mine(1, 50)
+      .then((data) => {
+        const list = (data && data.items) || [];
+        const hit = list.find((a) => a.orderNo === this.data.orderNo);
+        this.setData({ aftersale: hit || null });
+      })
+      .catch(() => this.setData({ aftersale: null }));
+  },
+
+  /** 申请售后 */
+  goAfterSale() {
+    wx.navigateTo({ url: '/pages/after-sale/after-sale?orderNo=' + this.data.orderNo });
   },
 
   /** 复制订单号 */

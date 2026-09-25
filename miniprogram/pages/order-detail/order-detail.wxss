@@ -139,6 +139,13 @@
   margin-top: 4rpx;
 }
 
+/* 售后/物流备注文本 */
+.tracks-note {
+  font-size: 25rpx;
+  line-height: 1.6;
+  margin-top: 8rpx;
+}
+
 /* 订单信息 */
 .kv-row {
   display: flex;

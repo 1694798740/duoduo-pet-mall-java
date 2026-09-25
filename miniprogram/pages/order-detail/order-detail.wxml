@@ -18,6 +18,17 @@
     <view wx:if="{{order.closeReason}}" class="t3 status-hint">关闭原因：{{order.closeReason}}</view>
   </view>
 
+  <!-- 售后状态：有售后单时展示（已提过就不再给申请入口） -->
+  <view wx:if="{{aftersale}}" class="card">
+    <view class="sec-title">售后进度</view>
+    <view class="kv-row">
+      <text class="t2">{{aftersale.typeLabel || aftersale.type}}</text>
+      <text class="tag tag-accent">{{aftersale.statusLabel || aftersale.status}}</text>
+    </view>
+    <view wx:if="{{aftersale.reason}}" class="t3 tracks-note">{{aftersale.reason}}</view>
+    <view wx:if="{{aftersale.sellerReply}}" class="t3 tracks-note">卖家回复：{{aftersale.sellerReply}}</view>
+  </view>
+
   <!-- 收货信息 -->
   <view class="card">
     <view class="sec-title">收货信息</view>
@@ -107,7 +118,17 @@
       <button class="btn btn-accent footer-btn" bindtap="doPay" loading="{{paying}}" disabled="{{paying}}">去支付</button>
     </block>
     <block wx:elif="{{order.status === 'SHIPPED'}}">
+      <button wx:if="{{!aftersale}}" class="btn btn-plain footer-cancel" bindtap="goAfterSale">申请售后</button>
       <button class="btn btn-accent footer-btn" bindtap="doConfirm">确认收货</button>
+    </block>
+    <block wx:elif="{{order.status === 'COMPLETED'}}">
+      <button wx:if="{{!aftersale}}" class="btn btn-plain footer-btn" bindtap="goAfterSale">申请售后</button>
+      <view wx:else class="t3 footer-tip">售后处理中，进度见上方</view>
+    </block>
+    <block wx:elif="{{order.status === 'PAID'}}">
+      <!-- 后端业务规则：发货后才可申请售后（实测 422 文案为「发货后才能申请售后」），
+           因此已付款但未发货时不给入口，避免用户填完表单才失败 -->
+      <view class="t3 footer-tip">卖家发货后可申请售后</view>
     </block>
     <block wx:else>
       <view class="t3 footer-tip">该订单暂无待处理操作</view>

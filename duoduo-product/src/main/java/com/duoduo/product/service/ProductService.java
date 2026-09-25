@@ -7,6 +7,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.product.dto.ProductDtos.ProductCard;
 import com.duoduo.product.dto.ProductDtos.ProductDetail;
 import com.duoduo.product.dto.ProductDtos.ProductQuery;
+import com.duoduo.product.support.search.SearchIndexer;
 import com.duoduo.product.dto.ProductDtos.SkuPurchaseView;
 import com.duoduo.product.dto.ProductDtos.SkuView;
 import com.duoduo.product.dto.ProductDtos.Suitability;
@@ -91,6 +92,174 @@ public class ProductService {
     }
 
     // ---------------- 检索 ----------------
+
+    // ── 搜索纠错（A14 · P3）────────────────────────────────────────────────
+    //
+    // 关键教训（实测得出）：**词表粒度决定纠错能不能用**。
+    // 第一版只把「标题按空格切出的整词」放进词表，切出来的是「幼猫粮」「冻干双拼全价猫粮」这类长词，
+    // 而用户打的是「猫粮」「冻干」——词表里没有 → 纠错永远给不出建议（更糟：「猫粮」被当错词，错配成「猫主粮」）。
+    // 因此词表 = 词本身 + 其 **2~4 字连续子串**，并预建**拼音索引**（同音命中 O(1)）与**长度索引**
+    // （形近只比长度 ±1 的桶），既准又快。
+    private volatile Set<String> correctionWordSet = Set.of();
+    private volatile Map<String, List<String>> correctionByPinyin = Map.of();
+    private volatile Map<Integer, List<String>> correctionByLength = Map.of();
+    private volatile long correctionBuiltAt = 0L;
+    private static final long CORRECTION_TTL_MS = 5 * 60 * 1000L;
+
+    /**
+     * 搜索纠错建议：给「搜不到东西」的输入找一个更可能的词（前端据此提示「你是不是想搜 X」）。
+     *
+     * <p><b>词表零维护成本</b>：品牌名 + 分类名 + 在售商品标题切词，全部来自库内既有数据。
+     *
+     * <p>两级判定，按「更符合中文输入习惯」排序：
+     * <ol>
+     *   <li><b>拼音完全相同</b>（复用 {@link SearchIndexer#pinyin}）—— 中文错误绝大多数是拼音输入法
+     *       选错字（「猫良」→「猫粮」），查预建索引 O(1)；</li>
+     *   <li><b>形近</b>：长度差 ≤ 1、至少共享一个汉字、编辑距离 ≤ max(1, 长度/3)。</li>
+     * </ol>
+     * 给不出靠谱候选时返回 {@code null} —— 宁可不建议，也不要给错建议。
+     */
+    public String suggestKeyword(String rawKeyword) {
+        String kw = trimToNull(rawKeyword);
+        if (kw == null || kw.length() < 2 || kw.length() > 12) {
+            return null; // 单字 / 长句都不做纠错
+        }
+        ensureCorrectionIndex();
+        if (correctionWordSet.contains(kw)) {
+            return null; // 词表里本来就有这个说法 → 输入没问题
+        }
+
+        // ① 同音优先
+        List<String> same = correctionByPinyin.get(SearchIndexer.pinyin(kw));
+        if (same != null && !same.isEmpty()) {
+            String pick = pickClosest(same, kw);
+            if (pick != null) {
+                return pick;
+            }
+        }
+
+        // ② 形近：只扫长度 ±1 的桶，且要求共享至少一个汉字（先筛掉绝大多数字）
+        int limit = Math.max(1, kw.length() / 3);
+        String best = null;
+        int bestDist = Integer.MAX_VALUE;
+        for (int len = Math.max(2, kw.length() - 1); len <= kw.length() + 1; len++) {
+            for (String cand : correctionByLength.getOrDefault(len, List.of())) {
+                if (!shareAnyChar(kw, cand)) {
+                    continue;
+                }
+                int dist = editDistance(kw, cand);
+                if (dist <= limit && dist < bestDist) {
+                    bestDist = dist;
+                    best = cand;
+                }
+            }
+        }
+        return best;
+    }
+
+    /** 同音候选里挑最贴近的：先看有没有共同字，再取最短的（更可能是用户本意） */
+    private static String pickClosest(List<String> candidates, String kw) {
+        String hit = null;
+        String shortest = null;
+        for (String cand : candidates) {
+            if (cand.equals(kw)) {
+                return null; // 同音词里就有原词 → 不算错误输入
+            }
+            if (shareAnyChar(kw, cand) && (hit == null || cand.length() < hit.length())) {
+                hit = cand;
+            }
+            if (shortest == null || cand.length() < shortest.length()) {
+                shortest = cand;
+            }
+        }
+        return hit != null ? hit : shortest;
+    }
+
+    private static boolean shareAnyChar(String a, String b) {
+        for (int i = 0; i < a.length(); i++) {
+            if (b.indexOf(a.charAt(i)) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 构建纠错索引（5 分钟 TTL 懒加载） */
+    private void ensureCorrectionIndex() {
+        long now = System.currentTimeMillis();
+        if (now - correctionBuiltAt < CORRECTION_TTL_MS && !correctionWordSet.isEmpty()) {
+            return;
+        }
+        Set<String> words = new LinkedHashSet<>();
+        categoryService.brands().forEach(b -> addCorrectionWord(words, b.name()));
+        categoryService.flat().forEach(c -> addCorrectionWord(words, c.name()));
+        List<SpuEntity> spus = spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
+                .select(SpuEntity::getTitle)
+                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                .last("LIMIT 300"));
+        for (SpuEntity spu : spus) {
+            String title = spu.getTitle() == null ? "" : spu.getTitle();
+            for (String part : title.split("[\\s,，、/×]+")) {
+                addCorrectionWord(words, part);
+            }
+        }
+
+        Map<String, List<String>> byPinyin = new HashMap<>();
+        Map<Integer, List<String>> byLength = new HashMap<>();
+        for (String w : words) {
+            String py = SearchIndexer.pinyin(w);
+            if (!py.isEmpty()) {
+                byPinyin.computeIfAbsent(py, k -> new ArrayList<>()).add(w);
+            }
+            byLength.computeIfAbsent(w.length(), k -> new ArrayList<>()).add(w);
+        }
+        correctionWordSet = Set.copyOf(words);
+        correctionByPinyin = byPinyin;
+        correctionByLength = byLength;
+        correctionBuiltAt = now;
+        log.info("纠错词表已构建 词数={} 同音组={}", words.size(), byPinyin.size());
+    }
+
+    /**
+     * 词 + 其 2~4 字连续子串。
+     *
+     * <p>为什么要子串：用户输入的是「猫粮」「冻干」这类短词，而标题按空格切出来的往往是
+     * 「幼猫粮」「冻干双拼全价猫粮」——只收整词，短词就永远不在词表里，纠错等于失效。
+     */
+    private static void addCorrectionWord(Set<String> words, String raw) {
+        String w = raw == null ? "" : raw.trim();
+        if (w.length() < 2) {
+            return;
+        }
+        if (w.length() <= 8) {
+            words.add(w);
+        }
+        for (int len = 2; len <= 4; len++) {
+            for (int i = 0; i + len <= w.length(); i++) {
+                words.add(w.substring(i, i + len));
+            }
+        }
+    }
+
+    /** 标准 Levenshtein 编辑距离（字符级）；两边都 ≤ 12 字，无需滚动数组优化 */
+    private static int editDistance(String a, String b) {
+        int[] prev = new int[b.length() + 1];
+        int[] cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            prev[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] tmp = prev;
+            prev = cur;
+            cur = tmp;
+        }
+        return prev[b.length()];
+    }
 
     public PageResult<ProductCard> search(ProductQuery query) {
         int pageNo = Math.max(1, query.page());

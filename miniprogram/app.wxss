@@ -57,6 +57,8 @@ page {
 .t2 { color: var(--text-2); }
 .t3 { color: var(--text-3); }
 .price { color: var(--accent); font-weight: 700; }
+/* 搜索关键词命中高亮（配合 utils/highlight.js 的分段渲染） */
+.hl { color: var(--accent); font-weight: 600; }
 .price::before { content: '¥'; font-size: 0.75em; }
 .price-origin { color: var(--text-3); text-decoration: line-through; font-size: 22rpx; }
 .ellipsis { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

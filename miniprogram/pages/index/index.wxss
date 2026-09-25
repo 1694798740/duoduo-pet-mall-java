@@ -177,3 +177,14 @@
   border-radius: 6rpx;
   padding: 2rpx 10rpx;
 }
+
+/* 零结果时的纠错建议（"你是不是想搜 X"） */
+.suggest-line {
+  margin-top: 20rpx;
+  font-size: 26rpx;
+  color: var(--text-2);
+}
+.suggest-word {
+  color: var(--brand);
+  font-weight: 600;
+}

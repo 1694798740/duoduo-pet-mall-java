@@ -113,6 +113,12 @@
 <view wx:elif="{{items.length === 0}}" class="empty">
   <view class="icon">🐾</view>
   <view>没有找到相关商品</view>
+  <!-- 纠错建议：后端给不出靠谱候选时不会出现这一行 -->
+  <view wx:if="{{suggestion}}" class="suggest-line">
+    你是不是想搜
+    <text class="suggest-word" bindtap="useSuggestion">「{{suggestion}}」</text>
+    ？
+  </view>
 </view>
 
 <view wx:else class="goods-grid">
@@ -127,7 +133,15 @@
       <image src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
     </view>
     <view class="goods-body">
-      <view class="goods-name ellipsis-2">{{item.title}}</view>
+      <!-- 关键词命中片段高亮：分段渲染，不用 rich-text -->
+      <view class="goods-name ellipsis-2">
+        <text
+          wx:for="{{item.titleSegs}}"
+          wx:for-item="seg"
+          wx:key="index"
+          class="{{seg.hit ? 'hl' : ''}}"
+        >{{seg.text}}</text>
+      </view>
       <view class="goods-price-row">
         <view class="price goods-price">{{item.priceText}}</view>
         <text class="t3" style="font-size: 22rpx">已售 {{item.salesCount || 0}}</text>

@@ -137,6 +137,13 @@ const product = {
   home() {
     return req.get('/api/home');
   },
+  /** 搜索纠错建议：给不出建议时后端返回空对象（前端不展示提示） */
+  suggest(keyword) {
+    return req.get('/api/products/search/suggestion?keyword=' + encodeURIComponent(keyword), {
+      silent: true,
+      timeout: 8000,
+    });
+  },
 };
 
 // ── 交易域 ───────────────────────────────────────────────────────────────────
@@ -226,6 +233,21 @@ const address = {
   },
 };
 
+// ── 售后（A3，履约域） ──────────────────────────────────────────────────────
+const aftersale = {
+  /** 申请售后：type 为 REFUND_ONLY（仅退款）或 RETURN_REFUND（退货退款） */
+  create(orderNo, type, reason) {
+    return req.post('/api/aftersales', { orderNo, type, reason });
+  },
+  /** 我的售后单（分页） */
+  mine(page, pageSize) {
+    return req.get('/api/aftersales/mine?page=' + (page || 1) + '&pageSize=' + (pageSize || 20));
+  },
+  detail(id) {
+    return req.get('/api/aftersales/' + id);
+  },
+};
+
 // ── 营销域（A5） ─────────────────────────────────────────────────────────────
 const coupon = {
   templates() {
@@ -310,6 +332,7 @@ module.exports = {
   product,
   cart,
   order,
+  aftersale,
   address,
   coupon,
   ai,
