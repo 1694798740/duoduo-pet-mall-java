@@ -1,0 +1,33 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button wx:if="{{error === '登录后查看售后'}}" class="btn btn-plain btn-mini" bindtap="goOrders">去订单页</button>
+</view>
+<view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
+<view wx:elif="{{items.length === 0}}" class="empty">
+  <view class="icon">🛡️</view>
+  <view>还没有售后记录</view>
+  <view class="t3">需要申请售后？在订单详情页操作</view>
+  <button class="btn btn-plain btn-mini empty-btn" bindtap="goOrders">去我的订单</button>
+</view>
+
+<view
+  wx:for="{{items}}"
+  wx:key="id"
+  class="card as-item"
+  data-no="{{item.orderNo}}"
+  bindtap="goOrder"
+>
+  <view class="as-head">
+    <text class="as-type">{{item.typeText}}</text>
+    <text class="tag tag-accent">{{item.statusText}}</text>
+  </view>
+  <view class="as-reason">{{item.reason}}</view>
+  <view wx:if="{{item.sellerReply}}" class="t3 as-reply">卖家回复：{{item.sellerReply}}</view>
+  <view class="as-foot">
+    <text class="t3">订单 {{item.orderNo}}</text>
+    <text class="t3">{{item.timeText}}</text>
+  </view>
+</view>
+
+<view wx:if="{{loading && items.length > 0}}" class="empty">加载更多…</view>
+<view wx:elif="{{!hasMore && items.length > 0}}" class="empty">— 已经到底啦 —</view>

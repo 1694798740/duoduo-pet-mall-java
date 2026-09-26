@@ -1,0 +1,35 @@
+/* 我的售后列表（第三十七轮） */
+.as-item {
+  margin-bottom: 20rpx;
+}
+.as-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+.as-type {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #23262f;
+}
+.as-reason {
+  font-size: 26rpx;
+  color: #23262f;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-bottom: 8rpx;
+}
+.as-reply {
+  margin-bottom: 8rpx;
+}
+.as-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8rpx;
+}
+.empty-btn {
+  margin-top: 20rpx;
+}

@@ -27,8 +27,20 @@
     <text class="o-status">{{item.statusText}}</text>
   </view>
   <view class="o-body">
-    <text>共 {{item.quantityText}} 件商品</text>
-    <text class="price">实付 {{item.payAmountText}}</text>
+    <view wx:for="{{item.items}}" wx:key="skuId" class="o-goods">
+      <image class="o-thumb" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+      <view class="o-goods-main">
+        <view class="o-goods-title">{{item.title}}</view>
+        <view class="t3" wx:if="{{item.specText}}">{{item.specText}}</view>
+      </view>
+      <text class="t3 o-goods-qty">× {{item.quantity}}</text>
+    </view>
+    <view wx:if="{{item.moreCount > 0}}" class="t3 o-goods-more">…等共 {{item.quantityText}} 件商品</view>
+    <view wx:if="{{item.items.length === 0}}" class="t3">共 {{item.quantityText}} 件商品</view>
+    <view class="o-amount">
+      <text>实付</text>
+      <text class="price">{{item.payAmountText}}</text>
+    </view>
   </view>
   <view class="o-actions">
     <button

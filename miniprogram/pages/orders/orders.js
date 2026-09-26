@@ -9,6 +9,7 @@
 //  * 加入分页：列表是页面级滚动，onReachBottom 可正常触发。
 const api = require('../../utils/api');
 const pay = require('../../utils/pay');
+const images = require('../../utils/images');
 
 const FALLBACK_LABEL = {
   PENDING_PAYMENT: '待付款',
@@ -87,13 +88,21 @@ Page({
       });
   },
 
-  /** 补齐展示需要的派生字段：状态中文（优先服务端）、件数、金额串 */
+  /** 补齐展示需要的派生字段：状态中文（优先服务端）、件数、金额串、商品缩略（最多展示 2 行） */
   decorate(order) {
-    const items = order.items || [];
-    const quantity = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+    const all = order.items || [];
+    const quantity = all.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+    // 卡片只放前 2 个商品行（缩略图 + 标题 + 数量），更多用「等共 N 件」收口 —— 卡片是列表，不是详情
+    const items = all.slice(0, 2).map((it) =>
+      Object.assign({}, it, {
+        imageSrc: images.skuImage(it.skuId, it.spuId, it.mainImage),
+      })
+    );
     return Object.assign({}, order, {
       statusText: order.statusLabel || FALLBACK_LABEL[order.status] || order.status,
-      quantityText: quantity || items.length,
+      quantityText: quantity || all.length,
+      items,
+      moreCount: all.length > 2 ? all.length - 2 : 0,
       payAmountText: api.fen2yuan(order.payAmount),
     });
   },

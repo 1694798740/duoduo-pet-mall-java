@@ -53,6 +53,12 @@
     <text>我的订单</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 售后需登录（接口要求令牌），未登录不给入口 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/after-sales/after-sales">
+    <text class="mi-icon">🛡️</text>
+    <text>我的售后</text>
+    <text class="arrow">›</text>
+  </view>
   <view class="menu-item" bindtap="go" data-url="/pages/cart/cart">
     <text class="mi-icon">🛒</text>
     <text>购物车</text>
