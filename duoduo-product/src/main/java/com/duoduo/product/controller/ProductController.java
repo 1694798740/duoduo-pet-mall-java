@@ -2,6 +2,7 @@ package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.ProductCard;
 import com.duoduo.product.dto.ProductDtos.ProductDetail;
 import com.duoduo.product.dto.ProductDtos.ProductQuery;
@@ -103,5 +104,17 @@ public class ProductController {
     public ApiResponse<List<ProductCard>> candidates(@RequestParam("keyword") String keyword,
                                                      @RequestParam(defaultValue = "8") int limit) {
         return ApiResponse.ok(productService.internalCandidates(keyword, limit));
+    }
+
+    /**
+     * 批量取商品快照（内部接口，第四十三轮 · 分享圈，供履约域发布分享时落快照）。
+     *
+     * <p>与 {@code /internal/skus/batch} 同一条两段路径约定：不与单段 {@code /{spuId}} 冲突，
+     * 由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}（外部直接调用返回 403）。
+     * 查不到的 id 静默缺席，由调用方判定「商品不存在」—— 与采购视图同一宽容口径。
+     */
+    @GetMapping("/internal/cards")
+    public ApiResponse<List<ProductDtos.InternalCardView>> internalCards(@RequestParam("ids") List<Long> ids) {
+        return ApiResponse.ok(productService.internalCards(ids));
     }
 }

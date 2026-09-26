@@ -49,6 +49,10 @@ Page({
     params: [],
     packageRows: [],
     detailImages: [],
+    // 第四十三轮：分享面板（写评价 → 转发好友 / 发布到分享圈）
+    showSharePanel: false,
+    shareContent: '',
+    publishing: false,
   },
 
   onLoad(query) {
@@ -237,14 +241,80 @@ Page({
     });
   },
 
-  /** 分享给好友/群（社交裂变入口）：卡片标题带价格，封面用商品首图（真机有效） */
+  /**
+   * 分享入口（第四十三轮改造）：底部「分享」按钮改为普通按钮 + 登录校验，
+   * 点按先 ensureLogin —— 未登录直接被引导登录；已登录弹出分享面板。
+   *
+   * <p>为什么不能「未登录弹 toast、已登录调起转发」一蹴而就：微信转发面板
+   * 只能由 open-type="share" 的按钮**触发**（程序化调不起），所以登录校验
+   * 只能做在「进入分享流程」这道门上 —— 校验通过后再展示面板，
+   * 面板里的「转发给好友」才是真正的 open-type 按钮。
+   */
+  onShareTap() {
+    getApp()
+      .ensureLogin()
+      .then(() => this.setData({ showSharePanel: true }))
+      .catch((err) => {
+        if (err && err.needLogin) return; // 已引导登录页
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
+  },
+
+  closeSharePanel() {
+    this.setData({ showSharePanel: false });
+  },
+
+  /** 阻止面板内点击冒泡到遮罩（遮罩 bindtap 负责关闭） */
+  noop() {},
+
+  onShareContentInput(e) {
+    this.setData({ shareContent: e.detail.value });
+  },
+
+  /** 转发给好友：open-type=share 按钮的伴随点击，只负责收起面板（转发由微信接管） */
+  onForwardTap() {
+    this.setData({ showSharePanel: false });
+  },
+
+  /** 发布到分享圈：内容必填，走 POST /api/shares（需登录，快照由服务端取事实） */
+  publishShare() {
+    const content = (this.data.shareContent || '').trim();
+    if (!content) {
+      wx.showToast({ title: '先写点评价再发布吧', icon: 'none' });
+      return;
+    }
+    if (this.data.publishing) return;
+    this.setData({ publishing: true });
+    api.share
+      .publish(this.data.id, content)
+      .then(() => {
+        this.setData({ publishing: false, showSharePanel: false, shareContent: '' });
+        wx.showToast({ title: '已发布到分享圈', icon: 'success' });
+      })
+      .catch((err) => {
+        this.setData({ publishing: false });
+        wx.showToast({ title: (err && err.message) || '发布失败', icon: 'none' });
+      });
+  },
+
+  goShareCircle() {
+    this.setData({ showSharePanel: false });
+    wx.navigateTo({ url: '/pages/share-circle/share-circle' });
+  },
+
+  /**
+   * 分享给好友/群（社交裂变入口）：卡片标题带价格，封面用商品首图（真机有效）。
+   *
+   * <p>第四十三轮修复「查看分享页无响应」：落点从商品页自身改为**分享落地页**
+   * share-detail（?spuId=）—— 旧落点就是当前页，点开卡片等于刷新原页，看起来毫无反应。
+   */
   onShareAppMessage() {
     const detail = this.data.detail || {};
     const title =
       (detail.title || '多多宠物商店') + (detail.minPriceText ? '｜¥' + detail.minPriceText : '');
     return {
       title: title,
-      path: '/pages/product/product?id=' + this.data.id,
+      path: '/pages/share-detail/share-detail?spuId=' + this.data.id,
       imageUrl: (detail.gallery && detail.gallery[0]) || '/images/share/cover.jpg',
     };
   },

@@ -105,3 +105,47 @@
 .footer-btn { flex: 1; height: 76rpx; }
 /* 加入购物车用描边样式与「立即购买」实心主按钮区分层级 */
 .footer .btn-plain.footer-btn { border: 2rpx solid var(--brand); color: var(--brand); }
+
+/* ── 分享面板（第四十三轮）：底部弹层，写评价 → 转发好友 / 发布到分享圈 ── */
+.sp-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 20, 28, 0.45);
+  z-index: 300;
+}
+.sp-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+.sp-title { font-size: 32rpx; font-weight: 700; text-align: center; margin-bottom: 24rpx; }
+.sp-input {
+  width: 100%;
+  height: 160rpx;
+  padding: 18rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+  background: var(--bg);
+}
+.sp-actions { display: flex; gap: 20rpx; margin-top: 24rpx; }
+.sp-btn { flex: 1; height: 80rpx; line-height: 80rpx; }
+.sp-link {
+  text-align: center;
+  color: var(--brand);
+  font-size: 26rpx;
+  margin-top: 20rpx;
+}
+.sp-cancel {
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--line);
+}

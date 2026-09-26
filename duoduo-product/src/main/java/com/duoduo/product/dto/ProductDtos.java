@@ -284,4 +284,19 @@ public final class ProductDtos {
             int pageSize
     ) {
     }
+
+    /**
+     * 内部快照视图（第四十三轮 · 分享圈）：履约域发布分享时落商品快照用。
+     *
+     * <p>只给分享展示必需的四个字段（id / 标题 / 主图 / 最低价）：
+     * 跨域接口按调用方真正需要裁剪字段（与 {@code UserBrief} 同一口径），
+     * 类目、品牌、卖家归属等一概不带 —— 透露面最小，契约也最稳。
+     */
+    public record InternalCardView(
+            Long id,
+            String title,
+            String mainImage,
+            Long minPrice
+    ) {
+    }
 }

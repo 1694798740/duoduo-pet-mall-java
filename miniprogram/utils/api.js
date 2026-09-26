@@ -338,6 +338,22 @@ const seckill = {
   },
 };
 
+// ── 分享圈（第四十三轮，履约域）：发布需登录，信息流 / 详情公开 ────────────────
+const share = {
+  /** 发布分享：spuId + 用户自撰评价内容（必填，≤500 字） */
+  publish(spuId, content) {
+    return req.post('/api/shares', { spuId: Number(spuId), content });
+  },
+  /** 信息流（公开）：按发布时间倒序，{ items, total } */
+  feed(page, pageSize) {
+    return req.get('/api/shares/feed?page=' + (page || 1) + '&pageSize=' + (pageSize || 10));
+  },
+  /** 分享详情（公开）：分享落地页数据源 */
+  detail(id) {
+    return req.get('/api/shares/' + id, { silent: true });
+  },
+};
+
 // ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────
 function fen2yuan(fen) {
   const n = Number(fen) || 0;
@@ -386,6 +402,7 @@ module.exports = {
   coupon,
   ai,
   seckill,
+  share,
   fen2yuan,
   shortTime,
 };

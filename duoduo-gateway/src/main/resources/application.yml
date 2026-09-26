@@ -88,7 +88,9 @@ spring:
             #   /uploads/** = 图片公开读（A15），<image> 标签发不出 Authorization 头，必须免登。
             #   两段必须同时列出且白名单只放 /uploads/**：白名单按路径匹配、不区分方法，
             #   若 /api/uploads/** 进白名单，匿名 POST 上传会把磁盘变成公共网盘。
-            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**,/api/logistics/**,/api/uploads/**,/uploads/**
+            # /api/shares/** = 分享圈（第四十三轮）：发布需登录；信息流 / 详情公开读
+            #   （白名单只放 /api/shares/feed 与 /api/shares/* 两条只读路径，见安全配置注释）。
+            - Path=/api/aftersales/**,/api/admin/aftersales/**,/api/reviews/**,/api/logistics/**,/api/shares/**,/api/uploads/**,/uploads/**
         - id: duoduo-marketing
           uri: lb://duoduo-marketing
           predicates:

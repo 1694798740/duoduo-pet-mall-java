@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.ProductCard;
 import com.duoduo.product.dto.ProductDtos.ProductDetail;
 import com.duoduo.product.dto.ProductDtos.ProductQuery;
@@ -454,6 +455,28 @@ public class ProductService {
         }
         List<SpuEntity> spus = spuMapper.selectBatchIds(new LinkedHashSet<>(spuIds));
         return toCards(spus);
+    }
+
+    /**
+     * 批量取商品快照（内部接口，第四十三轮 · 分享圈）。
+     *
+     * <p>调用方是履约域：发布分享时把商品标题 / 主图 / 最低价落成**快照**，
+     * 商品后续改名换图不影响历史分享的展示（与评价快照同一条不变性原理）。
+     *
+     * <p>不按在售状态过滤：分享指向的商品可能随后下架，但历史分享仍应可看 ——
+     * 是否在售由前端跳详情页时自然感知，快照接口不做这道闸。
+     */
+    public List<ProductDtos.InternalCardView> internalCards(Collection<Long> spuIds) {
+        if (spuIds == null || spuIds.isEmpty()) {
+            return List.of();
+        }
+        return spuMapper.selectBatchIds(new LinkedHashSet<>(spuIds)).stream()
+                .map(spu -> new ProductDtos.InternalCardView(
+                        spu.getId(),
+                        spu.getTitle(),
+                        spu.getMainImage(),
+                        nz(spu.getMinPrice())))
+                .toList();
     }
 
     // ---------------- 供交易服务调用（内部接口） ----------------

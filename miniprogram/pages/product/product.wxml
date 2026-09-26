@@ -107,7 +107,9 @@
 
   <view style="height: 140rpx"></view>
   <view class="footer">
-    <button class="btn btn-plain footer-share" open-type="share" size="mini">分享</button>
+    <!-- 第四十三轮：分享按钮不再直接 open-type=share —— 先过登录校验（未登录引导登录），
+         已登录弹出分享面板（写评价 → 转发好友 / 发布到分享圈） -->
+    <button class="btn btn-plain footer-share" bindtap="onShareTap" size="mini">分享</button>
     <button
       class="btn btn-plain footer-btn"
       bindtap="addCart"
@@ -123,5 +125,34 @@
     >
       立即购买
     </button>
+  </view>
+
+  <!-- 分享面板（底部弹层）：open-type=share 只能由用户点按触发，放在已登录才可达的面板里 -->
+  <view wx:if="{{showSharePanel}}" class="sp-mask" bindtap="closeSharePanel">
+    <view class="sp-panel" catchtap="noop">
+      <view class="sp-title">分享这个商品</view>
+      <textarea
+        class="sp-input"
+        placeholder="写点评价，说说好在哪…（发布到分享圈必填）"
+        value="{{shareContent}}"
+        bindinput="onShareContentInput"
+        maxlength="500"
+      />
+      <view class="sp-actions">
+        <button class="btn btn-plain sp-btn" open-type="share" bindtap="onForwardTap">
+          转发给好友
+        </button>
+        <button
+          class="btn btn-accent sp-btn"
+          bindtap="publishShare"
+          loading="{{publishing}}"
+          disabled="{{publishing}}"
+        >
+          发布到分享圈
+        </button>
+      </view>
+      <view class="sp-link" bindtap="goShareCircle">先去分享圈逛逛 ›</view>
+      <view class="sp-cancel" bindtap="closeSharePanel">取消</view>
+    </view>
   </view>
 </block>

@@ -1,0 +1,42 @@
+<view wx:if="{{error && items.length === 0}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+</view>
+
+<view wx:elif="{{items.length === 0 && !loading}}" class="empty">
+  分享圈还没有内容，去商品页发布第一条分享吧
+</view>
+
+<block wx:else>
+  <view
+    wx:for="{{items}}"
+    wx:key="id"
+    class="card sc-item"
+    data-id="{{item.id}}"
+    bindtap="goDetail"
+  >
+    <view class="sc-head">
+      <image class="sc-avatar" src="{{item.avatar || '/images/category/default.png'}}" mode="aspectFill" />
+      <view class="sc-head-info">
+        <view class="t2">{{item.nickname}}</view>
+        <view class="t3">{{item.timeText}} · 分享了一个好物</view>
+      </view>
+    </view>
+
+    <!-- 用户自撰评价：整条卡片的灵魂 -->
+    <view wx:if="{{item.content}}" class="sc-content">{{item.content}}</view>
+
+    <!-- 商品卡（快照）：点击跳商品详情，不冒泡到整条卡片 -->
+    <view class="sc-product" data-spu="{{item.spuId}}" catchtap="goProduct">
+      <image class="sc-img" src="{{item.image}}" mode="aspectFill" lazy-load />
+      <view class="sc-p-info">
+        <view class="sc-p-title">{{item.productTitle}}</view>
+        <view class="price">¥{{item.priceText}}</view>
+      </view>
+      <text class="sc-arrow">›</text>
+    </view>
+  </view>
+
+  <view wx:if="{{noMore && items.length > 0}}" class="t3 sc-end">— 到底啦 —</view>
+  <view wx:elif="{{loading}}" class="t3 sc-end">加载中…</view>
+</block>

@@ -1,0 +1,55 @@
+/* ── 分享落地页（第四十三轮） ── */
+.sd-intro {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 28rpx 0;
+  color: var(--text-2);
+  font-size: 28rpx;
+}
+.sd-intro-icon { font-size: 36rpx; }
+
+.sd-user { display: flex; align-items: center; gap: 20rpx; }
+.sd-avatar {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  background: var(--bg);
+  flex: none;
+}
+.sd-user-info { flex: 1; }
+
+.sd-quote {
+  font-size: 30rpx;
+  line-height: 1.7;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.sd-product { display: flex; align-items: center; gap: 20rpx; }
+.sd-img {
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 14rpx;
+  background: var(--bg);
+  flex: none;
+}
+.sd-p-info { flex: 1; min-width: 0; }
+.sd-p-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  margin-bottom: 12rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arrow { color: var(--text-3); font-size: 32rpx; }
+
+.sd-actions {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 32rpx;
+  padding: 0 24rpx;
+}
+.sd-act-btn { flex: 1; height: 84rpx; }

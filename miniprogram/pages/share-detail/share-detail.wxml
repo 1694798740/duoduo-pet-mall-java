@@ -1,0 +1,42 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="goShareCircle">去分享圈逛逛</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+
+<block wx:elif="{{view}}">
+  <!-- 好友直转：无分享单，只有一句转达语 -->
+  <view wx:if="{{friendShare}}" class="sd-intro">
+    <text class="sd-intro-icon">🎁</text>
+    <text>好友向你分享了这个商品</text>
+  </view>
+
+  <!-- 分享者信息（分享圈发布的内容才带） -->
+  <view wx:else class="card sd-user">
+    <image class="sd-avatar" src="{{view.avatar || '/images/category/default.png'}}" mode="aspectFill" />
+    <view class="sd-user-info">
+      <view class="t2">{{view.nickname}}</view>
+      <view class="t3">觉得这个商品不错 · {{view.timeText}}</view>
+    </view>
+  </view>
+
+  <!-- 用户自撰评价 -->
+  <view wx:if="{{view.content}}" class="card">
+    <view class="sd-quote">{{view.content}}</view>
+  </view>
+
+  <!-- 商品卡：点击进详情 -->
+  <view class="card sd-product" bindtap="goProduct">
+    <image class="sd-img" src="{{view.image}}" mode="aspectFill" lazy-load />
+    <view class="sd-p-info">
+      <view class="sd-p-title">{{view.productTitle}}</view>
+      <view class="price">¥{{view.priceText}}</view>
+    </view>
+    <text class="arrow">›</text>
+  </view>
+
+  <view class="sd-actions">
+    <button class="btn btn-accent sd-act-btn" bindtap="goProduct">查看商品</button>
+    <button class="btn btn-plain sd-act-btn" bindtap="goShareCircle">逛逛分享圈</button>
+  </view>
+</block>

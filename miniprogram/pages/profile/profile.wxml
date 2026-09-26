@@ -38,6 +38,12 @@
     <text>限时秒杀</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 分享圈（第四十三轮）：公开信息流，未登录也能逛 -->
+  <view class="menu-item" bindtap="go" data-url="/pages/share-circle/share-circle">
+    <text class="mi-icon">💬</text>
+    <text>分享圈</text>
+    <text class="arrow">›</text>
+  </view>
   <view class="menu-item" bindtap="goAddress">
     <text class="mi-icon">📍</text>
     <text>收货地址</text>
