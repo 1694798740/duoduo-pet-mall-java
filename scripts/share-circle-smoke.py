@@ -106,6 +106,39 @@ check("⑥ 空白内容 → 400", st == 400, f"{st} {res}")
 st, res = call("GET", "/api/shares/1234567890123456789")
 check("⑦ 打开不存在的分享 → 404（公开路径仍可访问）", st == 404, f"{st} {res}")
 
+# ── ⑧⑨⑩ 点赞 / 收藏 toggle（第四十四轮） ────────────────────────────────────
+st, res = call("POST", f"/api/shares/{share_id}/like")
+check("⑧ 未登录点赞 → 401", st == 401, f"{st} {res}")
+
+st, res = call("POST", f"/api/shares/{share_id}/like", {}, token)
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑨ 登录点赞 → active=true, count=1", st == 200 and d.get("active") is True and d.get("count") == 1, f"{st} {d}")
+
+st, res = call("GET", f"/api/shares/{share_id}", token=token)
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑨b 登录浏览详情 → liked=true, likeCount=1",
+      d.get("liked") is True and d.get("likeCount") == 1, {k: d.get(k) for k in ("liked", "likeCount")})
+
+st, res = call("GET", f"/api/shares/{share_id}")
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑨c 匿名浏览详情 → liked=false 但计数可见",
+      d.get("liked") is False and d.get("likeCount") == 1, {k: d.get(k) for k in ("liked", "likeCount")})
+
+st, res = call("POST", f"/api/shares/{share_id}/like", {}, token)
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑨d 再点一次取消 → active=false, count=0", st == 200 and d.get("active") is False and d.get("count") == 0, f"{st} {d}")
+
+st, res = call("POST", f"/api/shares/{share_id}/favorite", {}, token)
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑩ 登录收藏 → active=true, count=1", st == 200 and d.get("active") is True and d.get("count") == 1, f"{st} {d}")
+
+st, res = call("POST", f"/api/shares/{share_id}/favorite", {}, token)
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑩b 再收藏取消 → active=false, count=0", st == 200 and d.get("active") is False and d.get("count") == 0, f"{st} {d}")
+
+st, res = call("POST", "/api/shares/1234567890123456789/like", {}, token)
+check("⑩c 给不存在的分享点赞 → 404", st == 404, f"{st} {res}")
+
 print(f"\n=== 结果：通过 {len(passed)} 项，失败 {len(failed)} 项 ===")
 if failed:
     for f_ in failed:

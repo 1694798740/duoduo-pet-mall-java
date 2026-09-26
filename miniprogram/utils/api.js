@@ -344,13 +344,21 @@ const share = {
   publish(spuId, content) {
     return req.post('/api/shares', { spuId: Number(spuId), content });
   },
-  /** 信息流（公开）：按发布时间倒序，{ items, total } */
+  /** 信息流（公开）：按发布时间倒序，{ items, total }；登录时带 liked/favorited 标记 */
   feed(page, pageSize) {
     return req.get('/api/shares/feed?page=' + (page || 1) + '&pageSize=' + (pageSize || 10));
   },
   /** 分享详情（公开）：分享落地页数据源 */
   detail(id) {
     return req.get('/api/shares/' + id, { silent: true });
+  },
+  /** 点赞 / 取消点赞（toggle，需登录）→ { active, count } */
+  like(id) {
+    return req.post('/api/shares/' + id + '/like');
+  },
+  /** 收藏 / 取消收藏（toggle，需登录）→ { active, count } */
+  favorite(id) {
+    return req.post('/api/shares/' + id + '/favorite');
   },
 };
 

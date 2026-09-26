@@ -4,7 +4,13 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第四十三轮）** — **分享两 Bug 修复 + 分享圈新功能**。
+**最近更新：2026-09-26（第四十四轮）** — **分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发**。
+**Bug 根治**：未登录点分享"自动登录到不明账号"的根因是 `ensureLogin()` 未登录时走 `silentRelogin() → wx.login` 静默 code2Session（无感建号/登录到微信绑定账号），分享拦截被静默登录穿透。新增 `requireLogin()`（探测失败**直接去登录页**，不走静默链），分享/点赞/收藏等"以用户身份对外发声"的动作全部改用它；`ensureLogin` 静默链保留给加购/领券等本机动作。
+**分享圈升一级 tab**：tabBar 第 6 项（生成 `tab_share` 双态图标）；页面改自绘导航栏 + 自绘下拉刷新（R41 惯例）；「我的」页入口移除；跳转收口 `switchTab`。
+**互动能力**：`t_share_like`/`t_share_favorite`（复合主键防重）+ `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` toggle（需登录，两段路径不在白名单）；`ShareView` 增 likeCount/favoriteCount + 浏览者标记（匿名恒 false）；`likeCount/favoriteCount/count` 补进 Long 序列化数值白名单（计数被当标识转字符串会让前端比较/算术退化）。卡片互动条 ❤️/⭐/🔁：toggle 后回填状态与计数；转发按钮 `open-type=share` + `markForward` 记条目，卡片落点 `share-detail?id=`。
+**验证**：后端探针 `share-circle-smoke.py` 20/20 + 小程序 stub 12/12（未登录点分享**全程零次 wx.login**）+ 静态自检 0 错误；fulfilment 容器重建健康，增量 SQL `13-share-engagement.sql` 已执行。
+
+**第四十三轮（2026-09-26）** — **分享两 Bug 修复 + 分享圈新功能**。
 **Bug1 分享登录校验**：详情页「分享」从直接 `open-type="share"` 改为普通按钮过登录门（未登录 `ensureLogin` 引导登录）——微信转发面板只能由用户点按触发、无法程序化调起，登录校验只能做在"进入分享流程"这道门上；已登录弹出**分享面板**（评价 textarea → 转发好友 / 发布到分享圈两路）。
 **Bug2 查看分享页无响应根治**：根因是分享 `path` 指向商品页自身，点卡片=刷新原页。新建独立落地页 `pages/share-detail`（`?spuId=` 好友直转 / `?id=` 分享单双入口，评价 + 商品卡 + 跳详情），分享落点全部改指它。
 **新功能分享圈（参考拼多多「拼小圈」）**：履约域新增 `t_product_share` + `POST /api/shares`（需登录）/ `GET /api/shares/feed` / `GET /api/shares/{id}`（公开读）三端点；商品快照由服务端经商品域新内部接口 `/api/products/internal/cards` 取事实落库（请求体只带 spuId+content，公开信息流无法贴伪造商品卡）；昵称头像 Feign 批量补全；网关路由补 `/api/shares/**`、白名单只放两条只读路径（feed 两段路径与发布路径分开，杜绝连带放行）。小程序新建 `pages/share-circle` 信息流（下拉刷新/触底分页，公开可逛）+「我的」页入口。

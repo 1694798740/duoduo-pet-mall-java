@@ -9,9 +9,11 @@ import com.duoduo.fulfilment.client.ProductClient;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.client.dto.ProductCardBrief;
 import com.duoduo.fulfilment.client.dto.UserBrief;
+import com.duoduo.fulfilment.dto.ShareDtos.EngagementState;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareCreateRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareView;
 import com.duoduo.fulfilment.entity.ShareEntity;
+import com.duoduo.fulfilment.mapper.ShareEngagementMapper;
 import com.duoduo.fulfilment.mapper.ShareMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,17 +50,20 @@ public class ShareService {
     private static final int DEFAULT_PAGE_SIZE = 10;
 
     private final ShareMapper shareMapper;
+    private final ShareEngagementMapper engagementMapper;
     private final ProductClient productClient;
     private final UserClient userClient;
     private final SnowflakeIdGenerator idGenerator;
     private final int maxContentLength;
 
     public ShareService(ShareMapper shareMapper,
+                        ShareEngagementMapper engagementMapper,
                         ProductClient productClient,
                         UserClient userClient,
                         SnowflakeIdGenerator idGenerator,
                         @Value("${duoduo.share.max-content-length:500}") int maxContentLength) {
         this.shareMapper = shareMapper;
+        this.engagementMapper = engagementMapper;
         this.productClient = productClient;
         this.userClient = userClient;
         this.idGenerator = idGenerator;
@@ -93,19 +98,69 @@ public class ShareService {
         entity.setProductImage(brief.mainImage() == null ? "" : brief.mainImage());
         entity.setMinPrice(brief.minPrice() == null ? 0L : brief.minPrice());
         entity.setContent(content);
+        entity.setLikeCount(0);
+        entity.setFavoriteCount(0);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         shareMapper.insert(entity);
 
         log.info("用户 {} 发布了商品 {} 的分享（{}）", userId, request.spuId(), entity.getId());
         Map<Long, UserBrief> briefs = loadBriefs(List.of(userId));
-        return toView(entity, briefs);
+        return toView(entity, briefs, Map.of(), Map.of());
+    }
+
+    // ---------------- 互动：点赞 / 收藏 toggle（需登录，第四十四轮） ----------------
+
+    /**
+     * 点赞 / 收藏共用一次切换逻辑：事实行的**存在性**就是状态，
+     * 计数列随动作原子回写（GREATEST 防负漂移）。
+     *
+     * <p>并发语义：同一用户同一分享重复点击，两个请求都可能先查后插 ——
+     * 第二个插入会撞复合主键，按「已点赞」幂等处理，计数只加一次。
+     */
+    public EngagementState toggleLike(Long userId, Long shareId) {
+        return toggleEngagement(userId, shareId, true);
+    }
+
+    public EngagementState toggleFavorite(Long userId, Long shareId) {
+        return toggleEngagement(userId, shareId, false);
+    }
+
+    private EngagementState toggleEngagement(Long userId, Long shareId, boolean like) {
+        requireShare(shareId);
+        boolean active = like
+                ? engagementMapper.likeExists(shareId, userId) > 0
+                : engagementMapper.favoriteExists(shareId, userId) > 0;
+        int delta;
+        if (active) {
+            int removed = like
+                    ? engagementMapper.deleteLike(shareId, userId)
+                    : engagementMapper.deleteFavorite(shareId, userId);
+            delta = removed > 0 ? -1 : 0;
+        } else {
+            int inserted = like
+                    ? engagementMapper.insertLike(shareId, userId)
+                    : engagementMapper.insertFavorite(shareId, userId);
+            // INSERT IGNORE：并发重复插入返回 0 —— 状态按已激活、计数不加
+            delta = inserted > 0 ? 1 : 0;
+        }
+        if (delta != 0) {
+            if (like) {
+                engagementMapper.bumpLikeCount(shareId, delta);
+            } else {
+                engagementMapper.bumpFavoriteCount(shareId, delta);
+            }
+        }
+        ShareEntity fresh = shareMapper.selectById(shareId);
+        long count = fresh == null ? 0
+                : (like ? nz(fresh.getLikeCount()) : nz(fresh.getFavoriteCount()));
+        return new EngagementState(!active, count);
     }
 
     // ---------------- 读：公开 ----------------
 
-    /** 分享圈信息流（公开）：按发布时间倒序分页 */
-    public PageResult<ShareView> feed(int page, int pageSize) {
+    /** 分享圈信息流（公开）：按发布时间倒序分页；登录浏览者带 liked/favorited 标记 */
+    public PageResult<ShareView> feed(Long viewerId, int page, int pageSize) {
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
         Page<ShareEntity> result = shareMapper.selectPage(new Page<>(pageNo, size),
@@ -114,20 +169,22 @@ public class ShareService {
                         .orderByDesc(ShareEntity::getId));
         Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
                 .map(ShareEntity::getUserId).distinct().toList());
+        var engagement = loadEngagement(viewerId, result.getRecords());
         List<ShareView> views = result.getRecords().stream()
-                .map(e -> toView(e, briefs))
+                .map(e -> toView(e, briefs, engagement.liked(), engagement.favorited()))
                 .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
     }
 
     /** 分享详情（公开）：分享落地页 {@code share-detail?id=} 的数据源 */
-    public ShareView detail(Long id) {
+    public ShareView detail(Long viewerId, Long id) {
         ShareEntity entity = shareMapper.selectById(id);
         if (entity == null) {
             throw BizException.notFound("分享");
         }
         Map<Long, UserBrief> briefs = loadBriefs(List.of(entity.getUserId()));
-        return toView(entity, briefs);
+        var engagement = loadEngagement(viewerId, List.of(entity));
+        return toView(entity, briefs, engagement.liked(), engagement.favorited());
     }
 
     // ---------------- 内部：校验与装配 ----------------
@@ -164,6 +221,35 @@ public class ShareService {
         return trimmed;
     }
 
+    /** toggle 前置：分享必须存在（点赞一个不存在的分享没有意义） */
+    private void requireShare(Long shareId) {
+        if (shareMapper.selectById(shareId) == null) {
+            throw BizException.notFound("分享");
+        }
+    }
+
+    /**
+     * 批量取当前浏览者的 liked / favorited 集合。
+     *
+     * <p>匿名浏览（viewerId = null）返回空集合 —— 信息流是公开的，
+     * 但「我赞过没赞过」只有登录了才知道。
+     */
+    private EngagementSets loadEngagement(Long viewerId, List<ShareEntity> records) {
+        if (viewerId == null || records.isEmpty()) {
+            return new EngagementSets(Map.of(), Map.of());
+        }
+        String ids = records.stream().map(e -> String.valueOf(e.getId()))
+                .collect(Collectors.joining(","));
+        Map<Long, Boolean> liked = engagementMapper.likedShareIds(viewerId, ids).stream()
+                .collect(Collectors.toMap(Function.identity(), s -> true, (a, b) -> a));
+        Map<Long, Boolean> favorited = engagementMapper.favoritedShareIds(viewerId, ids).stream()
+                .collect(Collectors.toMap(Function.identity(), s -> true, (a, b) -> a));
+        return new EngagementSets(liked, favorited);
+    }
+
+    private record EngagementSets(Map<Long, Boolean> liked, Map<Long, Boolean> favorited) {
+    }
+
     /**
      * 批量取昵称头像（与 {@code ReviewService} 同一降级策略）：
      * 用户服务不可用时降级为「用户 {id}」，不让整个分享圈打不开。
@@ -187,7 +273,8 @@ public class ShareService {
         }
     }
 
-    private ShareView toView(ShareEntity entity, Map<Long, UserBrief> briefs) {
+    private ShareView toView(ShareEntity entity, Map<Long, UserBrief> briefs,
+                             Map<Long, Boolean> liked, Map<Long, Boolean> favorited) {
         UserBrief brief = briefs.get(entity.getUserId());
         String nickname = brief != null && brief.nickname() != null
                 ? brief.nickname()
@@ -201,7 +288,15 @@ public class ShareService {
                 entity.getContent(),
                 nickname,
                 brief == null ? null : brief.avatar(),
-                iso(entity.getCreatedAt()));
+                iso(entity.getCreatedAt()),
+                nz(entity.getLikeCount()),
+                nz(entity.getFavoriteCount()),
+                liked.containsKey(entity.getId()),
+                favorited.containsKey(entity.getId()));
+    }
+
+    private long nz(Integer value) {
+        return value == null ? 0L : value.longValue();
     }
 
     private String iso(LocalDateTime time) {

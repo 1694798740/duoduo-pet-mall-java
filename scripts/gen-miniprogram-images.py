@@ -210,9 +210,23 @@ def tab_profile(color, S=81):
     return img
 
 
+def tab_share(color, S=81):
+    """分享圈（第四十四轮）：对话气泡 + 三个圈友点，语义是「大家在聊好物」。"""
+    img = icon_canvas()
+    d = ImageDraw.Draw(img)
+    w = 5
+    d.rounded_rectangle((13, 16, 68, 56), radius=14, outline=color, width=w)
+    # 气泡尾巴（左下）
+    d.line([(24, 55), (20, 68), (33, 55)], fill=color, width=w, joint='curve')
+    # 三个圈友点
+    for cx in (27, 40.5, 54):
+        d.ellipse((cx - 4, 32, cx + 4, 40), fill=color)
+    return img
+
+
 def make_tabbar(outdir):
-    tabs = {'home': tab_home, 'category': tab_category, 'cart': tab_cart,
-            'order': tab_order, 'profile': tab_profile}
+    tabs = {'home': tab_home, 'category': tab_category, 'share': tab_share,
+            'cart': tab_cart, 'order': tab_order, 'profile': tab_profile}
     total = 0
     for name, fn in tabs.items():
         for suffix, color in (('', GREY), ('-on', BRAND)):
@@ -277,7 +291,8 @@ def main():
     print('category: %d 张' % len(CATEGORY_GLYPHS))
 
     total += make_tabbar(tab_dir)
-    print('tabbar: 10 张')
+    print('tabbar: %d 张' % (len({'home': tab_home, 'category': tab_category, 'share': tab_share,
+                                  'cart': tab_cart, 'order': tab_order, 'profile': tab_profile}) * 2))
 
     # 首页快捷入口（宫格）图标：彩色圆角底 + 白色/彩色图形，与 tabBar 区分开
     entries = [

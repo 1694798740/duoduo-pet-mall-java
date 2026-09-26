@@ -46,4 +46,33 @@
 }
 .sc-arrow { color: var(--text-3); font-size: 32rpx; }
 
+/* ── 互动条（第四十四轮）：点赞 / 收藏 / 转发 ── */
+.sc-actions {
+  display: flex;
+  align-items: center;
+  gap: 40rpx;
+  margin-top: 20rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx solid var(--line);
+}
+.sc-act {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 26rpx;
+  color: var(--text-2);
+  padding: 4rpx 0;
+}
+.sc-act-on { color: var(--brand); font-weight: 600; }
+/* open-type=share 按钮要抹掉原生按钮的边框/底色，融进互动条 */
+.sc-forward {
+  margin: 0;
+  padding: 4rpx 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  line-height: 1.4;
+}
+.sc-forward::after { border: none; }
+
 .sc-end { text-align: center; padding: 24rpx 0 40rpx; }

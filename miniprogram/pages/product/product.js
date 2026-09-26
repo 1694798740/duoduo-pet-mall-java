@@ -242,8 +242,9 @@ Page({
   },
 
   /**
-   * 分享入口（第四十三轮改造）：底部「分享」按钮改为普通按钮 + 登录校验，
-   * 点按先 ensureLogin —— 未登录直接被引导登录；已登录弹出分享面板。
+   * 分享入口（第四十三轮改造，第四十四轮收紧）：底部「分享」按钮改为普通按钮 + 登录校验，
+   * 点按先 requireLogin —— 未登录**强制主动登录**（不静默 wx.login，杜绝"被登录"到不明账号）；
+   * 已登录弹出分享面板。
    *
    * <p>为什么不能「未登录弹 toast、已登录调起转发」一蹴而就：微信转发面板
    * 只能由 open-type="share" 的按钮**触发**（程序化调不起），所以登录校验
@@ -252,10 +253,10 @@ Page({
    */
   onShareTap() {
     getApp()
-      .ensureLogin()
+      .requireLogin()
       .then(() => this.setData({ showSharePanel: true }))
       .catch((err) => {
-        if (err && err.needLogin) return; // 已引导登录页
+        if (err && err.needLogin) return; // 已引导登录页（用户取消/返回时由 cancelLogin 拒绝）
         wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
       });
   },
@@ -299,7 +300,8 @@ Page({
 
   goShareCircle() {
     this.setData({ showSharePanel: false });
-    wx.navigateTo({ url: '/pages/share-circle/share-circle' });
+    // 第四十四轮：分享圈升为一级 tab 页，只能 switchTab（navigateTo 对 tab 页无效）
+    wx.switchTab({ url: '/pages/share-circle/share-circle' });
   },
 
   /**

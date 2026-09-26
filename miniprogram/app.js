@@ -86,6 +86,26 @@ App({
       });
   },
 
+  /**
+   * 强制**主动**登录：与 ensureLogin 的唯一区别是不走静默链——
+   * 探测失败一律去登录页，让用户主动确认身份（登录成功经 finishLogin 回跳）。
+   *
+   * <p>为什么分享/点赞/收藏不能用 ensureLogin：ensureLogin 未登录时会
+   * silentRelogin() → api.wxLogin()，微信环境下 wx.login 不需要用户点击，
+   * code2Session 会无感创建或登录到一个微信绑定的账号 —— 用户"被登录"进
+   * 不明账号后分享面板照常弹出，登录拦截形同虚设（第四十四轮用户反馈）。
+   * 「以用户身份对外发声」的动作必须让用户知道自己登的是谁。
+   */
+  requireLogin() {
+    return api
+      .ensureSession()
+      .then((user) => {
+        this.globalData.user = user;
+        return user;
+      })
+      .catch(() => this.openLogin());
+  },
+
   /** 打开登录页并把等待中的 Promise 交给登录页结算 */
   openLogin() {
     return new Promise((resolve, reject) => {

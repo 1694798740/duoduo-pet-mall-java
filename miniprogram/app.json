@@ -47,6 +47,12 @@
         "selectedIconPath": "images/tabbar/category-on.png"
       },
       {
+        "pagePath": "pages/share-circle/share-circle",
+        "text": "分享圈",
+        "iconPath": "images/tabbar/share.png",
+        "selectedIconPath": "images/tabbar/share-on.png"
+      },
+      {
         "pagePath": "pages/cart/cart",
         "text": "购物车",
         "iconPath": "images/tabbar/cart.png",

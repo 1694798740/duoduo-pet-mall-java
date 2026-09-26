@@ -1,5 +1,9 @@
 {
+  "navigationStyle": "custom",
   "navigationBarTitleText": "分享圈",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "light"
+  "backgroundTextStyle": "light",
+  "backgroundColor": "#4f6ef7",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
 }

@@ -1,3 +1,5 @@
+<nav-bar title="分享圈" loading="{{refreshing}}" />
+
 <view wx:if="{{error && items.length === 0}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
@@ -35,8 +37,39 @@
       </view>
       <text class="sc-arrow">›</text>
     </view>
+
+    <!-- 互动条（第四十四轮）：点赞 / 收藏 / 转发，均不冒泡到整条卡片 -->
+    <view class="sc-actions" catchtap="noop">
+      <view
+        class="sc-act {{item.liked ? 'sc-act-on' : ''}}"
+        data-id="{{item.id}}"
+        catchtap="toggleLike"
+      >
+        <text>{{item.liked ? '❤️' : '🤍'}}</text>
+        <text>{{item.likeCount}}</text>
+      </view>
+      <view
+        class="sc-act {{item.favorited ? 'sc-act-on' : ''}}"
+        data-id="{{item.id}}"
+        catchtap="toggleFavorite"
+      >
+        <text>{{item.favorited ? '⭐' : '☆'}}</text>
+        <text>{{item.favoriteCount}}</text>
+      </view>
+      <!-- 转发：open-type=share 只能由点按触发；markForward 先记下转的是哪条 -->
+      <button
+        class="sc-act sc-forward"
+        open-type="share"
+        data-id="{{item.id}}"
+        bindtap="markForward"
+      >
+        <text>🔁</text>
+        <text>转发</text>
+      </button>
+    </view>
   </view>
 
   <view wx:if="{{noMore && items.length > 0}}" class="t3 sc-end">— 到底啦 —</view>
   <view wx:elif="{{loading}}" class="t3 sc-end">加载中…</view>
+  <view style="height: 40rpx"></view>
 </block>

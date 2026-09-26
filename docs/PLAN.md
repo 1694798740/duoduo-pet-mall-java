@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-26（第四十三轮 · 分享两 Bug 修复 + 分享圈新功能）——**Bug1 分享登录校验**：详情页「分享」按钮从直接 `open-type="share"` 改为普通按钮过登录门（未登录 `ensureLogin` 引导登录；微信转发面板只能由用户点按 open-type 按钮触发，无法程序化调起，故登录校验做在"进入分享流程"这道门上）；**Bug2 查看分享页无响应根治**：分享 `path` 从商品页自身（点卡片=刷新原页）改为独立落地页 `pages/share-detail`（`?spuId=` 好友直转 / `?id=` 分享单两种入口，展示评价 + 商品卡 + 「查看商品」跳转）；**新功能分享圈（参考拼多多"拼小圈"）**：履约域新增 `t_product_share`（商品快照由服务端经商品域 `/api/products/internal/cards` 取事实落库，请求体只带 spuId+content，杜绝公开信息流贴伪造商品卡）+ `POST /api/shares`（需登录）/`GET /api/shares/feed`（公开）/`GET /api/shares/{id}`（公开）三端点；网关路由补 `/api/shares/**` + 白名单只放两条只读路径（feed 刻意两段与发布路径分开，杜绝"放行信息流连带放行发布"）；小程序分享面板（写评价 → 转发好友/发布到分享圈两路）+ `pages/share-circle` 信息流（昵称/头像 Feign 批量补全 + 快照商品卡）+ 「我的」页入口。验证：后端探针 `share-circle-smoke.py` **12/12**（未登录 401/发布快照/昵称补全/公开读/幽灵商品 404/空内容 400）；小程序 stub **17/17**；静态自检 0 错误 0 告警；三容器重建健康。以下为第四十二轮内容：——商品详情页升级：立即购买 + 展示丰富化 + 分享修复。
+> 更新时间：2026-09-26（第四十四轮 · 分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发）——**Bug 根治**：未登录点分享"自动登录到不明账号"的根因是 `ensureLogin()` 未登录时走 `silentRelogin() → wx.login` 静默 code2Session（无感建号/登录到微信绑定账号），分享拦截被静默登录穿透。修复：新增 `requireLogin()`（探测失败**直接去登录页**，不走静默链），分享/点赞/收藏等"以用户身份对外发声"的动作全部改用它。**分享圈升级**：升为 tabBar 第 6 个一级页面（分享/分类之间，自绘导航栏 + 自绘下拉刷新，R41 惯例；生成 share 双态图标）；信息流卡片新增**互动条**——❤️点赞 / ⭐收藏（toggle：`t_share_like`/`t_share_favorite` 复合主键防重 + `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` 需登录，`ShareView` 增 likeCount/favoriteCount + 浏览者标记 liked/favorited，匿名恒 false）与 🔁转发（open-type=share + `markForward` 记条目，卡片落点 `share-detail?id=`，页面级转发落分享圈 tab）；「我的」页入口移除；跳转全部收口 `switchTab`。验证：后端探针 `share-circle-smoke.py` **20/20**（未登录点赞 401/toggle 来回/登录标记/匿名标记/计数数值化）；小程序 stub **12/12**（B1-B3 登录拦截零 wx.login / C1-C7 互动与转发落点）；静态自检 0 错误；fulfilment 容器重建健康，增量 SQL `13-share-engagement.sql` 已执行。以下为第四十三轮内容：——分享两 Bug 修复 + 分享圈新功能。
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -224,6 +224,15 @@
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
 
+### 2026-09-26（第四十四轮 · 分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发）
+
+> 用户两点需求：① 未登录仍可触发分享且点分享会自动静默登录到不明账号，要求拦截并引导主动登录；② 分享圈从「我的」移到导航栏作一级页面，定位公共空间，支持点赞/收藏/转发。
+
+- **Bug 根治（静默登录穿透）**。链路复盘：分享按钮 → `ensureLogin()` → `ensureSession` 失败 → `silentRelogin()` → `refreshSession` 失败 → `api.wxLogin()`——微信环境 `wx.login` 无需用户点击，code2Session 会**无感创建或登录到微信绑定的账号**，于是"未登录"点分享反而变成了登录到某个不明账号、分享面板照常弹出。修复：`app.js` 新增 `requireLogin()`——探测失败**一律直接去登录页**（`openLogin`，登录成功经 `finishLogin` 回跳兑现等待方），全程不触碰静默链；分享面板入口、分享圈点赞/收藏全部改用它。`ensureLogin` 的静默链保留给加购/领券等本机动作（无感恢复是那里的特性）。
+- **分享圈升一级 tab（第四十四轮）**。tabBar 第 6 项（首页/分类/**分享圈**/购物车/订单/我的），双态图标 `share.png/share-on.png` 由 `gen-miniprogram-images.py` 新增 `tab_share`（对话气泡 + 三圈友点）生成；页面改 `navigationStyle: custom` + `nav-bar` 自绘导航（R41 教训：tab 页原生导航栏切页被重建）+ 自绘下拉刷新指示器（`loading="{{refreshing}}"`，index 同款）；「我的」页原入口移除；`product` 面板与 `share-detail` 的跳转改 `wx.switchTab`（navigateTo 对 tab 页无效）。
+- **互动能力（点赞 / 收藏 / 转发）**。后端：`t_share_like`/`t_share_favorite` 两张同构表（`(share_id, user_id)` 复合主键 = 唯一约束，并发撞键幂等）+ `t_product_share` 冗余计数列（信息流高频读不逐行 COUNT；回退 `GREATEST(0, n-1)` 防负漂移）；`POST /api/shares/{id}/like|favorite` toggle（需登录；两段路径天然不在 `/api/shares/*` 白名单内，仍由网关强制登录）；`ShareView` 增 `likeCount/favoriteCount` 与浏览者标记 `liked/favorited`（公开端点可选身份：带令牌透传 X-User-* 则回填，匿名恒 false）；批量取标记集合（`IN` 一次查回，不逐行查）。序列化：`likeCount/favoriteCount/count` 补进 `LongToStringJacksonModule` 数值白名单——计数被当标识转成字符串会让前端 `===`/算术退化（T-40 同类缺陷，顺手根治）。小程序：卡片互动条 ❤️/⭐（catchtap 防冒泡；toggle 后按响应回填状态与计数 + toast）/ 🔁转发按钮（`open-type="share"` + `markForward` 先记条目 → `onShareAppMessage` 落点 `share-detail?id=`，标题带分享者与评价；页面级转发落分享圈 tab）。
+- **验证**：后端探针 `share-circle-smoke.py` **20/20**（新增：未登录点赞 401 / 点赞 toggle 来回 / 登录浏览 `liked=true` / 匿名浏览 `liked=false` 且计数可见 / 收藏 toggle / 幽灵分享点赞 404 / 计数为 JSON 数字）；小程序 stub **12/12**（B1 未登录点分享去登录页且**全程零次 wx.login** / B2 主动登录后兑现 / B3 已登录直通 / C1-C7 信息流互动与转发落点）；静态自检 0 错误 0 告警；fulfilment 容器重建 healthy；增量 SQL `13-share-engagement.sql` 已在运行库执行。
+
 ### 2026-09-26（第四十三轮 · 分享两 Bug 修复 + 分享圈新功能）
 
 > 用户三点需求：① 未登录用户也能执行分享，需登录态校验 + 引导登录；② 分享后点「查看分享页」无响应（页面只刷新停留在原商品页）；③ 参考拼多多「拼小圈」新增分享动态页（信息流展示用户商品分享，每条带用户自撰评价）。指令：先修 Bug 再做新功能。
@@ -233,8 +242,6 @@
 - **新功能分享圈（后端）**。`duoduo-fulfilment` 新增 `t_product_share`（雪花 ID，商品快照四列 + content ≤500 字 + created/updated；增量 `12-share-circle.sql`，全量 04 与 `schema.sql` 源文件同步）。**快照以商品域事实为准**：新增商品域内部接口 `GET /api/products/internal/cards`（InternalTokenFilter 保护，只回 id/标题/主图/最低价四字段），发布时履约域经 Feign `ProductClient` 取快照落库——请求体只带 `spuId + content`，杜绝"9.9 元猫粮卡片贴在任意商品 id 上"的伪造面；商品不存在 404、商品域不可用则拒绝发布（写操作不静默降级成空白卡）。三端点：`POST /api/shares`（需登录，`UserContext.requireUserId()`）/ `GET /api/shares/feed`（公开，按时间倒序分页）/ `GET /api/shares/{id}`（公开）；昵称头像复用 `loadBriefs` 批量补全 + 用户服务不可用降级「用户 {id}」。**网关**：fulfilment 路由 Path 补 `/api/shares/**`；白名单只放 `/api/shares/feed` 与 `/api/shares/*` 两条只读路径并留注释——白名单按路径匹配不区分方法，feed 刻意用两段路径与发布路径（单段）分开，绝不能写 `/api/shares` 或 `/api/shares/**`。
 - **新功能分享圈（小程序）**。详情页分享面板（底部弹层：评价 textarea 500 字 + 「转发给好友」/「发布到分享圈」两路 + 「先去分享圈逛逛」链接 + 遮罩关闭）；`api.js` 新增 `share` 命名空间（publish/feed/detail）；新建 `pages/share-circle` 信息流页（卡片 = 昵称/头像 + 时间 + 评价 + 商品快照卡；点商品卡 catchtap 跳详情、点整条跳 share-detail；下拉刷新 + 触底分页 noMore 判定；公开可逛无需登录）；「我的」页新增「💬 分享圈」入口。app.json 16 → 18 页。
 - **验证**：后端探针 `scripts/share-circle-smoke.py` **12/12**（未登录发布 401/登录发布返回服务端快照/昵称 Feign 补全/免登录信息流与详情/幽灵商品 404/空白内容 400/不存在分享 404，夹具自动清理）；小程序 stub **17/17**（登录两分支/弹层两路/发布成功失败/转发落点/信息流装配与分页/落地页双入口/再转发路径）；静态自检 0 错误 0 告警；product/fulfilment/gateway 三容器重建健康，增量 SQL 已在运行库执行。
-
-
 
 ### 2026-09-26（第四十二轮 · 商品详情页升级：立即购买 + 展示丰富化 + 分享修复）
 

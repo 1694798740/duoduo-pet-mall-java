@@ -78,7 +78,8 @@ Page({
   },
 
   goShareCircle() {
-    wx.navigateTo({ url: '/pages/share-circle/share-circle' });
+    // 第四十四轮：分享圈升为一级 tab 页，只能 switchTab
+    wx.switchTab({ url: '/pages/share-circle/share-circle' });
   },
 
   /** 落地页也可再转发：带分享单转卡片（含评价语境），直转则继续转商品 */

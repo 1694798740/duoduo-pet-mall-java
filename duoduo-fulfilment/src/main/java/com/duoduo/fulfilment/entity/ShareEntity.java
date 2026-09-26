@@ -30,6 +30,9 @@ public class ShareEntity {
     private Long minPrice;
     /** 用户自撰评价内容（发布入口强制非空，服务层兜底校验） */
     private String content;
+    /** 互动计数（冗余列，事实源是 t_share_like / t_share_favorite；第四十四轮） */
+    private Integer likeCount;
+    private Integer favoriteCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -87,6 +90,22 @@ public class ShareEntity {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public Integer getLikeCount() {
+        return likeCount;
+    }
+
+    public void setLikeCount(Integer likeCount) {
+        this.likeCount = likeCount;
+    }
+
+    public Integer getFavoriteCount() {
+        return favoriteCount;
+    }
+
+    public void setFavoriteCount(Integer favoriteCount) {
+        this.favoriteCount = favoriteCount;
     }
 
     public LocalDateTime getCreatedAt() {

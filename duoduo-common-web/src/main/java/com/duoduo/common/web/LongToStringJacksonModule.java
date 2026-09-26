@@ -92,6 +92,8 @@ public class LongToStringJacksonModule extends SimpleModule {
             "itemCount", "totalQuantity", "selectedCount", "orderCount",
             "pendingPaymentCount", "pendingShipCount", "shippedCount",
             "completedCount", "refundedCount", "closedCount", "totalOrderCount",
+            // 第四十四轮补齐：分享圈互动计数（信息流展示 + 前端 toggle 后直接回填比较）
+            "likeCount", "favoriteCount", "count",
             "closeMinutes", "expireMinutes", "durationMinutes", "expiresInSeconds",
             // 第十七轮补齐：**分页总数**。此前漏列导致 `PageResult.total` 以字符串下发，
             // 于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里退化成**字典序比较**

@@ -179,6 +179,9 @@ CREATE TABLE t_product_share (
     min_price      BIGINT       NOT NULL DEFAULT 0,
     -- 用户自撰评价内容（发布入口强制非空，服务层校验，上限 500 字）
     content        VARCHAR(500) NOT NULL,
+    -- 第四十四轮：互动计数（冗余列，事实源是 t_share_like / t_share_favorite）
+    like_count     INT          NOT NULL DEFAULT 0,
+    favorite_count INT          NOT NULL DEFAULT 0,
     created_at     TIMESTAMP    NOT NULL,
     updated_at     TIMESTAMP    NOT NULL,
     PRIMARY KEY (id)
@@ -188,3 +191,22 @@ CREATE INDEX idx_share_time ON t_product_share (created_at);
 CREATE INDEX idx_share_user ON t_product_share (user_id, created_at);
 -- 商品维度的查询（如「这个商品被分享了多少次」）：低频运维口径，单列够用
 CREATE INDEX idx_share_spu ON t_product_share (spu_id);
+
+-- ---------- 分享圈互动（点赞 / 收藏，第四十四轮） ----------
+-- 一人一分享一票：复合主键即唯一约束，并发重复插入撞键幂等。
+-- 计数冗余在 t_product_share（信息流高频读），这两张表是事实源。
+CREATE TABLE t_share_like (
+    share_id   BIGINT    NOT NULL,
+    user_id    BIGINT    NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (share_id, user_id)
+);
+CREATE INDEX idx_share_like_user ON t_share_like (user_id);
+
+CREATE TABLE t_share_favorite (
+    share_id   BIGINT    NOT NULL,
+    user_id    BIGINT    NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (share_id, user_id)
+);
+CREATE INDEX idx_share_fav_user ON t_share_favorite (user_id);
