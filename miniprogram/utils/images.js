@@ -16,7 +16,7 @@
 //    本层会自动走「绝对 URL 原样使用」分支，前端零改动。
 
 const PRODUCT_COUNT = 12;
-const COUNT_PER_PRODUCT = 3; // 详情页图集：主图 + 2 张邻近变体
+const COUNT_PER_PRODUCT = 5; // 详情页轮播图集：主图 + 4 张邻近变体（第四十二轮 3→5）
 
 function productPath(i) {
   const n = ((i - 1) % PRODUCT_COUNT) + 1;
@@ -55,7 +55,7 @@ function skuImage(skuId, spuId, backendPath) {
   return productPath(seedOf(spuId || skuId));
 }
 
-/** 详情页图集：主图 + 2 张邻近图（用 swiper 展示，避免详情页只有一张图） */
+/** 详情页图集：主图 + 4 张邻近图（swiper 轮播，避免详情页只有一张图） */
 function gallery(id, backendPath) {
   if (isAbsolute(backendPath)) {
     return [backendPath];
@@ -66,6 +66,12 @@ function gallery(id, backendPath) {
     list.push(productPath(base + k));
   }
   return list;
+}
+
+/** 图文详情的配图：与轮播错开取图，稳定映射（第四十二轮） */
+function detailImages(id) {
+  const base = seedOf(id) + 2;
+  return [0, 1, 2].map((k) => productPath(base + k * 2));
 }
 
 // 分类图标：键与后端 t_category.icon 的语义名对齐（后端存的是 bowl / bone / box / …）
@@ -98,6 +104,7 @@ module.exports = {
   productImage: productImage,
   skuImage: skuImage,
   gallery: gallery,
+  detailImages: detailImages,
   categoryIcon: categoryIcon,
   assetUrl: assetUrl,
   CATEGORY_ICONS: CATEGORY_ICONS,

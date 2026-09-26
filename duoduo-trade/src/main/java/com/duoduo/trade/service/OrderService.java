@@ -219,12 +219,21 @@ public class OrderService {
             return replay(userId, existing);
         }
 
-        // 2) 取购物车中已勾选的条目
-        List<CartItemEntity> rows = cartItemMapper.selectList(new LambdaQueryWrapper<CartItemEntity>()
-                .eq(CartItemEntity::getUserId, userId)
-                .eq(CartItemEntity::getSelected, SELECTED));
-        if (rows.isEmpty()) {
-            throw BizException.businessRule("购物车中没有已勾选的商品，无法下单");
+        // 2) 取本次结算的条目：
+        //    * 直购（buySkuId 非空，商品详情页「立即购买」）→ 造一条**内存中的临时行**，
+        //      不写库、不动购物车；下单成功后自然也不会清购物车（第 5 步按 directBuy 跳过）。
+        //    * 否则取购物车中已勾选的条目（原语义不变）。
+        boolean directBuy = request.buySkuId() != null;
+        List<CartItemEntity> rows;
+        if (directBuy) {
+            rows = List.of(directBuyRow(userId, request));
+        } else {
+            rows = cartItemMapper.selectList(new LambdaQueryWrapper<CartItemEntity>()
+                    .eq(CartItemEntity::getUserId, userId)
+                    .eq(CartItemEntity::getSelected, SELECTED));
+            if (rows.isEmpty()) {
+                throw BizException.businessRule("购物车中没有已勾选的商品，无法下单");
+            }
         }
         if (rows.size() > maxItemsPerOrder) {
             throw BizException.businessRule("单次下单最多 " + maxItemsPerOrder + " 种商品，请分批结算");
@@ -338,12 +347,34 @@ public class OrderService {
             throw e;
         }
 
-        // 5) 下单成功，清掉已结算的购物车条目
-        cartItemMapper.deleteBatchIds(rows.stream().map(CartItemEntity::getId).toList());
+        // 5) 下单成功，清掉已结算的购物车条目（直购没有购物车条目可清）
+        if (!directBuy) {
+            cartItemMapper.deleteBatchIds(rows.stream().map(CartItemEntity::getId).toList());
+        }
 
         List<OrderView> views = toViews(created);
         long totalPay = views.stream().mapToLong(OrderView::payAmount).sum();
         return new PlaceOrderResult(views, views.size(), totalPay, false);
+    }
+
+    /**
+     * 直购（「立即购买」）的临时行：把 {@code buySkuId + buyQuantity} 包装成与购物车行同构的对象，
+     * 让后续的快照校验、拆单分组、建单、库存冻结、券锁定全部走同一条路径。
+     *
+     * <p><b>不落库</b>：id 留空，所以它永远不会被写入 t_cart_item，也不会被清车逻辑误删。
+     */
+    private CartItemEntity directBuyRow(Long userId, PlaceOrderRequest request) {
+        Integer quantity = request.buyQuantity();
+        if (quantity == null || quantity < 1) {
+            throw BizException.validation("立即购买需要指定购买数量");
+        }
+        CartItemEntity row = new CartItemEntity();
+        row.setUserId(userId);
+        row.setSkuId(request.buySkuId());
+        row.setQuantity(quantity);
+        // 语义上等同「已勾选」，但该行只存在于内存，不影响用户购物车里的勾选状态
+        row.setSelected(SELECTED);
+        return row;
     }
 
     /**

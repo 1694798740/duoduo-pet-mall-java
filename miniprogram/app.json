@@ -10,6 +10,7 @@
     "pages/coupons/coupons",
     "pages/address/address",
     "pages/order-detail/order-detail",
+    "pages/checkout/checkout",
     "pages/pay/pay",
     "pages/after-sales/after-sales",
     "pages/after-sale/after-sale",

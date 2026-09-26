@@ -1,0 +1,73 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="fetchDetail">重试</button>
+</view>
+<view wx:elif="{{loading && !sku}}" class="empty">加载中…</view>
+
+<block wx:elif="{{sku}}">
+  <!-- 收货地址：与购物车结算同一交互（address pick 模式回填） -->
+  <view class="card addr-row" bindtap="chooseAddress">
+    <text class="addr-icon">📍</text>
+    <view class="addr-body">
+      <block wx:if="{{address}}">
+        <view class="addr-name">{{address.receiverName}} {{address.receiverPhone}}</view>
+        <view class="t3 addr-full">{{address.fullAddress}}</view>
+      </block>
+      <view wx:else class="t3">请选择收货地址</view>
+    </view>
+    <text class="addr-arrow">›</text>
+  </view>
+
+  <!-- 商品明细（直购只有一条） -->
+  <view class="card">
+    <view class="co-item">
+      <image class="co-thumb" src="{{sku.imageSrc}}" mode="aspectFill" lazy-load />
+      <view class="co-main">
+        <view class="co-title ellipsis-2">{{sku.title}}</view>
+        <view class="t3 co-spec">{{sku.specText}}</view>
+        <view class="co-bottom">
+          <view class="price">{{sku.priceText}}</view>
+          <view class="stepper">
+            <view class="step-btn" bindtap="dec">−</view>
+            <view class="step-num">{{quantity}}</view>
+            <view class="step-btn" bindtap="inc">＋</view>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view wx:if="{{!sku.sellable || sku.stock <= 0}}" class="co-invalid">该规格暂无库存</view>
+  </view>
+
+  <!-- 优惠券：服务端判定可用性；默认选它推荐的最优券 -->
+  <view class="card coupon-row" bindtap="chooseCoupon">
+    <text class="cp-icon">🎫</text>
+    <view class="cp-name">{{couponText}}</view>
+    <text wx:if="{{discountText}}" class="cp-discount">{{discountText}}</text>
+    <text class="addr-arrow">›</text>
+  </view>
+
+  <!-- 金额汇总 -->
+  <view class="card">
+    <view class="co-line"><text class="t3">商品金额</text><text>¥{{amountText}}</text></view>
+    <view wx:if="{{discountText}}" class="co-line">
+      <text class="t3">优惠抵扣</text><text class="co-minus">{{discountText}}</text>
+    </view>
+    <view class="co-line"><text class="t3">运费</text><text>¥0</text></view>
+    <view class="co-line co-total"><text>应付</text><text class="price">¥{{payText}}</text></view>
+  </view>
+
+  <view style="height: 160rpx"></view>
+  <view class="footer">
+    <view class="footer-total">
+      应付 <text class="price">¥{{payText}}</text>
+    </view>
+    <button
+      class="btn btn-accent footer-submit"
+      bindtap="submit"
+      disabled="{{submitting || !sku.sellable || sku.stock <= 0}}"
+      loading="{{submitting}}"
+    >
+      提交订单
+    </button>
+  </view>
+</block>

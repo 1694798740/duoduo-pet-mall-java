@@ -191,13 +191,24 @@ const order = {
   detail(orderNo) {
     return req.get('/api/orders/' + orderNo);
   },
-  /** 下单（A8 地址簿语义 + A5 优惠券）。couponCode 可空；折扣金额由服务端锁券时计算，前端只传码不传金额 */
-  place(addressId, couponCode) {
+  /**
+   * 下单（A8 地址簿语义 + A5 优惠券 + 第四十一轮直购）。
+   *
+   * <p>购物车结算：只传 addressId（+ 可选 couponCode），结算范围是购物车中「已勾选」的条目。
+   * <p>立即购买（direct）：额外传 { skuId, quantity }，服务端按该 SKU 直购——
+   * 不读购物车、下单成功后也不清购物车；其余语义（库存冻结 / 券 / 幂等）两条路径完全一致。
+   * <p>折扣金额一律由服务端锁券时计算，前端只传券码不传金额。
+   */
+  place(addressId, couponCode, direct) {
     const payload = {
       addressId,
       idempotentKey: 'mp-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
     };
     if (couponCode) payload.couponCode = couponCode;
+    if (direct && direct.skuId) {
+      payload.buySkuId = direct.skuId;
+      payload.buyQuantity = direct.quantity || 1;
+    }
     return req.post('/api/orders', payload);
   },
   /**

@@ -1,6 +1,8 @@
 package com.duoduo.trade.dto;
 
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -69,6 +71,23 @@ public final class OrderDtos {
              * （并列时取最先拆出的）。购物车含多家卖家时，其余订单不享受该券。
              */
             @Size(max = 32, message = "优惠券码过长") String couponCode,
+
+            /**
+             * 「立即购买」（直购）的 SKU 与数量（可空，两者必须成对出现）。
+             *
+             * <p>非空时本次下单**不使用购物车**：直接按该 SKU × 数量结算，且下单成功后
+             * <b>不会</b>改动用户的购物车 —— 这是「立即购买」与「购物车结算」唯一但关键的差别。
+             * 商品快照、拆单、库存冻结、券锁定的口径两条路径完全一致（同一段代码）。
+             *
+             * <p>为什么要放在下单接口里而不是新开一个端点：下单后的所有副作用
+             * （幂等键、库存冻结、券锁定、状态机）必须与购物车结算<b>严格同源</b>，
+             * 另开端点等于把这些语义复制一份，迟早出现两条路径不一致的订单。
+             */
+            Long buySkuId,
+
+            @Min(value = 1, message = "购买数量至少 1 件")
+            @Max(value = 200, message = "单次直购最多 200 件")
+            Integer buyQuantity,
 
             @NotBlank(message = "idempotentKey 不能为空，用于防止重复下单")
             @Size(max = 64, message = "idempotentKey 过长") String idempotentKey

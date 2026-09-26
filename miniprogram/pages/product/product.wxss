@@ -64,7 +64,26 @@
 .review-content { font-size: 26rpx; color: var(--text); line-height: 1.6; }
 .p-desc { color: var(--text-2); line-height: 1.7; }
 
-/* ── 底部操作栏：分享（open-type=share）+ 加购 ── */
+/* ── 规格参数 / 包装规格（第四十二轮）：两列「名 + 值」，随选中规格联动 ── */
+.spec-row {
+  display: flex;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid var(--line);
+  font-size: 26rpx;
+}
+.spec-row:last-child { border-bottom: none; }
+.spec-k { width: 180rpx; flex: none; color: var(--text-3); }
+.spec-v { flex: 1; color: var(--text); }
+
+/* ── 图文详情配图（第四十二轮） ── */
+.detail-media { margin-top: 20rpx; }
+.detail-img {
+  width: 100%;
+  border-radius: 12rpx;
+  background: var(--bg);
+}
+
+/* ── 底部操作栏：分享（open-type=share）+ 加购 + 立即购买 ── */
 .footer {
   position: fixed;
   left: 0;
@@ -72,15 +91,17 @@
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 20rpx;
+  gap: 16rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
   background: #fff;
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
 .footer-share {
-  width: 140rpx;
+  width: 120rpx;
   height: 76rpx;
   flex: none;
   margin: 0;
 }
 .footer-btn { flex: 1; height: 76rpx; }
+/* 加入购物车用描边样式与「立即购买」实心主按钮区分层级 */
+.footer .btn-plain.footer-btn { border: 2rpx solid var(--brand); color: var(--brand); }

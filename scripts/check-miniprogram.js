@@ -56,13 +56,15 @@ function collectMethods(src) {
   return names;
 }
 
-/** 采集 data 初始值 + setData 的顶层键（用于字段粗筛） */
+/** 采集 data 初始值 + properties 声明 + setData 的顶层键（用于字段粗筛） */
 function collectDataKeys(src) {
   const clean = stripCommentsAndStrings(src);
   const keys = new Set();
-  // data: { ... } 的顶层 key
-  const dataBlock = clean.match(/data\s*:\s*\{/);
-  if (dataBlock) {
+  // data: { ... } 的顶层 key；组件的 properties 同样对外可见，一并收进白名单
+  const blocks = ['data\\s*:\\s*\\{', 'properties\\s*:\\s*\\{'];
+  for (const pat of blocks) {
+    const dataBlock = clean.match(new RegExp(pat));
+    if (!dataBlock) continue;
     let i = dataBlock.index + dataBlock[0].length - 1;
     let depth = 0;
     let end = i;
