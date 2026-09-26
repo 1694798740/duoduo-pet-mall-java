@@ -1,0 +1,9 @@
+<!-- 占位块：与固定条等高，把页面内容推到导航栏下方（固定条脱离文档流） -->
+<view class="nb-ph" style="height:{{navTotalHeight}}px"></view>
+
+<view class="nb" style="height:{{navTotalHeight}}px;padding-top:{{statusBarHeight}}px">
+  <view class="nb-inner" style="height:{{navBarHeight}}px">
+    <view class="nb-spin" wx:if="{{loading}}"></view>
+    <text class="nb-title">{{title}}</text>
+  </view>
+</view>

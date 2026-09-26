@@ -1,12 +1,13 @@
 /* 分类页：左右分栏，整页不滚动（列表在右侧 scroll-view 内滚动）
-   高度用 position:fixed + 四向 0 撑满**可见视口**（自动扣掉 tabBar 与安全区），
-   比 height:100vh 可靠：vh 是屏幕高，会把最后一行压到 tabBar 下面 */
+   高度用 position:fixed 四向撑满**可见视口**（自动扣掉 tabBar 与安全区），
+   比 height:100vh 可靠：vh 是屏幕高，会把最后一行压到 tabBar 下面。
+   top 由页面按自绘导航栏总高下发（原来 top:0 会顶到导航栏底下被遮住）。
+   另外：原生导航栏已换成自绘导航栏，占位块不参与本页布局。 */
 
 .cat-wrap {
   position: fixed;
   left: 0;
   right: 0;
-  top: 0;
   bottom: 0;
   display: flex;
   background: var(--bg);

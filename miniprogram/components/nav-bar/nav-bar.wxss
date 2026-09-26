@@ -1,0 +1,46 @@
+/* 占位块：与固定条同色同高，滚动时不露底色 */
+.nb-ph {
+  background: #4f6ef7;
+}
+
+.nb {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  box-sizing: border-box;
+  background: #4f6ef7;
+}
+
+.nb-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 200rpx; /* 两侧留白，避免标题压到胶囊按钮 */
+}
+
+.nb-title {
+  color: #fff;
+  font-size: 34rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 下拉刷新指示器（原生三点指示器在自绘导航栏下会被遮挡，这里自绘一个） */
+.nb-spin {
+  width: 26rpx;
+  height: 26rpx;
+  margin-right: 12rpx;
+  border-radius: 50%;
+  border: 3rpx solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: nb-spin 0.8s linear infinite;
+}
+
+@keyframes nb-spin {
+  to { transform: rotate(360deg); }
+}

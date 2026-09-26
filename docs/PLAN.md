@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-26（第三十九轮 · 页内沙箱收银台 + 购物车选券）——用户反馈两个支付/结算问题，一次修完：① **支付要复制链接到浏览器**：根因是小程序里没有可打开 `http://localhost` 收银台的容器（`web-view` 强制 HTTPS + 业务域名预配置，localhost 永远配不了；`wx.requestPayment` 需要真实微信渠道预下单参数，属 B-07 边界）。修法：新建**页内沙箱收银台** `pages/pay/pay`——`pay.checkout()` 改为 `navigateTo` 进收银台页，直接调公开端点 `POST /api/payments/sandbox/{payNo}`（与 Web 收银台同一校验/入账路径），回调链经 `pendingHandlers` 暂存/取走透明交接，失败兜底轮询；② **结算券不生效**：根因是**前端从未把 couponCode 传给下单接口**（Web 端 Checkout 传了，小程序端漏了；后端 OrderService 用券逻辑本来就正确）。修法：购物车新增**选券行**，服务端可用性判断 `GET /api/coupons/mine/usable?amount=`（含 bestCouponCode 推荐），默认选最优、用户「不使用」优先级最高（`_couponDeclined` 不被自动推荐覆盖）、已选券失效自动退回。验证：Node stub 7 场景全过（A1-A4 + B0-B3，含拒绝选券优先级 bug 当场修复）；静态自检 0 错误。以下为第三十八轮内容：——未登录态按钮统一「去登录」+ 登录返回自动重拉：address / order-detail / orders / after-sales 四页未登录分支误显「重试」，统一按 `needLogin` 区分（未登录=去登录、网络错=重试），address / order-detail 补 `onShow` 自动重拉。再往前各轮见下方逐轮详录）
+> 更新时间：2026-09-26（第四十一轮 · tab 切换顶部白条根治：5 个 tab 页改自绘导航栏）——用户二次反馈同一问题（附截图，红框仍指向导航栏区域），说明上一轮「页面级补 `navigationBarBackgroundColor`」不足以解决。**加测取证**：截图像素分析（状态栏 #4F6EF7 蓝、紧邻 44pt 行纯白 #FFFFFF 且无标题）→ 原生导航栏在 tab 切换时被重建为默认白色；状态栏恒蓝说明白条就是**标题栏那一行**。**根治**：tab 页改用**自绘导航栏**（`navigationStyle: custom` + 新增 `components/nav-bar` + `utils/nav.js` 按胶囊反推尺寸）——原生导航栏不存在，就没有可闪烁之物；非 tab 页保持原生（推进式跳转不受影响）。连带收口：category 全屏 fixed 布局按导航总高下移、orders 吸顶筛选条 `top: navTotal`、index 下拉刷新改自绘指示器（原生三点会被自绘栏遮挡）。验证：17 个 JSON 合法、JS 语法全过、Node stub **11/11** 通过。以下为第四十轮内容：——tab 切换顶部白条闪烁修复：15 个页面 json 显式补 `navigationBarBackgroundColor: #4f6ef7` + `navigationBarTextStyle: white`（该轮不足以根治，见上）。
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -223,6 +223,16 @@
 
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
+
+### 2026-09-26（第四十一轮 · tab 切换顶部白条根治：5 个 tab 页改自绘导航栏）
+
+> 用户二次反馈同一白条问题（附截图）。上一轮只给 15 个页面 json 补了 `navigationBarBackgroundColor`，未能根治 —— 本轮重新取证后改结构。
+
+- **再取证（像素级）**：截图中状态栏区域 = #4F6EF7（蓝），紧邻其下的 44pt 行 = **纯白 #FFFFFF 且无标题**（实测 71px @1.62px/pt ≈ 43.8pt）。视频逐帧确认三次切换各闪约 160ms 后恢复。状态栏恒蓝 + 标题行变白 → 白条就是**原生导航栏的标题行被重建为默认白色**。
+- **为什么上一轮的办法不够**：开发者工具中导航栏是模拟层，切 tab 时该层随页面重建，与页面 json 里声明什么颜色无关（页面内容与状态栏都正常，只有这一行重建）。真实设备同理：原生导航栏由客户端在切页时重建。
+- **根治**：5 个 tab 页（index / category / cart / orders / profile）改用**自绘导航栏** —— `navigationStyle: custom` + 新增 `components/nav-bar`（固定蓝条 + 流内占位块）；尺寸由 `utils/nav.js` 按胶囊位置反推（`(胶囊 top - 状态栏高) * 2 + 胶囊高`，取不到则兜底 44px）。原生导航栏不再存在 → 没有可闪烁之物；非 tab 页保持原生（推进式跳转无此问题，且需要返回键）。
+- **连带收口**：① category 页整页 `position: fixed` 布局，改为按导航总高下发 `top`（否则内容顶到自绘栏底下）；② orders 页吸顶筛选条 `top` 同步下移；③ index 页下拉刷新改**自绘指示器**（原生三点指示器会被自绘导航栏遮挡，自绘栏在 `loading` 时显示白环）。
+- **验证**：17 个 JSON 合法；5 个改动 JS 语法全过；Node stub **11/11**（尺寸计算 iPhone 15 Pro=42/96、接口不可用兜底 44/98、组件 attached 写入、category/orders 的 navTop=96、index 下拉 refreshing 开关 + stopPullDownRefresh）。
 
 ### 2026-09-26（第四十轮 · tab 切换顶部白条闪烁修复）
 

@@ -1,4 +1,6 @@
-<view class="cat-wrap">
+<nav-bar title="分类" />
+
+<view class="cat-wrap" style="top:{{navTop}}px">
   <!-- 左栏：固定宽度不收缩，每项「图标 + 单行文案」，选中态全部分类一致 -->
   <scroll-view scroll-y class="cat-side">
     <view

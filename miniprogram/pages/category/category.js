@@ -11,6 +11,7 @@
 //     快速切换时新分类永远不发请求。→ 改为**请求序号**：新请求发出去，过期响应丢弃。
 const api = require('../../utils/api');
 const images = require('../../utils/images');
+const { getNavMetrics } = require('../../utils/nav.js');
 
 const PAGE_SIZE = 10;
 
@@ -35,12 +36,15 @@ Page({
     page: 1,
     total: 0,
     hasMore: false,
+    // 自绘导航栏总高：整页是 fixed 布局，需要据此把内容顶到导航栏下方
+    navTop: 0,
   },
 
   // 请求序号：只认最后一次请求的响应（快速切分类时旧响应作废）
   _seq: 0,
 
   onLoad() {
+    this.setData({ navTop: getNavMetrics().navTotalHeight });
     this.fetchCategories();
   },
 

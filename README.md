@@ -4,7 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第四十轮）** — **tab 切换顶部白条闪烁修复（小程序）**。
+**最近更新：2026-09-26（第四十一轮）** — **tab 切换顶部白条根治：5 个 tab 页改自绘导航栏（小程序）**。
+上一轮「页面 json 补 `navigationBarBackgroundColor`」未根治。本轮像素级再取证：状态栏 #4F6EF7 蓝、紧邻 44pt 行 **纯白 #FFFFFF 无标题** → 白条 = 原生导航栏标题行在切页时被重建为默认白。根治方案：**tab 页弃用原生导航栏**，新增 `components/nav-bar`（固定蓝条 + 流内占位，尺寸由 `utils/nav.js` 按胶囊位置反推）+ 5 页 `navigationStyle: custom`；原生栏不存在即无可闪。连带收口：category 全屏 fixed 布局按导航总高下移、orders 吸顶条同步下移、index 下拉刷新改自绘指示器（原生三点会被遮挡）。**验证**：17 JSON 合法 + JS 语法全过 + Node stub 11/11。
+
+**第四十轮（2026-09-26）** — **tab 切换顶部白条闪烁修复（小程序）**。
 录屏逐帧定位：白条 = 导航栏区域，切换后约 150ms 白底无标题、随后才套全局蓝。根因是 15 个页面 json 均未显式声明 `navigationBarBackgroundColor`，tab 切换时新页面导航栏先按缺省白色初始化。修复：全部页面 json 显式补 `navigationBarBackgroundColor: #4f6ef7` + `navigationBarTextStyle: white`。
 
 **第三十九轮（2026-09-26）** — **页内沙箱收银台 + 购物车选券（小程序）**。

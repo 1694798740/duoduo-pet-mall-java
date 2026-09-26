@@ -17,6 +17,10 @@ page {
   font-size: 28rpx;
 }
 
+/* 自绘导航栏组件按块级参与布局（自定义组件标签默认行内） */
+nav-bar { display: block; }
+
+
 /* ── 卡片 ── */
 .card {
   background: var(--card);

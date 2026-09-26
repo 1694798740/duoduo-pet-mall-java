@@ -22,6 +22,9 @@
     "navigationBarTitleText": "多多宠物商店",
     "backgroundColor": "#f5f6fa"
   },
+  "usingComponents": {
+    "nav-bar": "/components/nav-bar/nav-bar"
+  },
   "tabBar": {
     "color": "#9ca3af",
     "selectedColor": "#4f6ef7",

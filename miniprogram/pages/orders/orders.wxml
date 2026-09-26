@@ -1,4 +1,6 @@
-<scroll-view scroll-x class="order-tabs">
+<nav-bar title="我的订单" />
+
+<scroll-view scroll-x class="order-tabs" style="top:{{navTop}}px">
   <view
     wx:for="{{tabs}}"
     wx:key="key"

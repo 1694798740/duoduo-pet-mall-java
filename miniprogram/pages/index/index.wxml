@@ -1,3 +1,5 @@
+<nav-bar title="多多宠物商店" loading="{{refreshing}}" />
+
 <view class="search-bar">
   <input
     class="search-input"

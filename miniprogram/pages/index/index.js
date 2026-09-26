@@ -49,6 +49,8 @@ Page({
     hasSeckill: false,
     // 零结果时的纠错建议（"你是不是想搜 X"）
     suggestion: '',
+    // 下拉刷新中：自绘导航栏据此显示指示器（原生三点指示器会被自绘导航栏遮挡）
+    refreshing: false,
   },
 
   // 请求序号：关键词/刷新切换时丢弃过期响应，避免「列表短暂混排」
@@ -65,9 +67,13 @@ Page({
   },
 
   onPullDownRefresh() {
+    this.setData({ refreshing: true });
     Promise.all([this.fetchProducts(true), this.fetchSeckill()])
       .catch(() => {})
-      .then(() => wx.stopPullDownRefresh());
+      .then(() => {
+        this.setData({ refreshing: false });
+        wx.stopPullDownRefresh();
+      });
   },
 
   onKeywordInput(e) {

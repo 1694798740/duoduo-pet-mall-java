@@ -1,7 +1,9 @@
 {
+  "navigationStyle": "custom",
   "navigationBarTitleText": "多多宠物商店",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark",
+  "backgroundTextStyle": "light",
+  "backgroundColor": "#4f6ef7",
   "navigationBarBackgroundColor": "#4f6ef7",
   "navigationBarTextStyle": "white"
 }

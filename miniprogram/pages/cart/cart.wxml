@@ -1,3 +1,5 @@
+<nav-bar title="购物车" />
+
 <view wx:if="{{error}}" class="error-box">{{error}}</view>
 <view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
 <view wx:elif="{{items.length === 0}}" class="empty">
