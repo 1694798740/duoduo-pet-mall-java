@@ -1,6 +1,6 @@
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
-  <button wx:if="{{error === '登录后查看售后'}}" class="btn btn-plain btn-mini" bindtap="goOrders">去订单页</button>
+  <button wx:if="{{error === '登录后查看售后'}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
 </view>
 <view wx:elif="{{loading && items.length === 0}}" class="empty">加载中…</view>
 <view wx:elif="{{items.length === 0}}" class="empty">

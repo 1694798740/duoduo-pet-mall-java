@@ -47,6 +47,20 @@ Page({
   },
 
   /**
+   * 登录页成功后 navigateBack 回到本页：onShow 触发但 onLoad 不会。
+   * 只在「上次因未登录失败」时重拉，避免每次 onShow 都多发一次请求。
+   */
+  onShow() {
+    if (this.data.needLogin && api.getToken()) {
+      this.fetchList();
+    }
+  },
+
+  goLogin() {
+    api.openLoginPage();
+  },
+
+  /**
    * 选择模式：把地址回传给上一页（购物车），用于「本次结算临时换地址」。
    *
    * <p>用 navigateTo 的 eventChannel 回传而不是全局变量：生命周期清清楚楚，
@@ -64,17 +78,17 @@ Page({
   },
 
   fetchList() {
-    this.setData({ loading: true, error: '' });
+    this.setData({ loading: true, error: '', needLogin: false });
     return api
       .ensureSession()
       .then(() => api.address.list())
       .then((list) => this.setData({ list: list || [], loading: false }))
       .catch((err) => {
         if (err && err.needLogin) {
-          this.setData({ loading: false, error: '登录后管理收货地址' });
+          this.setData({ loading: false, error: '登录后管理收货地址', needLogin: true });
           return;
         }
-        this.setData({ loading: false, error: (err && err.message) || '加载失败' });
+        this.setData({ loading: false, error: (err && err.message) || '加载失败', needLogin: false });
       });
   },
 

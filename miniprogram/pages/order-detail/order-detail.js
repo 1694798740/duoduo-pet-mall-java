@@ -61,6 +61,17 @@ Page({
     this.fetch();
   },
 
+  /** 登录页成功后 navigateBack 回本页：只在「因未登录失败」时自动重拉 */
+  onShow() {
+    if (this.data.needLogin && api.getToken()) {
+      this.fetch();
+    }
+  },
+
+  goLogin() {
+    api.openLoginPage();
+  },
+
   onHide() {
     pay.stopPolling(this);
   },
@@ -80,7 +91,7 @@ Page({
       this.setData({ loading: false, error: '缺少订单号' });
       return Promise.resolve();
     }
-    this.setData({ loading: true, error: '' });
+    this.setData({ loading: true, error: '', needLogin: false });
     return api
       .ensureSession()
       .then(() => api.order.detail(this.data.orderNo))
@@ -98,10 +109,10 @@ Page({
       })
       .catch((err) => {
         if (err && err.needLogin) {
-          this.setData({ loading: false, error: '登录后查看订单' });
+          this.setData({ loading: false, error: '登录后查看订单', needLogin: true });
           return null;
         }
-        this.setData({ loading: false, error: (err && err.message) || '加载失败' });
+        this.setData({ loading: false, error: (err && err.message) || '加载失败', needLogin: false });
         return null;
       });
   },

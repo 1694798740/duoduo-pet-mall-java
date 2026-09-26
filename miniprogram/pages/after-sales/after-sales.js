@@ -70,4 +70,8 @@ Page({
   goOrders() {
     wx.switchTab({ url: '/pages/orders/orders' });
   },
+
+  goLogin() {
+    api.openLoginPage();
+  },
 });

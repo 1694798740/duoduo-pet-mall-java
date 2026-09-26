@@ -5,7 +5,8 @@
 
   <view wx:if="{{error}}" class="error-box">
     <view>{{error}}</view>
-    <button class="btn btn-plain btn-mini" bindtap="fetchList">重试</button>
+    <button wx:if="{{needLogin}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
+    <button wx:else class="btn btn-plain btn-mini" bindtap="fetchList">重试</button>
   </view>
   <view wx:elif="{{loading && list.length === 0}}" class="empty">加载中…</view>
   <view wx:elif="{{list.length === 0}}" class="empty">

@@ -54,6 +54,10 @@ Page({
     pay.stopPolling(this);
   },
 
+  goLogin() {
+    api.openLoginPage();
+  },
+
   switchTab(e) {
     const key = e.currentTarget.dataset.key;
     if (key === this.data.activeTab) return;
@@ -65,7 +69,7 @@ Page({
     if (this.data.loading) return Promise.resolve();
     const page = reset ? 1 : this.data.page;
     // 重新拉第一页时先清空列表，避免「旧筛选的结果 + 新筛选的结果」短暂混排
-    this.setData(reset ? { loading: true, error: '', page: 1, orders: [] } : { loading: true, error: '' });
+    this.setData(reset ? { loading: true, error: '', needLogin: false, page: 1, orders: [] } : { loading: true, error: '', needLogin: false });
     return api
       .ensureSession()
       .then(() => api.order.list(page, this.data.activeTab, PAGE_SIZE))
@@ -81,10 +85,11 @@ Page({
       })
       .catch((err) => {
         if (err && err.needLogin) {
-          this.setData({ orders: [], loading: false, error: '' });
+          // 未登录时明确说「去登录」，不能落成空态「还没有相关订单」误导用户
+          this.setData({ orders: [], loading: false, error: '登录后查看订单', needLogin: true });
           return;
         }
-        this.setData({ loading: false, error: (err && err.message) || '加载失败' });
+        this.setData({ loading: false, error: (err && err.message) || '加载失败', needLogin: false });
       });
   },
 

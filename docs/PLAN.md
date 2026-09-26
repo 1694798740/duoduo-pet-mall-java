@@ -224,6 +224,14 @@
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
 
+### 2026-09-26（第三十八轮 · 未登录态按钮统一「去登录」+ 登录返回自动重拉）
+
+> 用户反馈：地址簿未登录时在「登录后管理收货地址」下显示的是**重试**按钮（截图），要求修复并全局排查统一。
+
+- **全局排查结论**：错误盒 + 重试按钮共 6 页 —— **address / order-detail / orders / after-sales** 四页未登录分支有误（coupons 已正确用「去登录」；index/product/category/seckill 的重试对应公开接口，未登录可浏览，属合法场景不在误判之列）。orders 更隐蔽：未登录时把 error 清空 → 落成「还没有相关订单」空态误导。
+- **统一修法**：catch 的 needLogin 分支显式置 `needLogin: true`；错误盒按钮 `wx:if="{{needLogin}}"` 显示**去登录**（`api.openLoginPage()`，带去重），`wx:else` 才是重试。address / order-detail 额外补 `onShow` 自动重拉 —— 登录页成功后是 `navigateBack` 回来源页，只触发 onShow 不触发 onLoad，不清「登录返回后停在错误页」的体验断点；onShow 只在 `needLogin && getToken()` 时重拉，避免每次回页多发请求。
+- **验证**：静态自检 0 错误；Node stub 4 场景全过（未登录→needLogin 标志 / 登录返回自动重拉 / 网络错误仍走重试 / 订单列表未登录明确提示）。
+
 ### 2026-09-26（第三十七轮 · 订单列表商品缩略 + 我的售后入口/列表页）
 
 > 用户两点反馈：① 订单列表卡片只显示「共 N 件商品」，没图没名；② 「我的」页没有售后入口，找不到售后功能。搜索入口维持现状。

@@ -8,7 +8,10 @@
   >{{item.label}}</view>
 </scroll-view>
 
-<view wx:if="{{error}}" class="error-box">{{error}}</view>
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button wx:if="{{needLogin}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
+</view>
 <view wx:elif="{{loading && orders.length === 0}}" class="empty">加载中…</view>
 <view wx:elif="{{orders.length === 0}}" class="empty">
   <view class="icon">📦</view>
