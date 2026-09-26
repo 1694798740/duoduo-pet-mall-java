@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "我的订单"
+  "navigationBarTitleText": "我的订单",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
 }

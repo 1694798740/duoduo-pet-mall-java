@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "收银台"
+  "navigationBarTitleText": "收银台",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
 }

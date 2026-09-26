@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "分类"
+  "navigationBarTitleText": "分类",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
 }

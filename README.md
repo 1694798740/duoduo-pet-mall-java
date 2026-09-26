@@ -4,7 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第三十九轮）** — **页内沙箱收银台 + 购物车选券（小程序）**。
+**最近更新：2026-09-26（第四十轮）** — **tab 切换顶部白条闪烁修复（小程序）**。
+录屏逐帧定位：白条 = 导航栏区域，切换后约 150ms 白底无标题、随后才套全局蓝。根因是 15 个页面 json 均未显式声明 `navigationBarBackgroundColor`，tab 切换时新页面导航栏先按缺省白色初始化。修复：全部页面 json 显式补 `navigationBarBackgroundColor: #4f6ef7` + `navigationBarTextStyle: white`。
+
+**第三十九轮（2026-09-26）** — **页内沙箱收银台 + 购物车选券（小程序）**。
 ① 支付不再复制链接：新建页内收银台 `pages/pay/pay`（app.json 15 页），`pay.checkout()` 改为 `navigateTo` 进页，直接调公开端点 `POST /api/payments/sandbox/{payNo}`（与 Web 收银台同一条校验/入账路径），调用方回调经 `pendingHandlers` 暂存/取走透明交接、失败兜底轮询。三条路的取舍：`web-view` 强制 HTTPS + 业务域名预配置（localhost 永远配不了）；`wx.requestPayment` 需要真实微信渠道预下单参数（B-07 边界未接）；页内自绘是沙箱阶段唯一正解。
 ② 结算券生效：根因是**小程序端下单从未传 couponCode**（Web 端传了、后端锁券抵扣本来就正确，纯前端缺陷）。购物车新增选券行，可用性判断走服务端 `GET /api/coupons/mine/usable?amount=`（含 bestCouponCode 推荐），金额以服务端锁券计算为准；语义：用户「不使用」优先级最高（`_couponDeclined` 不被自动推荐复活）、已选券失效自动退回、下单成功重置。
 **验证**：Node stub 7 场景全过（含拒绝选券优先级 bug 当场抓出并修复）+ 静态自检 0 错误。

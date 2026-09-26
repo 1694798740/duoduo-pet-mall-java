@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "AI 导购「多多」"
+  "navigationBarTitleText": "AI 导购「多多」",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
 }
