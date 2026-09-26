@@ -191,11 +191,14 @@ const order = {
   detail(orderNo) {
     return req.get('/api/orders/' + orderNo);
   },
-  place(addressId) {
-    return req.post('/api/orders', {
+  /** 下单（A8 地址簿语义 + A5 优惠券）。couponCode 可空；折扣金额由服务端锁券时计算，前端只传码不传金额 */
+  place(addressId, couponCode) {
+    const payload = {
       addressId,
       idempotentKey: 'mp-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
-    });
+    };
+    if (couponCode) payload.couponCode = couponCode;
+    return req.post('/api/orders', payload);
   },
   /**
    * 发起支付（沙箱渠道）。
@@ -215,6 +218,16 @@ const order = {
   },
   payStatus(payNo) {
     return req.get('/api/payments/' + payNo, { silent: true });
+  },
+  /**
+   * 沙箱收银台「确认支付」（A15 第三十九轮）。
+   *
+   * <p>公开端点（白名单）：现实中扫码设备没有买家登录态，金额一律取库内值，
+   * 与服务端渲染收银台页（GET /sandbox/pay/{payNo}）的支付按钮走同一入账路径。
+   * 小程序内直接调它，替代「复制 codeUrl 到浏览器」的旧体验。
+   */
+  sandboxConfirm(payNo) {
+    return req.post('/api/payments/sandbox/' + payNo);
   },
   /** 取消订单（仅待付款可取消；请求体可省略） */
   cancel(orderNo, reason) {
@@ -273,6 +286,15 @@ const coupon = {
   },
   mine(status) {
     return req.get('/api/coupons/mine' + (status ? '?status=' + status : ''));
+  },
+  /**
+   * 结算可用券（A5，第三十九轮）：amount=已勾选商品金额（分）。
+   * 门槛/有效期/锁定状态的判定全在服务端 —— 前端自算迟早与锁券时不一致。
+   * 返回 { amount, coupons[{code,name,thresholdAmount,discountAmount,usable,reason}],
+   *        bestCouponCode, bestDiscountAmount }，bestCouponCode 是服务端推荐的最优券。
+   */
+  usable(amount) {
+    return req.get('/api/coupons/mine/usable?amount=' + (amount || 0));
   },
 };
 

@@ -1,22 +1,41 @@
-// 沙箱支付：发起 + 轮询（订单列表页与订单详情页共用，避免两处各写一份）
+// 沙箱支付：发起 + 收银台跳转 + 轮询（订单列表页与订单详情页共用）
 //
 // 沙箱渠道的支付链路（与 Web 端同一套契约）：
-//   POST /api/orders/{no}/pay {channel:'sandbox', idempotentKey}  → PayResult
+//   POST /api/orders/{no}/pay {channel:'sandbox', idempotentKey}  → PayResult（含 payNo）
+//   跳转 pages/pay/pay 沙箱收银台 → 确认支付 POST /api/payments/sandbox/{payNo}（公开端点）
 //   GET  /api/payments/{payNo}                                    → 轮询支付状态
 //
 // 关键约定（都是踩过的坑）：
-//  * 必须带 idempotentKey：后端 @NotBlank，缺了直接 400；
-//  * 收银台地址字段是 PayResult.codeUrl（不是 payUrl）；
+//  * 发起支付必须带 idempotentKey：后端 @NotBlank，缺了直接 400；
 //  * 支付状态字段是 payStatus（不是 status）；
-//  * 轮询句柄必须挂到页面实例上并在 onHide/onUnload 清理，否则离开页面仍在跑、连点还会叠加。
+//  * 旧版「复制 codeUrl 到浏览器」已废弃：小程序打不开未配置业务域名的 H5，
+//    沙箱收银台直接做成本地页面（第三十九轮）；
+//  * 轮询句柄必须挂到页面实例上并在 onHide/onUnload 清理，否则离开页面仍在跑、连点还会叠加；
+//  * 调用方的 onSuccess/onTimeout 回调经 pendingHandlers 透传给收银台页 ——
+//    调用方代码（toast + 刷新）一行不用改。
 const api = require('./api');
 
 const POLL_INTERVAL = 3000;
 const POLL_MAX = 20; // 3s × 20 = 1 分钟，与 Web 端口径一致
 
-/** 发起支付（含幂等键）。调用方负责把返回的 codeUrl/payNo 展示与轮询 */
+/** 发起支付（含幂等键）。返回 PayResult（payNo / payStatus / codeUrl） */
 function payOrder(orderNo) {
   return api.order.pay(orderNo);
+}
+
+// 收银台页按 payNo 取走调用方注册的回调（取即删，防止重复触发）
+const pendingHandlers = {};
+
+function stashHandlers(payNo, opts) {
+  if (payNo && opts && (opts.onSuccess || opts.onTimeout)) {
+    pendingHandlers[payNo] = opts;
+  }
+}
+
+function takeHandlers(payNo) {
+  const h = pendingHandlers[payNo] || {};
+  delete pendingHandlers[payNo];
+  return h;
 }
 
 /**
@@ -64,9 +83,9 @@ function stopPolling(page) {
 }
 
 /**
- * 一站式：发起支付并展示沙箱收银台。
+ * 一站式：发起支付并跳转**页内沙箱收银台**。
  *
- * @returns {Promise<'SUCCESS'|'PENDING'>} SUCCESS=已立刻支付成功；PENDING=已拉起收银台、进入轮询
+ * @returns {Promise<'SUCCESS'|'PENDING'>} SUCCESS=发起即已支付成功；PENDING=已进入收银台页
  */
 function checkout(orderNo, page, handlers) {
   const opts = handlers || {};
@@ -75,23 +94,13 @@ function checkout(orderNo, page, handlers) {
       if (opts.onSuccess) opts.onSuccess();
       return 'SUCCESS';
     }
-    const cashierUrl = (result && result.codeUrl) || '';
-    wx.showModal({
-      title: '沙箱支付',
-      content: cashierUrl
-        ? '收银台链接（复制后在浏览器打开完成支付）：\n' + cashierUrl
-        : '未取得收银台链接，请稍后重试',
-      confirmText: cashierUrl ? '复制' : '知道了',
-      cancelText: '关闭',
-      success: (res) => {
-        if (res.confirm && cashierUrl) {
-          wx.setClipboardData({ data: cashierUrl });
-        }
-        if (result && result.payNo) {
-          startPolling(result.payNo, opts, page);
-        }
-      },
-    });
+    const payNo = result && result.payNo;
+    if (!payNo) {
+      wx.showToast({ title: '未取得支付单号，请稍后重试', icon: 'none' });
+      return 'PENDING';
+    }
+    stashHandlers(payNo, opts);
+    wx.navigateTo({ url: '/pages/pay/pay?payNo=' + payNo + '&orderNo=' + orderNo });
     return 'PENDING';
   });
 }
@@ -101,4 +110,5 @@ module.exports = {
   startPolling: startPolling,
   stopPolling: stopPolling,
   checkout: checkout,
+  takeHandlers: takeHandlers,
 };

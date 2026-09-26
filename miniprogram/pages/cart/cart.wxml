@@ -46,11 +46,23 @@
     <view class="ci-del" data-sku="{{item.skuId}}" bindtap="removeItem">删除</view>
   </view>
 
+  <!-- 优惠券：门槛/可用性由服务端判定，默认选它推荐的最优券 -->
+  <view class="card coupon-row {{hasUsableCoupon ? '' : 'coupon-none'}}" bindtap="chooseCoupon">
+    <text class="addr-icon">🎫</text>
+    <view class="addr-body">
+      <view>优惠券</view>
+      <view wx:if="{{discountText}}" class="coupon-discount">{{discountText}}</view>
+    </view>
+    <text class="t3">{{couponText}}</text>
+    <text class="addr-arrow">›</text>
+  </view>
+
   <view style="height: 140rpx"></view>
   <view class="footer">
     <view class="footer-total">
       合计 <text class="price">{{selectedAmountText}}</text>
-      <text class="t3">（已选 {{selectedCount}} 件）</text>
+      <text class="t3" wx:if="{{discountText}}">（券后以支付页为准）</text>
+      <text class="t3" wx:else>（已选 {{selectedCount}} 件）</text>
     </view>
     <button
       class="btn btn-accent footer-btn"

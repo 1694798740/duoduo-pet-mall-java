@@ -1,0 +1,25 @@
+<view wx:if="{{error && !payNo}}" class="error-box">{{error}}</view>
+<block wx:else>
+  <view class="card cashier">
+    <view class="brand">多多宠物商店 · 沙箱支付</view>
+    <view class="amount"><text class="rmb">￥</text>{{amountText}}</view>
+    <view class="meta">
+      <view>支付单号 {{payNo}}</view>
+      <view wx:if="{{orderNo}}">订单号 {{orderNo}}</view>
+      <view>状态：{{statusText}}</view>
+    </view>
+
+    <button
+      wx:if="{{status !== 'SUCCESS'}}"
+      class="btn btn-accent pay-btn"
+      bindtap="doConfirm"
+      loading="{{paying}}"
+      disabled="{{paying}}"
+    >确认支付</button>
+
+    <view wx:if="{{status === 'SUCCESS'}}" class="pay-ok">✓ 支付成功，正在返回…</view>
+    <view wx:if="{{error}}" class="t3 pay-err">{{error}}</view>
+
+    <view class="t3 note">沙箱环境模拟支付，不产生真实扣款；金额以后端核验为准</view>
+  </view>
+</block>

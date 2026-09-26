@@ -26,6 +26,11 @@ Page({
     ordering: false,
     selectedAmountText: '0',
     selectedCount: 0,
+    // 优惠券（第三十九轮）：服务端判定可用性（门槛/有效期/锁定都在它那），默认选服务端推荐的最优券
+    chosenCoupon: null,
+    couponText: '不使用',
+    discountText: '',
+    hasUsableCoupon: false,
   },
 
   onShow() {
@@ -55,6 +60,8 @@ Page({
         });
         // 地址独立刷新：失败不影响购物车主体
         this.fetchAddress();
+        // 可用券依赖勾选金额：金额变了可用性就变了（静默失败，不影响结算）
+        this.refreshCoupons((view && view.selectedAmount) || 0);
       })
       .catch((err) => {
         if (err && err.needLogin) {
@@ -94,6 +101,71 @@ Page({
           this.applyAddress(addr);
           wx.showToast({ title: '已切换收货地址', icon: 'none' });
         },
+      },
+    });
+  },
+
+  // ── 优惠券（第三十九轮）：服务端判定可用，默认选它推荐的最优券 ──────────────
+  refreshCoupons(selectedAmount) {
+    this._selectedAmountFen = selectedAmount || 0;
+    if (!selectedAmount) {
+      // 没勾选商品谈不上门槛：清掉选择，避免「选了券却不能用于这笔订单」
+      this.applyCoupon(null);
+      return Promise.resolve();
+    }
+    return api.coupon
+      .usable(selectedAmount)
+      .then((result) => {
+        const coupons = (result && result.coupons) || [];
+        const usable = coupons.filter((c) => c.usable);
+        this._usableCoupons = usable;
+        this.setData({ hasUsableCoupon: usable.length > 0 });
+        // 用户明确「不使用」优先 —— 不自动选回；否则默认选服务端推荐的最优券
+        // （「默认帮用户省钱」只该有服务端一个实现）；已选的券若因金额变化变得
+        // 不可用，自动退掉
+        if (this._couponDeclined) {
+          this.applyCoupon(null);
+        } else if (result && result.bestCouponCode) {
+          const best = usable.find((c) => c.code === result.bestCouponCode) || null;
+          this.applyCoupon(best);
+        } else if (this.data.chosenCoupon) {
+          const still = usable.find((c) => c.code === this.data.chosenCoupon.code);
+          if (!still) this.applyCoupon(null);
+        }
+      })
+      .catch(() => {});
+  },
+
+  applyCoupon(coupon) {
+    this.setData({
+      chosenCoupon: coupon,
+      couponText: coupon ? coupon.name + '（抵 ' + api.fen2yuan(coupon.discountAmount) + ' 元）' : '不使用',
+      discountText: coupon ? '券抵扣 -' + api.fen2yuan(coupon.discountAmount) : '',
+    });
+  },
+
+  chooseCoupon() {
+    const usable = this._usableCoupons || [];
+    if (usable.length === 0) {
+      wx.showToast({ title: '暂无可用优惠券', icon: 'none' });
+      return;
+    }
+    const labels = ['不使用优惠券'].concat(
+      usable.map((c) => c.name + '（抵 ' + api.fen2yuan(c.discountAmount) + ' 元）')
+    );
+    wx.showActionSheet({
+      itemList: labels,
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          this._couponDeclined = true;
+          this.applyCoupon(null);
+          return;
+        }
+        const picked = usable[res.tapIndex - 1];
+        if (picked) {
+          this._couponDeclined = false;
+          this.applyCoupon(picked);
+        }
       },
     });
   },
@@ -178,10 +250,13 @@ Page({
           });
           return null;
         }
-        return api.order.place(addr.id).then((result) => {
+        // 只传券码，折扣由服务端锁券时计算（与 Web 端同一口径）；下单成功券即被核销
+        return api.order.place(addr.id, this.data.chosenCoupon ? this.data.chosenCoupon.code : undefined).then((result) => {
           const count = (result && result.orderCount) || 1;
           wx.showToast({ title: count > 1 ? '已生成 ' + count + ' 个订单' : '下单成功', icon: 'success' });
-          // 已结算条目被服务端清出购物车，先刷新再跳订单页
+          // 已结算条目被服务端清出购物车，先刷新再跳订单页；券已核销，选择一并清掉
+          this._couponDeclined = false;
+          this.applyCoupon(null);
           this.fetchCart();
           setTimeout(() => wx.switchTab({ url: '/pages/orders/orders' }), 600);
           return null;

@@ -4,7 +4,12 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第三十八轮）** — **未登录态按钮统一「去登录」+ 登录返回自动重拉（小程序）**。
+**最近更新：2026-09-26（第三十九轮）** — **页内沙箱收银台 + 购物车选券（小程序）**。
+① 支付不再复制链接：新建页内收银台 `pages/pay/pay`（app.json 15 页），`pay.checkout()` 改为 `navigateTo` 进页，直接调公开端点 `POST /api/payments/sandbox/{payNo}`（与 Web 收银台同一条校验/入账路径），调用方回调经 `pendingHandlers` 暂存/取走透明交接、失败兜底轮询。三条路的取舍：`web-view` 强制 HTTPS + 业务域名预配置（localhost 永远配不了）；`wx.requestPayment` 需要真实微信渠道预下单参数（B-07 边界未接）；页内自绘是沙箱阶段唯一正解。
+② 结算券生效：根因是**小程序端下单从未传 couponCode**（Web 端传了、后端锁券抵扣本来就正确，纯前端缺陷）。购物车新增选券行，可用性判断走服务端 `GET /api/coupons/mine/usable?amount=`（含 bestCouponCode 推荐），金额以服务端锁券计算为准；语义：用户「不使用」优先级最高（`_couponDeclined` 不被自动推荐复活）、已选券失效自动退回、下单成功重置。
+**验证**：Node stub 7 场景全过（含拒绝选券优先级 bug 当场抓出并修复）+ 静态自检 0 错误。
+
+**第三十八轮（2026-09-26）** — **未登录态按钮统一「去登录」+ 登录返回自动重拉（小程序）**。
 全局排查错误盒 + 重试按钮：address / order-detail / orders / after-sales 四页未登录分支误显「重试」（orders 甚至落成空态误导），统一改为按 `needLogin` 标志显式区分 —— 未登录给**去登录**（`openLoginPage` 带去重），网络错误才给重试；address / order-detail 补 `onShow` 自动重拉（登录页 navigateBack 只触发 onShow，不清登录返回后停在错误页的断点）。coupons 此前已正确；index/product/category/seckill 的重试对应公开接口属合法场景。
 
 **第三十七轮（2026-09-26）** — **订单列表商品缩略 + 我的售后入口/列表页（小程序）**。

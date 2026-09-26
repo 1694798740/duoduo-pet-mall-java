@@ -1,0 +1,47 @@
+/* 页内沙箱收银台（第三十九轮） */
+.cashier {
+  margin: 40rpx 24rpx;
+  padding: 48rpx 32rpx;
+  text-align: center;
+}
+.brand {
+  color: #0abf6b;
+  font-weight: 700;
+  letter-spacing: 2rpx;
+  font-size: 30rpx;
+}
+.amount {
+  font-size: 88rpx;
+  font-weight: 700;
+  color: #23262f;
+  margin: 40rpx 0 16rpx;
+}
+.rmb {
+  font-size: 40rpx;
+  font-weight: 400;
+}
+.meta {
+  color: #888;
+  font-size: 26rpx;
+  line-height: 1.9;
+}
+.pay-btn {
+  margin-top: 48rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 44rpx;
+  font-size: 32rpx;
+}
+.pay-ok {
+  margin-top: 48rpx;
+  color: #0a8f52;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+.pay-err {
+  margin-top: 20rpx;
+  color: #e5484d;
+}
+.note {
+  margin-top: 32rpx;
+}
