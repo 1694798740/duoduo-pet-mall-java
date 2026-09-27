@@ -14,13 +14,14 @@
 // 现在点「转发」先开弹层，两条出路各司其职：
 //  * 「转发到分享圈」→ POST /api/shares/{id}/repost，真的落一条以**我**为作者的转发行，
 //    刷新后出现在信息流最前；
-//  * 「分享给好友」→ 走微信原生转发，落点用**转发单 ID**（若已转发），好友点开看到的是我的转发页。
+//  * 「分享给好友」→ 走微信原生转发，落点 = 弹层里那条（转发过后它就是我的转发单，
+//    好友点开看到的是我的转发页）。
 const api = require('../../utils/api');
 const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
 
-/** 列表项装饰：图片映射 + 金额 + 时间文本（拉列表与转发回填共用同一套） */
+/** 列表项装饰：图片映射 + 金额 + 时间文本 + 转发标记（isRepost 由 parentId 派生） */
 function decorate(it) {
   return Object.assign({}, it, {
     image: images.productImage(it.spuId, it.productImage),
