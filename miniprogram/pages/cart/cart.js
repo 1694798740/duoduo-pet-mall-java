@@ -258,7 +258,8 @@ Page({
           this._couponDeclined = false;
           this.applyCoupon(null);
           this.fetchCart();
-          setTimeout(() => wx.switchTab({ url: '/pages/orders/orders' }), 600);
+          // 第四十五轮：orders 回归普通页面，switchTab 对非 tab 页无效
+          setTimeout(() => wx.navigateTo({ url: '/pages/orders/orders' }), 600);
           return null;
         });
       })

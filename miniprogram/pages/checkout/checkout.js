@@ -235,13 +235,8 @@ Page({
               })
               .then(() => {
                 // 收银台用 navigateTo 叠在本页之上，返回时本页已无意义 → 换到订单列表
-                setTimeout(() => {
-                  wx.switchTab({
-                    url: '/pages/orders/orders',
-                    success: () => {},
-                    fail: () => wx.redirectTo({ url: '/pages/orders/orders' }),
-                  });
-                }, 800);
+                // （第四十五轮：orders 回归普通页面，navigateTo 即可）
+                setTimeout(() => wx.redirectTo({ url: '/pages/orders/orders' }), 800);
               });
           });
       })

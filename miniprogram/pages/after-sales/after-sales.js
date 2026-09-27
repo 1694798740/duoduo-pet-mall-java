@@ -68,7 +68,8 @@ Page({
 
   /** 想申请售后？入口在订单详情（按订单状态出现），列表页给个指路 */
   goOrders() {
-    wx.switchTab({ url: '/pages/orders/orders' });
+    // 第四十五轮：orders 回归普通页面，switchTab 对非 tab 页无效
+    wx.navigateTo({ url: '/pages/orders/orders' });
   },
 
   goLogin() {

@@ -9,7 +9,7 @@ const bannerConfig = require('../../config/banners');
 
 const PAGE_SIZE = 10;
 // tabBar 页面必须用 switchTab 跳转，其余用 navigateTo
-const TAB_PAGES = ['/pages/index/index', '/pages/category/category', '/pages/cart/cart', '/pages/orders/orders', '/pages/profile/profile'];
+const TAB_PAGES = ['/pages/index/index', '/pages/category/category', '/pages/share-circle/share-circle', '/pages/cart/cart', '/pages/profile/profile'];
 
 function decorate(list, keyword) {
   return (list || []).map((it) =>

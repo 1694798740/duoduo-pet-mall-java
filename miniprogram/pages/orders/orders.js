@@ -10,7 +10,6 @@
 const api = require('../../utils/api');
 const pay = require('../../utils/pay');
 const images = require('../../utils/images');
-const { getNavMetrics } = require('../../utils/nav.js');
 
 const FALLBACK_LABEL = {
   PENDING_PAYMENT: '待付款',
@@ -41,12 +40,6 @@ Page({
     payingOrderNo: '',
     page: 1,
     hasMore: false,
-    // 自绘导航栏总高：吸顶筛选条据此下移，避免被导航栏遮住
-    navTop: 0,
-  },
-
-  onLoad() {
-    this.setData({ navTop: getNavMetrics().navTotalHeight });
   },
 
   onShow() {

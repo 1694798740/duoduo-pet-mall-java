@@ -98,7 +98,8 @@ Page({
             confirmText: '查看订单',
             complete: () => {
               this.fetch();
-              wx.switchTab({ url: '/pages/orders/orders' });
+              // 第四十五轮：orders 回归普通页面，switchTab 对非 tab 页无效
+              wx.navigateTo({ url: '/pages/orders/orders' });
             },
           });
         });

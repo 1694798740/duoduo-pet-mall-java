@@ -38,8 +38,8 @@ Page({
     const tabPages = [
       '/pages/index/index',
       '/pages/category/category',
+      '/pages/share-circle/share-circle',
       '/pages/cart/cart',
-      '/pages/orders/orders',
       '/pages/profile/profile',
     ];
     if (tabPages.some((p) => url.indexOf(p) === 0)) {
