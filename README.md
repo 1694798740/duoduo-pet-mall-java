@@ -4,7 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-26（第四十四轮）** — **分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发**。
+**最近更新：2026-09-27（第四十五轮 · 热修）** — **模拟器启动失败修复：tabBar 超 5 项**。
+根因：微信 `tabBar.list` 硬上限 5 项，第四十四轮加分享圈成 6 项，`app.json` 校验不过（`["tabBar"]["list"] 不能超过 5 项`），工具拒绝启动模拟器。修复：tabBar 收敛为 **首页/分类/分享圈/购物车/我的**（订单 tab 移除，「我的 → 我的订单」入口替代）；orders 恢复原生导航栏（非 tab 页需返回键）；cart/after-sales/checkout/seckill 四处 `switchTab(orders)` 改 `navigateTo/redirectTo`；index/profile 的 tab 页清单同步。验证：app.json 合法且 tabBar=5、7 个 js 语法全过、switchTab 残留清零、静态自检 0 错误。
+
+**第四十四轮（2026-09-26）** — **分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发**。
 **Bug 根治**：未登录点分享"自动登录到不明账号"的根因是 `ensureLogin()` 未登录时走 `silentRelogin() → wx.login` 静默 code2Session（无感建号/登录到微信绑定账号），分享拦截被静默登录穿透。新增 `requireLogin()`（探测失败**直接去登录页**，不走静默链），分享/点赞/收藏等"以用户身份对外发声"的动作全部改用它；`ensureLogin` 静默链保留给加购/领券等本机动作。
 **分享圈升一级 tab**：tabBar 第 6 项（生成 `tab_share` 双态图标）；页面改自绘导航栏 + 自绘下拉刷新（R41 惯例）；「我的」页入口移除；跳转收口 `switchTab`。
 **互动能力**：`t_share_like`/`t_share_favorite`（复合主键防重）+ `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` toggle（需登录，两段路径不在白名单）；`ShareView` 增 likeCount/favoriteCount + 浏览者标记（匿名恒 false）；`likeCount/favoriteCount/count` 补进 Long 序列化数值白名单（计数被当标识转字符串会让前端比较/算术退化）。卡片互动条 ❤️/⭐/🔁：toggle 后回填状态与计数；转发按钮 `open-type=share` + `markForward` 记条目，卡片落点 `share-detail?id=`。

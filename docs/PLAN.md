@@ -1,6 +1,6 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> 更新时间：2026-09-26（第四十四轮 · 分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发）——**Bug 根治**：未登录点分享"自动登录到不明账号"的根因是 `ensureLogin()` 未登录时走 `silentRelogin() → wx.login` 静默 code2Session（无感建号/登录到微信绑定账号），分享拦截被静默登录穿透。修复：新增 `requireLogin()`（探测失败**直接去登录页**，不走静默链），分享/点赞/收藏等"以用户身份对外发声"的动作全部改用它。**分享圈升级**：升为 tabBar 第 6 个一级页面（分享/分类之间，自绘导航栏 + 自绘下拉刷新，R41 惯例；生成 share 双态图标）；信息流卡片新增**互动条**——❤️点赞 / ⭐收藏（toggle：`t_share_like`/`t_share_favorite` 复合主键防重 + `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` 需登录，`ShareView` 增 likeCount/favoriteCount + 浏览者标记 liked/favorited，匿名恒 false）与 🔁转发（open-type=share + `markForward` 记条目，卡片落点 `share-detail?id=`，页面级转发落分享圈 tab）；「我的」页入口移除；跳转全部收口 `switchTab`。验证：后端探针 `share-circle-smoke.py` **20/20**（未登录点赞 401/toggle 来回/登录标记/匿名标记/计数数值化）；小程序 stub **12/12**（B1-B3 登录拦截零 wx.login / C1-C7 互动与转发落点）；静态自检 0 错误；fulfilment 容器重建健康，增量 SQL `13-share-engagement.sql` 已执行。以下为第四十三轮内容：——分享两 Bug 修复 + 分享圈新功能。
+> 更新时间：2026-09-27（第四十五轮 · 模拟器启动失败热修）——**根因**：微信 tabBar 上限 5 项，第四十四轮加分享圈成 6 项，`app.json` 静态校验不过（`["tabBar"]["list"] 不能超过 5 项`），工具拒绝启动模拟器。**修复**：tabBar 收敛为 首页/分类/分享圈/购物车/我的（订单 tab 移除，「我的 → 我的订单」入口替代）；orders 恢复原生导航栏（非 tab 页需返回键，R41 自绘栏改造还原）；cart/after-sales/checkout/seckill 四处 `switchTab(orders)` 改 `navigateTo|redirectTo`；index/profile 的 tab 页清单同步。验证：app.json 合法且 tabBar=5、7 个改动 js 语法全过、switchTab 残留清零、静态自检 0 错误。以下为第四十四轮内容：——分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发。
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -223,6 +223,15 @@
 
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
+
+### 2026-09-27（第四十五轮 · 模拟器启动失败热修：tabBar 超 5 项）
+
+> 用户报模拟器启动失败，截图报错：`app.json: ["tabBar"]["list"] 不能超过 5 项`。
+
+- **根因**：微信 tabBar **硬上限 5 项**——第四十四轮把分享圈加进 tabBar 后成 6 项，`app.json` 静态校验不过，开发者工具直接拒绝启动模拟器（与环境配置/依赖/端口/资源无关）。
+- **修复**：① tabBar 收敛为 **首页/分类/分享圈/购物车/我的**（订单 tab 移除，「我的 → 我的订单」入口本就存在）；② orders 回归普通页面并**恢复原生导航栏**（非 tab 页推进式打开需要返回键；R41 的自绘栏改造随之还原：json 去 `navigationStyle: custom`、wxml 去 nav-bar 与 `navTop` 吸顶偏移、js 去 `getNavMetrics`）；③ **switchTab 收口**——`switchTab` 对非 tab 页静默失败，cart 结算后 / after-sales 指路 / checkout 支付后 / seckill 下单后四处改 `navigateTo|redirectTo`；④ index `TAB_PAGES` 与 profile `tabPages` 清单同步（orders 出、share-circle 入）。
+- **验证**：app.json 合法且 `tabBar.length === 5`、tab 页全部注册；7 个改动 js `node --check` 全过；`switchTab.*orders` 残留清零；静态自检 0 错误 0 告警。提交 `e064e79` 已推送并验证远端。
+- **教训**：往 tabBar 加第 6 个页面前必须先减一个；tab 成员变更必须全局排查 `switchTab` 与各页自维护的 tab 清单。
 
 ### 2026-09-26（第四十四轮 · 分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发）
 
