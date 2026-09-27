@@ -360,6 +360,16 @@ const share = {
   favorite(id) {
     return req.post('/api/shares/' + id + '/favorite');
   },
+  /**
+   * 转发分享到分享圈（第四十六轮，需登录）→ 转发单视图。
+   *
+   * <p>转发是**写操作**：服务端真的插一条新分享行（userId = 我，parentId = 原帖）。
+   * 返回体里 `id` 是转发单 ID —— 后续「分享给好友」的落点必须用它，
+   * 否则好友点开看到的是原发帖人的页面。content 为转发附言，可空。
+   */
+  repost(id, content) {
+    return req.post('/api/shares/' + id + '/repost', { content: content || '' });
+  },
 };
 
 // ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────

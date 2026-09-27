@@ -149,32 +149,40 @@ CREATE TABLE t_logistics_track (
 -- 查询固定是「按订单号取全部节点并按时间正序」，这个联合索引直接覆盖排序
 CREATE INDEX idx_track_order_time ON t_logistics_track (order_no, occurred_at);
 
--- ---------- 商品分享（分享圈，第四十三轮） ----------
+-- ---------- 商品分享（分享圈，第四十三轮；第四十六轮加转发层） ----------
 -- 一条记录 = 「某用户带着自己写的评价分享了一个商品」。
 -- 商品字段是发布时点的快照：商品后续改名换图，历史分享仍按分享那一刻的样子展示。
+-- 转发 = 又一次分享：转发行有 parent_share_id 指向它转的原帖，user 是转发人。
 CREATE TABLE t_product_share (
     id             BIGINT       NOT NULL,
     user_id        BIGINT       NOT NULL,
+    -- 第四十六轮：被转发的原分享单 ID；NULL = 原创
+    parent_share_id BIGINT      NULL,
     -- 分享对象：SPU 维度（分享是口碑行为，不细分到规格）
     spu_id         BIGINT       NOT NULL,
     -- 商品快照：发布时点的标题 / 主图 / 最低价（分）
     product_title  VARCHAR(200) NOT NULL,
     product_image  VARCHAR(500),
     min_price      BIGINT       NOT NULL DEFAULT 0,
-    -- 用户自撰评价内容（发布入口强制非空，服务层校验，上限 500 字）
+    -- 用户自撰评价内容（原创发布入口强制非空；转发时是转附言，可为空串）
     content        VARCHAR(500) NOT NULL,
     -- 第四十四轮：互动计数（冗余列，事实源是 t_share_like / t_share_favorite）
     like_count     INT          NOT NULL DEFAULT 0,
     favorite_count INT          NOT NULL DEFAULT 0,
     created_at     TIMESTAMP    NOT NULL,
     updated_at     TIMESTAMP    NOT NULL,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    -- 第四十六轮：一人对同一条原帖只能转发一次。
+    -- MySQL 唯一索引把 NULL 视为互不相等 —— 原创行不受约束，只有重复转发才撞键。
+    CONSTRAINT uk_share_user_parent UNIQUE (user_id, parent_share_id)
 );
 -- 信息流按发布时间倒序分页：联合索引直接覆盖排序
 CREATE INDEX idx_share_time ON t_product_share (created_at);
 CREATE INDEX idx_share_user ON t_product_share (user_id, created_at);
 -- 商品维度的查询（如「这个商品被分享了多少次」）：低频运维口径，单列够用
 CREATE INDEX idx_share_spu ON t_product_share (spu_id);
+-- 原帖的转发列表 / 转发链路回溯（第四十六轮）
+CREATE INDEX idx_share_parent ON t_product_share (parent_share_id);
 
 -- ---------- 分享圈互动（点赞 / 收藏，第四十四轮） ----------
 -- 一人一分享一票：复合主键即唯一约束，并发重复插入撞键幂等。

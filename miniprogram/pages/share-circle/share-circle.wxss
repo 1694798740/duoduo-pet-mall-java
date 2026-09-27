@@ -64,15 +64,62 @@
   padding: 4rpx 0;
 }
 .sc-act-on { color: var(--brand); font-weight: 600; }
-/* open-type=share 按钮要抹掉原生按钮的边框/底色，融进互动条 */
-.sc-forward {
-  margin: 0;
-  padding: 4rpx 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  line-height: 1.4;
+
+/* ── 转发引用块（第四十六轮）：署名原作者 + 引出原评价 ── */
+.sc-quote {
+  margin-top: 20rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 14rpx;
+  background: var(--bg);
+  border-left: 6rpx solid var(--line);
 }
-.sc-forward::after { border: none; }
+.sc-quote-hd { font-size: 24rpx; color: var(--brand); margin-bottom: 8rpx; }
+.sc-quote-body {
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: var(--text-2);
+  word-break: break-all;
+}
 
 .sc-end { text-align: center; padding: 24rpx 0 40rpx; }
+
+/* ── 转发弹层（第四十六轮） ── */
+.sc-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 20, 28, 0.45);
+  z-index: 300;
+}
+.sc-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+.sc-panel-title { font-size: 32rpx; font-weight: 700; text-align: center; }
+.sc-panel-sub { font-size: 24rpx; text-align: center; margin-top: 8rpx; }
+.sc-panel-input {
+  width: 100%;
+  height: 160rpx;
+  margin-top: 24rpx;
+  padding: 18rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+  background: var(--bg);
+}
+.sc-panel-ph { color: var(--text-3); }
+.sc-panel-actions { display: flex; gap: 20rpx; margin-top: 24rpx; }
+.sc-panel-btn { flex: 1; height: 80rpx; line-height: 80rpx; }
+.sc-panel-cancel {
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--line);
+}

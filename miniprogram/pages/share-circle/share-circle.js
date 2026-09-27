@@ -8,10 +8,27 @@
 //  * 必须自绘导航栏（R41 教训：tab 切换原生导航栏标题行被重建，白条闪现）；
 //  * 下拉刷新用自绘指示器（原生三点会被自绘导航栏遮挡，index 页同款）；
 //  * 跳进本页只能 wx.switchTab，navigateTo 对 tab 页无效。
+//
+// 转发（第四十六轮修复）：旧版点「转发」只调起微信原生面板，**从不写后端** ——
+// 于是①列表里看不到转发动态、②卡片落点带的是原帖 ID（详情页显示原发帖人）。
+// 现在点「转发」先开弹层，两条出路各司其职：
+//  * 「转发到分享圈」→ POST /api/shares/{id}/repost，真的落一条以**我**为作者的转发行，
+//    刷新后出现在信息流最前；
+//  * 「分享给好友」→ 走微信原生转发，落点用**转发单 ID**（若已转发），好友点开看到的是我的转发页。
 const api = require('../../utils/api');
 const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
+
+/** 列表项装饰：图片映射 + 金额 + 时间文本（拉列表与转发回填共用同一套） */
+function decorate(it) {
+  return Object.assign({}, it, {
+    image: images.productImage(it.spuId, it.productImage),
+    priceText: api.fen2yuan(it.minPrice),
+    timeText: api.shortTime(it.createdAt),
+    isRepost: !!it.parentId,
+  });
+}
 
 Page({
   data: {
@@ -22,6 +39,11 @@ Page({
     refreshing: false,
     noMore: false,
     error: '',
+    // 转发弹层（第四十六轮）
+    sharePanel: false,
+    repostTarget: null,
+    repostContent: '',
+    reposting: false,
   },
 
   onLoad() {
@@ -48,13 +70,7 @@ Page({
     api.share
       .feed(page, PAGE_SIZE)
       .then((data) => {
-        const rows = ((data && data.items) || []).map((it) =>
-          Object.assign({}, it, {
-            image: images.productImage(it.spuId, it.productImage),
-            priceText: api.fen2yuan(it.minPrice),
-            timeText: api.shortTime(it.createdAt),
-          })
-        );
+        const rows = ((data && data.items) || []).map(decorate);
         this.setData({
           items: reset ? rows : this.data.items.concat(rows),
           total: (data && data.total) || 0,
@@ -124,19 +140,67 @@ Page({
   },
 
   /**
-   * 转发按钮（open-type=share）的伴随点击：先记下要转的是哪条分享，
-   * 随后触发的 onShareAppMessage 按 pendingItem 组卡 —— 卡片落点带评价语境。
+   * 点「转发」→ 开转发弹层（第四十六轮）。
+   *
+   * <p>不再直接把按钮做成 open-type=share：转发有两条出路（进分享圈 / 发给好友），
+   * 默认只弹微信面板会丢掉「进分享圈」这条 —— 那正是旧版 bug①的来源。
    */
-  markForward(e) {
-    const index = this.data.items.findIndex(
-      (it) => String(it.id) === String(e.currentTarget.dataset.id)
-    );
-    this._pendingItem = index >= 0 ? this.data.items[index] : null;
+  openForward(e) {
+    const id = e.currentTarget.dataset.id;
+    const target = this.data.items.find((it) => String(it.id) === String(id)) || null;
+    if (!target) return;
+    this._pendingItem = null; // 开新弹层 = 新一次转发，不让上一条的落点残留
+    this.setData({ sharePanel: true, repostTarget: target, repostContent: '' });
   },
 
-  /** 转发卡片：有条目转该条（落点 share-detail?id=），没有则转分享圈本身 */
+  closeForward() {
+    this.setData({ sharePanel: false, repostTarget: null, repostContent: '' });
+  },
+
+  onRepostInput(e) {
+    this.setData({ repostContent: e.detail.value });
+  },
+
+  /**
+   * 「转发到分享圈」：写接口落一条以我为作者的转发行。
+   *
+   * <p>登录用 requireLogin（不是 ensureLogin）：转发是「以我的身份对外发声」，
+   * 未登录必须主动登录 —— 静默 wx.login 会无感登进微信绑定账号（第四十四轮同源）。
+   *
+   * <p>成功后刷新列表：我的转发行由服务端以「最新发布时间」返回，出现在信息流最前
+   * —— 修复 bug①「转发后刷新列表里看不到」。
+   */
+  repostToCircle() {
+    const target = this.data.repostTarget;
+    if (!target || this.data.reposting) return;
+    this.setData({ reposting: true });
+    getApp()
+      .requireLogin()
+      .then(() => api.share.repost(target.id, this.data.repostContent))
+      .then(() => {
+        this.setData({ reposting: false, sharePanel: false, repostTarget: null, repostContent: '' });
+        wx.showToast({ title: '已转发到分享圈', icon: 'success' });
+        this.fetch(true);
+      })
+      .catch((err) => {
+        this.setData({ reposting: false });
+        if (err && err.needLogin) return; // 已引导登录页
+        wx.showToast({ title: (err && err.message) || '转发失败', icon: 'none' });
+      });
+  },
+
+  /**
+   * 「分享给好友」前的落点准备：open-type=share 的点击**紧随其后**触发
+   * onShareAppMessage，这里先把「要转的是哪条」定下来（弹层里的那条）。
+   */
+  prepFriendShare() {
+    this._pendingItem = this.data.repostTarget || null;
+  },
+
+  /** 转发卡片：弹层里选定过一次就转那条（落点 share-detail?id=），否则转分享圈本身 */
   onShareAppMessage() {
     const item = this._pendingItem;
+    this._pendingItem = null; // 落点一次性消费，避免之后从右上角菜单转发时残留旧条目
     if (item) {
       const title = item.content
         ? item.nickname + '：' + item.content

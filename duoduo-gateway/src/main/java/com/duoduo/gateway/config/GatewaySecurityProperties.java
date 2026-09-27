@@ -73,6 +73,8 @@ public class GatewaySecurityProperties {
             // 白名单按路径、不区分方法，而 feed 刻意用两段路径与发布路径（单段）分开 ——
             // 绝不能写成 /api/shares 或 /api/shares/**，那会把发布接口一起放行，
             // 匿名 UGC 直写入库；同时也不允许日后在单段路径上挂需登录的读接口。
+            // AntPathMatcher 的 * 不跨 /，所以第四十四轮的 /{id}/like、/{id}/favorite
+            // 与第四十六轮的 /{id}/repost 三类两段写路径都落不到这里，一律强制登录。
             "/api/shares/feed",
             "/api/shares/*",
             // AI 导购（A9）：购物咨询本身就是「还没决定买不买」的场景，

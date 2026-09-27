@@ -9,6 +9,7 @@ import com.duoduo.fulfilment.client.ProductClient;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.client.dto.ProductCardBrief;
 import com.duoduo.fulfilment.client.dto.UserBrief;
+import com.duoduo.fulfilment.dto.ShareDtos;
 import com.duoduo.fulfilment.dto.ShareDtos.EngagementState;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareCreateRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareView;
@@ -25,8 +26,10 @@ import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 分享圈服务（第四十三轮）。
@@ -105,8 +108,66 @@ public class ShareService {
         shareMapper.insert(entity);
 
         log.info("用户 {} 发布了商品 {} 的分享（{}）", userId, request.spuId(), entity.getId());
-        Map<Long, UserBrief> briefs = loadBriefs(List.of(userId));
-        return toView(entity, briefs, Map.of(), Map.of());
+        ShareContext ctx = loadContext(List.of(entity));
+        return toView(entity, ctx, Map.of(), Map.of());
+    }
+
+    // ---------------- 写：转发（第四十六轮，需登录） ----------------
+
+    /**
+     * 转发一条分享到分享圈。
+     *
+     * <p>转发 = <b>又一次分享</b>，不是「引用展示」：这里真的插入一条新记录 ——
+     * {@code userId = 转发人}、{@code parentShareId = 原帖}。于是：
+     * <ol>
+     *   <li>信息流按发布时间倒序，转发行出现在最前 —— 修复「转发后列表里看不到」；</li>
+     *   <li>详情页按 {@code userId} 渲染，转发人打开自己的转发行看到的就是「我」
+     *       —— 修复「详情页仍显示原发帖人自己的分享页」；</li>
+     *   <li>商品快照<b>直接沿用原帖</b>，不重新查商品域 —— 转发引用的是原帖内容，
+     *       重新拉商品会让同一条内容在原创与转发两处快照不一致；也顺带省掉一次
+     *       跨域调用，商品域抖动不影响转发。</li>
+     * </ol>
+     *
+     * <p>三条拒绝规则：原帖必须存在（404）；不能转发自己（业务规则）；
+     * 同一原帖只能转一次（409；并发窗口由唯一键 {@code uk_share_user_parent} 兜住）。
+     */
+    public ShareView repost(Long userId, Long shareId, String content) {
+        if (userId == null) {
+            throw BizException.unauthorized("请先登录后再转发");
+        }
+        ShareEntity origin = shareMapper.selectById(shareId);
+        if (origin == null) {
+            throw BizException.notFound("分享");
+        }
+        if (userId.equals(origin.getUserId())) {
+            throw BizException.businessRule("这是你自己的分享，不用转发");
+        }
+        Long duplicated = shareMapper.selectCount(new LambdaQueryWrapper<ShareEntity>()
+                .eq(ShareEntity::getUserId, userId)
+                .eq(ShareEntity::getParentShareId, shareId));
+        if (duplicated != null && duplicated > 0) {
+            throw BizException.conflict("你已经转发过这条分享了");
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        ShareEntity entity = new ShareEntity();
+        entity.setId(idGenerator.nextId());
+        entity.setUserId(userId);
+        entity.setParentShareId(shareId);
+        // 商品快照沿用原帖：转发引用的是原帖内容，不是「转发那一刻的商品」
+        entity.setSpuId(origin.getSpuId());
+        entity.setProductTitle(origin.getProductTitle());
+        entity.setProductImage(origin.getProductImage());
+        entity.setMinPrice(origin.getMinPrice() == null ? 0L : origin.getMinPrice());
+        entity.setContent(normalizeNote(content));
+        entity.setLikeCount(0);
+        entity.setFavoriteCount(0);
+        entity.setCreatedAt(now);
+        entity.setUpdatedAt(now);
+        shareMapper.insert(entity);
+
+        log.info("用户 {} 转发了分享 {}（转发单 {}）", userId, shareId, entity.getId());
+        return toView(entity, loadContext(List.of(entity)), Map.of(), Map.of());
     }
 
     // ---------------- 互动：点赞 / 收藏 toggle（需登录，第四十四轮） ----------------
@@ -167,11 +228,10 @@ public class ShareService {
                 new LambdaQueryWrapper<ShareEntity>()
                         .orderByDesc(ShareEntity::getCreatedAt)
                         .orderByDesc(ShareEntity::getId));
-        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
-                .map(ShareEntity::getUserId).distinct().toList());
+        ShareContext ctx = loadContext(result.getRecords());
         var engagement = loadEngagement(viewerId, result.getRecords());
         List<ShareView> views = result.getRecords().stream()
-                .map(e -> toView(e, briefs, engagement.liked(), engagement.favorited()))
+                .map(e -> toView(e, ctx, engagement.liked(), engagement.favorited()))
                 .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
     }
@@ -182,9 +242,9 @@ public class ShareService {
         if (entity == null) {
             throw BizException.notFound("分享");
         }
-        Map<Long, UserBrief> briefs = loadBriefs(List.of(entity.getUserId()));
+        ShareContext ctx = loadContext(List.of(entity));
         var engagement = loadEngagement(viewerId, List.of(entity));
-        return toView(entity, briefs, engagement.liked(), engagement.favorited());
+        return toView(entity, ctx, engagement.liked(), engagement.favorited());
     }
 
     // ---------------- 内部：校验与装配 ----------------
@@ -221,6 +281,23 @@ public class ShareService {
         return trimmed;
     }
 
+    /**
+     * 转发附言：<b>可空</b>（纯转发，不写话也算转发）。
+     *
+     * <p>空串落库而不是 NULL —— 列 {@code content} 是 NOT NULL，且展示层用
+     * 「空串 = 没写附言」判断是否渲染附言块，语义直接。
+     */
+    private String normalizeNote(String content) {
+        if (content == null) {
+            return "";
+        }
+        String trimmed = content.trim();
+        if (trimmed.length() > maxContentLength) {
+            throw BizException.validation("转发附言不能超过 " + maxContentLength + " 字");
+        }
+        return trimmed;
+    }
+
     /** toggle 前置：分享必须存在（点赞一个不存在的分享没有意义） */
     private void requireShare(Long shareId) {
         if (shareMapper.selectById(shareId) == null) {
@@ -251,12 +328,41 @@ public class ShareService {
     }
 
     /**
+     * 装配上下文：本条作者 + 原帖作者<b>一次</b>批量取昵称（避免逐条回源 = N+1）。
+     *
+     * <p>原帖只在**转发**时需要：先批量查出原帖行（拿到原帖作者 id 与评价内容），
+     * 再把两类作者 id 合并成一次 {@code loadBriefs} 调用。信息流一页 10 条转发
+     * 也只是 1 次原帖查询 + 1 次昵称查询。
+     */
+    private ShareContext loadContext(List<ShareEntity> records) {
+        List<Long> parentIds = records.stream()
+                .map(ShareEntity::getParentShareId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, ShareEntity> parents = parentIds.isEmpty() ? Map.of()
+                : shareMapper.selectBatchIds(parentIds).stream()
+                        .collect(Collectors.toMap(ShareEntity::getId, Function.identity(), (a, b) -> a));
+        List<Long> userIds = Stream
+                .concat(records.stream().map(ShareEntity::getUserId),
+                        parents.values().stream().map(ShareEntity::getUserId))
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        return new ShareContext(loadBriefs(userIds), parents);
+    }
+
+    /** 装配上下文：作者昵称表 + 原帖行表（转发才有原帖） */
+    private record ShareContext(Map<Long, UserBrief> briefs, Map<Long, ShareEntity> parents) {
+    }
+
+    /**
      * 批量取昵称头像（与 {@code ReviewService} 同一降级策略）：
      * 用户服务不可用时降级为「用户 {id}」，不让整个分享圈打不开。
      */
     private Map<Long, UserBrief> loadBriefs(Collection<Long> userIds) {
         List<Long> ids = userIds == null ? List.of()
-                : userIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+                : userIds.stream().filter(Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -273,26 +379,41 @@ public class ShareService {
         }
     }
 
-    private ShareView toView(ShareEntity entity, Map<Long, UserBrief> briefs,
+    private ShareView toView(ShareEntity entity, ShareContext ctx,
                              Map<Long, Boolean> liked, Map<Long, Boolean> favorited) {
-        UserBrief brief = briefs.get(entity.getUserId());
-        String nickname = brief != null && brief.nickname() != null
-                ? brief.nickname()
-                : "用户" + entity.getUserId();
+        UserBrief brief = ctx.briefs().get(entity.getUserId());
+        Long parentId = entity.getParentShareId();
+        ShareEntity parent = parentId == null ? null : ctx.parents().get(parentId);
         return new ShareView(
                 entity.getId(),
+                // 作者恒为本条分享的作者：转发时是转发人本人（第四十六轮修复点之一）
+                entity.getUserId(),
                 entity.getSpuId(),
                 entity.getProductTitle(),
                 entity.getProductImage(),
                 entity.getMinPrice(),
                 entity.getContent(),
-                nickname,
+                nicknameOf(ctx.briefs(), entity.getUserId()),
                 brief == null ? null : brief.avatar(),
                 iso(entity.getCreatedAt()),
                 nz(entity.getLikeCount()),
                 nz(entity.getFavoriteCount()),
                 liked.containsKey(entity.getId()),
-                favorited.containsKey(entity.getId()));
+                favorited.containsKey(entity.getId()),
+                parentId == null ? ShareDtos.TYPE_ORIGINAL : ShareDtos.TYPE_REPOST,
+                parentId,
+                // 原帖已不存在（当前无删除入口，防御性兜底）时给个中性署名，不留空
+                parentId == null ? null
+                        : (parent == null ? "原分享" : nicknameOf(ctx.briefs(), parent.getUserId())),
+                parent == null ? null : parent.getContent());
+    }
+
+    private String nicknameOf(Map<Long, UserBrief> briefs, Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        UserBrief brief = briefs.get(userId);
+        return brief != null && brief.nickname() != null ? brief.nickname() : "用户" + userId;
     }
 
     private long nz(Integer value) {

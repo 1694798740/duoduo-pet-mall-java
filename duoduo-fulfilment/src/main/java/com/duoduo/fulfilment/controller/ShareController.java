@@ -4,6 +4,7 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.fulfilment.dto.ShareDtos.EngagementState;
+import com.duoduo.fulfilment.dto.ShareDtos.RepostRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareCreateRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ShareView;
 import com.duoduo.fulfilment.service.ShareService;
@@ -67,6 +68,21 @@ public class ShareController {
     @PostMapping
     public ApiResponse<ShareView> create(@Valid @RequestBody ShareCreateRequest request) {
         return ApiResponse.ok(shareService.create(UserContext.requireUserId(), request));
+    }
+
+    /**
+     * 转发一条分享到分享圈（第四十六轮）。
+     *
+     * <p>与发布同属写操作，路径 {@code /{id}/repost} 是两段 —— 网关白名单里的
+     * {@code /api/shares/*} 只匹配单段，转发**不会**被连带放行，仍强制登录。
+     *
+     * <p>响应体是<b>转发单</b>的视图：前端拿到 {@code id} 后据此刷新信息流、
+     * 并把它作为「分享给好友」的落点（落点必须是转发单，详情页才显示转发人）。
+     */
+    @PostMapping("/{id}/repost")
+    public ApiResponse<ShareView> repost(@PathVariable Long id,
+                                         @Valid @RequestBody RepostRequest request) {
+        return ApiResponse.ok(shareService.repost(UserContext.requireUserId(), id, request.content()));
     }
 
     /** 点赞 / 取消点赞（toggle，第四十四轮） */

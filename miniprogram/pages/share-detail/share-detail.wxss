@@ -53,3 +53,63 @@
   padding: 0 24rpx;
 }
 .sd-act-btn { flex: 1; height: 84rpx; }
+.sd-link {
+  text-align: center;
+  color: var(--brand);
+  font-size: 26rpx;
+  margin-top: 28rpx;
+}
+
+/* ── 转发引用块（第四十六轮） ── */
+.sd-ref {
+  background: var(--bg);
+  border-left: 6rpx solid var(--line);
+}
+.sd-ref-hd { font-size: 26rpx; color: var(--brand); margin-bottom: 10rpx; }
+.sd-ref-body {
+  font-size: 28rpx;
+  line-height: 1.7;
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+/* ── 转发弹层（第四十六轮） ── */
+.sd-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 20, 28, 0.45);
+  z-index: 300;
+}
+.sd-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+.sd-panel-title { font-size: 32rpx; font-weight: 700; text-align: center; }
+.sd-panel-sub { font-size: 24rpx; text-align: center; margin-top: 8rpx; }
+.sd-panel-input {
+  width: 100%;
+  height: 160rpx;
+  margin-top: 24rpx;
+  padding: 18rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+  background: var(--bg);
+}
+.sd-panel-ph { color: var(--text-3); }
+.sd-panel-actions { display: flex; gap: 20rpx; margin-top: 24rpx; }
+.sd-panel-btn { flex: 1; height: 80rpx; line-height: 80rpx; }
+.sd-panel-cancel {
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--line);
+}

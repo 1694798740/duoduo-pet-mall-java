@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-第四十三轮 · 分享圈后端探针
+第四十三/四十四/四十六轮 · 分享圈后端探针
 覆盖：
   ① 未登录 POST /api/shares        → 401（发布必须登录，网关拦截）
   ② 登录后发布分享                  → 200，返回服务端快照（标题/主图/价格）+ 昵称
@@ -10,7 +10,12 @@
   ⑤ 发布时商品不存在                → 404（不允许给幽灵商品发分享）
   ⑥ 发布空内容                     → 400
   ⑦ GET /api/shares/{bogus}（公开）→ 404
-前置：8 容器在跑（网关 :8080），增量 SQL 12-share-circle.sql 已执行。
+  ⑧⑨⑩ 点赞 / 收藏 toggle（第四十四轮）
+  ⑪⑫⑬⑭ 转发（第四十六轮）：
+     未登录转发 401 / 转发落库为「以转发人为作者」的新分享 /
+     信息流出现转发动态（bug①）/ 转发单详情身份 = 转发人（bug②）/
+     重复转发 409 / 自转 422 / 幽灵原帖 404 / 空附言纯转发 200
+前置：8 容器在跑（网关 :8080），增量 SQL 12/13/14 已执行。
 用法：python scripts/share-circle-smoke.py
 """
 import json
@@ -139,6 +144,99 @@ check("⑩b 再收藏取消 → active=false, count=0", st == 200 and d.get("act
 st, res = call("POST", "/api/shares/1234567890123456789/like", {}, token)
 check("⑩c 给不存在的分享点赞 → 404", st == 404, f"{st} {res}")
 
+# ── ⑪⑫⑬⑭ 转发（第四十六轮） ────────────────────────────────────────────────
+# 需要**两个**用户：原作者 A 与转发人 B。身份分离是验证「详情页显示转发人」的前提。
+share2_id = repost_id = repost2_id = None
+
+phone_b = f"137{random.randint(10**7, 10**8 - 1)}"
+st, res = call("POST", "/api/auth/register", {"phone": phone_b, "password": PWD, "nickname": "转发测试"})
+check("夹具2：转发人 B 注册成功", st == 200, f"{st} {res}")
+st, res = call("POST", "/api/auth/login/token", {"phone": phone_b, "password": PWD})
+token_b = (res.get("data") or {}).get("accessToken") if isinstance(res, dict) else None
+user_b_id = ((res.get("data") or {}).get("user") or {}).get("id") if isinstance(res, dict) else None
+check("夹具2：转发人 B 取到令牌与 userId", st == 200 and token_b and user_b_id, f"{st} user={user_b_id}")
+
+# ⑪ 未登录转发 → 401。白名单 /api/shares/* 只匹配单段，不会连带放行 /{id}/repost
+st, res = call("POST", f"/api/shares/{share_id}/repost", {"content": "匿名转发"})
+check("⑪ 未登录转发 → 401", st == 401, f"{st} {res}")
+
+# ⑫ 登录转发 → 200，落一条以 B 为作者的新分享
+st, res = call("POST", f"/api/shares/{share_id}/repost", {"content": "这个我也想囤两箱"}, token_b)
+rv = (res.get("data") or {}) if isinstance(res, dict) else {}
+repost_id = rv.get("id")
+check("⑫ 转发 → 200 且返回转发单 ID（真的写库了）", st == 200 and repost_id, f"{st} {res}")
+check("⑫b shareType=REPOST 且 parentId 指向原帖",
+      rv.get("shareType") == "REPOST" and str(rv.get("parentId")) == str(share_id),
+      {k: rv.get(k) for k in ("shareType", "parentId")})
+check("⑫c 作者是转发人 B（userId + 昵称）",
+      str(rv.get("userId")) == str(user_b_id) and rv.get("nickname") == "转发测试",
+      {k: rv.get(k) for k in ("userId", "nickname")})
+check("⑫d 商品快照沿用原帖（spuId / 标题 / 价格一致）",
+      str(rv.get("spuId")) == str(spu_id)
+      and rv.get("productTitle") == view.get("productTitle")
+      and rv.get("minPrice") == view.get("minPrice"),
+      {k: rv.get(k) for k in ("spuId", "productTitle", "minPrice")})
+check("⑫e 带回原帖引用（parentNickname / parentContent）",
+      rv.get("parentNickname") == "分享圈测试" and rv.get("parentContent") == "毛孩子的口粮，回购第三次了",
+      {k: rv.get(k) for k in ("parentNickname", "parentContent")})
+
+# ⑬ 信息流出现转发动态（bug① 的回归断言）
+st, res = call("GET", "/api/shares/feed?page=1&pageSize=10")
+feed = ((res.get("data") or {}).get("items")) if isinstance(res, dict) else None
+feed = feed or []
+idx_repost = next((i for i, it in enumerate(feed) if str(it.get("id")) == str(repost_id)), -1)
+idx_origin = next((i for i, it in enumerate(feed) if str(it.get("id")) == str(share_id)), -1)
+check("⑬ 信息流出现刚转发的动态（bug①）", st == 200 and idx_repost >= 0, f"{st} items={len(feed)}")
+check("⑬b 转发行排在原帖之前（按发布时间倒序）",
+      idx_repost >= 0 and (idx_origin < 0 or idx_repost < idx_origin),
+      f"repost@{idx_repost} origin@{idx_origin}")
+check("⑬c 信息流条目带转发标记",
+      idx_repost >= 0 and feed[idx_repost].get("shareType") == "REPOST"
+      and str(feed[idx_repost].get("parentId")) == str(share_id),
+      feed[idx_repost] if idx_repost >= 0 else None)
+
+# ⑭ 转发单详情：身份 = 转发人（bug② 的回归断言）
+st, res = call("GET", f"/api/shares/{repost_id}")
+d = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑭ 转发单详情作者是转发人 B（bug②）",
+      st == 200 and str(d.get("userId")) == str(user_b_id) and d.get("nickname") == "转发测试",
+      {k: d.get(k) for k in ("userId", "nickname")})
+check("⑭b 转发单详情带原帖引用（parentId / parentNickname / parentContent）",
+      str(d.get("parentId")) == str(share_id)
+      and d.get("parentNickname") == "分享圈测试"
+      and d.get("parentContent") == "毛孩子的口粮，回购第三次了",
+      {k: d.get(k) for k in ("parentId", "parentNickname", "parentContent")})
+
+st, res = call("GET", f"/api/shares/{share_id}")
+od = (res.get("data") or {}) if isinstance(res, dict) else {}
+check("⑭c 原帖自身仍是原创（shareType=ORIGINAL、无 parentId、作者仍是 A）",
+      od.get("shareType") == "ORIGINAL" and not od.get("parentId") and od.get("nickname") == "分享圈测试",
+      {k: od.get(k) for k in ("shareType", "parentId", "nickname")})
+
+# ⑮ 重复转发同一条 → 409（唯一键 uk_share_user_parent 兜住并发）
+st, res = call("POST", f"/api/shares/{share_id}/repost", {"content": "再转一次"}, token_b)
+check("⑮ 重复转发同一条 → 409", st == 409, f"{st} {res}")
+
+# ⑯ 转发自己的分享 → 422
+st, res = call("POST", f"/api/shares/{share_id}/repost", {"content": "转自己的"}, token)
+check("⑯ 转发自己的分享 → 422", st == 422, f"{st} {res}")
+
+# ⑰ 转发不存在的分享 → 404
+st, res = call("POST", "/api/shares/1234567890123456789/repost", {"content": "幽灵"}, token_b)
+check("⑰ 转发不存在的分享 → 404", st == 404, f"{st} {res}")
+
+# ⑱ 空附言纯转发 → 200 且 content 为空串
+st, res = call("POST", "/api/shares", {"spuId": spu_id, "content": "第二件好物，同样推荐"}, token)
+share2_id = ((res.get("data") or {}) if isinstance(res, dict) else {}).get("id")
+st, res = call("POST", f"/api/shares/{share2_id}/repost", {}, token_b)
+rv2 = (res.get("data") or {}) if isinstance(res, dict) else {}
+repost2_id = rv2.get("id")
+check("⑱ 空附言纯转发 → 200 且 content 为空串",
+      st == 200 and repost2_id and rv2.get("content") == "", f"{st} {res}")
+check("⑱b 纯转发仍带回原帖引用",
+      rv2.get("parentNickname") == "分享圈测试" and rv2.get("parentContent") == "第二件好物，同样推荐",
+      {k: rv2.get(k) for k in ("parentNickname", "parentContent")})
+
 print(f"\n=== 结果：通过 {len(passed)} 项，失败 {len(failed)} 项 ===")
 if failed:
     for f_ in failed:
@@ -153,11 +251,12 @@ if share_id and os.environ.get("KEEP_FIXTURE") != "1":
     env = dict(os.environ)
     env["PATH"] = r"C:\Program Files\Docker\Docker\resources\bin;" + env.get("PATH", "")
     env["DOCKER_CONFIG"] = r"D:\duoduo-infra\docker-nocreds"
+    ids = [x for x in {share_id, share2_id, repost_id, repost2_id} if x]
     subprocess.run(
         ["docker", "exec", "duoduo-mysql", "mysql", "-uduoduo", "-pduoduo", "-N", "-B",
          "--default-character-set=utf8mb4", "-D", "duoduo_fulfilment", "-e",
-         f"DELETE FROM t_product_share WHERE id = {share_id};"],
+         "DELETE FROM t_product_share WHERE id IN (" + ",".join(str(i) for i in ids) + ");"],
         env=env, check=True,
     )
-    print(f"（夹具已复原）分享单 {share_id} 已删除；测试用户 {phone} 留档")
+    print(f"（夹具已复原）分享单 {ids} 已删除；测试用户 {phone}/{phone_b} 留档")
 

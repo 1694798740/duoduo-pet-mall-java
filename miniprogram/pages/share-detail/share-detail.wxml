@@ -11,18 +11,27 @@
     <text>好友向你分享了这个商品</text>
   </view>
 
-  <!-- 分享者信息（分享圈发布的内容才带） -->
+  <!-- 分享者信息（分享圈发布的内容才带）：第四十六轮起转发时这里是**转发人本人** -->
   <view wx:else class="card sd-user">
     <image class="sd-avatar" src="{{view.avatar || '/images/category/default.png'}}" mode="aspectFill" />
     <view class="sd-user-info">
       <view class="t2">{{view.nickname}}</view>
-      <view class="t3">觉得这个商品不错 · {{view.timeText}}</view>
+      <view class="t3">
+        {{view.shareType === 'REPOST' ? '转发了一条分享' : '觉得这个商品不错'}} · {{view.timeText}}
+      </view>
     </view>
   </view>
 
-  <!-- 用户自撰评价 -->
+  <!-- 本条分享作者自己的话：原创 = 评价，转发 = 附言（可为空） -->
   <view wx:if="{{view.content}}" class="card">
     <view class="sd-quote">{{view.content}}</view>
+  </view>
+
+  <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮） -->
+  <view wx:if="{{view.shareType === 'REPOST'}}" class="card sd-ref">
+    <view class="sd-ref-hd">转发自 @{{view.parentNickname}}</view>
+    <view wx:if="{{view.parentContent}}" class="sd-ref-body">{{view.parentContent}}</view>
+    <view wx:else class="sd-ref-body t3">（原分享没有写评价）</view>
   </view>
 
   <!-- 商品卡：点击进详情 -->
@@ -37,6 +46,37 @@
 
   <view class="sd-actions">
     <button class="btn btn-accent sd-act-btn" bindtap="goProduct">查看商品</button>
-    <button class="btn btn-plain sd-act-btn" bindtap="goShareCircle">逛逛分享圈</button>
+    <button class="btn btn-plain sd-act-btn" bindtap="openForward">转发到分享圈</button>
   </view>
+  <view class="sd-link" bindtap="goShareCircle">逛逛分享圈 ›</view>
 </block>
+
+<!-- 转发弹层（第四十六轮）：与分享圈同一套交互 -->
+<view wx:if="{{sharePanel}}" class="sd-mask" bindtap="closeForward">
+  <view class="sd-panel" catchtap="noop">
+    <view class="sd-panel-title">转发这条分享</view>
+    <view class="sd-panel-sub t3">转发自 @{{view.parentNickname || view.nickname}}</view>
+    <textarea
+      class="sd-panel-input"
+      value="{{repostContent}}"
+      bindinput="onRepostInput"
+      maxlength="500"
+      placeholder="说点什么…（选填）"
+      placeholder-class="sd-panel-ph"
+    />
+    <view class="sd-panel-actions">
+      <button class="btn btn-plain sd-panel-btn" open-type="share">
+        分享给好友
+      </button>
+      <button
+        class="btn btn-accent sd-panel-btn"
+        loading="{{reposting}}"
+        disabled="{{reposting}}"
+        bindtap="repostToCircle"
+      >
+        转发到分享圈
+      </button>
+    </view>
+    <view class="sd-panel-cancel" bindtap="closeForward">取消</view>
+  </view>
+</view>

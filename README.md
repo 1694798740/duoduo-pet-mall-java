@@ -4,13 +4,18 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-27（第四十五轮 · 热修）** — **模拟器启动失败修复：tabBar 超 5 项**。
+**最近更新：2026-09-27（第四十六轮）** — **分享圈转发落库 + 转发身份修正**。
+用户报两问题：① 转发他人分享后，转发动态没出现在分享圈列表；② 转发后看分享详情页，仍显示原发帖人自己的页面。**两问同源**：第四十四轮的「转发」只是 `open-type="share"` 调起微信原生面板、**从不写后端**——列表里自然没有新动态，卡片落点 `path` 带的是**原分享单 ID**，详情页只能按原发帖人渲染；数据模型里也没有「转发」这一层。
+**修复**：把「转发」建成数据模型里的一层——`t_product_share` 增 `parent_share_id`（NULL=原创）+ 唯一键 `uk_share_user_parent (user_id, parent_share_id)`；新增 `POST /api/shares/{id}/repost`（需登录）插一条**以转发人为作者**的新分享行，商品快照**沿用原帖**，自转 422 / 重复转发 409 / 幽灵原帖 404；`ShareView` 增 `userId` + `shareType/parentId/parentNickname/parentContent`，并明确 `userId/nickname/avatar` 恒是「本条作者」（转发即转发人）；原帖引用按 `loadContext` 一次批量取（无 N+1）。前端「转发」改为**转发弹层**（附言 + 「转发到分享圈」写接口 + 「分享给好友」走原生、落点用**转发单 ID**），信息流/详情页新增「转发自 @原作者」+ 原评价引用块，详情页转发后 `redirectTo` 转发单详情。
+**验证**：后端探针 `share-circle-smoke.py` **39/39** + 小程序 stub **16/16** + 静态自检 0 错误；fulfilment/gateway 容器重建健康，增量 SQL `14-share-repost.sql` 已执行。
+
+**第四十五轮（2026-09-27 · 热修）** — **模拟器启动失败修复：tabBar 超 5 项**。
 根因：微信 `tabBar.list` 硬上限 5 项，第四十四轮加分享圈成 6 项，`app.json` 校验不过（`["tabBar"]["list"] 不能超过 5 项`），工具拒绝启动模拟器。修复：tabBar 收敛为 **首页/分类/分享圈/购物车/我的**（订单 tab 移除，「我的 → 我的订单」入口替代）；orders 恢复原生导航栏（非 tab 页需返回键）；cart/after-sales/checkout/seckill 四处 `switchTab(orders)` 改 `navigateTo/redirectTo`；index/profile 的 tab 页清单同步。验证：app.json 合法且 tabBar=5、7 个 js 语法全过、switchTab 残留清零、静态自检 0 错误。
 
 **第四十四轮（2026-09-26）** — **分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发**。
 **Bug 根治**：未登录点分享"自动登录到不明账号"的根因是 `ensureLogin()` 未登录时走 `silentRelogin() → wx.login` 静默 code2Session（无感建号/登录到微信绑定账号），分享拦截被静默登录穿透。新增 `requireLogin()`（探测失败**直接去登录页**，不走静默链），分享/点赞/收藏等"以用户身份对外发声"的动作全部改用它；`ensureLogin` 静默链保留给加购/领券等本机动作。
 **分享圈升一级 tab**：tabBar 第 6 项（生成 `tab_share` 双态图标）；页面改自绘导航栏 + 自绘下拉刷新（R41 惯例）；「我的」页入口移除；跳转收口 `switchTab`。
-**互动能力**：`t_share_like`/`t_share_favorite`（复合主键防重）+ `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` toggle（需登录，两段路径不在白名单）；`ShareView` 增 likeCount/favoriteCount + 浏览者标记（匿名恒 false）；`likeCount/favoriteCount/count` 补进 Long 序列化数值白名单（计数被当标识转字符串会让前端比较/算术退化）。卡片互动条 ❤️/⭐/🔁：toggle 后回填状态与计数；转发按钮 `open-type=share` + `markForward` 记条目，卡片落点 `share-detail?id=`。
+**互动能力**：`t_share_like`/`t_share_favorite`（复合主键防重）+ `t_product_share` 冗余计数列 + `POST /api/shares/{id}/like|favorite` toggle（需登录，两段路径不在白名单）；`ShareView` 增 likeCount/favoriteCount + 浏览者标记（匿名恒 false）；`likeCount/favoriteCount/count` 补进 Long 序列化数值白名单（计数被当标识转字符串会让前端比较/算术退化）。卡片互动条 ❤️/⭐/🔁：toggle 后回填状态与计数；转发按钮 `open-type=share` + `markForward` 记条目，卡片落点 `share-detail?id=`（**第四十六轮已改为转发弹层 + 写接口，见上**）。
 **验证**：后端探针 `share-circle-smoke.py` 20/20 + 小程序 stub 12/12（未登录点分享**全程零次 wx.login**）+ 静态自检 0 错误；fulfilment 容器重建健康，增量 SQL `13-share-engagement.sql` 已执行。
 
 **第四十三轮（2026-09-26）** — **分享两 Bug 修复 + 分享圈新功能**。

@@ -36,7 +36,24 @@ public final class ShareDtos {
     ) {
     }
 
+    /**
+     * 转发分享（第四十六轮）：只带转发人自己的附言。
+     *
+     * <p>请求体里<b>没有 spuId 也没有商品快照</b>：转发的对象是原帖，商品快照与原帖
+     * 完全一致（服务端直接沿用），前端无从伪造 —— 否则「9.9 元猫粮」的卡片能被贴到
+     * 任意一条转发上。附言可空（纯转发），非空则上限 500 字。
+     */
+    public record RepostRequest(
+            @Size(max = 500, message = "转发附言不能超过 500 字")
+            String content
+    ) {
+    }
+
     // ---------------- 响应 ----------------
+
+    /** 分享类型：原创 / 转发（前端据此决定是否渲染「转发自 @原作者」引用块） */
+    public static final String TYPE_ORIGINAL = "ORIGINAL";
+    public static final String TYPE_REPOST = "REPOST";
 
     /**
      * 分享视图（信息流 / 详情页共用）。
@@ -45,9 +62,16 @@ public final class ShareDtos {
      * 商品后续改名换图不影响历史分享的展示。互动四字段（第四十四轮）：
      * 计数是冗余列读数；{@code liked / favorited} 是**当前浏览者**的标记，
      * 未登录（匿名浏览）恒为 false。
+     *
+     * <p><b>转发四字段</b>（第四十六轮）：{@code shareType} 区分原创/转发；
+     * 转发时 {@code parentId} 是原帖 ID，{@code parentNickname / parentContent}
+     * 是原帖的作者与评价内容（引用展示）。{@code nickname / avatar / userId}
+     * 始终是**本条分享的作者** —— 转发时即转发人本人。
      */
     public record ShareView(
             Long id,
+            /** 本条分享的作者：原创 = 发帖人，转发 = 转发人（第四十六轮明确） */
+            Long userId,
             Long spuId,
             String productTitle,
             String productImage,
@@ -60,7 +84,15 @@ public final class ShareDtos {
             long likeCount,
             long favoriteCount,
             boolean liked,
-            boolean favorited
+            boolean favorited,
+            /** ORIGINAL | REPOST（第四十六轮） */
+            String shareType,
+            /** 被转发的原帖 ID；原创为 null（第四十六轮） */
+            Long parentId,
+            /** 原帖作者昵称；原创为 null（第四十六轮） */
+            String parentNickname,
+            /** 原帖评价内容（引用展示）；原创为 null（第四十六轮） */
+            String parentContent
     ) {
     }
 

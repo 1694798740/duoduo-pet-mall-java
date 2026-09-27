@@ -21,12 +21,19 @@
       <image class="sc-avatar" src="{{item.avatar || '/images/category/default.png'}}" mode="aspectFill" />
       <view class="sc-head-info">
         <view class="t2">{{item.nickname}}</view>
-        <view class="t3">{{item.timeText}} · 分享了一个好物</view>
+        <view class="t3">{{item.timeText}} · {{item.isRepost ? '转发了一条分享' : '分享了一个好物'}}</view>
       </view>
     </view>
 
-    <!-- 用户自撰评价：整条卡片的灵魂 -->
+    <!-- 用户自己的话：原创是评价，转发是附言（可为空） -->
     <view wx:if="{{item.content}}" class="sc-content">{{item.content}}</view>
+
+    <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮） -->
+    <view wx:if="{{item.isRepost}}" class="sc-quote">
+      <view class="sc-quote-hd">转发自 @{{item.parentNickname}}</view>
+      <view wx:if="{{item.parentContent}}" class="sc-quote-body">{{item.parentContent}}</view>
+      <view wx:else class="sc-quote-body t3">（原分享没有写评价）</view>
+    </view>
 
     <!-- 商品卡（快照）：点击跳商品详情，不冒泡到整条卡片 -->
     <view class="sc-product" data-spu="{{item.spuId}}" catchtap="goProduct">
@@ -56,16 +63,11 @@
         <text>{{item.favorited ? '⭐' : '☆'}}</text>
         <text>{{item.favoriteCount}}</text>
       </view>
-      <!-- 转发：open-type=share 只能由点按触发；markForward 先记下转的是哪条 -->
-      <button
-        class="sc-act sc-forward"
-        open-type="share"
-        data-id="{{item.id}}"
-        bindtap="markForward"
-      >
+      <!-- 转发：开弹层选出路（转发到分享圈 / 分享给好友），第四十六轮 -->
+      <view class="sc-act" data-id="{{item.id}}" catchtap="openForward">
         <text>🔁</text>
         <text>转发</text>
-      </button>
+      </view>
     </view>
   </view>
 
@@ -73,3 +75,36 @@
   <view wx:elif="{{loading}}" class="t3 sc-end">加载中…</view>
   <view style="height: 40rpx"></view>
 </block>
+
+<!-- 转发弹层（第四十六轮）：附言 + 两条出路 -->
+<view wx:if="{{sharePanel}}" class="sc-mask" bindtap="closeForward">
+  <view class="sc-panel" catchtap="noop">
+    <view class="sc-panel-title">转发这条分享</view>
+    <view class="sc-panel-sub t3">
+      转发自 @{{repostTarget.parentNickname || repostTarget.nickname}}
+    </view>
+    <textarea
+      class="sc-panel-input"
+      value="{{repostContent}}"
+      bindinput="onRepostInput"
+      maxlength="500"
+      placeholder="说点什么…（选填）"
+      placeholder-class="sc-panel-ph"
+    />
+    <view class="sc-panel-actions">
+      <!-- open-type=share 只能由按钮触发：先 prepFriendShare 定落点，再弹微信面板 -->
+      <button class="btn btn-plain sc-panel-btn" open-type="share" bindtap="prepFriendShare">
+        分享给好友
+      </button>
+      <button
+        class="btn btn-accent sc-panel-btn"
+        loading="{{reposting}}"
+        disabled="{{reposting}}"
+        bindtap="repostToCircle"
+      >
+        转发到分享圈
+      </button>
+    </view>
+    <view class="sc-panel-cancel" bindtap="closeForward">取消</view>
+  </view>
+</view>
