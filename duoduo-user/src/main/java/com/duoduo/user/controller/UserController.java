@@ -85,6 +85,24 @@ public class UserController {
     }
 
     /**
+     * 服务间读：批量取角色快照（第四十七轮）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。
+     * 调用方是社交域：发私信时把发送方角色落列，通知中心据此分流好友 / 商家消息。
+     * 只回 id + role（低敏感），不整份 UserView 下发 —— 与 {@code /internal/briefs} 同一裁剪口径。
+     */
+    @GetMapping("/internal/roles")
+    public ApiResponse<java.util.List<com.duoduo.user.dto.UserDtos.UserRoleBrief>> roles(
+            @org.springframework.web.bind.annotation.RequestParam("ids") String ids) {
+        java.util.List<Long> userIds = java.util.Arrays.stream(ids.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Long::valueOf)
+                .toList();
+        return ApiResponse.ok(authService.userRoles(userIds));
+    }
+
+    /**
      * 服务间写：回写信用分（A4）。
      *
      * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token} ——

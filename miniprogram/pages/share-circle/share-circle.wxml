@@ -17,7 +17,8 @@
     data-id="{{item.id}}"
     bindtap="goDetail"
   >
-    <view class="sc-head">
+    <!-- 作者区（第四十七轮）：catchtap 阻断冒泡到整条卡片，进他人主页（关注/私信入口） -->
+    <view class="sc-head" data-user="{{item.userId}}" catchtap="goAuthor">
       <image class="sc-avatar" src="{{item.avatar || '/images/category/default.png'}}" mode="aspectFill" />
       <view class="sc-head-info">
         <view class="t2">{{item.nickname}}</view>

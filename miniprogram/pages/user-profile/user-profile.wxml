@@ -1,0 +1,49 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+
+<block wx:elif="{{user}}">
+  <view class="card up-head">
+    <image class="up-avatar" src="{{user.avatar || '/images/category/default.png'}}" mode="aspectFill" />
+    <view class="up-info">
+      <view class="up-nick">{{user.nickname}}</view>
+      <view wx:if="{{user.followedBy && !isSelf}}" class="tag tag-brand">关注了你</view>
+    </view>
+  </view>
+
+  <view class="card up-stats">
+    <view class="up-stat" data-tab="followers" bindtap="goList">
+      <view class="up-num">{{user.followers}}</view>
+      <view class="t3">粉丝</view>
+    </view>
+    <view class="up-stat" data-tab="following" bindtap="goList">
+      <view class="up-num">{{user.following}}</view>
+      <view class="t3">关注</view>
+    </view>
+  </view>
+
+  <view wx:if="{{!isSelf}}" class="up-actions">
+    <button
+      wx:if="{{user.viewerFollowing}}"
+      class="btn btn-plain up-btn"
+      bindtap="toggleFollow"
+      loading="{{toggling}}"
+    >
+      {{user.mutual ? '互相关注' : '已关注'}}
+    </button>
+    <button
+      wx:else
+      class="btn btn-accent up-btn"
+      bindtap="toggleFollow"
+      loading="{{toggling}}"
+    >
+      ＋ 关注
+    </button>
+    <button class="btn btn-plain up-btn" bindtap="goChat">💬 发私信</button>
+  </view>
+  <view wx:else class="t3 up-self-hint">这是你的主页</view>
+
+  <view class="t3 up-tip">未互相关注时，私信只能发送一条</view>
+</block>

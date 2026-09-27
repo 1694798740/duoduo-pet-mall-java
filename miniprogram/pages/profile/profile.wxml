@@ -56,6 +56,17 @@
     <text>我的订单</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 社交（第四十七轮）：私信 / 关注与粉丝，接口都要登录态 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/chat-list/chat-list">
+    <text class="mi-icon">💬</text>
+    <text>私信</text>
+    <text class="arrow">›</text>
+  </view>
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/follow-list/follow-list">
+    <text class="mi-icon">👥</text>
+    <text>关注与粉丝</text>
+    <text class="arrow">›</text>
+  </view>
   <!-- 售后需登录（接口要求令牌），未登录不给入口 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/after-sales/after-sales">
     <text class="mi-icon">🛡️</text>

@@ -322,6 +322,41 @@ services:
       nacos:
         condition: service_healthy
 
+  # ── 社交服务（第四十七轮，第 11 个业务容器）─────────────────
+  # 关注关系 / 私信与卡片消息 / 通知中心。聊天是高频读写（轮询），
+  # 独立库独立进程，不拖累承载登录鉴权的 user 域主链路。
+  duoduo-social-app:
+    container_name: duoduo-app-social
+    image: duoduo/duoduo-social:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        JAR_FILE: duoduo-social/target/duoduo-social-1.0.0.jar
+        APP_PORT: '8087'
+    restart: unless-stopped
+    environment:
+      DUODUO_SOCIAL_PORT: '8087'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_social?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      NACOS_ENABLED: 'true'
+      NACOS_ADDR: 'nacos:8848'
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      # 服务间调用共享密钥（交易域 / 履约域推送订单、售后、物流通知）
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # 私信频控：同一会话窗口期内最多发送条数（防骚扰）
+      SOCIAL_MSG_RATE_WINDOW: '60'
+      SOCIAL_MSG_RATE_LIMIT: '10'
+    ports:
+      - '8087:8087'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
   # ── Elasticsearch（A10，可选加速层，profile=search）────────
   # 刻意挂 profile：`docker compose up` 默认**不启动** ES ——
   # CI 与零依赖环境无需 ES（检索自动降级回 MySQL，验收④）；

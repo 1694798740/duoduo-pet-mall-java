@@ -17,6 +17,10 @@
     "pages/ai/ai",
     "pages/share-circle/share-circle",
     "pages/share-detail/share-detail",
+    "pages/user-profile/user-profile",
+    "pages/follow-list/follow-list",
+    "pages/chat-list/chat-list",
+    "pages/chat/chat",
     "pages/login/login"
   ],
   "window": {

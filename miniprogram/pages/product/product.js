@@ -94,6 +94,8 @@ Page({
           inStock: card.inStock !== false,
           brandName: card.brandName || '',
           categoryName: card.categoryName || '',
+          // 卖家归属（0 = 平台自营）：「问一问」据此决定能不能咨询
+          sellerId: card.sellerId || 0,
           // 后端的 detail 是介绍长文本
           description: raw.detail || '',
           skus,
@@ -239,6 +241,39 @@ Page({
     wx.navigateTo({
       url: '/pages/ai/ai?prefill=' + encodeURIComponent('帮我看看「' + title + '」值不值得买？'),
     });
+  },
+
+  /**
+   * 问一问（第四十七轮）：直接向卖家发起商品咨询 —— 与卖家聊天无需互关
+   * （ASK 会话在服务端豁免「非互关一条」限制）。
+   *
+   * <p>登录用 requireLogin：咨询是「以我的身份向卖家发声」，未登录必须主动登录
+   * （与分享/点赞同一纪律）。收件人只传 sellerId 作占位 —— 服务端会以商品归属
+   * 卖家为准重新定人，前端传值不被信任。
+   */
+  askSeller() {
+    const detail = this.data.detail;
+    if (!detail) return;
+    if (!detail.sellerId) {
+      wx.showToast({ title: '平台自营商品暂不支持在线咨询', icon: 'none' });
+      return;
+    }
+    getApp()
+      .requireLogin()
+      .then(() => {
+        wx.navigateTo({
+          url:
+            '/pages/chat/chat?peerId=' +
+            detail.sellerId +
+            '&productId=' +
+            this.data.id +
+            '&ask=1',
+        });
+      })
+      .catch((err) => {
+        if (err && err.needLogin) return; // 已引导登录页
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
   },
 
   /**

@@ -265,6 +265,19 @@ public final class UserDtos {
     }
 
     /**
+     * 用户角色快照（服务间内部接口，第四十七轮）。
+     *
+     * <p>调用方是社交域：发私信时把发送方角色落列（sender_role），通知中心据此把
+     * 私信分流到「好友消息」或「商家消息」。只回 id + role —— 角色是低敏感字段，
+     * 但仍是「按调用方需要什么裁剪」的口径，不整份 {@code UserView} 下发。
+     */
+    public record UserRoleBrief(
+            Long id,
+            String role
+    ) {
+    }
+
+    /**
      * 信用分回写结果（服务间内部接口，A4）。
      *
      * @param previousScore 回写前的分数（用户不存在时为 null）

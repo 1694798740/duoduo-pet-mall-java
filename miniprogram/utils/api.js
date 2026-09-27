@@ -372,6 +372,73 @@ const share = {
   },
 };
 
+// ── 社交域（第四十七轮）：关注 / 私信（duoduo-social，需登录） ────────────────
+const social = {
+  follow: {
+    /** 关注（重复关注幂等）→ { following, followedBy, mutual } */
+    follow(userId) {
+      return req.post('/api/socials/follows/' + userId);
+    },
+    /** 取关（幂等）→ 同上 */
+    unfollow(userId) {
+      return req.del('/api/socials/follows/' + userId);
+    },
+    /** 我与 TA 的关注关系（关注按钮状态源） */
+    state(userId) {
+      return req.get('/api/socials/follows/' + userId + '/state');
+    },
+    /** 他人主页聚合：资料 + 计数 + 关系，一次拿齐 */
+    profile(userId) {
+      return req.get('/api/socials/users/' + userId + '/profile');
+    },
+    /** 我关注的人 */
+    following(page, pageSize) {
+      return req.get(
+        '/api/socials/follows/following?page=' + (page || 1) + '&pageSize=' + (pageSize || 20)
+      );
+    },
+    /** 我的粉丝 */
+    followers(page, pageSize) {
+      return req.get(
+        '/api/socials/follows/followers?page=' + (page || 1) + '&pageSize=' + (pageSize || 20)
+      );
+    },
+  },
+  message: {
+    /**
+     * 发消息。bizType 缺省 TEXT；bizType=ASK（商品咨询）时服务端把收件人改成
+     * 商品归属卖家 —— 前端传的 receiverId 只是契约占位，真正收件人以后端事实为准。
+     */
+    send(receiverId, content, bizType, bizId) {
+      const payload = { receiverId: Number(receiverId), content: content || '' };
+      if (bizType) payload.bizType = bizType;
+      if (bizId) payload.bizId = Number(bizId);
+      return req.post('/api/socials/messages', payload);
+    },
+    /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
+    conversations(page, pageSize) {
+      return req.get(
+        '/api/socials/messages/conversations?page=' + (page || 1) + '&pageSize=' + (pageSize || 20)
+      );
+    },
+    /** 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态 */
+    thread(peerId, page, pageSize) {
+      return req.get(
+        '/api/socials/messages/conversations/' +
+          peerId +
+          '?page=' +
+          (page || 1) +
+          '&pageSize=' +
+          (pageSize || 20)
+      );
+    },
+    /** 打开会话后标已读（幂等） */
+    markRead(peerId) {
+      return req.post('/api/socials/messages/conversations/' + peerId + '/read');
+    },
+  },
+};
+
 // ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────
 function fen2yuan(fen) {
   const n = Number(fen) || 0;
@@ -421,6 +488,7 @@ module.exports = {
   ai,
   seckill,
   share,
+  social,
   fen2yuan,
   shortTime,
 };

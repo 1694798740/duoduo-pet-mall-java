@@ -107,6 +107,8 @@
 
   <view style="height: 140rpx"></view>
   <view class="footer">
+    <!-- 第四十七轮：问一问 —— 直接向卖家发起咨询（ASK 豁免一条限制，无需互关） -->
+    <button class="btn btn-plain footer-share" bindtap="askSeller" size="mini">问一问</button>
     <!-- 第四十三轮：分享按钮不再直接 open-type=share —— 先过登录校验（未登录引导登录），
          已登录弹出分享面板（写评价 → 转发好友 / 发布到分享圈） -->
     <button class="btn btn-plain footer-share" bindtap="onShareTap" size="mini">分享</button>

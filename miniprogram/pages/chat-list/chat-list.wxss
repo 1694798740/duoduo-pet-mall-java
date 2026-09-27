@@ -1,0 +1,61 @@
+.cl-item {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+.cl-avatar-wrap {
+  position: relative;
+  flex: none;
+}
+.cl-avatar {
+  width: 92rpx;
+  height: 92rpx;
+  border-radius: 50%;
+  background: var(--brand-weak);
+}
+.cl-badge {
+  position: absolute;
+  top: -8rpx;
+  right: -8rpx;
+  min-width: 32rpx;
+  height: 32rpx;
+  padding: 0 8rpx;
+  border-radius: 16rpx;
+  background: #e5484d;
+  color: #fff;
+  font-size: 20rpx;
+  line-height: 32rpx;
+  text-align: center;
+}
+.cl-info {
+  flex: 1;
+  min-width: 0;
+}
+.cl-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.cl-nick {
+  font-size: 30rpx;
+  font-weight: 500;
+}
+.cl-time {
+  font-size: 22rpx;
+}
+.cl-preview {
+  margin-top: 6rpx;
+  font-size: 26rpx;
+}
+.cl-tag {
+  margin-top: 8rpx;
+}
+.cl-arrow {
+  color: var(--text-3);
+  font-size: 36rpx;
+  flex: none;
+}
+.cl-end {
+  text-align: center;
+  padding: 20rpx 0;
+}

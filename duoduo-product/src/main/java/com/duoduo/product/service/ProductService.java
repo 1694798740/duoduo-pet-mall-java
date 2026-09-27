@@ -475,7 +475,9 @@ public class ProductService {
                         spu.getId(),
                         spu.getTitle(),
                         spu.getMainImage(),
-                        nz(spu.getMinPrice())))
+                        nz(spu.getMinPrice()),
+                        // 第四十七轮：社交域「问一问」在服务端定位收件人（SPU 归属卖家）
+                        spu.getSellerId()))
                 .toList();
     }
 

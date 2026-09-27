@@ -1,0 +1,56 @@
+.fl-tabs {
+  display: flex;
+  background: var(--card);
+  margin: 20rpx 24rpx 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.fl-tab {
+  flex: 1;
+  text-align: center;
+  padding: 22rpx 0;
+  color: var(--text-2);
+  font-size: 28rpx;
+  position: relative;
+}
+.fl-tab-on {
+  color: var(--brand);
+  font-weight: 600;
+}
+.fl-tab-on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 64rpx;
+  height: 6rpx;
+  margin-left: -32rpx;
+  border-radius: 3rpx;
+  background: var(--brand);
+}
+
+.fl-item {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+.fl-avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: var(--brand-weak);
+  flex: none;
+}
+.fl-info {
+  flex: 1;
+  min-width: 0;
+}
+.fl-nick {
+  font-size: 30rpx;
+  font-weight: 500;
+}
+.fl-end {
+  text-align: center;
+  padding: 20rpx 0;
+}

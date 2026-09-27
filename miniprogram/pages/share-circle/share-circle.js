@@ -106,6 +106,24 @@ Page({
   },
 
   /**
+   * 点作者 → 他人主页（第四十七轮）：关注 / 私信的社交入口。
+   *
+   * <p>requireLogin：主页里的关注/私信都要登录态，进门前先统一收口，
+   * 避免进去之后每个动作各自弹登录。
+   */
+  goAuthor(e) {
+    const userId = e.currentTarget.dataset.user;
+    if (!userId) return;
+    getApp()
+      .requireLogin()
+      .then(() => wx.navigateTo({ url: '/pages/user-profile/user-profile?id=' + userId }))
+      .catch((err) => {
+        if (err && err.needLogin) return; // 已引导登录页
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
+  },
+
+  /**
    * 点赞 / 取消点赞（toggle）。
    *
    * <p>登录用 requireLogin 而不是 ensureLogin：点赞是「以用户身份对外发声」，

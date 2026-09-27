@@ -4,7 +4,11 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-27（第四十六轮）** — **分享圈转发落库 + 转发身份修正**。
+**最近更新：2026-09-27（第四十七轮 · 第一批）** — **社交域上线：关注 + 私信 + 问一问**。
+新增第 8 个业务服务 `duoduo-social`（社交域，:8087；compose 服务名 `duoduo-social-app`，容器 `duoduo-app-social`，库 `duoduo_social`）：**① 关注**——`t_social_follow` 复合主键 `(follower_id, followee_id)`，互相关注=两个方向各一行（不引入状态列，双向同步是 bug 温床），重复关注/取关幂等，关注自己 422、幽灵用户 404，计数不冗余直接 COUNT；**② 私信**——`t_social_message` 会话键 `"lo:hi"`（双方 userId 小者在前，双向聊天一个索引）；**非互关每人限发一条**（服务端按会话计数判定，前端只消费 `canSend` 结果），互关后自由聊；卡片消息（PRODUCT）摘要由服务端去事实源现取（请求体只带 bizType+bizId，公开接口贴不出伪造卡片）；频控 60s/10 条（429）；**③ 问一问**——商品详情页「问一问」按钮直进与卖家的咨询会话：`bizType=ASK` 的收件人由**商品归属卖家**决定（不信前端传值），咨询会话永久豁免「一条」限制；发现种子商品 `seller_id` 全为 0（含 merchant 类型），增量 SQL 15 把 5 个 merchant 商品的卖家归属回填到种子卖家；**④ 小程序**——新 4 页（他人主页/关注与粉丝/会话列表/聊天页，全部非 tab + 原生导航，聊天页 4s HTTP 轮询 + 进入即标已读），分享圈作者区 → 他人主页，「我的」页加私信/关注入口。注意 `following` 既是计数也是关系词，`ProfileView` 关系字段用 `viewerFollowing/viewerFollowedBy` 避开 record 组件重名。
+**验证**：新增 `social-smoke.py` **42/42**（关注 12 项 + 私信 30 项，含幂等/互关/一条限制/ASK 服务端定人/豁免/频控/已读）+ 分享圈探针回归 **39/39** + 静态自检 0 错误 + wxml↔js 处理器核对全过；social/gateway/user/product 四容器重建健康（user/product jar 重打包带 `/internal/roles` 与 `InternalCardView.sellerId`），SQL 06/15 已落库。踩坑记录：Feign 必须带 `spring-cloud-starter-loadbalancer`，且内部接口必须挂 `X-Internal-Token` 拦截器——下游「取不到资料就降级为空」的容错会把 403 吞成业务 404，极难排查。
+
+**第四十六轮（2026-09-27）** — **分享圈转发落库 + 转发身份修正**。
 用户报两问题：① 转发他人分享后，转发动态没出现在分享圈列表；② 转发后看分享详情页，仍显示原发帖人自己的页面。**两问同源**：第四十四轮的「转发」只是 `open-type="share"` 调起微信原生面板、**从不写后端**——列表里自然没有新动态，卡片落点 `path` 带的是**原分享单 ID**，详情页只能按原发帖人渲染；数据模型里也没有「转发」这一层。
 **修复**：把「转发」建成数据模型里的一层——`t_product_share` 增 `parent_share_id`（NULL=原创）+ 唯一键 `uk_share_user_parent (user_id, parent_share_id)`；新增 `POST /api/shares/{id}/repost`（需登录）插一条**以转发人为作者**的新分享行，商品快照**沿用原帖**，自转 422 / 重复转发 409 / 幽灵原帖 404；`ShareView` 增 `userId` + `shareType/parentId/parentNickname/parentContent`，并明确 `userId/nickname/avatar` 恒是「本条作者」（转发即转发人）；原帖引用按 `loadContext` 一次批量取（无 N+1）。前端「转发」改为**转发弹层**（附言 + 「转发到分享圈」写接口 + 「分享给好友」走原生、落点用**转发单 ID**），信息流/详情页新增「转发自 @原作者」+ 原评价引用块，详情页转发后 `redirectTo` 转发单详情。
 **验证**：后端探针 `share-circle-smoke.py` **39/39** + 小程序 stub **16/16** + 静态自检 0 错误；fulfilment/gateway 容器重建健康，增量 SQL `14-share-repost.sql` 已执行。
@@ -281,7 +285,7 @@ DUODUO_TRADE_ORDER_MODE=queue docker compose up -d --force-recreate duoduo-trade
 |---|---|---|---|
 | `duoduo-mysql` | mysql:8.0.36 | 3306 | **五个库**：`duoduo_user` / `duoduo_product` / `duoduo_trade` / `duoduo_fulfilment` / `duoduo_marketing`（`nacos` 库由 Nacos 自建） |
 | `duoduo-redis` | redis:7.2-alpine | 6379 | 缓存与分布式能力预留 |
-| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 7 个服务**（网关 + 6 个业务服务） |
+| `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 8 个服务**（网关 + 7 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
@@ -289,6 +293,7 @@ DUODUO_TRADE_ORDER_MODE=queue docker compose up -d --force-recreate duoduo-trade
 | `duoduo-app-fulfilment` | duoduo/duoduo-fulfilment:1.0.0 | 8084 | 履约域：**评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分** |
 | `duoduo-app-marketing` | duoduo/duoduo-marketing:1.0.0 | 8085 | 营销域：**优惠券**（领券中心 / 我的券包 / 锁·解·核销 / 补偿调度） |
 | `duoduo-app-ai` | duoduo/duoduo-ai:1.0.0 | 8086 | AI 导购「多多」：**候选召回（商品域）+ 对话编排**；未配百炼 Key 时 503 降级，mock 模式可整链跑通 |
+| `duoduo-app-social` | duoduo/duoduo-social:1.0.0 | 8087 | 社交域（第四十七轮）：**关注 / 私信与卡片消息 / 商品咨询（问一问）**；通知中心（第二批） |
 | `duoduo-es`（可选） | elasticsearch:8.11.4 | 9200 | **检索加速层（A10）**，compose `profile=search` 默认不起：`docker compose --profile search up -d duoduo-es`。不起时检索自动降级走 MySQL |
 | `duoduo-mq-namesrv`（可选） | apache/rocketmq:5.3.2 | 9876 | **削峰队列（A11）NameServer**，compose `profile=mq` 默认不起；`JAVA_OPT_EXT` 压内存 |
 | `duoduo-mq-broker`（可选） | apache/rocketmq:5.3.2 | 10911 | **削峰队列 Broker**（挂 `docs/mq/broker.conf`，`brokerIP1` 指向服务名）；trade 切 `queue` 模式才依赖它 |
@@ -410,6 +415,7 @@ duoduo-pet-mall-java/
 ├── duoduo-trade/               交易服务（购物车 / 订单 / 冻结台账 / 支付渠道 / 资金托管）
 ├── duoduo-fulfilment/          履约服务（评价与晒单 / 物流轨迹 / 售后仲裁 / 信用分）
 ├── duoduo-marketing/           营销服务（优惠券：领券中心 / 我的券包 / 锁·解·核销 / 补偿调度）
+├── duoduo-social/              社交服务（第四十七轮：关注 / 私信与卡片消息 / 商品咨询；通知中心第二批）
 └── frontend/                   买家端 Web 商城（React 18 + TS + Vite，见第七节）
 ```
 

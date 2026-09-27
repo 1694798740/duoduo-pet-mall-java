@@ -249,3 +249,15 @@ INSERT INTO t_listing (id, seller_id, title, description, category_id, price, or
 (3008, 90008, '皇家幼猫粮 K36 3.5kg 全新', '双十一囤的，小猫已经长大换粮，全新未开封。', 101, 11900, 15800, 'NEW', '武汉', '/img/listings/3008.svg', 'cat', '中华田园猫', 'ON_SALE', 'APPROVED', 402, '2026-08-12 09:00:00', '2026-08-12 09:00:00'),
 (3009, 90009, '小佩饮水机 SOLO 待审核示例', '这条数据 audit_status=PENDING，接口不应返回它。', 501, 18900, 24900, 'NEW', '西安', '/img/listings/3009.svg', 'cat', '英短', 'ON_SALE', 'PENDING', 0, '2026-08-13 09:00:00', '2026-08-13 09:00:00'),
 (3010, 90010, '已驳回闲置示例', '这条数据 audit_status=REJECTED，接口不应返回它。', 304, 1000, 5900, 'FAIR', '重庆', '/img/listings/3010.svg', 'cat', '未知', 'ON_SALE', 'REJECTED', 0, '2026-08-14 09:00:00', '2026-08-14 09:00:00');
+
+-- ---------- 商家商品卖家归属（第四十七轮） ----------
+-- t_spu.seller_id 默认 0（自营）；merchant 商品的归属卖家在用户域种子之后回填。
+-- 「问一问」（ASK）按商品归属卖家定收件人，没有归属的商品无法咨询。
+-- 与 incremental/15-ask-seller-backfill.sql 保持同一口径，跨环境可重放。
+UPDATE t_spu
+SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13550931548' AND role = 'SELLER')
+WHERE id IN (1009, 1010);
+
+UPDATE t_spu
+SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13765569756' AND role = 'SELLER')
+WHERE id IN (1015, 1017, 1018);

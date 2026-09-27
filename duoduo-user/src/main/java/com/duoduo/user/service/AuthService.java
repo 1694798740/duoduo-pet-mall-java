@@ -377,6 +377,21 @@ public class AuthService {
                 .toList();
     }
 
+    /**
+     * 批量取角色快照（第四十七轮，服务间内部接口）。
+     *
+     * <p>调用方是社交域（发私信落 sender_role）。不存在 / 已注销的 id 直接不返回 ——
+     * 调用方按「拿不到角色」自行处理，不在这里抛 404（批量接口逐个抛会把好请求一起拖死）。
+     */
+    public List<UserDtos.UserRoleBrief> userRoles(Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return List.of();
+        }
+        return userMapper.selectBatchIds(userIds).stream()
+                .map(u -> new UserDtos.UserRoleBrief(u.getId(), u.getRole()))
+                .toList();
+    }
+
     @Transactional
     public UserView updateProfile(Long userId, UpdateProfileRequest request) {
         UserEntity entity = userMapper.selectById(userId);

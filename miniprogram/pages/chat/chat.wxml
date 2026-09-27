@@ -1,0 +1,79 @@
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">加载中…</view>
+
+<block wx:elif="{{page}}">
+  <view class="chat-page">
+    <!-- 会话头部：对方资料 + 关系徽章（consulting 优先：咨询会话恒可发） -->
+    <view class="chat-head">
+      <image class="chat-avatar" src="{{page.peerAvatar || '/images/category/default.png'}}" mode="aspectFill" />
+      <view class="chat-head-info">
+        <view class="chat-nick">{{page.peerNickname}}</view>
+        <view class="t3">
+          {{page.consulting ? '商品咨询 · 可自由沟通' : (page.mutual ? '互相关注' : '未互相关注')}}
+        </view>
+      </view>
+    </view>
+
+    <!-- 消息流：时间正序，新消息自动滚底 -->
+    <scroll-view class="chat-body" scroll-y scroll-into-view="{{scrollInto}}" scroll-with-animation>
+      <view wx:if="{{items.length === 0}}" class="empty">
+        {{ask ? '向卖家咨询这个商品吧' : '打个招呼吧'}}
+      </view>
+      <view
+        wx:for="{{items}}"
+        wx:key="id"
+        id="msg-{{item.id}}"
+        class="msg-row {{item.mine ? 'msg-mine' : ''}}"
+      >
+        <image
+          wx:if="{{!item.mine}}"
+          class="msg-avatar"
+          src="{{page.peerAvatar || '/images/category/default.png'}}"
+          mode="aspectFill"
+        />
+        <view class="msg-col">
+          <!-- 卡片消息：服务端取事实源渲染，点击跳商品详情 -->
+          <view wx:if="{{item.card}}" class="msg-card" data-spu="{{item.card.id}}" catchtap="goCard">
+            <image class="msg-card-img" src="{{item.cardImage}}" mode="aspectFill" />
+            <view class="msg-card-info">
+              <view class="msg-card-title ellipsis-2">{{item.card.title}}</view>
+              <view wx:if="{{item.cardPriceText}}" class="price msg-card-price">{{item.cardPriceText}}</view>
+            </view>
+          </view>
+          <view class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
+          <view class="t3 msg-time">{{item.timeText}}{{item.mine && !item.read ? ' · 未读' : ''}}</view>
+        </view>
+      </view>
+      <view style="height: 20rpx"></view>
+    </scroll-view>
+
+    <!-- 规则提示：非互关且已发过一条时禁言 -->
+    <view wx:if="{{hint}}" class="chat-hint">{{hint}}</view>
+
+    <!-- 输入条 -->
+    <view class="chat-input-bar">
+      <input
+        class="chat-input"
+        value="{{input}}"
+        placeholder="{{ask ? '想了解什么？直接问卖家…' : '说点什么…'}}"
+        placeholder-class="chat-ph"
+        confirm-type="send"
+        bindinput="onInput"
+        bindconfirm="send"
+        disabled="{{!canSend}}"
+      />
+      <button
+        class="btn btn-accent chat-send"
+        size="mini"
+        bindtap="send"
+        disabled="{{!canSend || sending || !input}}"
+        loading="{{sending}}"
+      >
+        发送
+      </button>
+    </view>
+  </view>
+</block>

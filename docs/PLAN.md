@@ -224,6 +224,29 @@
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
 
+### 2026-09-27（第四十七轮 · 第一批：社交域上线——关注 / 私信 / 问一问）
+
+> 用户需求：① 修复分享好友问题；② 关注功能（说明存储方案）；③ 私信：互关自由聊、未互关仅一条；④ 站内分享（个人卡/商品/分享圈内容）给已关注用户；⑤ 消息通知（小铃铛 + 分类 + 订单通知）；⑥ 商品详情「问一问」直咨询卖家（无需互关）。经确认四项决策：**独立 duoduo-social 域 / HTTP 轮询 / 站内通知中心 / 分两批交付**。本批交付 ①②③⑥ + 前端；④⑤（通知中心 + 站内卡片）第二批。
+
+- **新服务 `duoduo-social`（:8087，库 `duoduo_social`，雪花 worker-id 6）**：通知需要跨域聚合（交易/履约/私信/公告），聊天高频读写不应拖累 user 域登录链路，故独立成域。
+- **数据模型**（`docs/sql/06-duoduo-social.sql`，通知表一次建齐）：
+  - `t_social_follow` 复合主键 `(follower_id, followee_id)`：**互相关注 = 两个方向各一行**，一条 COUNT 判定，不引入状态列（双向同步是 bug 温床）；重复关注/取关幂等；计数不冗余直接 COUNT。
+  - `t_social_message`：**会话键 `"lo:hi"`**（双方 userId 小者在前）——双向聊天一个索引搞定；`sender_role` 发送时点快照（第二批通知分流好友/商家消息用）；`biz_type`（TEXT/PRODUCT/SHARE/PROFILE_CARD/ASK）+ `biz_id` + `read_at`。
+  - `t_social_notice` / `t_social_notice_read`（第二批启用）。
+- **规则集中服务端**（前端只消费结果，避免两端规则漂移）：
+  - **非互关每人限发一条**（按会话计数）；**咨询会话（出现 ASK）永久豁免**，否则问一问不可用；
+  - **ASK 收件人 = 商品归属卖家**（经商品域内部卡取 `sellerId`），不信前端传的 receiverId；自营（sellerId=0）422、自问 422、幽灵商品 404；
+  - **卡片摘要服务端取事实**：请求体只带 `bizType+bizId`，展示字段由服务端去事实源现取（与分享圈同一纪律）；SHARE/PROFILE_CARD 第二批开放前 422；
+  - **频控**：同一会话 60s/10 条（429），咨询会话同样生效；
+  - `canSend` 服务端算好下发，前端置灰 + 文案。
+- **发现并修复的数据缺口**：种子 SPU 的 `seller_id` 全为 0（INSERT 未含该列，merchant 类型也 0）→ 问一问无处可发。增量 `15-ask-seller-backfill.sql` 把 1009/1010/1015/1017/1018 按手机号定位回填到种子 SELLER（跨库子查询，不硬编码雪花 ID）；02 种子文件尾部同口径补写。
+- **踩坑两枚（都已根治并记入代码注释）**：
+  1. Feign 服务名调用必须 `spring-cloud-starter-loadbalancer`（缺失启动即抛 No Feign Client for loadBalancing）；
+  2. 内部接口必须挂 `X-Internal-Token` 拦截器（`InternalCallConfig`）——下游「取不到资料就降级为空」的容错会把 403 吞成业务 404「用户不存在」，极难排查；另 `Map.of()` 对 `get(null)` 抛 NPE，TEXT 消息 `bizId=null` 查卡前必须判空。
+- **小程序（4 新页，全部非 tab + 原生导航）**：`user-profile`（他人主页聚合 profile 接口：资料+计数+关系一次拿齐；关系字段名 `viewerFollowing/viewerFollowedBy` 避开 record 组件与 following 计数重名）、`follow-list`（我关注的/我的粉丝双 tab + 互关角标 + 私信直达）、`chat-list`（未读徽标 + canSend 文案 + consulting 标签）、`chat`（气泡流 + 4s 轮询 + 卡片消息跳详情 + 进入即标已读 + 非互关禁言提示；问一问入口 `?peerId=&productId=&ask=1` 首条按 ASK 发）。商品 footer 加「问一问」（requireLogin；自营商品提示不支持）；分享圈作者区 catchtap → 他人主页（requireLogin）；「我的」加 💬私信 / 👥关注与粉丝（登录可见）。
+- **验证**：`social-smoke.py` **42/42**（关注 12：401/自转 422/幽灵 404/幂等/互关/列表/计数/主页聚合；私信 30：401/一条限制/回复/互关解锁/卡片类型 422/ASK 定人·豁免·404/空内容/自聊 422/频控 429/未读/正序/已读）+ 分享圈探针回归 **39/39** + 静态自检 0 错误 + wxml↔js 处理器核对全过；social/gateway/user/product 四容器重建 healthy（user 补 `/internal/roles`、product 内部卡补 `sellerId`）。
+- **第二批（待办）**：通知中心接口 + trade/fulfilment Feign 推送（下单/付款/退款/售后/物流，旁路降级）+ fulfilment 分享单内部端点 + 小程序通知页与铃铛入口 + 解锁 SHARE/PROFILE_CARD 站内分享。
+
 ### 2026-09-27（第四十六轮 · 分享圈转发落库 + 转发身份修正）
 
 > 用户报两个问题：① 转发他人分享后，转发动态未出现在分享圈列表；② 转发后查看分享详情页，仍显示原发帖人自己的分享页。

@@ -1,0 +1,94 @@
+server:
+  # 不要用 SOCIAL_PORT 这类通用名，宿主/CI 环境可能已占用该变量名而静默改写端口
+  port: ${DUODUO_SOCIAL_PORT:8087}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 30
+    accept-count: 500
+    max-connections: 5000
+
+spring:
+  application:
+    name: duoduo-social
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_social?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: duoduo-social-pool
+  sql:
+    init:
+      # 表结构由 DDL 统一管理（docs/sql/06-duoduo-social.sql 与 db/schema.sql），
+      # 绝不能在启动时自动执行 —— schema.sql 里有 DROP TABLE。
+      mode: never
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+duoduo:
+  id:
+    datacenter-id: ${ID_DATACENTER:1}
+    worker-id: ${ID_WORKER:6}
+  internal:
+    # 服务间调用共享密钥（交易域 / 履约域推送订单、售后、物流通知）。
+    # 失败关闭：配置为空一律拒绝，绝不能「没配就放行」（INV-11）。
+    token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+  social:
+    message:
+      # 单条正文上限（字符）。卡片类消息的摘要由服务端拼，不受此限（另行裁剪）。
+      max-length: 1000
+      # 频控：同一会话窗口期内最多发送条数（防骚扰；超限 429 RATE_LIMITED）。
+      rate-window-seconds: ${SOCIAL_MSG_RATE_WINDOW:60}
+      rate-limit: ${SOCIAL_MSG_RATE_LIMIT:10}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.duoduo: INFO
+  pattern:
+    console: '{"ts":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"duoduo-social","requestId":"%X{requestId}","logger":"%c{1}","msg":"%replace(%m){''"'',''\\"''}","thread":"%t"}%n'
+
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: false
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn

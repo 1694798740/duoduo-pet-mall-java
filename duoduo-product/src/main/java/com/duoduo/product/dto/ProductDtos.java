@@ -292,11 +292,23 @@ public final class ProductDtos {
      * 跨域接口按调用方真正需要裁剪字段（与 {@code UserBrief} 同一口径），
      * 类目、品牌、卖家归属等一概不带 —— 透露面最小，契约也最稳。
      */
+    /**
+     * 内部商品卡（服务间）。
+     *
+     * <p>跨域接口按调用方真正需要裁剪字段（与 {@code UserBrief} 同一口径），
+     * 类目、品牌等一概不带 —— 透露面最小，契约也最稳。
+     *
+     * <p>{@code sellerId}（第四十七轮）：社交域「问一问」要在服务端定位收件人 ——
+     * 买家点咨询时，收件人由本域事实（SPU 归属卖家）决定，而不是信前端传的 userId，
+     * 否则「咨询」会被当成向任意用户发消息的通道。履约域的旧契约副本少这一个字段，
+     * Feign/Jackson 对未知字段默认忽略，互不影响。
+     */
     public record InternalCardView(
             Long id,
             String title,
             String mainImage,
-            Long minPrice
+            Long minPrice,
+            Long sellerId
     ) {
     }
 }

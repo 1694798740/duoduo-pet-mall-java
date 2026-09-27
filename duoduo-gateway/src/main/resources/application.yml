@@ -95,6 +95,15 @@ spring:
           uri: lb://duoduo-marketing
           predicates:
             - Path=/api/promotions/**,/api/coupons/**
+        # /api/socials/** = 社交域（第四十七轮）：关注关系 / 私信与卡片消息 / 通知中心。
+        # 全部**不进白名单**：关注关系与私信是当事人数据，通知是收件人数据，
+        # 「不登录就能看」本身就是缺陷，且归属判断依赖 X-User-*；
+        # 唯一公开的某人粉丝/关注数（counts）挂在三段路径 /follows/{id}/counts 上，
+        # 与登录路径天然分开 —— 白名单按路径匹配、不区分方法，绝不能整段放行 /api/socials/**。
+        - id: duoduo-social
+          uri: lb://duoduo-social
+          predicates:
+            - Path=/api/socials/**
         # /api/admin/** 已拆段并入 product、trade 与 user 三服务（M10 / A7）：
         # 运营管理接口本质是商品域 / 交易域 / 用户域数据的「管理视图」，数据在哪就落哪个服务，
         # 避免新建独立 admin 微服务时的跨库查询与额外 Feign 链路。
