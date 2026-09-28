@@ -289,6 +289,55 @@ public final class ProductDtos {
     ) {
     }
 
+    /**
+     * 卖家视角详情（第五十三轮）：「我的闲置」编辑回填专用。
+     *
+     * <p>公开详情 {@link ListingDetail} 对未过审内容一律 404（防状态码探测），卖家的
+     * 被驳回条目用它拿不到自己的内容 —— 编辑重提必须有一个 owner 视角的读端点。
+     * 因此这里带出<b>全集字段</b>：描述、全部图片、类目（公开卡只有首图无描述），
+     * 并保留 status / auditStatus / auditReason 供页面判定当前状态。
+     *
+     * <p>路径安全：挂在 {@code /api/listings/mine/{id}}（三段），天然落在网关免登白名单
+     * {@code /api/listings/*} 之外（Ant {@code *} 不跨 {@code /}），归属校验在服务层。
+     */
+    public record ListingOwnerView(
+            Long id,
+            String title,
+            String description,
+            Long categoryId,
+            Long price,
+            Long originalPrice,
+            String conditionLevel,
+            String city,
+            List<String> images,
+            String species,
+            String breed,
+            String status,
+            String statusLabel,
+            String auditStatus,
+            String auditReason,
+            int viewCount,
+            String createdAt
+    ) {
+    }
+
+    /**
+     * 服务间：闲置卡事实（第五十三轮，社交域「问一问」LISTING 消息用）。
+     *
+     * <p>与商城商品卡 {@code InternalCardView} 同一裁剪口径：只要展示与定人必需的
+     * 五个字段。{@code sellerId} 用于服务端按闲置归属定收件人 —— 不信前端。
+     * <b>内部接口</b>：落在 {@code /api/listings/internal/**}，由 InternalTokenFilter
+     * 校验 {@code X-Internal-Token}（带出 sellerId 属内部口径，不能匿名枚举）。
+     */
+    public record InternalListingView(
+            Long id,
+            String title,
+            String mainImage,
+            Long price,
+            Long sellerId
+    ) {
+    }
+
     // ---------------- 首页聚合 ----------------
 
     public record SpeciesPicks(String species, String label, List<ProductCard> items) {

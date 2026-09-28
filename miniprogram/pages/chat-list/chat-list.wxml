@@ -15,6 +15,7 @@
     class="card cl-item"
     data-user="{{item.peerId}}"
     data-product="{{item.productId}}"
+    data-listing="{{item.listingId}}"
     bindtap="goChat"
   >
     <view class="cl-avatar-wrap">
@@ -27,9 +28,10 @@
         <text class="t3 cl-time">{{item.timeText}}</text>
       </view>
       <view class="t3 cl-preview ellipsis">{{item.preview}}</view>
-      <!-- 商品咨询会话（第四十九轮）：显示咨询对象商品，主会话不显示 -->
+      <!-- 咨询会话（第四十九轮商品 / 第五十三轮闲置）：显示咨询对象，主会话不显示 -->
       <view wx:if="{{item.productTitle}}" class="t3 ellipsis cl-product">🛒 {{item.productTitle}}</view>
-      <view wx:if="{{item.consulting}}" class="tag tag-brand cl-tag">商品咨询</view>
+      <view wx:if="{{item.listingTitle}}" class="t3 ellipsis cl-product">🏷️ {{item.listingTitle}}</view>
+      <view wx:if="{{item.consulting}}" class="tag tag-brand cl-tag">咨询会话</view>
       <view wx:elif="{{item.mutual}}" class="tag tag-gray cl-tag">互相关注</view>
       <view wx:elif="{{!item.canSend}}" class="tag tag-gray cl-tag">已发送 1 条，等 TA 回复</view>
     </view>

@@ -13,6 +13,8 @@ import com.duoduo.product.dto.ProductDtos.ListingDetail;
 import com.duoduo.product.dto.ProductDtos.ListingMineView;
 import com.duoduo.product.dto.ProductDtos.ListingPublishRequest;
 import com.duoduo.product.dto.ProductDtos.ListingAuditView;
+import com.duoduo.product.dto.ProductDtos.InternalListingView;
+import com.duoduo.product.dto.ProductDtos.ListingOwnerView;
 import com.duoduo.product.dto.ProductDtos.ListingQuery;
 import com.duoduo.product.entity.ListingEntity;
 import com.duoduo.product.mapper.ListingMapper;
@@ -205,33 +207,8 @@ public class ListingService {
      */
     public ListingMineView publish(ListingPublishRequest request) {
         LoginUser user = UserContext.require();
-        if (!user.realNameVerified()) {
-            throw BizException.forbidden("该操作需要先完成实名认证");
-        }
-        if (request == null) {
-            throw BizException.validation("请求体不能为空");
-        }
-
-        String title = requireText(request.title(), "标题", MAX_TITLE_LENGTH);
-        String description = optionalText(request.description(), "描述", MAX_DESCRIPTION_LENGTH);
-        String city = optionalText(request.city(), "城市", 50);
-        String species = optionalText(request.species(), "物种", 20);
-        String breed = optionalText(request.breed(), "品种", 50);
-
-        long price = requirePrice(request.price(), "价格");
-        long originalPrice = request.originalPrice() == null ? 0L : request.originalPrice();
-        if (originalPrice < 0) {
-            throw BizException.validation("原价不能为负数");
-        }
-
-        String condition = normalizeCondition(request.conditionLevel());
-        List<String> images = normalizeImages(request.images());
-
-        // 违禁词：标题与描述合并送检（命中即抛，连库都不进）
-        bannedWordGuard.rejectIfHit(title, "闲置标题");
-        if (description != null) {
-            bannedWordGuard.rejectIfHit(description, "闲置描述");
-        }
+        requireRealName(user);
+        NormalizedListing normalized = normalizeForWrite(request);
 
         Long existing = listingMapper.selectCount(new LambdaQueryWrapper<ListingEntity>()
                 .eq(ListingEntity::getSellerId, user.userId()));
@@ -244,16 +221,7 @@ public class ListingService {
         ListingEntity entity = new ListingEntity();
         entity.setId(idGenerator.nextId());
         entity.setSellerId(user.userId());
-        entity.setTitle(title);
-        entity.setDescription(description);
-        entity.setCategoryId(request.categoryId());
-        entity.setPrice(price);
-        entity.setOriginalPrice(originalPrice);
-        entity.setConditionLevel(condition);
-        entity.setCity(city);
-        entity.setImages(images.isEmpty() ? null : String.join(",", images));
-        entity.setSpecies(species);
-        entity.setBreed(breed);
+        applyNormalized(entity, normalized);
         // 以下四项服务端说了算，不接受客户端传值
         entity.setStatus(STATUS_ON_SALE);
         entity.setAuditStatus(AUDIT_PENDING);
@@ -263,18 +231,64 @@ public class ListingService {
         listingMapper.insert(entity);
 
         log.info("用户 {} 发布闲置 {}「{}」（价格 {} 分），已进入待审核",
-                user.userId(), entity.getId(), title, price);
+                user.userId(), entity.getId(), normalized.title(), normalized.price());
         return toMineView(entity);
+    }
+
+    /**
+     * 重新提审（第五十三轮）：被驳回的闲置修改内容后再次进入审核。
+     *
+     * <p>状态机口径（与 {@link #audit} 配套）：
+     * <ul>
+     *   <li><b>只有 REJECTED 能重提</b> —— PENDING 是「正在审」，重复提交只会打乱审核队列；
+     *       APPROVED 是「已通过」，内容已公开，想改东西应该下架后发新的一条。</li>
+     *   <li><b>重提 = 内容更新 + 回到发布态</b>：auditStatus 置回 PENDING、清空驳回原因、
+     *       status 回 ON_SALE（驳回时被 audit() 落到 OFF_SHELF）——
+     *       语义上等同重新发布了一条，审核链从头走。</li>
+     *   <li><b>实名与违禁词全部复检</b>：重提是新的供给行为，与首次发布同一套闸门，
+     *       不因为「曾经通过实名」就免检。</li>
+     *   <li><b>归属校验与 404/403 区分</b>：照抄上下架的范式（{@link #changeStatus}）。</li>
+     * </ul>
+     */
+    public ListingMineView resubmit(Long id, ListingPublishRequest request) {
+        LoginUser user = UserContext.require();
+        requireRealName(user);
+        NormalizedListing normalized = normalizeForWrite(request);
+
+        ListingEntity listing = requireOwned(id, user);
+        if (STATUS_SOLD.equals(listing.getStatus())) {
+            throw BizException.businessRule("该闲置已售出，无法重新提审");
+        }
+        if (!AUDIT_REJECTED.equals(listing.getAuditStatus())) {
+            throw BizException.businessRule(resubmitBlockReason(listing.getAuditStatus()));
+        }
+
+        applyNormalized(listing, normalized);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        listing.setStatus(STATUS_ON_SALE);
+        listing.setAuditStatus(AUDIT_PENDING);
+        listing.setAuditReason(null);
+        listing.setUpdatedAt(now);
+        listingMapper.updateById(listing);
+
+        log.info("用户 {} 重新提审闲置 {}「{}」，回到待审核", user.userId(), id, normalized.title());
+        return toMineView(listing);
     }
 
     /**
      * 我的发布列表。
      *
      * <p>与公开列表的核心差别：<b>带出全部状态</b>（含 PENDING / REJECTED / OFF_SHELF / SOLD）。
-     * 卖家必须看得到自己没通过审核的条目，否则发布完就「查无此项」。
+     * 卖家必须看得到自己没通过审核的条目，否则发布完就「查无此项」，卖家只能反复重发。
      * 删选在此处不做 —— 这些是卖家自己的数据，不存在越权面。
+     *
+     * <p>两个过滤维度（第五十三轮）：<b>status</b>（在售 / 下架 / 已售，交易维度）与
+     * <b>auditStatus</b>（待审 / 通过 / 驳回，审核维度）正交组合。此前被驳回的条目
+     * 挂在 ON_SALE 名下（发布即 ON_SALE）却不在公开列表出现，卖家在「在售」里看到
+     * 一条实际不可见的闲置会一头雾水 —— 审核维度过滤就是给「审核中 / 审核失败」
+     * 分类标签用的。
      */
-    public PageResult<ListingMineView> listMine(String status, int page, int pageSize) {
+    public PageResult<ListingMineView> listMine(String status, String auditStatus, int page, int pageSize) {
         LoginUser user = UserContext.require();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -289,12 +303,43 @@ public class ListingService {
             }
             wrapper.eq(ListingEntity::getStatus, normalized);
         }
+        String auditFilter = trimToNull(auditStatus);
+        if (auditFilter != null) {
+            String normalized = auditFilter.toUpperCase();
+            if (!Set.of(AUDIT_PENDING, AUDIT_APPROVED, AUDIT_REJECTED).contains(normalized)) {
+                throw BizException.validation("auditStatus 仅支持 PENDING / APPROVED / REJECTED");
+            }
+            wrapper.eq(ListingEntity::getAuditStatus, normalized);
+        }
         // 待审核的排前面：卖家最需要处理的就是「还没通过」的那些
         wrapper.orderByDesc(ListingEntity::getCreatedAt).orderByDesc(ListingEntity::getId);
 
         Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size), wrapper);
         List<ListingMineView> views = result.getRecords().stream().map(this::toMineView).toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 卖家视角详情（第五十三轮）：编辑重提的回填数据源。
+     *
+     * <p>公开详情对未过审内容 404 是<b>对的</b>（防状态码探测），但卖家自己必须能
+     * 读回自己被驳回的内容才能修改重提 —— 归属校验在这里补上，路径本身在白名单之外。
+     */
+    public ListingOwnerView ownerDetail(Long id) {
+        LoginUser user = UserContext.require();
+        return toOwnerView(requireOwned(id, user));
+    }
+
+    /** 归属校验统一收口：404（不存在）与 403（不是你的）刻意分开，是两种不同的用户处境 */
+    private ListingEntity requireOwned(Long id, LoginUser user) {
+        ListingEntity listing = listingMapper.selectById(id);
+        if (listing == null) {
+            throw BizException.notFound("闲置商品");
+        }
+        if (!user.userId().equals(listing.getSellerId())) {
+            throw BizException.forbidden("该闲置不属于当前账号");
+        }
+        return listing;
     }
 
     /**
@@ -320,14 +365,7 @@ public class ListingService {
         LoginUser user = UserContext.require();
         String target = normalizeAction(action);
 
-        ListingEntity listing = listingMapper.selectById(id);
-        if (listing == null) {
-            throw BizException.notFound("闲置商品");
-        }
-        // 404 与 403 刻意分开：id 不存在 vs 存在但不是你的，是两种不同的用户处境
-        if (!user.userId().equals(listing.getSellerId())) {
-            throw BizException.forbidden("该闲置不属于当前账号");
-        }
+        ListingEntity listing = requireOwned(id, user);
         if (STATUS_SOLD.equals(listing.getStatus())) {
             throw BizException.businessRule("该闲置已售出，无法再上下架");
         }
@@ -363,6 +401,89 @@ public class ListingService {
             throw BizException.validation("action 仅支持 ON_SALE / OFF_SHELF");
         }
         return normalized;
+    }
+
+    /**
+     * 发布 / 重提共用的写闸门：实名 + 内容规范化 + 违禁词复检。
+     *
+     * <p>抽成一段的原因不是「复用几行代码」，而是<b>两条链路必须同强度</b>：
+     * 重提是新的供给行为，若只复用一半校验，「发布时拦违禁词、重提时不拦」
+     * 就是白送一个绕过通道。
+     */
+    private void requireRealName(LoginUser user) {
+        if (!user.realNameVerified()) {
+            throw BizException.forbidden("该操作需要先完成实名认证");
+        }
+    }
+
+    /** 规范化后的写侧内容（发布与重提共用）；字段语义见 {@link #publish} */
+    private record NormalizedListing(
+            String title,
+            String description,
+            Long categoryId,
+            long price,
+            long originalPrice,
+            String conditionLevel,
+            String city,
+            List<String> images,
+            String species,
+            String breed
+    ) {
+    }
+
+    private NormalizedListing normalizeForWrite(ListingPublishRequest request) {
+        if (request == null) {
+            throw BizException.validation("请求体不能为空");
+        }
+        String title = requireText(request.title(), "标题", MAX_TITLE_LENGTH);
+        String description = optionalText(request.description(), "描述", MAX_DESCRIPTION_LENGTH);
+        String city = optionalText(request.city(), "城市", 50);
+        String species = optionalText(request.species(), "物种", 20);
+        String breed = optionalText(request.breed(), "品种", 50);
+
+        long price = requirePrice(request.price(), "价格");
+        long originalPrice = request.originalPrice() == null ? 0L : request.originalPrice();
+        if (originalPrice < 0) {
+            throw BizException.validation("原价不能为负数");
+        }
+
+        String condition = normalizeCondition(request.conditionLevel());
+        List<String> images = normalizeImages(request.images());
+
+        // 违禁词：标题与描述合并送检（命中即抛，连库都不进）
+        bannedWordGuard.rejectIfHit(title, "闲置标题");
+        if (description != null) {
+            bannedWordGuard.rejectIfHit(description, "闲置描述");
+        }
+        return new NormalizedListing(title, description, request.categoryId(), price,
+                originalPrice, condition, city, images, species, breed);
+    }
+
+    /** 把规范化内容落到实体（发布 = 填空实体；重提 = 覆盖旧内容，categoryId 表单不含则保持原值） */
+    private void applyNormalized(ListingEntity entity, NormalizedListing n) {
+        entity.setTitle(n.title());
+        entity.setDescription(n.description());
+        if (n.categoryId() != null) {
+            entity.setCategoryId(n.categoryId());
+        }
+        entity.setPrice(n.price());
+        entity.setOriginalPrice(n.originalPrice());
+        entity.setConditionLevel(n.conditionLevel());
+        entity.setCity(n.city());
+        entity.setImages(n.images().isEmpty() ? null : String.join(",", n.images()));
+        entity.setSpecies(n.species());
+        entity.setBreed(n.breed());
+    }
+
+    /** 重提被当前审核状态挡住时的提示语：告诉卖家该等还是不用等，不能只说「不行」 */
+    private String resubmitBlockReason(String auditStatus) {
+        if (AUDIT_PENDING.equals(auditStatus)) {
+            return "该闲置正在审核中，请等待审核结果";
+        }
+        if (AUDIT_APPROVED.equals(auditStatus)) {
+            return "该闲置已通过审核，无需重新提交";
+        }
+        return "该闲置当前状态不支持重新提审";
     }
 
     private String normalizeCondition(String condition) {
@@ -449,6 +570,29 @@ public class ListingService {
                         : listing.getCreatedAt().toInstant(ZoneOffset.UTC).toString());
     }
 
+    /** 卖家视角详情（编辑回填用）：MineView 的全部字段 + 描述 / 全部图片 / 类目 */
+    private ListingOwnerView toOwnerView(ListingEntity listing) {
+        return new ListingOwnerView(
+                listing.getId(),
+                listing.getTitle(),
+                listing.getDescription(),
+                listing.getCategoryId(),
+                listing.getPrice() == null ? 0L : listing.getPrice(),
+                listing.getOriginalPrice() == null ? 0L : listing.getOriginalPrice(),
+                listing.getConditionLevel(),
+                listing.getCity(),
+                Csv.split(listing.getImages()),
+                listing.getSpecies(),
+                listing.getBreed(),
+                listing.getStatus(),
+                statusLabelOf(listing.getStatus()),
+                listing.getAuditStatus(),
+                listing.getAuditReason(),
+                listing.getViewCount() == null ? 0 : listing.getViewCount(),
+                listing.getCreatedAt() == null ? null
+                        : listing.getCreatedAt().toInstant(ZoneOffset.UTC).toString());
+    }
+
     private static String statusLabelOf(String status) {
         if (status == null) {
             return "未知";
@@ -513,6 +657,27 @@ public class ListingService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    // ---------------- 服务间读（social 域「问一问」LISTING 消息用） ----------------
+
+    /**
+     * 批量取闲置卡事实（第五十三轮）：社交域发 LISTING 消息时服务端定收件人 +
+     * 组装卡片展示字段。幽灵 id 静默跳过 —— 调用方对缺失卡片有降级（卡片区空白），
+     * 不值得为一个过期 id 让整个请求 404。
+     */
+    public List<InternalListingView> internalCards(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return listingMapper.selectBatchIds(ids).stream()
+                .map(l -> new InternalListingView(
+                        l.getId(),
+                        l.getTitle(),
+                        Csv.split(l.getImages()).stream().findFirst().orElse(null),
+                        l.getPrice(),
+                        l.getSellerId()))
+                .toList();
+    }
+
     // ---------------- 运营审核（M10） ----------------
 
     private static final String AUDIT_PENDING = "PENDING";
@@ -559,6 +724,13 @@ public class ListingService {
         }
         listing.setAuditStatus(target);
         listing.setAuditReason(AUDIT_REJECTED.equals(target) ? trimToNull(reason) : null);
+        if (AUDIT_REJECTED.equals(target) && STATUS_ON_SALE.equals(listing.getStatus())) {
+            // 驳回即不可售（第五十三轮）：status 同步落 OFF_SHELF。
+            // 公开可见性由 auditStatus=APPROVED 把守（驳回本来就不可见），
+            // 这里改 status 是让卖家视角语义一致 —— 被驳回的条目不该出现在「在售」筛选里，
+            // 让卖家误以为东西还挂着卖。
+            listing.setStatus(STATUS_OFF_SHELF);
+        }
         listing.setAuditAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
         listing.setUpdatedAt(listing.getAuditAt());
         listingMapper.updateById(listing);

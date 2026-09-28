@@ -318,11 +318,42 @@ const listing = {
       breed: data.breed,
     });
   },
-  /** 我的发布（需登录）。含未过审 / 被驳回的条目，带 auditReason 供用户改稿 */
+  /**
+   * 我的发布（需登录）。含未过审 / 被驳回的条目，带 auditReason 供用户改稿。
+   * status（在售/下架/已售）与 auditStatus（待审/通过/驳回）是两个正交的过滤维度：
+   * 「审核中」「审核失败」分类标签走 auditStatus —— 被驳回的条目不是「在售」。
+   */
   mine(params) {
     const p = params || {};
-    const s = p.status && p.status !== 'ALL' ? '&status=' + p.status : '';
+    let s = '';
+    if (p.status && p.status !== 'ALL') s += '&status=' + p.status;
+    if (p.auditStatus) s += '&auditStatus=' + p.auditStatus;
     return req.get('/api/listings/mine/list?page=' + (p.page || 1) + '&pageSize=' + (p.pageSize || 20) + s);
+  },
+  /**
+   * 卖家视角详情（需登录，第五十三轮）：编辑重提的回填数据源。
+   * 公开详情对未过审内容 404，被驳回的条目只能从这里拿回自己的内容。
+   */
+  ownerDetail(id) {
+    return req.get('/api/listings/mine/' + id);
+  },
+  /**
+   * 重新提审（需登录 + 需实名，第五十三轮）：仅被驳回（REJECTED）的闲置可调。
+   * 请求体与发布一致；服务端把内容更新后审核态重置回 PENDING。
+   */
+  resubmit(id, data) {
+    return req.post('/api/listings/' + id + '/resubmit', {
+      title: data.title,
+      description: data.description,
+      categoryId: data.categoryId,
+      price: data.price,
+      originalPrice: data.originalPrice,
+      conditionLevel: data.conditionLevel,
+      city: data.city,
+      images: data.images || [],
+      species: data.species,
+      breed: data.breed,
+    });
   },
   /** 上架 / 下架（需登录，仅本人）。action: 'ON_SALE' | 'OFF_SHELF' */
   changeStatus(id, action) {
@@ -489,13 +520,16 @@ const social = {
     /**
      * 发消息。bizType 缺省 TEXT；bizType=ASK（商品咨询）时服务端把收件人改成
      * 商品归属卖家 —— 前端传的 receiverId 只是契约占位，真正收件人以后端事实为准。
+     * bizType=LISTING（闲置咨询，第五十三轮）同款纪律：服务端按闲置归属定人。
      */
-    send(receiverId, content, bizType, bizId, contextProductId) {
+    send(receiverId, content, bizType, bizId, contextProductId, contextListingId) {
       const payload = { receiverId: Number(receiverId), content: content || '' };
       if (bizType) payload.bizType = bizType;
       if (bizId) payload.bizId = Number(bizId);
       // 商品咨询会话上下文（第四十九轮）：TEXT 带 productId 落回该商品的独立会话
       if (contextProductId) payload.productId = Number(contextProductId);
+      // 闲置咨询会话上下文（第五十三轮）：TEXT 带 listingId 落回该闲置的独立会话
+      if (contextListingId) payload.listingId = Number(contextListingId);
       return req.post('/api/socials/messages', payload);
     },
     /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
@@ -504,8 +538,11 @@ const social = {
         '/api/socials/messages/conversations?page=' + (page || 1) + '&pageSize=' + (pageSize || 20)
       );
     },
-    /** 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态；productId 非空读商品咨询会话 */
-    thread(peerId, page, pageSize, productId) {
+    /**
+     * 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态。
+     * productId 非空读商品咨询会话；listingId 非空读闲置咨询会话（第五十三轮）。
+     */
+    thread(peerId, page, pageSize, productId, listingId) {
       return req.get(
         '/api/socials/messages/conversations/' +
           peerId +
@@ -513,13 +550,16 @@ const social = {
           (page || 1) +
           '&pageSize=' +
           (pageSize || 20) +
-          (productId ? '&productId=' + productId : '')
+          (productId ? '&productId=' + productId : '') +
+          (listingId ? '&listingId=' + listingId : '')
       );
     },
-    /** 打开会话后标已读（幂等）；productId 非空标商品咨询会话 */
-    markRead(peerId, productId) {
+    /** 打开会话后标已读（幂等）；productId / listingId 语义同上 */
+    markRead(peerId, productId, listingId) {
       return req.post(
-        '/api/socials/messages/conversations/' + peerId + '/read' + (productId ? '?productId=' + productId : '')
+        '/api/socials/messages/conversations/' + peerId + '/read' +
+          (productId ? '?productId=' + productId : '') +
+          (listingId ? (productId ? '&' : '?') + 'listingId=' + listingId : '')
       );
     },
   },

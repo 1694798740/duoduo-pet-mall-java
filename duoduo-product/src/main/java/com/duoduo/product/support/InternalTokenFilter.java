@@ -34,6 +34,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     /** 受保护的路径前缀：库存写操作 + 服务间批量快照（快照含卖家归属等内部口径字段） */
     private static final String PROTECTED_PREFIX_STOCK = "/api/products/skus/stock/";
     private static final String PROTECTED_PREFIX_INTERNAL = "/api/products/internal/";
+    /** 闲置服务间接口（第五十三轮）：InternalListingView 带 sellerId，同属内部口径 */
+    private static final String PROTECTED_PREFIX_LISTING_INTERNAL = "/api/listings/internal/";
     private static final String HEADER = "X-Internal-Token";
 
     private final String expectedToken;
@@ -50,7 +52,9 @@ public class InternalTokenFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String uri = request.getRequestURI();
-        if (!uri.startsWith(PROTECTED_PREFIX_STOCK) && !uri.startsWith(PROTECTED_PREFIX_INTERNAL)) {
+        if (!uri.startsWith(PROTECTED_PREFIX_STOCK)
+                && !uri.startsWith(PROTECTED_PREFIX_INTERNAL)
+                && !uri.startsWith(PROTECTED_PREFIX_LISTING_INTERNAL)) {
             filterChain.doFilter(request, response);
             return;
         }

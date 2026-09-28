@@ -41,6 +41,13 @@
         </view>
 
         <view class="fmine-actions">
+          <!-- 修改并重提（第五十三轮）：被驳回的条目改内容后重新进入审核 -->
+          <view
+            class="fmine-btn fmine-btn-resubmit"
+            wx:if="{{item.canResubmit}}"
+            data-id="{{item.id}}"
+            catchtap="onResubmit"
+          >修改并重新提审</view>
           <view
             class="fmine-btn fmine-btn-on"
             wx:if="{{item.canShelve}}"

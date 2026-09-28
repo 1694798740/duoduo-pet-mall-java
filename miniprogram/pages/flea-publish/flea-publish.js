@@ -1,13 +1,17 @@
-// 发布闲置（第五十二轮 · C2C 发布链路的写侧）
+// 发布闲置（第五十二轮建，第五十三轮加编辑模式）
 //
-// 三条设计取舍：
+// 四条设计取舍：
 //  1. **原生导航栏**（非 tab 页）：自绘栏没有返回键，推进式打开的页面会被困住（R41 推论）。
 //  2. **价格以「元」输入、以「分」提交**：后端金额一律整数分。在界面上让用户填「分」
 //     既反直觉又易错，因此在这里做一次显式换算 —— 换算是本页唯一的金额逻辑，
 //     并做了「最多两位小数 / 不接受非法字符」的校验，不用 parseFloat 静默容忍脏输入。
-//  3. **发布后不停留在本页**：直接 redirect 到「我的闲置」并提示「已提交，等待审核」。
+//  3. **提交后不停留在本页**：直接 redirect 到「我的闲置」并提示「已提交，等待审核」。
 //     停在表单上会让用户以为没成功（新发布是 PENDING，公开列表里查不到），
 //     而「我的闲置」里能看到状态，语义自洽。
+//  4. **编辑模式复用本页**（第五十三轮）：?id=xx&mode=edit 进入 —— 被驳回的闲置
+//     用 owner 详情（/mine/{id}）回填表单，提交走 /{id}/resubmit。表单、校验、
+//     实名预检全部同款，只有「数据来源」与「提交端点」两处不同 —— 复制一份表单页
+//     迟早会漂移。
 const api = require('../../utils/api');
 
 const CONDITIONS = [
@@ -56,16 +60,54 @@ Page({
     // 实名预检状态：loading（查询中）/ ok（可发布）/ needed（需先实名）。
     // 查询失败时也按 needed 处理并显示重试 —— 宁可多拦一道，不让用户白填表单。
     realNameState: 'loading',
+
+    // 编辑模式（第五十三轮）：被驳回闲置的「修改并重新提审」复用本页表单。
+    // editId 非空 = 编辑模式：进入时用 owner 详情回填，提交走 resubmit。
+    editId: '',
+    editLoading: false,
   },
 
-  onLoad() {
+  onLoad(options) {
     // 发布需登录 + 需实名，两道都提前拦：填完一长串表单再被 403 是最差的体验
     if (!api.getToken()) {
       api.openLoginPage();
       wx.navigateBack();
       return;
     }
+    if (options && options.id) {
+      this.setData({ editId: String(options.id) });
+      wx.setNavigationBarTitle({ title: '修改闲置' });
+    }
     this.checkRealName();
+    if (this.data.editId) this.loadOwner();
+  },
+
+  /**
+   * 编辑模式回填（第五十三轮）：GET /api/listings/mine/{id}（卖家视角，
+   * 公开详情对未过审内容 404，被驳回的条目只能从这里拿回内容）。
+   * 价格以「分」存储、以「元」回显 —— 与发布时的换算互为逆运算。
+   */
+  loadOwner() {
+    this.setData({ editLoading: true });
+    api
+      .ensureSession()
+      .then(() => api.listing.ownerDetail(this.data.editId))
+      .then((d) => {
+        this.setData({
+          editLoading: false,
+          title: d.title || '',
+          description: d.description || '',
+          priceYuan: api.fen2yuan(d.price),
+          originalYuan: d.originalPrice ? api.fen2yuan(d.originalPrice) : '',
+          conditionLevel: d.conditionLevel || 'GOOD',
+          city: d.city || '',
+          species: d.species || '',
+          breed: d.breed || '',
+        });
+      })
+      .catch((e) => {
+        this.setData({ editLoading: false, error: (e && e.message) || '读取闲置内容失败' });
+      });
   },
 
   onShow() {
@@ -151,23 +193,31 @@ Page({
       : 0;
 
     this.setData({ submitting: true, error: '' });
-    api.listing
-      .publish({
-        title: this.data.title.trim(),
-        description: this.data.description.trim(),
-        price,
-        originalPrice,
-        conditionLevel: this.data.conditionLevel,
-        city: this.data.city.trim(),
-        species: this.data.species,
-        breed: this.data.breed.trim(),
-        images: [],
-      })
+    const payload = {
+      title: this.data.title.trim(),
+      description: this.data.description.trim(),
+      price,
+      originalPrice,
+      conditionLevel: this.data.conditionLevel,
+      city: this.data.city.trim(),
+      species: this.data.species,
+      breed: this.data.breed.trim(),
+      images: [],
+    };
+    const isEdit = !!this.data.editId;
+    const submit = isEdit
+      ? api.listing.resubmit(this.data.editId, payload)
+      : api.listing.publish(payload);
+    submit
       .then(() => {
         this.setData({ submitting: false });
-        // 新发布是 PENDING：公开列表看不到，停在本页会让用户以为失败。
-        // 因此直接送去「我的闲置」——那里能看到状态与审核进度。
-        wx.showToast({ title: '已提交，等待审核', icon: 'none', duration: 1800 });
+        // 提交后不停留在本页：新发布/重提都是 PENDING，公开列表看不到，
+        // 停在表单上会让用户以为失败。送去「我的闲置」看状态与审核进度。
+        wx.showToast({
+          title: isEdit ? '已重新提交审核' : '已提交，等待审核',
+          icon: 'none',
+          duration: 1800,
+        });
         setTimeout(() => {
           wx.redirectTo({ url: '/pages/flea-mine/flea-mine' });
         }, 900);
@@ -175,7 +225,8 @@ Page({
       .catch((e) => {
         this.setData({
           submitting: false,
-          error: (e && e.message) || '发布失败，请稍后重试',
+          // 重提被状态挡住时（如审核刚好通过），服务端原话透传给用户
+          error: (e && e.message) || (isEdit ? '提交失败，请稍后重试' : '发布失败，请稍后重试'),
         });
       });
   },

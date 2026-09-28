@@ -16,12 +16,14 @@ public final class SocialDtos {
 
     // ---------------- 常量 ----------------
 
-    /** 消息业务类型：普通文本 / 商品卡 / 分享卡 / 个人卡 / 商品咨询 */
+    /** 消息业务类型：普通文本 / 商品卡 / 分享卡 / 个人卡 / 商品咨询 / 闲置咨询（第五十三轮） */
     public static final String BIZ_TEXT = "TEXT";
     public static final String BIZ_PRODUCT = "PRODUCT";
     public static final String BIZ_SHARE = "SHARE";
     public static final String BIZ_PROFILE_CARD = "PROFILE_CARD";
     public static final String BIZ_ASK = "ASK";
+    /** 闲置咨询（第五十三轮）：C2C 详情页「问一问」，收件人=闲置归属卖家（服务端定人） */
+    public static final String BIZ_LISTING = "LISTING";
 
     // ---------------- 请求 ----------------
 
@@ -50,6 +52,16 @@ public final class SocialDtos {
              * ASK 消息忽略此字段（会话商品恒取 bizId）。服务端校验商品存在。
              */
             Long productId,
+
+            /**
+             * 可选：闲置咨询会话上下文（第五十三轮）。
+             *
+             * <p>语义与 {@code productId} 完全平行：TEXT 消息带 listingId 时落入该闲置的
+             * 咨询会话（会话键带闲置段 {@code :l{listingId}}）。LISTING 消息忽略此字段
+             * （会话闲置恒取 bizId）。与 productId 互斥 —— 同时携带属于前端拼装错误，400。
+             * 服务端校验闲置存在。
+             */
+            Long listingId,
 
             @Size(max = 1000, message = "消息内容不能超过 1000 字")
             String content
@@ -171,7 +183,11 @@ public final class SocialDtos {
             /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
             Long productId,
             String productTitle,
-            String productImage
+            String productImage,
+            /** 闲置咨询会话的上下文闲置（主会话为 null，第五十三轮） */
+            Long listingId,
+            String listingTitle,
+            String listingImage
     ) {
     }
 
@@ -190,7 +206,9 @@ public final class SocialDtos {
             boolean canSend,
             boolean consulting,
             /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
-            Long productId
+            Long productId,
+            /** 闲置咨询会话的上下文闲置（主会话为 null，第五十三轮） */
+            Long listingId
     ) {
     }
 

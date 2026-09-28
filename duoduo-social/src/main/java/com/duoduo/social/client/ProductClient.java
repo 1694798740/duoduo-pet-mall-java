@@ -13,8 +13,12 @@ import java.util.List;
  *
  * <p>两个用途：①「问一问」在服务端定位收件人（SPU 归属卖家，不信前端）；
  * ②商品卡片消息按 bizId 现取展示字段，公开接口贴不出伪造卡片。
+ *
+ * <p>contextId 必填：与 {@link ListingClient} 同指向 duoduo-product 服务，
+ * 同 name 的多个 Feign 接口若不区分 contextId，会因同名
+ * {@code FeignClientSpecification} 冲突导致启动失败（第五十三轮实测）。
  */
-@FeignClient(name = "duoduo-product", path = "/api/products")
+@FeignClient(name = "duoduo-product", contextId = "productCard", path = "/api/products")
 public interface ProductClient {
 
     @GetMapping("/internal/cards")

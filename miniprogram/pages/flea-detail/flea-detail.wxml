@@ -33,6 +33,20 @@
       </view>
     </view>
 
+    <!-- 卖家信息卡（第五十三轮）：昵称头像来自他人主页同一公开端点，点卡进主页看更多 -->
+    <view class="card fd-seller" bindtap="goSellerProfile">
+      <image
+        class="fd-seller-avatar"
+        src="{{(seller && seller.avatar) || '/images/category/default.png'}}"
+        mode="aspectFill"
+      />
+      <view class="fd-seller-info">
+        <view class="fd-seller-name">{{(seller && seller.nickname) || '卖家'}}</view>
+        <view class="t3">查看卖家主页 · 信用与动态</view>
+      </view>
+      <text class="fd-seller-arrow">›</text>
+    </view>
+
     <!-- 描述 -->
     <view class="card">
       <view class="fd-sec-title">卖家描述</view>
@@ -62,8 +76,17 @@
       这是用户发布的二手闲置。交易前请与卖家确认成色与交易方式。
     </view>
 
+    <!-- 底部操作栏（第五十三轮）：「我想要」= 与卖家聊（LISTING 咨询会话）；
+         「立即购买」为过渡态 —— 担保交易属 Batch-3，资质核实前不做假下单 -->
     <view class="fd-foot">
-      <button class="btn btn-plain" bindtap="onBackMarket">返回跳蚤市场</button>
+      <block wx:if="{{!isOwner}}">
+        <button class="btn btn-plain fd-foot-buy" bindtap="onBuy" size="mini">立即购买</button>
+        <button class="btn btn-primary fd-foot-want" bindtap="onWantIt" size="mini">我想要</button>
+      </block>
+      <block wx:else>
+        <button class="btn btn-plain" bindtap="onBackMarket" size="mini">返回</button>
+        <view class="t3 fd-owner-hint">这是你发布的闲置，去「我的闲置」管理</view>
+      </block>
     </view>
   </block>
 </view>

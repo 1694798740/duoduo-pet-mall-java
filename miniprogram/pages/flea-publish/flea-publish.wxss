@@ -90,6 +90,15 @@
   font-size: 26rpx;
 }
 
+/* 编辑模式读取回填中的占位（第五十三轮） */
+.fp-edit-loading {
+  margin: 0 24rpx 20rpx;
+  padding: 40rpx 22rpx;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+}
+
 .fp-actions {
   display: flex;
   gap: 20rpx;

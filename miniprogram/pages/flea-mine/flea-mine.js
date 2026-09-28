@@ -8,9 +8,14 @@ const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
 
+// 五十三轮起筛选分两个维度：交易维度（在售/下架/已售 → status 参数）与
+// 审核维度（审核中/审核失败 → auditStatus 参数）。被驳回的条目不是「在售」——
+// 服务端驳回时会把 status 同步落 OFF_SHELF，把驳回条目混进「在售」会让卖家误判。
 const FILTERS = [
   { code: 'ALL', label: '全部' },
+  { code: 'AUDIT_PENDING', label: '审核中' },
   { code: 'ON_SALE', label: '在售' },
+  { code: 'AUDIT_REJECTED', label: '审核失败' },
   { code: 'OFF_SHELF', label: '已下架' },
   { code: 'SOLD', label: '已售出' },
 ];
@@ -30,10 +35,12 @@ function decorate(it) {
     auditLabel: AUDIT_LABEL[audit] || audit,
     auditClass: 'fm-audit-' + audit.toLowerCase(),
     timeText: api.shortTime(it.createdAt),
-    canShelve: it.status === 'OFF_SHELF',
-    canUnshelve: it.status === 'ON_SALE',
+    canShelve: it.status === 'OFF_SHELF' && audit === 'APPROVED',
+    canUnshelve: it.status === 'ON_SALE' && audit === 'APPROVED',
     // 驳回原因要显示出来：不告诉卖家为什么被拒，他只能猜着改
     showReason: audit === 'REJECTED' && !!it.auditReason,
+    // 重新提审（第五十三轮）：只有被驳回的条目能改内容重提
+    canResubmit: audit === 'REJECTED',
   });
 }
 
@@ -87,8 +94,14 @@ Page({
     }
     const page = reset ? 1 : this.data.page + 1;
     this.setData({ loading: true, error: reset ? '' : this.data.error });
+    // 筛选 code → 接口参数：审核维度走 auditStatus，交易维度走 status（第五十三轮）
+    const filter = this.data.status;
+    const params = { page, pageSize: PAGE_SIZE };
+    if (filter === 'AUDIT_PENDING') params.auditStatus = 'PENDING';
+    else if (filter === 'AUDIT_REJECTED') params.auditStatus = 'REJECTED';
+    else if (filter !== 'ALL') params.status = filter;
     api.listing
-      .mine({ page, pageSize: PAGE_SIZE, status: this.data.status })
+      .mine(params)
       .then((res) => {
         // 请求层成功时已返回包络里的 data（即分页结果 {items,total,...} 本身），
         // 这里直接用 —— 再取 res.data 会得到 undefined，列表永远为空（R52 热修实录）
@@ -125,12 +138,22 @@ Page({
   onTapItem(e) {
     const id = e.currentTarget.dataset.id;
     const item = this.data.items.find((x) => String(x.id) === String(id));
-    // 在售且已过审的才有公开详情页；其余状态公开接口会 404，因此给提示而不是跳转
+    // 在售且已过审的才有公开详情页；其余状态公开接口会 404
     if (item && item.status === 'ON_SALE' && item.auditStatus === 'APPROVED') {
       wx.navigateTo({ url: '/pages/flea-detail/flea-detail?id=' + id });
+    } else if (item && item.auditStatus === 'REJECTED') {
+      this.onResubmit(e); // 被驳回的条目：直接送编辑页，比一句「未公开」更有用
     } else {
       wx.showToast({ title: '该闲置尚未公开展示', icon: 'none' });
     }
+  },
+
+  /** 修改并重新提审（第五十三轮）：进发布页编辑模式，回填内容后走 resubmit */
+  onResubmit(e) {
+    const id = e.currentTarget.dataset.id;
+    wx.navigateTo({
+      url: '/pages/flea-publish/flea-publish?id=' + id + '&mode=edit',
+    });
   },
 
   /** 上架 / 下架 */
@@ -153,8 +176,9 @@ Page({
             ? Object.assign({}, x, {
                 status: next,
                 statusLabel: next === 'ON_SALE' ? '在售' : '已下架',
-                canShelve: next === 'OFF_SHELF',
-                canUnshelve: next === 'ON_SALE',
+                // 上架按钮仍受审核态约束（未过审不能上架，服务端同款闸门）
+                canShelve: next === 'OFF_SHELF' && x.auditStatus === 'APPROVED',
+                canUnshelve: next === 'ON_SALE' && x.auditStatus === 'APPROVED',
               })
             : x
         );

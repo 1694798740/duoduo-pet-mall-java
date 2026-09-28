@@ -1,4 +1,4 @@
-<!-- 发布闲置（第五十二轮） -->
+<!-- 发布闲置（第五十二轮）；编辑模式（第五十三轮）：?id=xx&mode=edit 回填重提 -->
 <view class="fp">
   <!-- 实名预检（第五十二轮热修）：未实名直接给指引，不让用户填完一长串表单再吃 403 -->
   <view wx:if="{{realNameState === 'needed'}}" class="fp-gate">
@@ -9,11 +9,16 @@
   </view>
 
   <block wx:else>
-  <view class="fp-tip">
+  <view class="fp-tip" wx:if="{{!editId}}">
     发布后需平台审核通过才会在跳蚤市场公开展示，可在「我的闲置」查看进度。
   </view>
+  <view class="fp-tip" wx:else>
+    正在修改被驳回的闲置。内容修改后重新提交，审核通过后会再次公开展示。
+  </view>
 
-  <view class="card">
+  <view class="fp-edit-loading" wx:if="{{editLoading}}">正在读取闲置内容…</view>
+
+  <view class="card" wx:if="{{!editId || !editLoading}}">
     <view class="fp-field">
       <text class="fp-label">标题<text class="fp-req">*</text></text>
       <input
@@ -130,7 +135,7 @@
       class="btn btn-accent fp-btn-submit {{submitting ? 'btn-disabled' : ''}}"
       loading="{{submitting}}"
       bindtap="onSubmit"
-    >{{submitting ? '发布中…' : '发布闲置'}}</button>
+    >{{submitting ? (editId ? '提交中…' : '发布中…') : (editId ? '重新提交审核' : '发布闲置')}}</button>
   </view>
   </block>
 </view>

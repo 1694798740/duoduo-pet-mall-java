@@ -96,14 +96,10 @@
   gap: 14rpx;
   margin-top: 14rpx;
 }
-.fmine-btn {
-  padding: 10rpx 28rpx;
-  border-radius: 26rpx;
-  font-size: 24rpx;
-  background: var(--bg);
-  color: var(--text-2);
-}
+.fmine-btn { padding: 10rpx 28rpx; border-radius: 26rpx; font-size: 24rpx; background: var(--bg); color: var(--text-2); }
 .fmine-btn-on { background: var(--brand-weak); color: var(--brand); font-weight: 600; }
+/* 修改并重提（第五十三轮）：驳回条目的主操作，用警示色与普通按钮区分 */
+.fmine-btn-resubmit { background: var(--accent-weak, rgba(240, 82, 82, 0.12)); color: var(--accent); font-weight: 600; }
 .fmine-time { margin-left: auto; font-size: 22rpx; color: var(--text-3); }
 
 .fmine-state {

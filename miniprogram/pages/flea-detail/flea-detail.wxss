@@ -81,7 +81,29 @@
   line-height: 1.6;
 }
 
-.fd-foot { padding: 28rpx 24rpx 0; }
+/* ── 卖家信息卡（第五十三轮） ── */
+.fd-seller { display: flex; align-items: center; gap: 20rpx; }
+.fd-seller-avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.fd-seller-info { flex: 1; min-width: 0; }
+.fd-seller-name { font-size: 29rpx; font-weight: 600; }
+.fd-seller-arrow { color: var(--text-3); font-size: 40rpx; }
+
+/* ── 底部操作栏（第五十三轮） ── */
+.fd-foot {
+  padding: 28rpx 24rpx 0;
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+.fd-foot-buy { flex-shrink: 0; }
+.fd-foot-want { flex: 1; }
+.fd-owner-hint { flex: 1; }
 
 .fd-state {
   padding: 120rpx 24rpx;

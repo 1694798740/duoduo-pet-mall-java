@@ -8,13 +8,19 @@ const api = require('../../utils/api');
 
 const PAGE_SIZE = 20;
 
-/** 行装饰：时间 + 头像 + 摘要前缀（卡片类消息带类型图标）+ 商品会话标识 */
+/** 行装饰：时间 + 头像 + 摘要前缀（卡片类消息带类型图标）+ 咨询会话标识 */
 function decorate(it) {
   const prefix =
-    it.lastBizType === 'ASK' ? '❓ ' : it.lastBizType === 'PRODUCT' ? '🛍️ ' : '';
-  // 第四十九轮：同一 peer 可有「主会话 + 每商品一个咨询会话」，wx:key 必须会话级唯一
+    it.lastBizType === 'ASK'
+      ? '❓ '
+      : it.lastBizType === 'PRODUCT'
+        ? '🛍️ '
+        : it.lastBizType === 'LISTING'
+          ? '🏷️ '
+          : '';
+  // 第四十九轮：同一 peer 可有「主会话 + 每商品/闲置一个咨询会话」，wx:key 必须会话级唯一
   return Object.assign({}, it, {
-    key: it.peerId + '-' + (it.productId || 'main'),
+    key: it.peerId + '-' + (it.productId || 'main') + '-' + (it.listingId || 'n'),
     timeText: api.shortTime(it.lastAt),
     avatarSrc: it.avatar || '/images/category/default.png',
     preview: prefix + (it.lastContent || ''),
@@ -64,13 +70,14 @@ Page({
   },
 
   goChat(e) {
-    // 商品咨询会话带 productId（第四十九轮）：进对会话，不串到主会话
+    // 咨询会话带 productId / listingId（第四十九轮商品 / 第五十三轮闲置）：进对会话，不串线
     const d = e.currentTarget.dataset;
     wx.navigateTo({
       url:
         '/pages/chat/chat?peerId=' +
         d.user +
-        (d.product ? '&productId=' + d.product : ''),
+        (d.product ? '&productId=' + d.product : '') +
+        (d.listing ? '&listingId=' + d.listing : ''),
     });
   },
 });

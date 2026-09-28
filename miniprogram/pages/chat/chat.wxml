@@ -37,8 +37,14 @@
           mode="aspectFill"
         />
         <view class="msg-col">
-          <!-- 卡片消息：服务端取事实源渲染，点击跳商品详情 -->
-          <view wx:if="{{item.card}}" class="msg-card" data-spu="{{item.card.id}}" catchtap="goCard">
+          <!-- 卡片消息：服务端取事实源渲染，点击按类型分流（闲置卡→闲置详情 / 商品卡→商城详情） -->
+          <view
+            wx:if="{{item.card}}"
+            class="msg-card"
+            data-spu="{{item.card.id}}"
+            data-msgid="{{item.id}}"
+            catchtap="goCard"
+          >
             <image class="msg-card-img" src="{{item.cardImage}}" mode="aspectFill" />
             <view class="msg-card-info">
               <view class="msg-card-title ellipsis-2">{{item.card.title}}</view>

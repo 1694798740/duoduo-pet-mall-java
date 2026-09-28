@@ -4,6 +4,25 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**最近更新：2026-09-28（第五十三轮）** — **闲置详情卖家卡与问一问 + 详情购买按钮（过渡态）+ 我的闲置审核态体系**。
+本轮三项：详情页能看到卖家并一键咨询、购买按钮过渡态引导、驳回-修改-重提闭环。
+
+**① 闲置详情页卖家信息卡 + 「我想要」（问一问）**。此前详情页只有卖家描述文字，没有卖家身份、没有咨询入口。本轮：
+- 后端新增跨域事实源 `GET /api/listings/internal/cards`（product 域，`InternalTokenFilter` 保护，返回 `InternalListingView` 含 `sellerId`），social 域新增 `ListingClient`（Feign，`path=/api/listings`）+ `ListingCardBrief` 契约副本；「我想要」发送 `bizType=LISTING` 消息，**收件人由服务端按 `listing.sellerId` 决定**（不信前端），与 ASK 同款纪律：咨询会话豁免「非互关一条」、幽灵闲置 404、自己问自己 422。
+- **★ 会话上下文段升级为 `ConvContext` record**：统一 none / product / listing 三态拼装（商品段 `:p{spuId}` 与闲置段 `:l{listingId}` 平行、不共存），替换原 `Long contextProduct` 与 `productOfKey` 双实现；`productId` 与 `listingId` 同时携带 400。会话列表 / 会话页 / 已读全部支持闲置卡（LISTING 卡 `type=LISTING`，前端按类型分流 `images.listingImage`，列表前缀 🏷️）。
+- **★ Feign 同名服务多客户端必须 `contextId`（本轮最大的坑，启动即炸）**：`ListingClient` 与既有 `ProductClient` 同为 `@FeignClient(name="duoduo-product")`，Spring Cloud OpenFeign 会为同名 name 注册 `FeignClientSpecification`，第二个注册时 `BeanDefinitionOverrideException` 直接启动失败（容器 unhealthy）。修法：两个 client 都加唯一 `contextId`（`productCard`/`listingCard`）——contextId 只影响 bean 命名不影响服务发现。
+- **★ 前端聚合防 401 副作用**：卖家卡数据源复用他人主页公开端点 `api.social.follow.profile(sellerId)`（零新增契约），但它落 `/api/socials/**` 白名单外需登录——免登访客逛详情页时若直接发请求会 401 → `request.js` 清登录态 → 触发全局静默重登/跳登录，把免登用户拽去登录。修法：`loadSeller` **无令牌不发请求**，直接占位「卖家」，登录用户才拉完整资料。
+- 小程序 `flea-detail` 重写：卖家信息卡（头像/昵称/「查看卖家主页 · 信用与动态」）+ 底部双按钮（立即购买 / 我想要）；`isOwner`（自己看自己的闲置）时按钮区换成引导去「我的闲置」。
+
+**② 详情页「立即购买」过渡态**。完整 C2C 担保交易（下单/锁库存/资金托管/放款）属设计稿 Batch-3，且设计稿 §12-6 明确**上线前必须核实微信类目资质**——本轮不做假下单：按钮弹「担保交易即将上线」modal 并引导「问问卖家」，PLAN.md 已登记边界与前置条件。
+
+**③ 我的闲置审核态体系（正交双维度）**。`status`（在售/下架/已售）与 `auditStatus`（PENDING/APPROVED/REJECTED）**正交**，列表筛选从 4 项扩为 6 项：
+- `GET /api/listings/mine/list` 新增 `auditStatus` 参数（白名单校验，非法 400），可与 `status` 组合过滤；**审核驳回时 `status` 同步落 `OFF_SHELF`**（`audit()` 修改）——驳回条目不再混入「在售」筛选。
+- 新增 `GET /api/listings/mine/{id}`（**卖家视角详情**，`ListingOwnerView` 全集字段含审核原因；归属校验 404/403 刻意区分，`requireOwned` 统一收口）与 `POST /api/listings/{id}/resubmit`（**重新提审**：仅 REJECTED 可调，PENDING=「正在审核中」、APPROVED=「已通过无需重提」均 422 拒绝；重提=内容更新 + `auditStatus→PENDING` + `auditReason→null` + `status→ON_SALE`，实名与违禁词全部复检——发布/重提共用 `normalizeForWrite()` 闸门）。
+- 小程序：`flea-mine` 筛选 6 项 + 「修改并重新提审」按钮（驳回条目直接点卡片进编辑页）；`flea-publish` 支持编辑模式（`?id=X&mode=edit` 拉取 owner 详情回填表单，提交走 `resubmit`，价格分↔元换算复用 `api.fen2yuan`）。
+
+**验证**：新增 `scripts/r53-listing-detail-mine-smoke.py` **28/28 PASS**（A 审核维度过滤 5 项 + M LISTING 问一问 8 项 + R 驳回→修改→重提闭环 15 项，含运营账号真实审核）；R52 回归 **57/57**；product/social 编译 0 错；小程序静态自检 0 错 0 警；双容器 healthy。**状态码口径已固定**：参数校验错 400，业务规则违例 422（探针 M6/R7/R12 首轮预期写错已修正——服务端行为一直正确）。
+
 **最近更新：2026-09-28（第五十二轮）** — **跳蚤市场发布链路补全 + 结算预览端点 + 405 修复**。
 本轮源自第五十一轮小程序全流程验收报告的两条待修问题与一条验收建议（用户已采纳）。
 
@@ -508,8 +527,11 @@ duoduo-pet-mall-java/
 | POST | `/api/products/skus/stock/{freeze,release,deduct,restock}` | **库存写接口**（冻结 / 释放 / 扣减 / 退货入库），见下 | **内部凭据** |
 | GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐 | 免 |
 | POST | `/api/listings` | **发布闲置**（落 `PENDING` 待审；需实名；`sellerId`/`status`/`auditStatus` 概不接受客户端传值） | 需登录 |
-| GET | `/api/listings/mine/list` | **我的发布**（可按 `status` 筛：`ON_SALE`/`OFF_SHELF`/`SOLD`，含审核态与驳回原因） | 需登录 |
+| GET | `/api/listings/mine/list` | **我的发布**（`status` 与 `auditStatus` **正交双维度**筛选：`ON_SALE`/`OFF_SHELF`/`SOLD` × `PENDING`/`APPROVED`/`REJECTED`，含驳回原因；`auditStatus` 非法值 400） | 需登录 |
+| GET | `/api/listings/mine/{id}` | **卖家视角详情**（`ListingOwnerView` 全集字段含审核原因；未过审也可读自己条目；非本人 403） | 需登录 |
+| POST | `/api/listings/{id}/resubmit` | **重新提审**（仅 `REJECTED` 可调，PENDING/APPROVED 均 422；实名与违禁词复检；成功后回 `PENDING` + `ON_SALE`，清空驳回原因） | 需登录 |
 | POST | `/api/listings/{id}/status` | **上架 / 下架**（`action=ON_SALE`/`OFF_SHELF`；幂等开关；上架要求已过审；他人闲置 403、不存在 404） | 需登录 |
+| GET | `/api/listings/internal/cards` | **闲置卡批量视图**（供社交域取 `sellerId` 等事实；`X-Internal-Token` 保护） | 内部凭据 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
 
 `GET /api/products` 查询参数：

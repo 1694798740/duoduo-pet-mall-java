@@ -5,6 +5,9 @@
 //  * ?peerId=<卖家ID>&productId=<SPU>&ask=1 —— 商品页「问一问」：首条消息按 ASK 发送，
 //    服务端把收件人定为商品归属卖家（不信前端），会话从此带上咨询豁免 —— 之后可自由聊
 //    （后端 countAskInConversation 判定，无需互关）。
+//  * ?peerId=<卖家ID>&listingId=<闲置ID>&ask=1 —— 闲置详情页「问一问」（第五十三轮）：
+//    首条按 LISTING 发送，服务端按闲置归属定收件人，会话键带闲置段（lo:hi:l{listingId}），
+//    与商品咨询会话同款豁免 —— 整段对话留在该闲置的独立会话里。
 //
 // 规则展示（一律消费服务端结果，前端不自算）：
 //  * canSend=false 时输入框禁用 + 提示「互相关注后才能继续聊天」（已发过一条且未互关）；
@@ -22,7 +25,8 @@ Page({
     navTotal: 0, // 自绘导航栏总高（第五十轮）：整页 flex 高度按它扣减
     peerId: '',
     productId: '',
-    ask: false, // 首条按 ASK 发（问一问）
+    listingId: '',
+    ask: false, // 首条按 ASK / LISTING 发（问一问）
     page: null, // MessagePage：对方资料 + 互关/可发状态
     items: [], // 装饰后的消息（时间正序）
     input: '',
@@ -43,6 +47,7 @@ Page({
     this.setData({
       peerId: query.peerId,
       productId: query.productId || '',
+      listingId: query.listingId || '',
       ask: query.ask === '1',
     });
     this.fetchThread(true);
@@ -76,11 +81,16 @@ Page({
 
   // ---------------- 数据 ----------------
 
-  /** 消息装饰：时间文本 + 卡片图映射（卡片 image 是后端相对路径） */
+  /** 消息装饰：时间文本 + 卡片图映射（卡片 image 是后端相对路径；闲置卡走闲置图通道） */
   decorate(msg) {
+    const isListing = msg.card && msg.card.type === 'LISTING';
     return Object.assign({}, msg, {
       timeText: api.shortTime(msg.createdAt),
-      cardImage: msg.card ? images.productImage(msg.card.id, msg.card.image) : '',
+      cardImage: msg.card
+        ? isListing
+          ? images.listingImage(msg.card.id, msg.card.image)
+          : images.productImage(msg.card.id, msg.card.image)
+        : '',
       cardPriceText: msg.card && msg.card.minPrice ? api.fen2yuan(msg.card.minPrice) : '',
     });
   },
@@ -93,7 +103,13 @@ Page({
     if (this._fetching) return; // 上一轮还没回来，跳过本次（防请求堆积）
     this._fetching = true;
     api.social.message
-      .thread(this.data.peerId, 1, PAGE_SIZE, this.data.productId || null)
+      .thread(
+        this.data.peerId,
+        1,
+        PAGE_SIZE,
+        this.data.productId || null,
+        this.data.listingId || null
+      )
       .then((data) => {
         this._fetching = false;
         const items = ((data && data.items) || []).map((m) => this.decorate(m));
@@ -117,7 +133,9 @@ Page({
           }
         });
         if (hasNew) {
-          api.social.message.markRead(this.data.peerId, this.data.productId || null).catch(() => {});
+          api.social.message
+            .markRead(this.data.peerId, this.data.productId || null, this.data.listingId || null)
+            .catch(() => {});
         }
       })
       .catch((err) => {
@@ -148,12 +166,20 @@ Page({
     const content = (this.data.input || '').trim();
     if (!content || this.data.sending || !this.data.canSend) return;
     this.setData({ sending: true });
-    // 问一问首条：会话为空且带 productId 时按 ASK 发送（服务端定收件人=卖家）；
-    // 后续 TEXT 仍带 productId（第四十九轮：整段对话留在该商品的独立咨询会话里）
-    const askNow = this.data.ask && this.data.productId && this.data.items.length === 0;
-    const contextProduct = this.data.productId || null;
+    // 问一问首条：会话为空且带上下文时按咨询类型发送（ASK=商品 / LISTING=闲置，服务端定收件人）；
+    // 后续 TEXT 仍带上下文（第四十九轮商品 / 第五十三轮闲置：整段对话留在独立咨询会话里）
+    const askNow = this.data.ask && (this.data.productId || this.data.listingId) && this.data.items.length === 0;
+    const bizType = askNow ? (this.data.listingId ? 'LISTING' : 'ASK') : 'TEXT';
+    const askBizId = askNow ? (this.data.listingId || this.data.productId) : null;
     api.social.message
-      .send(this.data.peerId, content, askNow ? 'ASK' : 'TEXT', askNow ? this.data.productId : null, contextProduct)
+      .send(
+        this.data.peerId,
+        content,
+        bizType,
+        askBizId,
+        this.data.productId || null,
+        this.data.listingId || null
+      )
       .then(() => {
         this.setData({ sending: false, input: '', ask: askNow ? false : this.data.ask });
         this.fetchThread(false); // 拉最新一页，含自己刚发的这条
@@ -164,9 +190,17 @@ Page({
       });
   },
 
-  /** 点商品卡 → 商品详情（不冒泡到气泡） */
+  /** 点卡片 → 按类型分流：闲置卡去闲置详情，商品卡去商城详情（不冒泡到气泡） */
   goCard(e) {
-    wx.navigateTo({ url: '/pages/product/product?id=' + e.currentTarget.dataset.spu });
+    const card = this.data.items.find(
+      (m) => String(m.id) === String(e.currentTarget.dataset.msgid)
+    );
+    const id = e.currentTarget.dataset.spu;
+    if (card && card.card && card.card.type === 'LISTING') {
+      wx.navigateTo({ url: '/pages/flea-detail/flea-detail?id=' + id });
+    } else {
+      wx.navigateTo({ url: '/pages/product/product?id=' + id });
+    }
   },
 
   noop() {},

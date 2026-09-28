@@ -5,6 +5,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.ListingCard;
 import com.duoduo.product.dto.ProductDtos.ListingDetail;
 import com.duoduo.product.dto.ProductDtos.ListingMineView;
+import com.duoduo.product.dto.ProductDtos.ListingOwnerView;
 import com.duoduo.product.dto.ProductDtos.ListingPublishRequest;
 import com.duoduo.product.dto.ProductDtos.ListingQuery;
 import com.duoduo.product.dto.ProductDtos.ListingStatusRequest;
@@ -39,11 +40,18 @@ import org.springframework.web.bind.annotation.RestController;
  *   <tr><td>{@code /api/listings/mine/list}</td><td>GET</td>
  *       <td><b>强制登录</b>。我的发布。用<b>三段</b>路径躲开 {@code /api/listings/*} ——
  *           AntPathMatcher 的 {@code *} 不跨 {@code /}，两段的 {@code /mine} 会被详情白名单漏放行。</td></tr>
+ *   <tr><td>{@code /api/listings/mine/{id}}</td><td>GET</td>
+ *       <td><b>强制登录</b>。卖家视角详情（编辑重提回填用，第五十三轮）。同为三段，
+ *           字面量 {@code mine} 优先于 {@code {id}} 变量匹配，与单段详情互不干扰。</td></tr>
  *   <tr><td>{@code /api/listings/{id}/status}</td><td>POST</td>
  *       <td><b>强制登录</b>。上下架。同样三段，{@code *} 不跨 {@code /} 故落白名单外。</td></tr>
+ *   <tr><td>{@code /api/listings/{id}/resubmit}</td><td>POST</td>
+ *       <td><b>强制登录 + 实名</b>。被驳回后修改内容重新提审（第五十三轮）。三段，白名单外。</td></tr>
  * </table>
  *
- * <p>运营审核仍在 {@code /api/admin/listings/**}（见 {@link AdminListingController}）。
+ * <p>运营审核仍在 {@code /api/admin/listings/**}（见 {@link AdminListingController}）；
+ * 服务间闲置卡在 {@code /internal/cards}（见 {@link InternalListingController}，
+ * 由 InternalTokenFilter 保护）。
  */
 @RestController
 @RequestMapping("/api/listings")
@@ -105,13 +113,29 @@ public class ListingController {
      *
      * <p>路径刻意写成三段 {@code /mine/list} 而不是两段 {@code /mine}：
      * 白名单里的 {@code /api/listings/*} 只匹配一段通配，两段路径会被误放行成匿名可读。
+     *
+     * <p>{@code status}（交易维度）与 {@code auditStatus}（审核维度）正交组合
+     * （第五十三轮）：前端「审核中 / 审核失败」分类标签按 auditStatus 过滤。
      */
     @GetMapping("/mine/list")
     public ApiResponse<PageResult<ListingMineView>> mine(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String auditStatus,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(listingService.listMine(status, page, pageSize));
+        return ApiResponse.ok(listingService.listMine(status, auditStatus, page, pageSize));
+    }
+
+    /**
+     * 卖家视角详情（需登录 + 需归属，第五十三轮）。
+     *
+     * <p>公开详情对未过审内容一律 404（防状态码探测），卖家自己的被驳回条目
+     * 用它拿不回内容 —— 编辑重提需要 owner 视角读端点。路径 {@code /mine/{id}}
+     * 与 {@code /mine/list} 共存：字面量 {@code list} 优先于 {@code {id}} 变量匹配。
+     */
+    @GetMapping("/mine/{id}")
+    public ApiResponse<ListingOwnerView> ownerDetail(@PathVariable Long id) {
+        return ApiResponse.ok(listingService.ownerDetail(id));
     }
 
     /** 上下架（需登录 + 需归属）；请求体 {@code {"action": "ON_SALE" | "OFF_SHELF"}} */
@@ -119,5 +143,18 @@ public class ListingController {
     public ApiResponse<ListingMineView> changeStatus(@PathVariable Long id,
                                                      @RequestBody ListingStatusRequest request) {
         return ApiResponse.ok(listingService.changeStatus(id, request == null ? null : request.action()));
+    }
+
+    /**
+     * 重新提审（需登录 + 需实名 + 需归属，第五十三轮）。
+     *
+     * <p>仅 {@code auditStatus=REJECTED} 的闲置可重提（PENDING 请等待、APPROVED 无需重提）。
+     * 请求体与发布相同；服务端把内容更新后审核态重置回 PENDING、清空驳回原因、
+     * status 回 ON_SALE —— 语义等同重新发布，审核链从头走。
+     */
+    @PostMapping("/{id}/resubmit")
+    public ApiResponse<ListingMineView> resubmit(@PathVariable Long id,
+                                                 @RequestBody ListingPublishRequest request) {
+        return ApiResponse.ok(listingService.resubmit(id, request));
     }
 }
