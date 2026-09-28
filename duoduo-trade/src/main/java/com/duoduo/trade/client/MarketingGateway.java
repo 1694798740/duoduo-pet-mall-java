@@ -66,6 +66,34 @@ public class MarketingGateway {
     }
 
     /**
+     * 券试算（结算预览，<b>只读</b>）。
+     *
+     * <p>与 {@link #lock} 的区别只有一点：<b>不占用券</b>。
+     * 结算页每次改数量都要重算，若走 {@code lock}，用户逛一圈什么都没提交，
+     * 券却被锁了一轮（要等营销域 TTL 兜底任务才还回来）——
+     * 用一个写操作去支撑一个纯展示需求，是资损与体验双重事故。
+     *
+     * <p>失败语义与 {@link #lock} 一致：券本身不可用 → 返回 {@code success=false} 的
+     * {@code reason}（调用方决定是回 422 还是只做提示）；营销域故障 → 抛 503 {@code DEGRADED}。
+     * 结算预览对故障的处理比下单宽松：预览拿不到券结论时应当「按原价显示 + 提示稍后再试」，
+     * 而不是把整个结算页打不开——这个取舍在调用方（OrderService#previewOrder）里做。
+     */
+    public LockResult trial(String code, Long userId, long orderAmount) {
+        ApiResponse<LockResult> response = call(
+                () -> marketingClient.trial(new LockRequest(code, userId, TRIAL_ORDER_NO, orderAmount)),
+                "券试算(券 " + code + ")");
+        return response == null ? null : response.data();
+    }
+
+    /**
+     * 试算用的占位订单号（试算不写库、营销域也不记它）。
+     *
+     * <p>显式给常量而不是 {@code null}：{@code LockRequest.orderNo} 有 {@code @NotBlank}，
+     * 给 null 会触发一次毫无意义的参数校验失败。
+     */
+    private static final String TRIAL_ORDER_NO = "__TRIAL__";
+
+    /**
      * 解锁（关单 / 取消 / 超时）。<b>best-effort</b>：失败只记日志，返回 0。
      *
      * <p>为什么可以这么松：券有按 TTL 扫描的兜底解锁（营销域 {@code CouponReleaseJob}），

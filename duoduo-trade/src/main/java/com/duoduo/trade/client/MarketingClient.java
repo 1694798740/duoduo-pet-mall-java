@@ -29,6 +29,16 @@ public interface MarketingClient {
     @PostMapping("/lock")
     ApiResponse<LockResult> lock(@RequestBody LockRequest payload);
 
+    /**
+     * 券试算（结算预览时）。
+     *
+     * <p>复用 {@link LockRequest} 的请求形状，但语义是**只读** —— 营销域不会占用券。
+     * 预览若直接调 {@link #lock}，「用户改数量看价格」这个纯浏览动作会把券锁住，
+     * 最后没提交订单还得等 TTL 自动解锁。
+     */
+    @PostMapping("/trial")
+    ApiResponse<LockResult> trial(@RequestBody LockRequest payload);
+
     /** 解锁（关单 / 取消 / 超时） */
     @PostMapping("/release")
     ApiResponse<ReleaseResult> release(@RequestBody ReleaseRequest payload);

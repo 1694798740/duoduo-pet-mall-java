@@ -57,6 +57,12 @@
     <text>我的订单</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 我的闲置（第五十二轮）：C2C 发布链路的个人侧入口；需登录 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/flea-mine/flea-mine">
+    <text class="mi-icon">🧺</text>
+    <text>我的闲置</text>
+    <text class="arrow">›</text>
+  </view>
   <!-- 社交（第四十七轮）：关注与粉丝，接口都要登录态；私信入口已上移右上角 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/follow-list/follow-list">
     <text class="mi-icon">👥</text>

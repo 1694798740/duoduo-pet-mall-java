@@ -52,6 +52,22 @@ public class CouponInternalController {
         return ApiResponse.ok(couponService.lock(request));
     }
 
+    /**
+     * 券试算（<b>只读</b>，结算预览用）。
+     *
+     * <p>交易域在结算页要显示「用这张券能省多少」，但 <b>绝不能为此去调 {@code /lock}</b> ——
+     * 锁券是写操作，会把用户的券置为 LOCKED。用户每改一次数量就看到券被占一次，
+     * 最后没提交订单，券还被锁着等 TTL 解锁，这是纯粹的资损与体验事故。
+     * 因此单开一个只读试算入口，与 {@code lock} 共用同一份校验规则（见
+     * {@code CouponService#precheck}），保证「预览能用」与「下单能用」结论一致。
+     *
+     * <p>走 {@code /api/coupons/internal/**}，由服务间凭据保护，不经网关、不对外暴露。
+     */
+    @PostMapping("/trial")
+    public ApiResponse<LockResult> trial(@Valid @RequestBody LockRequest request) {
+        return ApiResponse.ok(couponService.trial(request.code(), request.userId(), request.orderAmount()));
+    }
+
     /** 解锁（关单 / 取消 / 超时）。{@code released=0} 是常态（该单没用券），不是错误 */
     @PostMapping("/release")
     public ApiResponse<ReleaseResult> release(@Valid @RequestBody ReleaseRequest request) {

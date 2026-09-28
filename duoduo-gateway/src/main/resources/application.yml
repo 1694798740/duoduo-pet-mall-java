@@ -56,6 +56,9 @@ spring:
             # /api/admin/{categories,brands,listings} = 平台管理后台（M10）的类目/品牌/审核，
             # 数据在商品库，运营接口本质是商品域数据的「管理视图」，落回 product 服务最自然
             # /api/admin/search/** = 检索对账（A10）：ES 索引与库差异报告 + 重建，数据在商品域
+            # /api/listings/** = C2C 闲置全部读写（search 列表 / {id} 详情 / 发布 / mine/list / {id}/status）。
+            # 路由用通配没问题，但**白名单绝不能跟着写通配** —— 白名单不区分方法，
+            # /api/listings/** 会把发布写端点一起放行（详见 GatewaySecurityProperties 的 listings 段注释）
             - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/search/**
         - id: duoduo-trade
           uri: lb://duoduo-trade

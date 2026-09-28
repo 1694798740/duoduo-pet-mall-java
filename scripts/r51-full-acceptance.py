@@ -277,12 +277,21 @@ def sec_c(buyer_tok, addr_id):
     st, r = call("GET", "/api/cart/count", token=buyer_tok)
     check("C3 购物车角标数可读", st == 200, f"{st} {str(r)[:80]}")
 
-    # 结算预览：端点存在性探测（前端实际走 direct 下单，故此步只记事实）
-    st, r = call("POST", "/api/orders/preview", {"addressId": addr_id}, token=buyer_tok)
-    if st == 500:
-        print("  [问题] C4 无结算预览端点；改为带令牌请求后落到交易域被拒，但回的是 500 而非 404/405")
-    check("C4 结算预览端点缺失（应为首屏预览提供，或明确回 404/405）",
-          st in (200, 404, 405), f"实际 HTTP={st}")
+    # 结算预览（R52 已补端点）：金额口径与下单同源、只读不写
+    st, r = call("POST", "/api/orders/preview", {}, token=buyer_tok)
+    check("C4 结算预览端点可用（购物车有勾选时返回金额）",
+          st in (200, 422), f"实际 HTTP={st} {str(r)[:120]}")
+    if st == 200:
+        pv = d(r) or {}
+        check("C4b 预览金额口径自洽（应付 = 总额 + 运费 − 优惠）",
+              pv.get("payAmount")
+              == max(0, (pv.get("totalAmount") or 0) + (pv.get("freightAmount") or 0)
+                     - (pv.get("discountAmount") or 0)),
+              f"pay={pv.get('payAmount')} total={pv.get('totalAmount')} "
+              f"freight={pv.get('freightAmount')} discount={pv.get('discountAmount')}")
+    # 匿名预览必须 401（预览读的是「我的」购物车与券，不该有公开通道）
+    st, r = call("POST", "/api/orders/preview", {})
+    check("C4c 匿名预览被拒（401）", st == 401, f"实际 HTTP={st}")
 
     # 下单（响应体是 { orders: [...] } 多包裹结构，不是单个 order）
     st, r = call("POST", "/api/orders", {
@@ -618,7 +627,8 @@ def sec_h(buyer_tok, addr_id):
           f"nickname={(d(r) or {}).get('nickname')}")
 
     st, r = call("PUT", "/api/users/me", {"nickname": "错方法"}, token=buyer_tok)
-    check("H3b 错误方法 PUT 应回 405 而非 500（HTTP 契约瑕疵）", st in (405, 404), f"实际 {st}")
+    # R52 修复后：方法错配由 GlobalExceptionHandler 统一回 405（此前落兜底是 500）
+    check("H3b 错误方法 PUT → 405（R52 修复后契约）", st == 405, f"实际 {st}")
 
     # 订单分状态
     for label, q in (("全部", ""), ("待付款", "&status=PENDING_PAYMENT"),
@@ -700,11 +710,13 @@ def sec_h(buyer_tok, addr_id):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# I. 跳蚤市场
+# I. 跳蚤市场（第五十二轮起含完整发布链路；路径从裸 /api/listings 迁移到 /search）
 # ═══════════════════════════════════════════════════════════════════════════
 def sec_i(buyer_tok):
     print("\n══════ I. 跳蚤市场 ══════")
-    st, r = call("GET", "/api/listings?page=1&pageSize=20")
+    # R52：列表从 GET /api/listings 迁到 GET /api/listings/search
+    # （单段路径让给 POST /api/listings 发布端点 —— 白名单不区分方法，两者不能同路径共存）
+    st, r = call("GET", "/api/listings/search?page=1&pageSize=20")
     check("I1 闲置列表可读（公开免登录）", st == 200, f"{st} {str(r)[:150]}")
     lst = d(r) or {}
     items = lst.get("items") or lst.get("records") or []
@@ -729,31 +741,79 @@ def sec_i(buyer_tok):
     for label, q in (("关键词", "keyword=%E7%8C%AB"), ("城市", "city=%E6%B7%B1%E5%9C%B3%E5%B8%82"),
                      ("价格区间", "minPrice=0&maxPrice=1000000"),
                      ("排序", "sort=price_asc")):
-        # 查询串必须以 & 开头（pageSize 已在前面），中文由 call() 内部保持原样、
-        # 由 urllib 处理编码 —— 用 unquote 前的 ASCII 形式拼装最稳。
-        st, r = call("GET", "/api/listings?page=1&pageSize=10&" + q)
+        st, r = call("GET", "/api/listings/search?page=1&pageSize=10&" + q)
         check(f"I5-{label} 闲置筛选可用", st == 200, f"{st} {str(r)[:100]}")
 
     st, r = call("GET", "/api/listings/999999999999999999")
     check("I6 不存在的闲置 → 404", st == 404, f"{st}")
 
-    # ★ 关键事实核对：发布能力是否存在
-    print("  ── 发布能力核对 ──")
+    # ★ R52 · 发布链路已补全（此前 I7 断言「端点缺失」已随功能上线改为正向断言）
+    print("  ── 发布链路（R52 新增） ──")
+    # 旧路径契约保持：匿名发布必须 401（白名单不连带放行写端点）
+    st, r = call("POST", "/api/listings", {"title": "匿名", "price": 100})
+    check("I7 匿名发布被拒（401，写端点不进免登白名单）", st == 401, f"HTTP={st}")
+
+    # 未实名买家不能发布（实名是发布门槛，见 ListingService.publish）
     st, r = call("POST", "/api/listings", {
         "title": "验收测试：九成新猫爬架", "price": 8800,
         "description": "自用半年，功能完好。",
     }, token=buyer_tok)
-    info("I7 POST /api/listings（买家发布闲置）", f"HTTP={st} {str(r)[:160]}")
-    check("I7 无发布端点，且应以 404/405 明确拒绝（现为 500，HTTP 契约瑕疵）",
-          st in (404, 405), f"实际 HTTP={st}")
+    check("I7b 未实名发布被拒（403）", st == 403, f"HTTP={st} {str(r)[:120]}")
 
-    st, r = call("GET", "/api/listings/mine?page=1&pageSize=20", token=buyer_tok)
-    info("I8 GET /api/listings/mine（我的发布）", f"HTTP={st} {str(r)[:160]}")
-    check("I8 无「我的发布」端点（记录为待补能力）", st in (404, 405, 500), f"HTTP={st}")
+    # 实名买家走完整闭环：实名 → 发布（PENDING）→ 我的发布可见 → 公开不可见 → 下架
+    rtok, rid, rphone = sell("R52闲置卖家")
+    if rtok:
+        call("POST", "/api/users/me/realname",
+             {"realName": "闲置卖家", "idCard": "110101199001011234"}, token=rtok)
+        # 实名后必须重新登录：realNameVerified 是令牌里的 claim，老令牌还是 false
+        st, r = call("POST", "/api/auth/login/token", {"phone": rphone, "password": PWD})
+        if d(r) and d(r).get("accessToken"):
+            rtok = d(r)["accessToken"]
+        st, r = call("POST", "/api/listings", {
+            "title": "验收闲置：R52 猫爬架", "price": 8800,
+            "description": "自用半年，功能完好。",
+            "conditionLevel": "LIKE_NEW", "city": "上海",
+        }, token=rtok)
+        check("I8 实名买家发布成功（200/201）", st in (200, 201), f"HTTP={st} {str(r)[:150]}")
+        new_id = (d(r) or {}).get("id")
+        check("I8b 新发布落 PENDING（审核闸门）", (d(r) or {}).get("auditStatus") == "PENDING",
+              str((d(r) or {}).get("auditStatus")))
+
+        if new_id:
+            st, r = call("GET", f"/api/listings/{new_id}")
+            check("I8c 待审闲置匿名访问不可见（404）", st == 404, f"HTTP={st}")
+
+            st, r = call("GET", "/api/listings/mine/list?page=1&pageSize=20", token=rtok)
+            ids = [x.get("id") for x in ((d(r) or {}).get("items") or [])] if st == 200 else []
+            check("I8d 我的发布可见（三段路径，需登录）", st == 200 and new_id in ids,
+                  f"HTTP={st} ids={ids}")
+
+            st, r = call("POST", f"/api/listings/{new_id}/status", {"action": "OFF_SHELF"},
+                         token=rtok)
+            check("I8e 卖家可下架自己的闲置（200）", st == 200, f"HTTP={st}")
+
+            st, r = call("POST", f"/api/listings/{new_id}/status", {"action": "ON_SALE"},
+                         token=rtok)
+            check("I8f 待审闲置不能自行上架（422，审核闸门）", st == 422, f"HTTP={st}")
+    else:
+        check("I8 实名买家发布闭环（夹具失败，跳过）", False, "sell() 失败")
+
+    # 匿名（不带任何令牌）访问我的发布必须被拒 ——「我的」是用户私有数据
+    st, r = call("GET", "/api/listings/mine/list?page=1&pageSize=20")
+    check("I8g 匿名访问我的发布被拒（401）", st == 401, f"HTTP={st}")
+    st, r = call("GET", "/api/listings/mine/list?page=1&pageSize=20", token=buyer_tok)
+    check("I8h 登录用户可查自己的发布（200，列表可为空）", st == 200, f"HTTP={st}")
 
     st, r = call("GET", "/api/admin/listings?page=1&pageSize=20", token=buyer_tok)
     info("I9 运营端闲置审核列表", f"HTTP={st} {str(r)[:160]}")
     check("I9 买家令牌无法访问运营审核列表（403/404）", st in (403, 404), f"{st}")
+
+    # ★ R52 · 方法错配应回 405（此前 GlobalExceptionHandler 缺一条 handler 落成 500）
+    print("  ── 方法错配（R52 · 405 修复） ──")
+    st, r = call("POST", "/api/listings/search")
+    check("I10 路径存在方法错误 → 405（不再是 500）", st == 405, f"HTTP={st}")
+    st, r = call("PUT", "/api/home")
+    check("I10b GET 端点发 PUT → 405", st == 405, f"HTTP={st}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

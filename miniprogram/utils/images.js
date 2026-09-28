@@ -100,11 +100,34 @@ function assetUrl(path, fallback) {
   return fallback || CATEGORY_ICONS.default;
 }
 
+/**
+ * 闲置（C2C）商品图（第五十二轮）。
+ *
+ * <p>与商品图**共用同一池本地图**：闲置的 images 字段同样存的是
+ * `/img/listings/3001.svg` 这类相对 SVG（<image> 不支持 SVG，且网关不托管 /img），
+ * 而再为闲置单独打包一套位图会白白吃掉主包 2MB 的额度。
+ * 复用商品池即可做到「每条闲置都有稳定图、不依赖外网」——这是本层的既有目标。
+ *
+ * @param {string|number} id 闲置 id（稳定种子的来源，保证同一闲置永远同一张图）
+ * @param {string} backendPath 后端下发的 images 首段
+ */
+function listingImage(id, backendPath) {
+  if (isAbsolute(backendPath)) return backendPath;
+  return productPath(seedOf(id));
+}
+
+/** 闲置详情图集：复用商品图集逻辑（主图 + 4 张变体） */
+function listingGallery(id, backendPath) {
+  return gallery(id, backendPath);
+}
+
 module.exports = {
   productImage: productImage,
   skuImage: skuImage,
   gallery: gallery,
   detailImages: detailImages,
+  listingImage: listingImage,
+  listingGallery: listingGallery,
   categoryIcon: categoryIcon,
   assetUrl: assetUrl,
   CATEGORY_ICONS: CATEGORY_ICONS,

@@ -1,0 +1,159 @@
+/* ── 跳蚤市场（第五十二轮） ── */
+.fm { padding-bottom: 40rpx; }
+
+/* 搜索条 */
+.fm-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 20rpx 24rpx 12rpx;
+}
+.fm-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  height: 72rpx;
+  padding: 0 20rpx;
+  background: var(--card);
+  border-radius: 36rpx;
+}
+.fm-search-icon { font-size: 26rpx; color: var(--text-3); }
+.fm-search-input { flex: 1; min-width: 0; font-size: 27rpx; }
+.fm-city {
+  width: 130rpx;
+  flex: none;
+  height: 72rpx;
+  padding: 0 18rpx;
+  background: var(--card);
+  border-radius: 36rpx;
+  display: flex;
+  align-items: center;
+}
+.fm-city-input { width: 100%; font-size: 27rpx; }
+.fm-ph { color: var(--text-3); font-size: 27rpx; }
+.fm-search-btn {
+  flex: none;
+  height: 72rpx;
+  padding: 0 26rpx;
+  display: flex;
+  align-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 27rpx;
+  font-weight: 600;
+  border-radius: 36rpx;
+}
+
+/* 发布 / 我的闲置入口 */
+.fm-entry {
+  display: flex;
+  gap: 16rpx;
+  padding: 8rpx 24rpx 12rpx;
+}
+.fm-entry-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  height: 80rpx;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+.fm-entry-publish { background: var(--accent); color: #fff; }
+.fm-entry-mine { background: var(--card); color: var(--brand); }
+.fm-entry-icon { font-size: 30rpx; }
+
+/* 筛选条 */
+.fm-filter { padding: 6rpx 0 0; }
+.fm-chips {
+  display: flex;
+  gap: 12rpx;
+  padding: 4rpx 24rpx;
+  white-space: nowrap;
+}
+.fm-chips-sort { padding-top: 10rpx; }
+.fm-chip {
+  flex: none;
+  padding: 10rpx 24rpx;
+  background: var(--card);
+  color: var(--text-2);
+  border-radius: 30rpx;
+  font-size: 25rpx;
+}
+.fm-chip-on {
+  background: var(--brand-weak);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 统计条 */
+.fm-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18rpx 24rpx 6rpx;
+  font-size: 24rpx;
+  color: var(--text-3);
+}
+.fm-clear { color: var(--brand); }
+
+/* 列表 */
+.fm-list { padding: 0 24rpx; }
+.fm-item {
+  display: flex;
+  gap: 20rpx;
+  padding: 22rpx;
+  margin-top: 18rpx;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.fm-img {
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 14rpx;
+  background: var(--bg);
+  flex: none;
+}
+.fm-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fm-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  /* 两行截断：标题长度不可控，不定高会让卡片高度参差 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.fm-tags { display: flex; flex-wrap: wrap; gap: 10rpx; margin-top: 12rpx; }
+.fm-tag {
+  padding: 4rpx 14rpx;
+  background: var(--bg);
+  color: var(--text-2);
+  border-radius: 8rpx;
+  font-size: 22rpx;
+}
+.fm-tag-cond { background: var(--brand-weak); color: var(--brand); }
+.fm-price-row { display: flex; align-items: baseline; gap: 12rpx; margin-top: auto; }
+.fm-price { color: var(--accent); font-size: 36rpx; font-weight: 700; }
+.fm-original {
+  color: var(--text-3);
+  font-size: 24rpx;
+  text-decoration: line-through;
+}
+.fm-foot { margin-top: 8rpx; }
+.fm-views { font-size: 22rpx; color: var(--text-3); }
+
+/* 状态 */
+.fm-state {
+  padding: 60rpx 24rpx;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+}
+.fm-error { color: var(--accent); }

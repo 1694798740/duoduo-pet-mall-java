@@ -1,0 +1,70 @@
+<!-- 我的闲置（第五十二轮） -->
+<view class="fmine">
+  <view class="fmine-head">
+    <view class="fmine-filters">
+      <view
+        wx:for="{{filters}}"
+        wx:key="code"
+        class="fmine-filter {{status === item.code ? 'fmine-filter-on' : ''}}"
+        data-code="{{item.code}}"
+        bindtap="onPickFilter"
+      >{{item.label}}</view>
+    </view>
+    <view class="fmine-add" bindtap="onTapPublish">＋ 发布</view>
+  </view>
+
+  <view class="fmine-list">
+    <view
+      class="fmine-item"
+      wx:for="{{items}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="onTapItem"
+    >
+      <image class="fmine-img" src="{{item.image}}" mode="aspectFill" lazy-load />
+      <view class="fmine-info">
+        <view class="fmine-title">{{item.title}}</view>
+
+        <view class="fmine-badges">
+          <text class="fmine-badge {{item.auditClass}}">{{item.auditLabel}}</text>
+          <text class="fmine-badge fmine-badge-status">{{item.statusLabel}}</text>
+        </view>
+
+        <view class="fmine-price-row">
+          <text class="fmine-price">¥{{item.priceText}}</text>
+          <text class="fmine-views">{{item.viewCount}} 人看过</text>
+        </view>
+
+        <!-- 驳回原因：不给原因，卖家只能猜着改 -->
+        <view class="fmine-reason" wx:if="{{item.showReason}}">
+          驳回原因：{{item.auditReason}}
+        </view>
+
+        <view class="fmine-actions">
+          <view
+            class="fmine-btn fmine-btn-on"
+            wx:if="{{item.canShelve}}"
+            data-id="{{item.id}}"
+            data-action="ON_SALE"
+            catchtap="onToggleStatus"
+          >上架</view>
+          <view
+            class="fmine-btn"
+            wx:if="{{item.canUnshelve}}"
+            data-id="{{item.id}}"
+            data-action="OFF_SHELF"
+            catchtap="onToggleStatus"
+          >下架</view>
+          <text class="fmine-time">{{item.timeText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="fmine-state" wx:if="{{loading}}">正在加载…</view>
+  <view class="fmine-state fmine-error" wx:if="{{error}}">{{error}}</view>
+  <view class="fmine-state" wx:if="{{!loading && !error && items.length === 0}}">
+    这里还没有闲置，点右上角「发布」发第一条
+  </view>
+  <view class="fmine-state" wx:if="{{!loading && noMore && items.length > 0}}">没有更多了</view>
+</view>

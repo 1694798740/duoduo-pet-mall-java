@@ -12,6 +12,8 @@ import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceTaskView;
+import com.duoduo.trade.dto.OrderDtos.PreviewOrderRequest;
+import com.duoduo.trade.dto.OrderDtos.PreviewOrderResult;
 import com.duoduo.trade.dto.OrderDtos.RefundRequest;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
@@ -51,6 +53,25 @@ public class OrderController {
         this.orderService = orderService;
         this.placeGuard = placeGuard;
         this.placeServiceProvider = placeServiceProvider;
+    }
+
+    /**
+     * 结算预览（只读）：算清「这一单要花多少钱」，供结算页展示。
+     *
+     * <p><b>为什么不能省掉这个端点：</b>金额取决于服务端独有的三件事 ——
+     * 实时可售价、库存是否够、券能不能用。前端自己算一遍，迟早出现
+     * 「结算页显示 199、付款时变成 219」，那是最伤信任的一类缺陷。
+     *
+     * <p><b>强制登录</b>（{@code /api/orders/**} 不在网关白名单）：
+     * 预览要读「我的购物车勾选行」与「我的券」，这两个都是用户私有数据，
+     * 匿名调用既无意义、也不该有一条公开通道去探测他人购物车金额。
+     *
+     * <p>金额口径与 {@link #place} 严格同源（同一个 {@code OrderService}），
+     * 且<b>不写任何表</b>：不占库存、不占券、不建订单。
+     */
+    @PostMapping("/preview")
+    public ApiResponse<PreviewOrderResult> preview(@Valid @RequestBody PreviewOrderRequest request) {
+        return ApiResponse.ok(orderService.previewOrder(UserContext.requireUserId(), request));
     }
 
     /**

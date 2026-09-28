@@ -242,47 +242,96 @@ public class CouponService {
      */
     @Transactional
     public LockResult lock(LockRequest request) {
+        // 校验与试算共用同一条链路：试算若自己再写一遍规则，
+        // 迟早出现「预览说能用、下单说不能用」—— 那正是这个接口要消灭的问题。
+        Precheck precheck = precheck(request);
+        if (!precheck.result().success()) {
+            return precheck.result();
+        }
+
+        LocalDateTime now = nowUtc();
+        LockResult verdict = precheck.result();
+        // CAS：只有 UNUSED 且未过期的那一行会被改成 LOCKED，并发下只有一单能成功
+        int affected = couponMapper.lock(verdict.code(), request.userId(), request.orderNo(), now);
+        if (affected == 0) {
+            return LockResult.reject("该优惠券刚刚被其他订单占用，请重新选择");
+        }
+        log.info("券 {} 已被订单 {} 锁定，抵扣 {} 分（订单金额 {} 分，门槛 {} 分）",
+                verdict.code(), request.orderNo(), verdict.discountAmount(),
+                request.orderAmount(), precheck.threshold());
+        return verdict;
+    }
+
+    /**
+     * 券试算（<b>只读</b>，结算预览用）：跑完锁券前的全部校验并算出抵扣额，<b>不写任何数据</b>。
+     *
+     * <p>与 {@link #lock} 共用 {@link #precheck}，因此「预览能不能用」与「下单能不能用」
+     * 由同一份规则回答 —— 两条链路各写一遍判断，是「预览说能用、下单说不行」的必然后果。
+     *
+     * <p>语义差别只在最后一步：{@code lock} 会把券置为 LOCKED 完成占用，
+     * 试算只是把结论告诉调用方，因此这里不需要订单号、也不产生任何副作用。
+     */
+    public LockResult trial(String code, Long userId, long orderAmount) {
+        return precheck(new LockRequest(code, userId, TRIAL_ORDER_NO, orderAmount)).result();
+    }
+
+    /**
+     * 锁券 / 试算共用的前置校验与抵扣额计算（<b>纯读</b>）。
+     *
+     * <p>返回 {@link LockResult} 而不是抛异常：券不可用的原因（未达门槛 / 已使用 / 已被占用）
+     * 是要直接给用户看的一句话，抛异常会让它退化成 HTTP 状态码。
+     *
+     * <p>额外带出门槛值：锁券成功时它只用于日志（`满 X 元可用` 的 X），
+     * 试算路径不需要它，但两条路径共用同一个返回值最省事、也最不容易走偏。
+     */
+    private Precheck precheck(LockRequest request) {
         LocalDateTime now = nowUtc();
         CouponEntity coupon = couponMapper.findByCode(request.code().trim());
         if (coupon == null) {
-            return LockResult.reject("优惠券不存在");
+            return new Precheck(LockResult.reject("优惠券不存在"), 0L);
         }
         if (!coupon.getUserId().equals(request.userId())) {
-            return LockResult.reject("该优惠券不属于当前用户");
+            return new Precheck(LockResult.reject("该优惠券不属于当前用户"), 0L);
         }
         CouponStatus status = CouponStatus.of(coupon.getStatus());
         if (status == null) {
-            return LockResult.reject("优惠券状态异常（" + coupon.getStatus() + "），请联系客服");
+            return new Precheck(LockResult.reject("优惠券状态异常（" + coupon.getStatus() + "），请联系客服"), 0L);
         }
         if (status == CouponStatus.USED) {
-            return LockResult.reject("该优惠券已被使用");
+            return new Precheck(LockResult.reject("该优惠券已被使用"), 0L);
         }
         if (status == CouponStatus.EXPIRED || coupon.getExpireAt().isBefore(now)) {
-            return LockResult.reject("该优惠券已过期");
+            return new Precheck(LockResult.reject("该优惠券已过期"), 0L);
         }
         if (status == CouponStatus.LOCKED) {
-            return LockResult.reject("该优惠券已被其他订单占用，请重新选择");
+            return new Precheck(LockResult.reject("该优惠券已被其他订单占用，请重新选择"), 0L);
         }
 
         CouponTemplateEntity template = templateMapper.selectById(coupon.getTemplateId());
         if (template == null) {
-            return LockResult.reject("优惠券对应的活动已下线");
+            return new Precheck(LockResult.reject("优惠券对应的活动已下线"), 0L);
         }
         long threshold = nz(template.getThresholdAmount());
         if (request.orderAmount() < threshold) {
-            return LockResult.reject("订单金额未达门槛，该券满 " + fenToYuan(threshold) + " 元可用");
-        }
-
-        // CAS：只有 UNUSED 且未过期的那一行会被改成 LOCKED，并发下只有一单能成功
-        int affected = couponMapper.lock(coupon.getCode(), request.userId(), request.orderNo(), now);
-        if (affected == 0) {
-            return LockResult.reject("该优惠券刚刚被其他订单占用，请重新选择");
+            return new Precheck(LockResult.reject(
+                    "订单金额未达门槛，该券满 " + fenToYuan(threshold) + " 元可用"), threshold);
         }
         long discount = Math.min(nz(template.getDiscountAmount()), request.orderAmount());
-        log.info("券 {} 已被订单 {} 锁定，抵扣 {} 分（订单金额 {} 分，门槛 {} 分）",
-                coupon.getCode(), request.orderNo(), discount, request.orderAmount(), threshold);
-        return LockResult.ok(coupon.getCode(), discount);
+        return new Precheck(LockResult.ok(coupon.getCode(), discount), threshold);
     }
+
+    /** 前置校验的内部返回值：判定结果 + 门槛值（仅日志用） */
+    private record Precheck(LockResult result, long threshold) {
+    }
+
+    /**
+     * 试算用的占位订单号。
+     *
+     * <p>试算不写库，订单号不参与任何判断，但 {@link LockRequest#orderNo()} 有
+     * {@code @NotBlank} 约束 —— 给一个显式常量比给 {@code null} 更清楚地表达
+     * 「这条链路根本不需要订单号」，也避免日后有人误以为试算可以带真实订单号进来。
+     */
+    private static final String TRIAL_ORDER_NO = "__TRIAL__";
 
     /**
      * 解锁（交易域关单 / 取消 / 超时时调用）。

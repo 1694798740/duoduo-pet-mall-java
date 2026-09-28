@@ -247,6 +247,76 @@ const order = {
   confirm(orderNo) {
     return req.post('/api/orders/' + orderNo + '/confirm');
   },
+
+  /**
+   * 结算预览（只读）。
+   *
+   * <p>为什么不复用 place()：preview 是**纯展示**动作，不该带 idempotentKey
+   * （会让人误以为它落库），也不该因为「没填地址」就算不出价格 ——
+   * 地址校验属于提交阶段。服务端为此单开了 POST /api/orders/preview。
+   */
+  preview(couponCode, direct) {
+    const payload = {};
+    if (couponCode) payload.couponCode = couponCode;
+    if (direct && direct.skuId) {
+      payload.buySkuId = direct.skuId;
+      payload.buyQuantity = direct.quantity || 1;
+    }
+    return req.post('/api/orders/preview', payload);
+  },
+};
+
+/**
+ * C2C 闲置（跳蚤市场）。
+ *
+ * <p>路径划分是服务端的安全设计，前端照契约调即可 ——
+ * 列表是 `/search`（两段，免登），发布是裸 `/api/listings`（单段，需登录），
+ * 我的发布是 `/mine/list`（三段，需登录）。三段与单段路径都不是「写错了」，
+ * 而是为了把写端点挡在网关免登白名单之外（白名单按路径匹配、不区分方法）。
+ */
+const listing = {
+  /** 闲置列表（免登）。params: { keyword, city, species, conditionLevel, minPrice, maxPrice, sort, page, pageSize } */
+  list(params) {
+    const qs = Object.keys(params || {})
+      .filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== '')
+      .map((k) => k + '=' + encodeURIComponent(params[k]))
+      .join('&');
+    return req.get('/api/listings/search' + (qs ? '?' + qs : ''));
+  },
+  /** 闲置详情（免登）。未过审的内容服务端返回 404（不暴露存在性） */
+  detail(id) {
+    return req.get('/api/listings/' + id);
+  },
+  /**
+   * 发布闲置（需登录 + 需实名）。
+   *
+   * <p>请求体刻意不含 sellerId / status / auditStatus：归属与审核态一律由服务端决定，
+   * 前端传了也会被忽略 —— 否则发布者可以自己把审核状态写成「已通过」。
+   */
+  publish(data) {
+    return req.post('/api/listings', {
+      title: data.title,
+      description: data.description,
+      categoryId: data.categoryId,
+      price: data.price,
+      originalPrice: data.originalPrice,
+      conditionLevel: data.conditionLevel,
+      city: data.city,
+      images: data.images || [],
+      species: data.species,
+      breed: data.breed,
+    });
+  },
+  /** 我的发布（需登录）。含未过审 / 被驳回的条目，带 auditReason 供用户改稿 */
+  mine(params) {
+    const p = params || {};
+    const s = p.status && p.status !== 'ALL' ? '&status=' + p.status : '';
+    return req.get('/api/listings/mine/list?page=' + (p.page || 1) + '&pageSize=' + (p.pageSize || 20) + s);
+  },
+  /** 上架 / 下架（需登录，仅本人）。action: 'ON_SALE' | 'OFF_SHELF' */
+  changeStatus(id, action) {
+    return req.post('/api/listings/' + id + '/status', { action });
+  },
 };
 
 const address = {
@@ -504,6 +574,7 @@ module.exports = {
   product,
   cart,
   order,
+  listing,
   aftersale,
   address,
   coupon,

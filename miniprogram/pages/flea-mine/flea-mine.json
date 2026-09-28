@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "我的闲置",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "backgroundColor": "#f5f6fa"
+}

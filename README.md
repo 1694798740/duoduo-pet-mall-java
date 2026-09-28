@@ -4,6 +4,32 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**最近更新：2026-09-28（第五十二轮）** — **跳蚤市场发布链路补全 + 结算预览端点 + 405 修复**。
+本轮源自第五十一轮小程序全流程验收报告的两条待修问题与一条验收建议（用户已采纳）。
+
+**① 跳蚤市场补全发布链路（新增功能）**。此前商品域的闲置侧只有 2 个**只读**端点（列表 / 详情），没有发布、没有上下架，小程序端也没有跳蚤市场页面与入口 —— 即「只能看、不能发」。本轮补成完整 C2C 闭环：
+- 后端新增 `POST /api/listings`（发布）、`GET /api/listings/mine/list`（我的发布，可按状态筛）、`POST /api/listings/{id}/status`（上架 / 下架）；新增 3 个 record：`ListingPublishRequest`、`ListingStatusRequest`、`ListingMineView`。
+- `ListingService` 新增发布链路，校验顺序：**实名校验**（`real_name` 非空，未实名 403）→ 违禁词 → 单卖家条数限流（默认 200，可配）→ 成色默认 `GOOD` → 图片去空去重限 9 张 → 价格上限 99999 元。新发布一律落 `PENDING` 待审核，**不能自审**。
+- 上下架是**幂等开关**（不设严格状态机）：`ON_SALE ⇄ OFF_SHELF` 都接受，`SOLD` 不可复活；从下架重新上架时要求 `auditStatus == APPROVED`（未过审 422）。
+- **★ 安全设计就是路径本身**。网关白名单**按路径匹配、不区分 HTTP 方法**，所以「同一路径既有免登读又有需登录写」不可能共存 —— 若按直觉写 `/api/listings/**`，会把三条写端点一并放行成「匿名 UGC 直写入库」。因此采用与 `SharesService` 同款的**两段式路径隔离**：`/api/listings/search`（两段）与 `/api/listings/*`（两段，Ant 的 `*` **不跨 `/`**）免登只读；三条写路径分别是单段 `POST /api/listings` 与三段 `/api/listings/mine/list`、`/api/listings/{id}/status`，天然落不进白名单。`sellerId` / `status` / `auditStatus` **刻意不在请求体**，全由服务端决定 —— 探针实测传 `auditStatus=APPROVED` 与 `sellerId` 均被忽略。
+- 详情可见性硬规则：只暴露 `status=ON_SALE 且 auditStatus=APPROVED`，否则 **404**（不是 403 —— 避免用状态码探测存在性）。
+- 小程序新增 4 页（跳蚤市场列表 / 发布 / 我的闲置 / 闲置详情，16 个文件）+ 首页「跳蚤市场」入口 + 我的页「我的闲置」菜单；`api.js` 加 `listing` 命名空间，`images.js` 加 `listingImage()`（复用商品图池，省主包 2MB 额度）；新增手绘 `flea.png` 图标（纯 Python `zlib`+`struct` 生成 108×108 购物篮，318 字节，品牌色 `#4f6ef7`）。发布页含显式 `yuanToFen()` 元→分换算（正则校验，**不用 `parseFloat` 静默容忍脏输入**）；我的闲置页显示审核态徽章三色与**驳回原因**，上下架按钮用 `catchtap` 阻止冒泡。跳蚤市场走**原生导航栏**（非 tab 页必须有返回键，而 tabBar 硬上限 5 项已满）。
+
+**② 结算预览端点缺失（中等）**。`POST /api/orders/preview` 此前不存在，带令牌请求回 500。已补端点，返回按卖家拆单后的 items / 商品总额 / 运费 / 券后应付。
+- **★ 关键取舍：券试算必须走只读路径**。新增 `POST /api/coupons/internal/trial` 与 `marketingGateway.trial()`，**绝不复用 `lock`** —— `lock` 是跨服务**写**（真占券），若预览调它，用户每改一次数量就被占一次券，最后没提交还得干等 TTL 解锁，会把券白白锁死。`lock` 与 `trial` 共用同一份 `precheck()` 校验（存在 / 归属 / 状态 / 过期 / 未锁 / 门槛 / 抵扣），保证「预览能用」与「下单能用」结论一致。
+- 券不可用（未达门槛等）**不抛错**，回 `couponMessage` 让用户知情即可，提交时再严格校验一次；预览请求体**不含** `idempotentKey` 与收货信息 —— 预览不建单、不占券、不写任何状态（探针连调 3 次后订单数与券状态均不变）。
+- 金额口径 `payAmount = max(0, totalAmount + freightAmount − discountAmount)`，本阶段运费固定 0，券只作用于**商品总额最大**的那单。**探针实测：预览金额 == 真实下单金额**（同源口径）。
+
+**③ 方法错误回 500 而非 405（轻微）**。根因是 `HttpRequestMethodNotSupportedException` 未被 `GlobalExceptionHandler` 覆盖。已修：`ErrorCode` 新增 `METHOD_NOT_ALLOWED`(405)，处理器新增对应 `@ExceptionHandler`（与既有 `UNSUPPORTED_MEDIA_TYPE`(415) 对称，日志记 requestId + method）。
+- **★ 本轮最重要的坑（已写入踩坑档案）**：`duoduo-common-web` 是**多服务共用模块**，但首轮只重建了 product/trade/marketing/gateway 四个服务 —— **user / fulfilment / ai / social 四个模块 jar 内嵌的 `duoduo-common-web` 仍是旧版**（`PUT /api/users/me` 仍回 500）。用 Python `zipfile` 逐层解包核实「含 405 异常引用 = False」定位；随后 `mvn -pl ... -am install` **仅耗时 9 秒且跳过打包**（增量检测认为无需重打，jar 时间戳仍是 9-27）。最终改用 `mvn -q -o -DskipTests clean package -pl duoduo-user,duoduo-fulfilment,duoduo-ai,duoduo-social` 强制重打，四模块复检全为 `True`。**教训：改共用模块必须重建全部依赖方，且要验证构建产物内容而非只看退出码。**
+- 已知语义（非缺陷，已在探针里固定契约）：`GET /api/orders/preview` 会被 `@GetMapping("/{orderNo}")` 捕获成订单号 `preview` → 回 404 而非 405。这是 Spring「只在**方法相同**时精确路径才优先于变量路径」的固有行为；`POST /preview` 与 `GET /{orderNo}` 方法不同故不冲突。
+
+**验证**：新增 `scripts/r52-listing-preview-smoke.py` **57/57 PASS**（L 发布链路 14 项 + P 结算预览 13 项 + M 方法不支持 8 项）；扩展 `scripts/r51-full-acceptance.py` **155/155 PASS · 0 FAIL**（新增实名发布闭环 I8/I8b~I8h、预览口径自洽 C4/C4b/C4c、405 断言 H3b/M6）。14 容器全部 healthy。
+
+**上线后需你确认（小程序侧，Agent 无法代做）**：跳蚤市场 4 个页面的真机/模拟器验收 —— 首页点「跳蚤市场」→ 发布一条闲置（含图片）→ 我的闲置看到 `待审核` → 下架 → 详情页正确显示「同款全新」推荐。
+
+**第五十一轮（2026-09-28）** — **小程序全流程验收（登录注册 / 微信登录 / 支付 / 退款 / 发货 / 退货 / 售后 / 个人中心 / 跳蚤市场 / 关注通知分享点赞收藏）**。产出《小程序全面排查报告》《小程序修复清单》与问题清单；本章程两处待修问题（结算预览缺失、方法错误回 500）与跳蚤市场发布链路建议均在本轮（五十二轮）闭环。
+
 **最近更新：2026-09-28（第五十轮）** — **通知中心上线 + tabBar 重排 + 全页面通知入口 + record 计数器类型缺陷根治**。
 ① **tabBar 重排**：用户要求「分类」移出底部导航（首页已有分类入口），空位换成「通知」并置于**居中第 3 位** —— 首页/分享圈/**通知**/购物车/我的；分类降为普通页（`back` 返回键，首页「全部分类」入口仍在），全局排查 `switchTab` 引用与三处自维护 tab 清单（index/notification/profile）同步。② **通知中心**（启用 R47 已建齐的 `t_social_notice` + `t_social_notice_read`）：后端 `duoduo-social` 新增 `NoticeController` 4 端点（列表 / 未读数 / 单条已读 / 全部已读），**定向通知与全站公告统一为一个视图**；已读统一记在集合表（`(notice_id, user_id)` 复合主键，撞键即幂等）—— 表上行本就没有已读列，**零 DDL 变更**；他人通知标已读返 **404**（不区分「不存在/无权限」，防枚举）。小程序新增 `pages/notification` 4 件套（未读蓝点 / 点击标已读并跳落地页 / 全部已读 / tabBar 角标 `setTabBarBadge` / 私信未读合计入口），种子 3 条公告（增量 SQL `17-notification-center.sql` + `06` 种子同步）。③ **通知入口全页面显示**：`nav-bar` 组件内置右上角图标（由 R48 的 📩 改回**短信样式 💬**），并新增 `back` 返回键属性 —— 全部 22 个页面改用自绘导航栏（`navigationStyle: custom`），聊天页/AI 页整页高度按导航栏高度扣减（`calc(100vh - navTotal)`）。④ **★ 根治 record 组件计数器类型缺陷（R47 遗留）**：`LongToStringJacksonModule` 的字段名白名单只对**普通 POJO** 生效，Java `record` 组件的属性由 `POJOPropertiesCollector` 的 record 分支直接构造、不流经 `BeanPropertyWriter` 替换 —— 于是 `UnreadCount.count` 下发字符串 `"3"` 而同一接口族 `PageResult.total` 是数字 `3`，**同语义两种类型**（R47 的 `FollowCounts.followers/following`、R49 的 `ConversationView.unread` 同病）。修法：模块新增公开的 `NumericLongSerializer`，record 里的计数/金额字段显式标注 `@JsonSerialize(using = …)`，本域 **9 处**已标注。
 **验证**：新增 `scripts/r50-notice-smoke.py` **18/18**（含 `count` 必须为 JSON 数字的类型守卫，作为该缺陷的回归防线）+ 社交域回归 `social-smoke` **43/43** + `r49-ask-thread-smoke` **15/15** + `r48-ask-smoke` **8/8** + CI 子集 `id-precision` **56/56** 与 `smoke` **55/55** + 小程序静态自检 **0 错误**；自建核对脚本验证 tabBar=5、全部页面 `navigationStyle:custom` ↔ `<nav-bar>` 一一对应、`wx.switchTab` 无指向非 tab 页的残留、三处 tab 清单与 `app.json` 一致。
@@ -229,7 +255,9 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 新增 `scripts/address-smoke.ps1`（**82 项**）与 `scripts/e2e/address-ui-check.mjs`（**64 项**真实 Chromium 断言），
 另新增 **`scripts/id-precision-smoke.ps1`（56 项）跨域 ID 精度回归**（断言 JSON **原始文本**，绕开 `ConvertFrom-Json` 的精度掩盖）
 与 `scripts/run-all-smoke.ps1`（一键跑全套并汇总）。
-**接口冒烟累计 20 套 1479 项，浏览器 UI 断言累计 6 套 244 项。**
+**接口冒烟累计 22 套 1624 项，浏览器 UI 断言累计 6 套 244 项。**
+（第五十二轮新增 `r52-listing-preview-smoke.py` 57 项，并把 `r51-full-acceptance.py` 扩到 155 项。
+历史口径：第十三轮 20 套 1479 项 → 第十四轮 A8「15 套 1286 项」是当时子集口径，两者不可直接相加。）
 详见「十二、变更记录」。
 
 **上一轮（第十三轮）** — **优惠券营销（A5）完成**：新增第 6 个业务服务 `duoduo-marketing`
@@ -476,7 +504,10 @@ duoduo-pet-mall-java/
 | GET | `/api/products/{spuId}` | 商品详情：SKU、适用属性聚合、同类推荐 | 免 |
 | GET | `/api/products/skus/batch?ids=2001,2002` | **批量 SKU 采购视图**（供交易服务调用；一次取几十个，避免 N 次跨服务调用） | 免 |
 | POST | `/api/products/skus/stock/{freeze,release,deduct,restock}` | **库存写接口**（冻结 / 释放 / 扣减 / 退货入库），见下 | **内部凭据** |
-| GET | `/api/listings` · `/{id}` | C2C 闲置列表（只返回已审核通过）/ 详情 + 同款全新推荐 | 免 |
+| GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐 | 免 |
+| POST | `/api/listings` | **发布闲置**（落 `PENDING` 待审；需实名；`sellerId`/`status`/`auditStatus` 概不接受客户端传值） | 需登录 |
+| GET | `/api/listings/mine/list` | **我的发布**（可按 `status` 筛：`ON_SALE`/`OFF_SHELF`/`SOLD`，含审核态与驳回原因） | 需登录 |
+| POST | `/api/listings/{id}/status` | **上架 / 下架**（`action=ON_SALE`/`OFF_SHELF`；幂等开关；上架要求已过审；他人闲置 403、不存在 404） | 需登录 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
 
 `GET /api/products` 查询参数：
@@ -502,6 +533,7 @@ duoduo-pet-mall-java/
 | PATCH | `/api/cart/items/{skuId}` | 改数量 | 需登录 |
 | PATCH | `/api/cart/items/{skuId}/selection` | 勾选 / 取消勾选 | 需登录 |
 | DELETE | `/api/cart/items/{skuId}` · `/api/cart/selected` | 删除一条 / 清空已勾选 | 需登录 |
+| POST | `/api/orders/preview` | **结算预览**（只读）：返回按卖家拆单的 items / 商品总额 / 运费 / 券后应付；**不建单、不占券**；券不可用回 `couponMessage` 而非报错 | 需登录 |
 | POST | `/api/orders` | **下单**（按卖家拆单 + 明细快照 + 冻结库存），必须带 `idempotentKey` | 需登录 |
 | GET | `/api/orders` | 我的订单列表（可按 `status` 过滤，**每条内嵌资金托管信息**） | 需登录 |
 | GET | `/api/orders/{orderNo}` | 订单详情（含明细快照 + 内嵌托管信息） | 需登录 |
@@ -721,7 +753,8 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 | POST | `/api/coupons/admin/templates` | 建券模板（`OperatorGuard.requireOperator()`） | 运营 |
 
 **内部接口**（`X-Internal-Token` 保护，**不进网关**，交易域直连 8085）：
-`POST /api/coupons/internal/{lock,release,consume,sweep}` —— 依次对应「下单锁券 / 取消·关单解锁 / 支付核销 / 补偿扫描」。
+`POST /api/coupons/internal/{lock,release,consume,sweep}` —— 依次对应「下单锁券 / 取消·关单解锁 / 支付核销 / 补偿扫描」；
+`POST /api/coupons/internal/trial` —— **只读试算**（第五十二轮新增，供结算预览用，见下）。
 
 **关键设计（为什么这样做）**：
 
@@ -733,6 +766,10 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
   营销域是被调用方，**不依赖 openfeign**。
 - **交易域接入点**：下单 `placeOrder` 先锁券（失败抛 422 带人话原因，如「满 200 元可用」）→ `paySuccess` 核销
   （核销失败则整笔支付不成立）→ `cancel` / `forceClose` / 超时关单**三处**解锁。
+- **★ 试算与占券必须分开（第五十二轮）**：`lock` 是跨服务**写**（CAS 真占券），`trial` 是纯读。
+  结算预览**只能**调 `trial` —— 否则用户每改一次数量就被占一次券，最后没提交还得干等 TTL 解锁。
+  两者共用同一份 `precheck()`（存在 / 归属 / 状态 / 过期 / 未锁 / 门槛 / 抵扣），
+  保证「预览说能用」与「下单真能用」结论一致；`trial` 用伪订单号 `__TRIAL__` 且**不落任何状态**。
 - **网关白名单收紧为精确路径 `/api/coupons/templates`**：白名单按**路径**而非方法匹配，
   放行 `/api/coupons/**` 会把 `POST /api/coupons/templates/{id}/claim` 也放成匿名可调（与 `/api/reviews/product/**` 是同一条纪律）。
 - **`COUPON_LOCK_TTL_MINUTES` 默认 35**：必须**略大于**交易域订单超时关单 30 分钟，
@@ -1024,6 +1061,40 @@ npm run build      # tsc --noEmit && vite build
 ---
 
 ## 十二、变更记录
+
+### 2026-09-28（第五十二轮 · 跳蚤市场发布链路 + 结算预览 + 405 修复）
+
+- **跳蚤市场补全发布链路**（源自第五十一轮验收建议「补全链路」）：后端从「仅 2 个只读端点」
+  扩为完整 C2C 闭环 —— `POST /api/listings`（发布，落 `PENDING`）、`GET /api/listings/mine/list`
+  （我的发布）、`POST /api/listings/{id}/status`（上/下架，幂等开关）。
+  新增 record：`ListingPublishRequest` / `ListingStatusRequest` / `ListingMineView`。
+- **★ 路径即安全设计**：闲置列表由裸 `/api/listings` 迁到 `/api/listings/search`，
+  与 `/api/listings/*`（两段）一起做免登只读；三条写路径走单段 `POST /api/listings` 或三段
+  `/api/listings/mine/list`、`/api/listings/{id}/status`。**网关白名单按路径匹配、不分方法**，
+  若照直觉写 `/api/listings/**` 会把三条写端点一并放行成「匿名 UGC 直写入库」——
+  这是 `duoduo-gateway/GatewaySecurityProperties` 里必须写清的一条纪律（与本轮 `SharesService`
+  的两段式隔离同款）。`sellerId`/`status`/`auditStatus` 一律不接受客户端传值。
+- **结算预览 `POST /api/orders/preview`**（源自第五十一轮问题 1）：返回按卖家拆单的
+  items / 商品总额 / 运费 / 券后应付；**只读** —— 不建单、不占券。新增
+  `PreviewOrderRequest` / `PreviewOrderPreview` / `PreviewOrderResult`、`OrderService.previewOrder`。
+- **★ 券试算新增只读 `trial`**（`POST /api/coupons/internal/trial` + `marketingGateway.trial`）：
+  `lock` 是跨服务**写**（占券），预览调它会导致用户每改一次数量就被占一次券、
+  没提交还得等 TTL 解锁；`lock` 与 `trial` 共用 `precheck()` 保证口径一致。
+  探针实测「预览金额 == 真实下单金额」，且连调 3 次后订单数与券状态均不变。
+- **方法错误回 500 而非 405 修复**（源自第五十一轮问题 2）：`ErrorCode` 新增
+  `METHOD_NOT_ALLOWED`(405)，`GlobalExceptionHandler` 新增 `HttpRequestMethodNotSupportedException`
+  处理器（与既有 `UNSUPPORTED_MEDIA_TYPE`(415) 对称）。
+- **★ 踩坑（重要）**：`duoduo-common-web` 是**多服务共用模块**，首轮只重建了 4 个服务，
+  **user / fulfilment / ai / social 内嵌的副本仍是旧版**（`PUT /api/users/me` 仍回 500）；
+  且 `mvn -pl ... -am install` 因增量检测**跳过打包**（jar 时间戳没变、9 秒结束）。
+  改用 `mvn -q -o -DskipTests clean package -pl <四模块>` 强制重打，逐层解包复检
+  「含 405 异常引用 = True」才通过。**改共用模块必须重建全部依赖方，并验证构建产物内容**。
+- **小程序**：新增 4 页（跳蚤市场 / 发布 / 我的闲置 / 闲置详情，16 文件）+ 首页入口
+  + 我的页「我的闲置」菜单 + `api.js` 的 `listing` 命名空间 + `images.js` 的 `listingImage()`
+  + 手绘 `flea.png` 图标；发布页用显式 `yuanToFen()`（正则校验，不用 `parseFloat`）；
+  我的闲置页显示三色审核徽章与驳回原因；跳蚤市场走**原生导航栏**（tabBar 已满 5 项）。
+- **验证**：`scripts/r52-listing-preview-smoke.py` **57/57**；`scripts/r51-full-acceptance.py`
+  **155/155 · 0 FAIL**；14 容器全部 healthy。
 
 ### 2026-09-25（第十九轮 · A12 压测：sync/queued 双通道 + 瓶颈定位）
 

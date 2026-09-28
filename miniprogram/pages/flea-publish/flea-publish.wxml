@@ -1,0 +1,126 @@
+<!-- 发布闲置（第五十二轮） -->
+<view class="fp">
+  <view class="fp-tip">
+    发布后需平台审核通过才会在跳蚤市场公开展示，可在「我的闲置」查看进度。
+  </view>
+
+  <view class="card">
+    <view class="fp-field">
+      <text class="fp-label">标题<text class="fp-req">*</text></text>
+      <input
+        class="fp-input"
+        value="{{title}}"
+        data-field="title"
+        maxlength="200"
+        placeholder="例如：小佩饮水机 SOLO 全新未拆"
+        placeholder-class="fp-ph"
+        bindinput="onInput"
+      />
+    </view>
+
+    <view class="fp-field">
+      <text class="fp-label">描述</text>
+      <textarea
+        class="fp-textarea"
+        value="{{description}}"
+        data-field="description"
+        maxlength="2000"
+        placeholder="成色、使用时长、附件、交易方式…写清楚更容易卖出"
+        placeholder-class="fp-ph"
+        bindinput="onInput"
+      />
+      <text class="fp-count">{{description.length}}/2000</text>
+    </view>
+
+    <view class="fp-row">
+      <view class="fp-field fp-half">
+        <text class="fp-label">出售价（元）<text class="fp-req">*</text></text>
+        <input
+          class="fp-input"
+          value="{{priceYuan}}"
+          data-field="priceYuan"
+          type="digit"
+          placeholder="0.00"
+          placeholder-class="fp-ph"
+          bindinput="onInput"
+        />
+      </view>
+      <view class="fp-field fp-half">
+        <text class="fp-label">原价（元）</text>
+        <input
+          class="fp-input"
+          value="{{originalYuan}}"
+          data-field="originalYuan"
+          type="digit"
+          placeholder="选填"
+          placeholder-class="fp-ph"
+          bindinput="onInput"
+        />
+      </view>
+    </view>
+
+    <view class="fp-field">
+      <text class="fp-label">成色</text>
+      <view class="fp-chips">
+        <view
+          wx:for="{{conditions}}"
+          wx:key="code"
+          class="fp-chip {{conditionLevel === item.code ? 'fp-chip-on' : ''}}"
+          data-code="{{item.code}}"
+          bindtap="onPickCondition"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
+    <view class="fp-field">
+      <text class="fp-label">适用宠物</text>
+      <view class="fp-chips">
+        <view
+          wx:for="{{speciesList}}"
+          wx:key="code"
+          class="fp-chip {{species === item.code ? 'fp-chip-on' : ''}}"
+          data-code="{{item.code}}"
+          bindtap="onPickSpecies"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
+    <view class="fp-row">
+      <view class="fp-field fp-half">
+        <text class="fp-label">城市</text>
+        <input
+          class="fp-input"
+          value="{{city}}"
+          data-field="city"
+          maxlength="50"
+          placeholder="例如：上海"
+          placeholder-class="fp-ph"
+          bindinput="onInput"
+        />
+      </view>
+      <view class="fp-field fp-half">
+        <text class="fp-label">品种</text>
+        <input
+          class="fp-input"
+          value="{{breed}}"
+          data-field="breed"
+          maxlength="50"
+          placeholder="例如：英短"
+          placeholder-class="fp-ph"
+          bindinput="onInput"
+        />
+      </view>
+    </view>
+  </view>
+
+  <view class="fp-error" wx:if="{{error}}">{{error}}</view>
+
+  <view class="fp-actions">
+    <button class="btn fp-btn-cancel" bindtap="onCancel">取消</button>
+    <button
+      class="btn btn-accent fp-btn-submit {{submitting ? 'btn-disabled' : ''}}"
+      loading="{{submitting}}"
+      bindtap="onSubmit"
+    >{{submitting ? '发布中…' : '发布闲置'}}</button>
+  </view>
+</view>

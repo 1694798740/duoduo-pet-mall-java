@@ -94,6 +94,62 @@ public final class OrderDtos {
     ) {
     }
 
+    /**
+     * 结算预览请求：字段与 {@link PlaceOrderRequest} 的「结算相关」子集一致，
+     * 但<b>没有 idempotentKey</b> —— 预览不落库，幂等键对它毫无意义，
+     * 要求前端为一个只读操作生成一个幂等键是纯粹的负担。
+     *
+     * <p>收货信息也<b>刻意不参与</b>：预览算的是钱，不是地址。
+     * 把地址塞进来会让「地址填错了」变成「连价格都看不到」，
+     * 而用户改地址时价格本来就不该变 —— 那属于提交阶段的校验（见 placeOrder 第 3.5 步）。
+     */
+    public record PreviewOrderRequest(
+            @Size(max = 32, message = "couponCode 过长") String couponCode,
+            Long buySkuId,
+            @Min(value = 1, message = "购买数量至少为 1")
+            @Max(value = 200, message = "单次购买数量过大") Integer buyQuantity
+    ) {
+    }
+
+    /**
+     * 结算预览的一条明细（按卖家分组后的单笔订单）。
+     *
+     * <p>为什么要按卖家拆开返回，而不是只给一个总数：
+     * 结算页要展示「这一单来自 A 店、那一单来自 B 店」，且券只作用在其中一单上 ——
+     * 只给总数的话，前端根本无法解释「为什么抵扣额是这么多」。
+     */
+    public record PreviewOrderPreview(
+            Long sellerId,
+            List<OrderItemView> items,
+            long totalAmount,
+            long freightAmount,
+            long discountAmount,
+            long payAmount
+    ) {
+    }
+
+    /**
+     * 结算预览结果（只读，不产生任何写操作）。
+     *
+     * <p>金额口径与真实下单<b>严格同源</b>：都来自同一套
+     * {@code 应付 = 商品总额 + 运费 − 优惠}（运费本阶段固定 0）。
+     * 预览若自己算一遍，迟早与下单结果对不上 —— 那正是这个接口存在的意义所在。
+     */
+    public record PreviewOrderResult(
+            List<PreviewOrderPreview> orders,
+            int orderCount,
+            long totalAmount,
+            long freightAmount,
+            long discountAmount,
+            long payAmount,
+            /** 券实际作用在哪一单（未用券为 null），前端据此在对应那一单上显示抵扣 */
+            Long couponSellerId,
+            String couponCode,
+            /** 券不可用时的原因（可用或无券为 null）；预览**不拦**这条，只如实告知 */
+            String couponMessage
+    ) {
+    }
+
     /** 订单明细（下单时的快照，商品后续改价改名都不影响这里） */
     public record OrderItemView(
             Long skuId,

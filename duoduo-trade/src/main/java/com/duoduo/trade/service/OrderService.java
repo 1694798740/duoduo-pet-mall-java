@@ -24,6 +24,9 @@ import com.duoduo.trade.dto.OrderDtos.PayRequest;
 import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PlaceOrderResult;
+import com.duoduo.trade.dto.OrderDtos.PreviewOrderPreview;
+import com.duoduo.trade.dto.OrderDtos.PreviewOrderRequest;
+import com.duoduo.trade.dto.OrderDtos.PreviewOrderResult;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SellerOrderStats;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
@@ -190,6 +193,163 @@ public class OrderService {
         this.eventPublisher = eventPublisher;
         this.logisticsNotifier = logisticsNotifier;
         this.seckillService = seckillService;
+    }
+
+    // ---------------- 结算预览（只读） ----------------
+
+    /**
+     * 结算预览：把「这一单要花多少钱」算给前端看，<b>不产生任何写操作</b>。
+     *
+     * <p><b>为什么必须有一个独立的只读端点，而不是让前端自己算：</b>
+     * 金额取决于服务端才知道的三件事 —— 商品的<b>实时可售价</b>（可能刚改过价）、
+     * 库存是否够（不够要拒单而不是照算）、券能不能用（门槛 / 有效期 / 是否已被占用）。
+     * 前端各算一遍的结果与服务端下单时的判断迟早分叉，表现出来就是
+     * 「结算页显示 199，付款时变成 219」—— 那是最伤信任的一类缺陷。
+     *
+     * <p><b>与 {@link #placeOrder} 的口径严格同源</b>：
+     * 取行（直购 / 购物车勾选）、快照校验、按卖家拆单、券归属规则
+     * （作用于商品总额最大的一单）全部走同一套逻辑，只有「写」被去掉。
+     *
+     * <p><b>两处刻意不做的校验</b>（做了反而有害）：
+     * <ol>
+     *   <li><b>不解析收货地址</b>。预览算的是钱不是地址；地址没填也要能看到价格。
+     *       地址校验属于提交阶段（{@code placeOrder} 第 3.5 步）。</li>
+     *   <li><b>不占用券</b>。券只做只读试算（{@code MarketingGateway#trial}）——
+     *       预览是纯浏览动作，占用券会让用户「逛一圈什么都没买，券却被锁住」。</li>
+     * </ol>
+     *
+     * <p><b>券不可用时不用抛异常拒绝预览</b>：券坏掉不该让用户连总价都看不到。
+     * 这里如实返回 {@code couponMessage}（前端可提示「这张券用不了，因为…」）
+     * 并把抵扣按 0 计，最终能不能用由提交时的 {@code lock} 一锤定音。
+     */
+    public PreviewOrderResult previewOrder(Long userId, PreviewOrderRequest request) {
+        if (request == null) {
+            throw BizException.validation("请求体不能为空");
+        }
+
+        // 2) 取本次结算的条目（与 placeOrder 同一套取行规则）
+        boolean directBuy = request.buySkuId() != null;
+        List<CartItemEntity> rows;
+        if (directBuy) {
+            rows = List.of(directBuyRow(userId, toPlaceOrderShim(request)));
+        } else {
+            rows = cartItemMapper.selectList(new LambdaQueryWrapper<CartItemEntity>()
+                    .eq(CartItemEntity::getUserId, userId)
+                    .eq(CartItemEntity::getSelected, SELECTED));
+            if (rows.isEmpty()) {
+                throw BizException.businessRule("购物车中没有已勾选的商品，无法结算");
+            }
+        }
+        if (rows.size() > maxItemsPerOrder) {
+            throw BizException.businessRule("单次结算最多 " + maxItemsPerOrder + " 种商品，请分批结算");
+        }
+
+        // 3) 快照校验：存在 / 未下架 / 余量足够（与 placeOrder 完全一致，价格也取自同一份快照）
+        Map<Long, SkuSnapshot> snapshots = productGateway.loadSnapshots(
+                rows.stream().map(CartItemEntity::getSkuId).toList());
+        for (CartItemEntity row : rows) {
+            SkuSnapshot snap = snapshots.get(row.getSkuId());
+            int quantity = row.getQuantity() == null ? 0 : row.getQuantity();
+            if (snap == null) {
+                throw BizException.notFound("商品规格（SKU " + row.getSkuId() + "）");
+            }
+            if (!snap.sellable()) {
+                throw new BizException(ErrorCode.BUSINESS_RULE,
+                        "商品「" + safeTitle(snap) + "」已下架或已售罄，请从购物车移除后重试");
+            }
+            if (quantity > snap.availableStock()) {
+                throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
+                        "商品「" + safeTitle(snap) + "」库存不足，当前最多可购 " + snap.availableStock() + " 件");
+            }
+        }
+
+        // 4) 按卖家拆单：与 placeOrder 用同一个分组口径（LinkedHashMap 保持顺序）
+        Map<Long, List<CartItemEntity>> groups = rows.stream()
+                .collect(Collectors.groupingBy(r -> {
+                    SkuSnapshot snap = snapshots.get(r.getSkuId());
+                    Long sellerId = snap == null ? null : snap.sellerId();
+                    return sellerId == null ? PLATFORM_SELLER_ID : sellerId;
+                }, LinkedHashMap::new, Collectors.toList()));
+
+        // 4.5) 券：只读试算，不占用。作用于商品总额最大的那一单（与 placeOrder 同一规则）
+        String couponCode = trimToNull(request.couponCode());
+        Long couponSellerId = null;
+        long couponDiscount = 0L;
+        String couponMessage = null;
+        if (couponCode != null) {
+            long bestAmount = -1L;
+            for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+                long amount = 0L;
+                for (CartItemEntity row : entry.getValue()) {
+                    SkuSnapshot snap = snapshots.get(row.getSkuId());
+                    amount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
+                }
+                if (amount > bestAmount) {
+                    bestAmount = amount;
+                    couponSellerId = entry.getKey();
+                }
+            }
+            try {
+                LockResult trialed = marketingGateway.trial(couponCode, userId, Math.max(0L, bestAmount));
+                if (trialed != null && trialed.success()) {
+                    couponDiscount = trialed.discountAmount();
+                    couponCode = trialed.code();
+                } else {
+                    // 券不可用：预览不拦，如实告知并把抵扣按 0 计
+                    couponMessage = trialed == null || trialed.reason() == null
+                            ? "优惠券不可用" : trialed.reason();
+                }
+            } catch (BizException e) {
+                // 营销域故障（503 DEGRADED）：按原价预览，附一句提示 —— 不能让券服务抖动把结算页打不开
+                log.warn("结算预览券试算失败，按原价展示：{}", e.getMessage());
+                couponMessage = "优惠券暂时无法校验，提交时将再次确认";
+            }
+        }
+
+        // 5) 逐单算钱：口径与 createOne 完全一致（应付 = 商品 + 运费 − 优惠，运费本阶段固定 0）
+        List<PreviewOrderPreview> previews = new ArrayList<>(groups.size());
+        long totalAmount = 0L;
+        long freightAmount = 0L;
+        long discountAmount = 0L;
+        long payAmount = 0L;
+        for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+            boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
+            long groupTotal = 0L;
+            long groupFreight = 0L;
+            long groupDiscount = couponTarget ? couponDiscount : 0L;
+            List<OrderItemView> items = new ArrayList<>(entry.getValue().size());
+            for (CartItemEntity row : entry.getValue()) {
+                SkuSnapshot snap = snapshots.get(row.getSkuId());
+                int quantity = row.getQuantity() == null ? 0 : row.getQuantity();
+                long amount = snap.price() * quantity;
+                groupTotal += amount;
+                items.add(new OrderItemView(snap.skuId(), snap.spuId(), safeTitle(snap),
+                        snap.specText(), snap.image(), snap.price(), quantity, amount));
+            }
+            long groupPay = Math.max(0L, groupTotal + groupFreight - groupDiscount);
+            previews.add(new PreviewOrderPreview(entry.getKey(), items, groupTotal,
+                    groupFreight, groupDiscount, groupPay));
+            totalAmount += groupTotal;
+            freightAmount += groupFreight;
+            discountAmount += groupDiscount;
+            payAmount += groupPay;
+        }
+
+        return new PreviewOrderResult(previews, previews.size(), totalAmount, freightAmount,
+                discountAmount, payAmount, couponSellerId,
+                couponDiscount > 0 ? couponCode : null, couponMessage);
+    }
+
+    /**
+     * 把预览请求适配成 {@link PlaceOrderRequest} 的形状，仅用于复用 {@link #directBuyRow}。
+     *
+     * <p>预览请求刻意不带幂等键与收货信息（它们与「算钱」无关），
+     * 但直购取行的逻辑只需 {@code buySkuId + buyQuantity}，因此这里补齐其余字段为 null。
+     * 不复用会导致「直购取行」这段规则在预览与下单之间出现两份实现。
+     */
+    private PlaceOrderRequest toPlaceOrderShim(PreviewOrderRequest request) {
+        return new PlaceOrderRequest(null, null, null, null, null, null,
+                request.buySkuId(), request.buyQuantity(), null);
     }
 
     // ---------------- 下单 ----------------

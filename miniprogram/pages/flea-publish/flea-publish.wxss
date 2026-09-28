@@ -1,0 +1,77 @@
+/* ── 发布闲置（第五十二轮） ── */
+.fp { padding-bottom: 60rpx; }
+
+.fp-tip {
+  margin: 20rpx 24rpx 0;
+  padding: 20rpx 24rpx;
+  background: var(--brand-weak);
+  color: var(--brand);
+  border-radius: 14rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.fp-field { margin-bottom: 28rpx; }
+.fp-field:last-child { margin-bottom: 0; }
+.fp-label {
+  display: block;
+  font-size: 26rpx;
+  color: var(--text-2);
+  margin-bottom: 12rpx;
+}
+.fp-req { color: var(--accent); margin-left: 4rpx; }
+
+.fp-input,
+.fp-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border-radius: 12rpx;
+  padding: 20rpx 22rpx;
+  font-size: 28rpx;
+}
+.fp-input { height: 84rpx; }
+.fp-textarea { height: 200rpx; }
+.fp-ph { color: var(--text-3); font-size: 27rpx; }
+.fp-count {
+  display: block;
+  text-align: right;
+  font-size: 22rpx;
+  color: var(--text-3);
+  margin-top: 8rpx;
+}
+
+.fp-row { display: flex; gap: 20rpx; }
+.fp-half { flex: 1; min-width: 0; }
+
+.fp-chips { display: flex; flex-wrap: wrap; gap: 14rpx; }
+.fp-chip {
+  padding: 12rpx 28rpx;
+  background: var(--bg);
+  color: var(--text-2);
+  border-radius: 30rpx;
+  font-size: 26rpx;
+}
+.fp-chip-on {
+  background: var(--brand-weak);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.fp-error {
+  margin: 0 24rpx 20rpx;
+  padding: 18rpx 22rpx;
+  background: var(--accent-weak);
+  color: var(--accent);
+  border-radius: 12rpx;
+  font-size: 26rpx;
+}
+
+.fp-actions {
+  display: flex;
+  gap: 20rpx;
+  padding: 8rpx 24rpx 0;
+}
+.fp-actions .btn { flex: 1; }
+.fp-btn-cancel { background: var(--card); color: var(--text-2); }
+.fp-btn-submit { flex: 1.6; }

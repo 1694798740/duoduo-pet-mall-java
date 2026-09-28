@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -89,6 +90,28 @@ public class GlobalExceptionHandler {
         log.error("未捕获异常 requestId={}", RequestIdHolder.get(), ex);
         return ResponseEntity.status(ErrorCode.INTERNAL.httpStatus())
                 .body(ApiResponse.fail(ErrorCode.INTERNAL.name(), ErrorCode.INTERNAL.defaultMessage()));
+    }
+
+    /**
+     * 请求方法不支持 → 405，而不是 500。
+     *
+     * <p>与 {@link #handleUnsupportedMediaType} 是同一类问题、同一套理由：
+     * 「路径存在但方法用错」（对只读端点发 POST、或反之）属 4xx，是<b>调用方的问题</b>。
+     * 落到兜底分支有两个后果：5xx 告警被无关噪声淹没（真正的服务故障反而看不见），
+     * 且调用方拿到「服务内部错误」，完全推不出问题在自己这一侧。
+     *
+     * <p>之所以此前一直是 500：{@code HttpRequestMethodNotSupportedException} 不在
+     * 任何 {@code @ExceptionHandler} 的覆盖范围内，只能被 {@code Exception} 兜底接住。
+     * 这类「框架异常漏配」不会报错、不会告警，只会在真实调用时表现为一个语义错误的码，
+     * 属于最难主动发现的一类缺陷 —— 是接口冒烟测出来的。
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        log.warn("请求方法不支持 requestId={} method={} msg={}",
+                RequestIdHolder.get(), ex.getMethod(), ex.getMessage());
+        return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.httpStatus())
+                .body(ApiResponse.fail(ErrorCode.METHOD_NOT_ALLOWED.name(),
+                        ErrorCode.METHOD_NOT_ALLOWED.defaultMessage()));
     }
 
     private ResponseEntity<ApiResponse<Void>> validationFailure(List<FieldError> errors) {

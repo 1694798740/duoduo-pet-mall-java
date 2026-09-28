@@ -22,7 +22,11 @@
     "pages/follow-list/follow-list",
     "pages/chat-list/chat-list",
     "pages/chat/chat",
-    "pages/login/login"
+    "pages/login/login",
+    "pages/flea-market/flea-market",
+    "pages/flea-detail/flea-detail",
+    "pages/flea-publish/flea-publish",
+    "pages/flea-mine/flea-mine"
   ],
   "window": {
     "navigationBarBackgroundColor": "#4f6ef7",

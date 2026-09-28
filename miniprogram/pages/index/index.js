@@ -36,6 +36,7 @@ Page({
       { iconSrc: '/images/entry/seckill.png', label: '限时秒杀', url: '/pages/seckill/seckill' },
       { iconSrc: '/images/entry/coupon.png', label: '领券中心', url: '/pages/coupons/coupons' },
       { iconSrc: '/images/entry/ai.png', label: 'AI 助手', url: '/pages/ai/ai' },
+      { iconSrc: '/images/entry/flea.png', label: '跳蚤市场', url: '/pages/flea-market/flea-market' },
       { iconSrc: '/images/entry/category.png', label: '全部分类', url: '/pages/category/category' },
     ],
     skeletons: [1, 2, 3, 4],

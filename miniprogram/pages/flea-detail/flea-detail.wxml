@@ -1,0 +1,69 @@
+<!-- 闲置详情（第五十二轮） -->
+<view class="fd">
+  <view class="fd-state" wx:if="{{loading}}">正在加载…</view>
+  <view class="fd-state fd-error" wx:if="{{error}}">{{error}}</view>
+
+  <block wx:if="{{!loading && !error && card}}">
+    <!-- 图集 -->
+    <swiper class="fd-swiper" indicator-dots indicator-active-color="#4f6ef7" circular>
+      <swiper-item wx:for="{{gallery}}" wx:key="*this">
+        <image
+          class="fd-swiper-img"
+          src="{{item}}"
+          mode="aspectFill"
+          data-index="{{index}}"
+          bindtap="onPreview"
+        />
+      </swiper-item>
+    </swiper>
+
+    <!-- 价格与标题 -->
+    <view class="card fd-main">
+      <view class="fd-price-row">
+        <text class="fd-price">¥{{card.priceText}}</text>
+        <text class="fd-original" wx:if="{{card.originalText}}">¥{{card.originalText}}</text>
+        <text class="fd-views">{{card.viewCount}} 人看过</text>
+      </view>
+      <view class="fd-title">{{card.title}}</view>
+      <view class="fd-tags">
+        <text class="fd-tag fd-tag-cond">{{card.conditionLevel}}</text>
+        <text class="fd-tag" wx:if="{{card.city}}">{{card.city}}</text>
+        <text class="fd-tag" wx:if="{{card.species}}">{{card.species}}</text>
+        <text class="fd-tag" wx:if="{{card.breed}}">{{card.breed}}</text>
+      </view>
+    </view>
+
+    <!-- 描述 -->
+    <view class="card">
+      <view class="fd-sec-title">卖家描述</view>
+      <view class="fd-desc">{{description || '卖家没有填写描述'}}</view>
+    </view>
+
+    <!-- 同款全新：C2C 闲置最大的转化入口就是「加一点钱买全新的」 -->
+    <view class="card" wx:if="{{sameCategoryNew.length > 0}}">
+      <view class="fd-sec-title">同款全新</view>
+      <view class="fd-new-list">
+        <view
+          class="fd-new"
+          wx:for="{{sameCategoryNew}}"
+          wx:key="id"
+          data-id="{{item.id}}"
+          bindtap="onTapNew"
+        >
+          <image class="fd-new-img" src="{{item.image}}" mode="aspectFill" lazy-load />
+          <view class="fd-new-title">{{item.title}}</view>
+          <view class="fd-new-price">¥{{item.priceText}}</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- C2C 交易提示：平台不代收货款，这一点必须说清楚 -->
+    <view class="fd-note">
+      这是用户发布的二手闲置。交易前请与卖家确认成色与交易方式。
+    </view>
+
+    <view class="fd-foot">
+      <button class="btn btn-plain" bindtap="onBackMarket">返回跳蚤市场</button>
+    </view>
+  </block>
+</view>

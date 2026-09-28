@@ -1,0 +1,115 @@
+/* ── 我的闲置（第五十二轮） ── */
+.fmine { padding-bottom: 40rpx; }
+
+.fmine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 20rpx 24rpx 12rpx;
+}
+.fmine-filters { display: flex; gap: 10rpx; flex: 1; min-width: 0; }
+.fmine-filter {
+  padding: 10rpx 22rpx;
+  background: var(--card);
+  color: var(--text-2);
+  border-radius: 30rpx;
+  font-size: 25rpx;
+}
+.fmine-filter-on {
+  background: var(--brand-weak);
+  color: var(--brand);
+  font-weight: 600;
+}
+.fmine-add {
+  flex: none;
+  padding: 12rpx 26rpx;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 30rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+.fmine-list { padding: 0 24rpx; }
+.fmine-item {
+  display: flex;
+  gap: 20rpx;
+  padding: 22rpx;
+  margin-top: 18rpx;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 2rpx 12rpx rgba(35, 38, 47, 0.04);
+}
+.fmine-img {
+  width: 180rpx;
+  height: 180rpx;
+  border-radius: 14rpx;
+  background: var(--bg);
+  flex: none;
+}
+.fmine-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fmine-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.fmine-badges { display: flex; gap: 10rpx; margin-top: 12rpx; }
+.fmine-badge {
+  padding: 4rpx 14rpx;
+  border-radius: 8rpx;
+  font-size: 22rpx;
+}
+.fmine-audit-pending { background: #fff7e6; color: #b7791f; }
+.fmine-audit-approved { background: #e8f8ee; color: #1aad19; }
+.fmine-audit-rejected { background: var(--accent-weak); color: var(--accent); }
+.fmine-badge-status { background: var(--bg); color: var(--text-2); }
+
+.fmine-price-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 12rpx;
+}
+.fmine-price { color: var(--accent); font-size: 32rpx; font-weight: 700; }
+.fmine-views { font-size: 22rpx; color: var(--text-3); }
+
+.fmine-reason {
+  margin-top: 10rpx;
+  padding: 12rpx 16rpx;
+  background: var(--accent-weak);
+  color: var(--accent);
+  border-radius: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.fmine-actions {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 14rpx;
+}
+.fmine-btn {
+  padding: 10rpx 28rpx;
+  border-radius: 26rpx;
+  font-size: 24rpx;
+  background: var(--bg);
+  color: var(--text-2);
+}
+.fmine-btn-on { background: var(--brand-weak); color: var(--brand); font-weight: 600; }
+.fmine-time { margin-left: auto; font-size: 22rpx; color: var(--text-3); }
+
+.fmine-state {
+  padding: 60rpx 24rpx;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+}
+.fmine-error { color: var(--accent); }

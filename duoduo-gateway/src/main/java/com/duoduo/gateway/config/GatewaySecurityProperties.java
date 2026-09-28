@@ -50,7 +50,17 @@ public class GatewaySecurityProperties {
             "/api/products/**",
             "/api/categories/**",
             "/api/home/**",
-            "/api/listings/**",
+            // C2C 闲置浏览：与商品浏览同性质（未登录先逛，才谈得上注册）。
+            // **不能写 /api/listings/** ** —— 发布（POST /api/listings）、我的发布、上下架
+            // 都挂在这棵子树下，通配会把三条写路径一起放行，等于匿名 UGC 直写入库。
+            // 照分享圈（/api/shares/feed + /api/shares/*）的两段式精确列举：
+            //   /api/listings/search —— 列表（两段，只读）
+            //   /api/listings/*      —— 详情（两段，只读；AntPathMatcher 的 * 不跨 /）
+            // 单段的 /api/listings 刻意<b>不在</b>白名单：那是发布端点。
+            // 三段的 /api/listings/mine/list 与 /api/listings/{id}/status 也落不进 * ——
+            // 前者是隐藏写路径，后者是写操作。
+            "/api/listings/search",
+            "/api/listings/*",
             "/api/meta/**",
             // 领券中心（A5）：营销落地页，未登录访客也应看到有什么券 —— 这正是它的作用。
             // 只放行 /api/coupons/templates 这一条**精确**只读路径：

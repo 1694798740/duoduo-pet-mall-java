@@ -66,6 +66,61 @@ public final class ProductDtos {
     ) {
     }
 
+    /**
+     * 发布闲置请求（C2C 卖家侧写链路）。
+     *
+     * <p>{@code sellerId} <b>刻意不在此处</b>：卖家身份只能来自服务端校验过的令牌，
+     * 请求体里给一个「谁是卖家」的字段，等于把归属交给客户端自证。
+     *
+     * <p>{@code auditStatus} / {@code status} 同样不接受客户端传入 ——
+     * 新发布一律落 {@code PENDING}（由服务端决定），否则发布者可以直接把
+     * {@code auditStatus=APPROVED} 塞进来，绕过整条人工审核链。
+     */
+    public record ListingPublishRequest(
+            String title,
+            String description,
+            Long categoryId,
+            Long price,
+            Long originalPrice,
+            String conditionLevel,
+            String city,
+            List<String> images,
+            String species,
+            String breed
+    ) {
+    }
+
+    /** 闲置上下架请求；action = ON_SALE / OFF_SHELF（不认识的动作必须 400，绝不静默当成下架） */
+    public record ListingStatusRequest(
+            String action
+    ) {
+    }
+
+    /**
+     * 卖家视角的「我的闲置」条目。
+     *
+     * <p>与 {@link ListingCard} 的关键差别：这里<b>必须带出 {@code status} / {@code auditStatus}
+     * 与驳回原因</b>。公开列表只暴露审核通过的可见内容，卖家却需要看到自己那些
+     * 「还没通过」「被驳回」的条目 —— 否则发布完就查无此项，卖家只能反复重发。
+     * 驳回原因更是刚需：不告诉他为什么被拒，他就只能猜着改。
+     */
+    public record ListingMineView(
+            Long id,
+            String title,
+            Long price,
+            String conditionLevel,
+            String city,
+            String cover,
+            String species,
+            String status,
+            String statusLabel,
+            String auditStatus,
+            String auditReason,
+            int viewCount,
+            String createdAt
+    ) {
+    }
+
     /** 闲置审核请求；action = APPROVE / REJECT，驳回时 reason 必填 */
     public record ListingAuditRequest(
             String action,

@@ -1,0 +1,110 @@
+<!-- 跳蚤市场：C2C 闲置浏览（第五十二轮） -->
+<view class="fm">
+  <!-- 搜索 + 快捷入口 -->
+  <view class="fm-topbar">
+    <view class="fm-search">
+      <text class="fm-search-icon">🔍</text>
+      <input
+        class="fm-search-input"
+        value="{{keyword}}"
+        placeholder="搜闲置：猫砂盆、牵引绳…"
+        placeholder-class="fm-ph"
+        confirm-type="search"
+        bindinput="onKeywordInput"
+        bindconfirm="onSearch"
+      />
+    </view>
+    <view class="fm-city">
+      <input
+        class="fm-city-input"
+        value="{{city}}"
+        placeholder="城市"
+        placeholder-class="fm-ph"
+        confirm-type="search"
+        bindinput="onCityInput"
+        bindconfirm="onSearch"
+      />
+    </view>
+    <view class="fm-search-btn" bindtap="onSearch">搜索</view>
+  </view>
+
+  <!-- 发布 / 我的闲置：非 tab 页，入口必须显眼 -->
+  <view class="fm-entry">
+    <view class="fm-entry-btn fm-entry-publish" bindtap="onTapPublish">
+      <text class="fm-entry-icon">＋</text>
+      <text>发布闲置</text>
+    </view>
+    <view class="fm-entry-btn fm-entry-mine" bindtap="onTapMine">
+      <text class="fm-entry-icon">☰</text>
+      <text>我的闲置</text>
+    </view>
+  </view>
+
+  <!-- 筛选条 -->
+  <view class="fm-filter">
+    <scroll-view class="fm-chips" scroll-x enable-flex>
+      <view
+        wx:for="{{conditions}}"
+        wx:key="code"
+        class="fm-chip {{conditionLevel === item.code ? 'fm-chip-on' : ''}}"
+        data-code="{{item.code}}"
+        bindtap="onPickCondition"
+      >{{item.label}}</view>
+    </scroll-view>
+    <view class="fm-chips fm-chips-sort">
+      <view
+        wx:for="{{sorts}}"
+        wx:key="code"
+        class="fm-chip {{sort === item.code ? 'fm-chip-on' : ''}}"
+        data-code="{{item.code}}"
+        bindtap="onPickSort"
+      >{{item.label}}</view>
+    </view>
+  </view>
+
+  <!-- 结果统计 + 清空筛选 -->
+  <view class="fm-meta" wx:if="{{!error}}">
+    <text class="fm-total">共 {{total}} 件闲置</text>
+    <text
+      class="fm-clear"
+      wx:if="{{keyword || city || conditionLevel || sort !== 'default'}}"
+      bindtap="onClearFilters"
+    >清空筛选</text>
+  </view>
+
+  <!-- 列表 -->
+  <view class="fm-list">
+    <view
+      class="fm-item"
+      wx:for="{{items}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="onTapItem"
+    >
+      <image class="fm-img" src="{{item.image}}" mode="aspectFill" lazy-load />
+      <view class="fm-info">
+        <view class="fm-title">{{item.title}}</view>
+        <view class="fm-tags">
+          <text class="fm-tag fm-tag-cond">{{item.conditionText}}</text>
+          <text class="fm-tag" wx:if="{{item.city}}">{{item.city}}</text>
+          <text class="fm-tag" wx:if="{{item.breed}}">{{item.breed}}</text>
+        </view>
+        <view class="fm-price-row">
+          <text class="fm-price">¥{{item.priceText}}</text>
+          <text class="fm-original" wx:if="{{item.originalText}}">¥{{item.originalText}}</text>
+        </view>
+        <view class="fm-foot">
+          <text class="fm-views">{{item.viewCount}} 人看过</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 状态区 -->
+  <view class="fm-state" wx:if="{{loading}}">正在加载…</view>
+  <view class="fm-state fm-error" wx:if="{{error}}">{{error}}</view>
+  <view class="fm-state" wx:if="{{!loading && !error && items.length === 0}}">
+    还没有闲置，点上方「发布闲置」发第一条
+  </view>
+  <view class="fm-state" wx:if="{{!loading && noMore && items.length > 0}}">没有更多了</view>
+</view>

@@ -24,6 +24,15 @@ public enum ErrorCode {
      * 既污染了 5xx 告警，又把「你发错了格式」说成了「我坏了」。
      */
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "不支持的请求体格式，请使用 application/json"),
+    /**
+     * 请求方法不支持（405）。
+     *
+     * <p>典型触发：路径存在但方法用错 —— 对只读端点发 POST（或反之）。
+     * 与 {@link #UNSUPPORTED_MEDIA_TYPE} 是同一类问题：<b>调用方发错了</b>。
+     * 此前落到兜底分支变成 500，把「你调错了」说成「我坏了」，
+     * 既污染 5xx 告警、又让接入方完全看不出问题在自己这一侧。
+     */
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "请求方法不被支持，请检查 HTTP 方法是否正确"),
 
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "身份未认证或登录已过期"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "没有权限执行该操作"),
