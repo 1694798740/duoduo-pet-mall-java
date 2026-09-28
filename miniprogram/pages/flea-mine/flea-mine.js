@@ -90,7 +90,9 @@ Page({
     api.listing
       .mine({ page, pageSize: PAGE_SIZE, status: this.data.status })
       .then((res) => {
-        const data = (res && res.data) || {};
+        // 请求层成功时已返回包络里的 data（即分页结果 {items,total,...} 本身），
+        // 这里直接用 —— 再取 res.data 会得到 undefined，列表永远为空（R52 热修实录）
+        const data = res || {};
         const rows = (data.items || data.records || []).map(decorate);
         const items = reset ? rows : this.data.items.concat(rows);
         this.setData({

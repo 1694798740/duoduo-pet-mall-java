@@ -111,7 +111,8 @@ Page({
     api.listing
       .list(params)
       .then((res) => {
-        const data = (res && res.data) || {};
+        // 请求层成功时已返回包络里的 data（分页结果本身），勿再剥一层（R52 热修实录）
+        const data = res || {};
         const rows = (data.items || data.records || []).map(decorate);
         const items = reset ? rows : this.data.items.concat(rows);
         this.setData({

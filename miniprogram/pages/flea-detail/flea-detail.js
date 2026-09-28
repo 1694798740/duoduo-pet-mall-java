@@ -33,7 +33,9 @@ Page({
     api.listing
       .detail(id)
       .then((res) => {
-        const data = (res && res.data) || {};
+        // 请求层成功时已返回包络里的 data（{card, description, images, sameCategoryNew}），
+        // 勿再剥一层 res.data（R52 热修实录）
+        const data = res || {};
         const card = data.card || {};
         const gallery = images.listingGallery(card.id, (data.images || [])[0]);
         this.setData({
