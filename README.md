@@ -4,7 +4,10 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**最近更新：2026-09-27（第四十七轮 · 第一批）** — **社交域上线：关注 + 私信 + 问一问**。
+**最近更新：2026-09-27（第四十八轮）** — **问一问全站打通 + 私信入口上移**。
+「我的」页私信入口从底部菜单上移为**右上角 📩 图标**（`nav-bar` 组件开启 `multipleSlots` 新增右侧命名插槽，位置按胶囊按钮实算）。修复「问一问」报「该商品没有卖家」：根因是 13 个自营商品 `seller_id=0`（R47 设计即 422），增量 SQL 16 新建**官方客服**账号（id `710000000000000001`，手机 `13900000002`）并把自营商品批量归属，「问一问」语义变为咨询官方客服——后端零改动，复用全部私信链路；种子卖家与官方客服补包内头像（`images/avatars/`）。新增探针 `scripts/r48-ask-smoke.py` **8/8**，R47 回归 **42/42**（⑳ 改版），静态自检 0 错误。分享圈下一阶段设计稿见 [`docs/design/分享圈设计需求文档.md`](./docs/design/分享圈设计需求文档.md)（评论体系 + 跳蚤市场 C2C）。
+
+**第四十七轮（2026-09-27 · 第一批）** — **社交域上线：关注 + 私信 + 问一问**。
 新增第 8 个业务服务 `duoduo-social`（社交域，:8087；compose 服务名 `duoduo-social-app`，容器 `duoduo-app-social`，库 `duoduo_social`）：**① 关注**——`t_social_follow` 复合主键 `(follower_id, followee_id)`，互相关注=两个方向各一行（不引入状态列，双向同步是 bug 温床），重复关注/取关幂等，关注自己 422、幽灵用户 404，计数不冗余直接 COUNT；**② 私信**——`t_social_message` 会话键 `"lo:hi"`（双方 userId 小者在前，双向聊天一个索引）；**非互关每人限发一条**（服务端按会话计数判定，前端只消费 `canSend` 结果），互关后自由聊；卡片消息（PRODUCT）摘要由服务端去事实源现取（请求体只带 bizType+bizId，公开接口贴不出伪造卡片）；频控 60s/10 条（429）；**③ 问一问**——商品详情页「问一问」按钮直进与卖家的咨询会话：`bizType=ASK` 的收件人由**商品归属卖家**决定（不信前端传值），咨询会话永久豁免「一条」限制；发现种子商品 `seller_id` 全为 0（含 merchant 类型），增量 SQL 15 把 5 个 merchant 商品的卖家归属回填到种子卖家；**④ 小程序**——新 4 页（他人主页/关注与粉丝/会话列表/聊天页，全部非 tab + 原生导航，聊天页 4s HTTP 轮询 + 进入即标已读），分享圈作者区 → 他人主页，「我的」页加私信/关注入口。注意 `following` 既是计数也是关系词，`ProfileView` 关系字段用 `viewerFollowing/viewerFollowedBy` 避开 record 组件重名。
 **验证**：新增 `social-smoke.py` **42/42**（关注 12 项 + 私信 30 项，含幂等/互关/一条限制/ASK 服务端定人/豁免/频控/已读）+ 分享圈探针回归 **39/39** + 静态自检 0 错误 + wxml↔js 处理器核对全过；social/gateway/user/product 四容器重建健康（user/product jar 重打包带 `/internal/roles` 与 `InternalCardView.sellerId`），SQL 06/15 已落库。踩坑记录：Feign 必须带 `spring-cloud-starter-loadbalancer`，且内部接口必须挂 `X-Internal-Token` 拦截器——下游「取不到资料就降级为空」的容错会把 403 吞成业务 404，极难排查。
 

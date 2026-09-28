@@ -44,3 +44,13 @@
 @keyframes nb-spin {
   to { transform: rotate(360deg); }
 }
+
+/* 右侧命名插槽容器（第四十八轮）：垂直居中于标题栏，水平位置按胶囊实算内联给出 */
+.nb-right {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+}

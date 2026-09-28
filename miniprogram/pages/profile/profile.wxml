@@ -1,4 +1,9 @@
-<nav-bar title="我的" />
+<nav-bar title="我的">
+  <!-- 私信入口（第四十八轮）：从底部菜单上移到右上角信封图标，位置由组件按胶囊实算 -->
+  <view slot="right" class="nav-msg" hover-class="nav-msg-hover" bindtap="go" data-url="/pages/chat-list/chat-list">
+    <text class="nav-msg-icon">📩</text>
+  </view>
+</nav-bar>
 
 <view class="profile-head">
   <view class="avatar">{{logged ? '🐱' : '👤'}}</view>
@@ -56,12 +61,7 @@
     <text>我的订单</text>
     <text class="arrow">›</text>
   </view>
-  <!-- 社交（第四十七轮）：私信 / 关注与粉丝，接口都要登录态 -->
-  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/chat-list/chat-list">
-    <text class="mi-icon">💬</text>
-    <text>私信</text>
-    <text class="arrow">›</text>
-  </view>
+  <!-- 社交（第四十七轮）：关注与粉丝，接口都要登录态；私信入口已上移右上角 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/follow-list/follow-list">
     <text class="mi-icon">👥</text>
     <text>关注与粉丝</text>

@@ -11,14 +11,14 @@
   私信：
   ⑬ 未登录发消息 401 / ⑭ 非互关第一条 200 / ⑮ 非互关第二条 422 /
   ⑯ 对方回一条 200 / ⑰ 对方第二条 422 / ⑱ 互关后自由聊 /
-  ⑲ SHARE / PROFILE_CARD 422「即将开放」/ ⑳ ASK 自营商品 422 /
+  ⑲ SHARE / PROFILE_CARD 422「即将开放」/ ⑳ ASK 自营商品 200（第四十八轮起归属官方客服）/
   ㉑ ASK 商家商品 200 + 收件人=商品归属卖家（服务端定人，前端传值不被信任）/
   ㉒ ASK 幽灵商品 404 / ㉓ ASK 会话豁免「一条」限制 / ㉔ 空内容 4xx /
   ㉕ 给自己发 422 / ㉖ 发给幽灵用户 404 / ㉗ 频控 429 /
   ㉘㉙ 会话列表（未读数 / consulting / canSend）/ ㉚ 会话消息正序 + 头部状态 /
   ㉛ 标已读后未读归零
-前置：9 容器 healthy（网关 :8080），06-duoduo-social.sql 与
-      incremental/15-ask-seller-backfill.sql 已执行。
+前置：容器 healthy（网关 :8080），06-duoduo-social.sql、incremental/15-ask-seller-backfill.sql
+      与 incremental/16-official-cs-and-avatars.sql 已执行。
 用法：python scripts/social-smoke.py
 """
 import json
@@ -32,6 +32,7 @@ PWD = "duoduo12345"
 SELF_SPU = 1001    # seller_id=0 的自营商品
 MERCHANT_SPU = 1009  # 已回填卖家的商家商品
 MERCHANT_SPU_2 = 1015  # 另一卖家商品（频控测试用，隔离会话）
+OFFICIAL_CS_ID = "710000000000000001"  # 官方客服（第四十八轮，增量 16 创建，自营商品归属）
 
 passed, failed = [], []
 
@@ -190,9 +191,11 @@ check("⑲a SHARE → 422 即将开放", st == 422, f"{st} {res}")
 st, res = call("POST", "/api/socials/messages", {"receiverId": B, "bizType": "PROFILE_CARD", "bizId": B}, ta)
 check("⑲b PROFILE_CARD → 422 即将开放", st == 422, f"{st} {res}")
 
-# ⑳ ASK 自营商品（sellerId=0）
+# ⑳ ASK 自营商品（第四十八轮起归属官方客服，语义=咨询客服；收件人服务端定人不信前端）
 st, res = call("POST", "/api/socials/messages", {"receiverId": B, "bizType": "ASK", "bizId": SELF_SPU, "content": "咨询"}, ta)
-check("⑳ ASK 自营商品 → 422", st == 422, f"{st} {res}")
+d20 = data_of(res) or {}
+check("⑳ ASK 自营商品 → 200 且收件人=官方客服", st == 200 and str(d20.get("receiverId")) == OFFICIAL_CS_ID,
+      f"{st} {res}")
 
 # ㉑ ASK 商家商品：收件人=归属卖家（服务端定人，前端传 C 也不被信任）
 st, res = call("POST", "/api/socials/messages",

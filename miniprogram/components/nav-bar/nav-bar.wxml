@@ -5,5 +5,9 @@
   <view class="nb-inner" style="height:{{navBarHeight}}px">
     <view class="nb-spin" wx:if="{{loading}}"></view>
     <text class="nb-title">{{title}}</text>
+    <!-- 右侧命名插槽：定位在胶囊左侧，无内容时为空、不影响标题布局 -->
+    <view class="nb-right" style="right:{{navRightGap}}px">
+      <slot name="right"></slot>
+    </view>
   </view>
 </view>

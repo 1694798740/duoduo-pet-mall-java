@@ -261,3 +261,12 @@ WHERE id IN (1009, 1010);
 UPDATE t_spu
 SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13765569756' AND role = 'SELLER')
 WHERE id IN (1015, 1017, 1018);
+
+-- ---------- 自营商品归属官方客服（第四十八轮） ----------
+-- 自营（supply_type='self'）商品 seller_id=0 时「问一问」一律 422；
+-- 归属到「多多官方客服」后语义变为咨询官方客服，复用全部私信链路。
+-- 官方客服账号由 incremental/16-official-cs-and-avatars.sql 创建（含头像），
+-- 与增量 16 保持同一口径，跨环境可重放。
+UPDATE t_spu
+SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13900000002' AND role = 'SELLER')
+WHERE supply_type = 'self' AND seller_id = 0;

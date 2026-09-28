@@ -49,3 +49,20 @@
   font-size: 24rpx;
   color: var(--text-3);
 }
+
+/* 右上角私信图标（第四十八轮）：位于 nav-bar 右侧插槽，定位由组件按胶囊实算 */
+.nav-msg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+}
+.nav-msg-hover {
+  opacity: 0.6;
+}
+.nav-msg-icon {
+  font-size: 36rpx;
+  line-height: 1;
+}
