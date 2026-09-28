@@ -21,6 +21,8 @@ CREATE INDEX idx_follow_followee ON t_social_follow (followee_id);
 
 -- ---------- 私信 / 卡片消息（第四十七轮） ----------
 -- 会话键 conversation_id = "lo:hi"（双方 userId 数值小的在前）：
+--   主会话（互关私聊 / 商品卡分享）= "lo:hi"；
+--   商品咨询会话（第四十九轮）= "lo:hi:p{spuId}"，每件商品独立会话，互不串线。
 -- 双向聊天只需这一个索引就能按会话拉取；若只靠 (sender, receiver) 得 UNION 两次查询。
 -- 卡片消息（biz_type != TEXT）的摘要 content 由服务端去事实源现取，请求体只带 bizId ——
 -- 与分享圈「快照以服务端事实为准」同一纪律，公开接口贴不出伪造卡片。

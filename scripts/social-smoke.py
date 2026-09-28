@@ -13,7 +13,7 @@
   ⑯ 对方回一条 200 / ⑰ 对方第二条 422 / ⑱ 互关后自由聊 /
   ⑲ SHARE / PROFILE_CARD 422「即将开放」/ ⑳ ASK 自营商品 200（第四十八轮起归属官方客服）/
   ㉑ ASK 商家商品 200 + 收件人=商品归属卖家（服务端定人，前端传值不被信任）/
-  ㉒ ASK 幽灵商品 404 / ㉓ ASK 会话豁免「一条」限制 / ㉔ 空内容 4xx /
+  ㉒ ASK 幽灵商品 404 / ㉓ 商品会话豁免「一条」限制+主会话仍受限 / ㉔ 空内容 4xx /
   ㉕ 给自己发 422 / ㉖ 发给幽灵用户 404 / ㉗ 频控 429 /
   ㉘㉙ 会话列表（未读数 / consulting / canSend）/ ㉚ 会话消息正序 + 头部状态 /
   ㉛ 标已读后未读归零
@@ -208,10 +208,16 @@ check("㉑ ASK 商家商品 → 200 且收件人=卖家", st == 200 and str(d.ge
 st, res = call("POST", "/api/socials/messages", {"receiverId": B, "bizType": "ASK", "bizId": 999999}, ta)
 check("㉒ ASK 幽灵商品 → 404", st == 404, f"{st} {res}")
 
-# ㉓ ASK 会话豁免：A 未互关卖家，ASK 后可连续发 TEXT
-ok1 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": " thank you"}, ta)[0]
-ok2 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": "再问一句"}, ta)[0]
-check("㉓ 咨询会话豁免一条限制 → 200/200", ok1 == 200 and ok2 == 200, f"{ok1}/{ok2}")
+# ㉓ ASK 会话豁免：A 未互关卖家，ASK 后在**同一商品会话**内可连续发 TEXT
+# （第四十九轮起 TEXT 必须带 productId 才落回商品咨询会话；不带则落主会话、仍受一条限制）
+ok1 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": " thank you", "productId": MERCHANT_SPU}, ta)[0]
+ok2 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": "再问一句", "productId": MERCHANT_SPU}, ta)[0]
+check("㉓ 商品咨询会话豁免一条限制 → 200/200", ok1 == 200 and ok2 == 200, f"{ok1}/{ok2}")
+
+# ㉓-2 主会话一条限制与商品会话豁免互不影响：主会话（无 productId）第一条 200、第二条 422
+ok3 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": "主会话第一条"}, ta)[0]
+ok4 = call("POST", "/api/socials/messages", {"receiverId": SELLER, "content": "主会话第二条"}, ta)[0]
+check("㉓-2 主会话仍按一条限制 → 200/422", ok3 == 200 and ok4 == 422, f"{ok3}/{ok4}")
 
 # ㉔ 空内容 TEXT → 4xx
 st, res = call("POST", "/api/socials/messages", {"receiverId": B, "content": "   "}, ta)
@@ -225,11 +231,12 @@ check("㉕ 给自己发 → 422", st == 422, f"{st} {res}")
 st, res = call("POST", "/api/socials/messages", {"receiverId": 999999999, "content": "hi"}, ta)
 check("㉖ 幽灵收件人 → 404", st == 404, f"{st} {res}")
 
-# ㉗ 频控：C 在与卖家2 的咨询会话里连发 11 条，第 11 条 → 429
+# ㉗ 频控：C 在与卖家2 的商品咨询会话里连发 11 条，第 11 条 → 429
+# （第四十九轮起 TEXT 带 productId 落商品会话，频控按会话计）
 codes = []
 call("POST", "/api/socials/messages", {"receiverId": SELLER2, "bizType": "ASK", "bizId": MERCHANT_SPU_2, "content": "咨询"}, tc)
 for i in range(10):
-    st, res = call("POST", "/api/socials/messages", {"receiverId": SELLER2, "content": f"刷屏第 {i + 1} 条"}, tc)
+    st, res = call("POST", "/api/socials/messages", {"receiverId": SELLER2, "content": f"刷屏第 {i + 1} 条", "productId": MERCHANT_SPU_2}, tc)
     codes.append(st)
 check("㉗ 同会话 60s 内第 11 条 → 429", codes[:9] == [200] * 9 and codes[9] == 429, f"{codes}")
 

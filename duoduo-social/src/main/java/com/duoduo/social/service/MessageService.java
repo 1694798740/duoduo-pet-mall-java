@@ -104,6 +104,8 @@ public class MessageService {
 
         // 卡片 / 咨询类：先取事实，再定收件人
         ProductCardBrief product = null;
+        // 商品咨询会话上下文（第四十九轮）：ASK 恒取 bizId；TEXT 可显式携带（进该商品的咨询会话）
+        Long contextProduct = null;
         if (SocialDtos.BIZ_ASK.equals(bizType) || SocialDtos.BIZ_PRODUCT.equals(bizType)) {
             if (bizId == null) {
                 throw BizException.validation("缺少商品 ID");
@@ -119,17 +121,24 @@ public class MessageService {
                     throw BizException.businessRule("这是你自己的商品，无需咨询");
                 }
                 content = content.isEmpty() ? "我想了解一下「" + product.title() + "」" : content;
+                // 咨询会话按商品隔离：同一卖家卖多件商品，每件一个独立会话
+                contextProduct = bizId;
             }
         } else if (SocialDtos.BIZ_SHARE.equals(bizType) || SocialDtos.BIZ_PROFILE_CARD.equals(bizType)) {
             // 分享卡 / 个人卡依赖履约域内部端点，第二批开放
             throw BizException.businessRule("该消息类型即将开放");
+        } else if (SocialDtos.BIZ_TEXT.equals(bizType) && request.productId() != null) {
+            // 商品会话内的后续闲聊：显式带 productId 才能落回同一商品会话
+            contextProduct = request.productId();
+            requireProductCard(contextProduct);
         }
         requireUserExists(receiverId);
 
-        String conversationId = conversationId(userId, receiverId);
+        String conversationId = conversationId(userId, receiverId, contextProduct);
 
-        // 条数规则：咨询会话豁免；非互关会话每人限发一条
-        boolean exempt = SocialDtos.BIZ_ASK.equals(bizType)
+        // 条数规则：商品咨询会话整体豁免；主会话仍按「非互关每人限发一条」
+        // （countAskInConversation 兼容第四十七轮旧数据：主会话里的历史 ASK 也豁免）
+        boolean exempt = contextProduct != null
                 || messageMapper.countAskInConversation(conversationId) > 0;
         if (!exempt && !followService.mutual(userId, receiverId)
                 && messageMapper.countSentByMe(conversationId, userId) > 0) {
@@ -174,14 +183,25 @@ public class MessageService {
         Set<String> sentByMe = new java.util.HashSet<>(messageMapper.selectMySentConversations(userId));
         Set<String> consulting = new java.util.HashSet<>(messageMapper.selectAskConversations(userId));
 
+        // 商品咨询会话（会话键带商品段）：批量取商品卡做会话副标题（失败降级为 null，不挡列表）
+        List<Long> convProducts = rows.stream()
+                .map(e -> productOfKey(e.getConversationId()))
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, ProductCardBrief> convCards = loadProductCardsByIds(convProducts);
+
         List<ConversationView> views = rows.stream()
                 .map(e -> {
                     String convId = e.getConversationId();
                     Long peer = peerOf(e, userId);
                     UserBrief brief = briefs.get(peer);
                     boolean isMutual = mutual.contains(peer);
-                    // 能发 = 互关 / 咨询会话 / 我还没发过第一条
-                    boolean canSend = isMutual || consulting.contains(convId) || !sentByMe.contains(convId);
+                    Long convProduct = productOfKey(convId);
+                    ProductCardBrief card = convProduct == null ? null : convCards.get(convProduct);
+                    // 能发 = 互关 / 咨询会话（商品会话恒豁免，consulting 含历史 ASK 会话）/ 我还没发过第一条
+                    boolean canSend = isMutual || consulting.contains(convId)
+                            || convProduct != null || !sentByMe.contains(convId);
                     return new ConversationView(
                             peer,
                             brief == null || brief.nickname() == null ? "用户" + peer : brief.nickname(),
@@ -193,18 +213,24 @@ public class MessageService {
                             unread.getOrDefault(convId, 0L),
                             isMutual,
                             canSend,
-                            consulting.contains(convId));
+                            consulting.contains(convId) || convProduct != null,
+                            convProduct,
+                            card == null ? null : card.title(),
+                            card == null ? null : card.mainImage());
                 })
                 .toList();
         return PageResult.of(views, total, pageNo, size);
     }
 
-    /** 与某人的双向消息（时间正序返回，分页取**最新**一页） */
-    public MessagePage conversation(Long userId, Long peerId, int page, int pageSize) {
+    /** 与某人的双向消息（时间正序返回，分页取**最新**一页）；productId 非空时读商品咨询会话 */
+    public MessagePage conversation(Long userId, Long peerId, Long productId, int page, int pageSize) {
         if (peerId == null) {
             throw BizException.validation("缺少对方用户");
         }
-        String conversationId = conversationId(userId, peerId);
+        if (productId != null) {
+            requireProductCard(productId); // 幽灵商品 404，与会话键拼装同源
+        }
+        String conversationId = conversationId(userId, peerId, productId);
         int pageNo = Math.max(1, page);
         int size = normalizeSize(pageSize);
         Page<SocialMessageEntity> result = messageMapper.selectPage(new Page<>(pageNo, size),
@@ -215,7 +241,8 @@ public class MessageService {
         List<SocialMessageEntity> ordered = result.getRecords().reversed();
 
         boolean mutual = followService.mutual(userId, peerId);
-        boolean consulting = messageMapper.countAskInConversation(conversationId) > 0;
+        boolean productConv = productOfKey(conversationId) != null;
+        boolean consulting = productConv || messageMapper.countAskInConversation(conversationId) > 0;
         boolean canSend = mutual || consulting
                 || messageMapper.countSentByMe(conversationId, userId) == 0;
 
@@ -233,15 +260,15 @@ public class MessageService {
                 peerId,
                 peer == null || peer.nickname() == null ? "用户" + peerId : peer.nickname(),
                 peer == null ? null : peer.avatar(),
-                mutual, canSend, consulting);
+                mutual, canSend, consulting, productOfKey(conversationId));
     }
 
-    /** 打开会话：把「对方发给我、还没读」的批量置已读（幂等） */
-    public long markRead(Long userId, Long peerId) {
+    /** 打开会话：把「对方发给我、还没读」的批量置已读（幂等）；productId 非空时读商品咨询会话 */
+    public long markRead(Long userId, Long peerId, Long productId) {
         SocialMessageEntity patch = new SocialMessageEntity();
         patch.setReadAt(LocalDateTime.now(ZoneOffset.UTC));
         return messageMapper.update(patch, new LambdaQueryWrapper<SocialMessageEntity>()
-                .eq(SocialMessageEntity::getConversationId, conversationId(userId, peerId))
+                .eq(SocialMessageEntity::getConversationId, conversationId(userId, peerId, productId))
                 .eq(SocialMessageEntity::getReceiverId, userId)
                 .isNull(SocialMessageEntity::getReadAt));
     }
@@ -376,9 +403,38 @@ public class MessageService {
                 card);
     }
 
-    /** 会话键：数值小的在前（纯数值约定，与业务无关） */
+    /** 会话键：数值小的在前（纯数值约定，与业务无关）——主会话（互关私聊 / 商品卡分享） */
     private String conversationId(Long a, Long b) {
         return a.longValue() <= b.longValue() ? a + ":" + b : b + ":" + a;
+    }
+
+    /**
+     * 会话键（第四十九轮）：商品咨询会话在主键后追加商品段 {@code lo:hi:p{spuId}}。
+     *
+     * <p>同一对用户可以同时有「主会话 + 每件商品一个咨询会话」；键由服务端拼装，
+     * 前端只能通过 send 的 productId / thread 的查询参数参与，无法伪造到任意会话
+     * （lo:hi 由登录态 + 服务端定人保证必然包含自己）。VARCHAR(64)：2×19 位 id + 2 分隔
+     * + "p" + 19 位 = 60，够用。
+     */
+    private String conversationId(Long a, Long b, Long productId) {
+        String base = conversationId(a, b);
+        return productId == null ? base : base + ":p" + productId;
+    }
+
+    /** 从会话键解析商品段（主会话返回 null）——纯数字 userId 保证 ":p" 模式无歧义 */
+    private Long productOfKey(String conversationKey) {
+        if (conversationKey == null) {
+            return null;
+        }
+        int idx = conversationKey.lastIndexOf(":p");
+        if (idx < 0) {
+            return null;
+        }
+        try {
+            return Long.parseLong(conversationKey.substring(idx + 2));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String iso(LocalDateTime time) {

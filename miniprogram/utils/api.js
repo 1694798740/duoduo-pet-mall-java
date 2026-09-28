@@ -409,10 +409,12 @@ const social = {
      * 发消息。bizType 缺省 TEXT；bizType=ASK（商品咨询）时服务端把收件人改成
      * 商品归属卖家 —— 前端传的 receiverId 只是契约占位，真正收件人以后端事实为准。
      */
-    send(receiverId, content, bizType, bizId) {
+    send(receiverId, content, bizType, bizId, contextProductId) {
       const payload = { receiverId: Number(receiverId), content: content || '' };
       if (bizType) payload.bizType = bizType;
       if (bizId) payload.bizId = Number(bizId);
+      // 商品咨询会话上下文（第四十九轮）：TEXT 带 productId 落回该商品的独立会话
+      if (contextProductId) payload.productId = Number(contextProductId);
       return req.post('/api/socials/messages', payload);
     },
     /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
@@ -421,20 +423,23 @@ const social = {
         '/api/socials/messages/conversations?page=' + (page || 1) + '&pageSize=' + (pageSize || 20)
       );
     },
-    /** 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态 */
-    thread(peerId, page, pageSize) {
+    /** 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态；productId 非空读商品咨询会话 */
+    thread(peerId, page, pageSize, productId) {
       return req.get(
         '/api/socials/messages/conversations/' +
           peerId +
           '?page=' +
           (page || 1) +
           '&pageSize=' +
-          (pageSize || 20)
+          (pageSize || 20) +
+          (productId ? '&productId=' + productId : '')
       );
     },
-    /** 打开会话后标已读（幂等） */
-    markRead(peerId) {
-      return req.post('/api/socials/messages/conversations/' + peerId + '/read');
+    /** 打开会话后标已读（幂等）；productId 非空标商品咨询会话 */
+    markRead(peerId, productId) {
+      return req.post(
+        '/api/socials/messages/conversations/' + peerId + '/read' + (productId ? '?productId=' + productId : '')
+      );
     },
   },
 };

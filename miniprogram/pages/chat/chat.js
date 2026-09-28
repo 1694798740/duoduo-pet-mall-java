@@ -90,7 +90,7 @@ Page({
     if (this._fetching) return; // 上一轮还没回来，跳过本次（防请求堆积）
     this._fetching = true;
     api.social.message
-      .thread(this.data.peerId, 1, PAGE_SIZE)
+      .thread(this.data.peerId, 1, PAGE_SIZE, this.data.productId || null)
       .then((data) => {
         this._fetching = false;
         const items = ((data && data.items) || []).map((m) => this.decorate(m));
@@ -114,7 +114,7 @@ Page({
           }
         });
         if (hasNew) {
-          api.social.message.markRead(this.data.peerId).catch(() => {});
+          api.social.message.markRead(this.data.peerId, this.data.productId || null).catch(() => {});
         }
       })
       .catch((err) => {
@@ -145,10 +145,12 @@ Page({
     const content = (this.data.input || '').trim();
     if (!content || this.data.sending || !this.data.canSend) return;
     this.setData({ sending: true });
-    // 问一问首条：会话为空且带 productId 时按 ASK 发送（服务端定收件人=卖家）
+    // 问一问首条：会话为空且带 productId 时按 ASK 发送（服务端定收件人=卖家）；
+    // 后续 TEXT 仍带 productId（第四十九轮：整段对话留在该商品的独立咨询会话里）
     const askNow = this.data.ask && this.data.productId && this.data.items.length === 0;
+    const contextProduct = this.data.productId || null;
     api.social.message
-      .send(this.data.peerId, content, askNow ? 'ASK' : 'TEXT', askNow ? this.data.productId : null)
+      .send(this.data.peerId, content, askNow ? 'ASK' : 'TEXT', askNow ? this.data.productId : null, contextProduct)
       .then(() => {
         this.setData({ sending: false, input: '', ask: askNow ? false : this.data.ask });
         this.fetchThread(false); // 拉最新一页，含自己刚发的这条

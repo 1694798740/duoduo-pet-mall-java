@@ -47,18 +47,27 @@ public class MessageController {
         return ApiResponse.ok(messageService.conversations(UserContext.requireUserId(), page, pageSize));
     }
 
-    /** 与某人的双向消息（时间正序，分页取最新一页；头部带互关/可发状态） */
+    /**
+     * 与某人的双向消息（时间正序，分页取最新一页；头部带互关/可发状态）。
+     *
+     * <p>{@code productId} 可选（第四十九轮）：携带时读取该商品的咨询会话（会话键带商品段），
+     * 缺省读主会话 —— 同一对用户的两类会话互不串线。
+     */
     @GetMapping("/api/socials/messages/conversations/{peerId}")
     public ApiResponse<MessagePage> conversation(
             @PathVariable Long peerId,
+            @RequestParam(required = false) Long productId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(messageService.conversation(UserContext.requireUserId(), peerId, page, pageSize));
+        return ApiResponse.ok(
+                messageService.conversation(UserContext.requireUserId(), peerId, productId, page, pageSize));
     }
 
-    /** 打开会话后标记已读（幂等） */
+    /** 打开会话后标记已读（幂等）；productId 语义同上 */
     @PostMapping("/api/socials/messages/conversations/{peerId}/read")
-    public ApiResponse<Long> markRead(@PathVariable Long peerId) {
-        return ApiResponse.ok(messageService.markRead(UserContext.requireUserId(), peerId));
+    public ApiResponse<Long> markRead(
+            @PathVariable Long peerId,
+            @RequestParam(required = false) Long productId) {
+        return ApiResponse.ok(messageService.markRead(UserContext.requireUserId(), peerId, productId));
     }
 }

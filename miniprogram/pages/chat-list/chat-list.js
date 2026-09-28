@@ -2,16 +2,19 @@
 //
 // 数据：GET /api/socials/messages/conversations —— 每会话最新一条 + 未读数 +
 // canSend（「还能不能发」由服务端算好：互关 / 咨询会话恒可发，非互关发过一条即不可）。
+// 第四十九轮：商品咨询会话按商品隔离（会话键 lo:hi:p{spuId}），同一卖家多商品互不串线。
 // onShow 刷新：从聊天页返回时能看到最新未读与最后一条。
 const api = require('../../utils/api');
 
 const PAGE_SIZE = 20;
 
-/** 行装饰：时间 + 头像 + 摘要前缀（卡片类消息带类型图标） */
+/** 行装饰：时间 + 头像 + 摘要前缀（卡片类消息带类型图标）+ 商品会话标识 */
 function decorate(it) {
   const prefix =
     it.lastBizType === 'ASK' ? '❓ ' : it.lastBizType === 'PRODUCT' ? '🛍️ ' : '';
+  // 第四十九轮：同一 peer 可有「主会话 + 每商品一个咨询会话」，wx:key 必须会话级唯一
   return Object.assign({}, it, {
+    key: it.peerId + '-' + (it.productId || 'main'),
     timeText: api.shortTime(it.lastAt),
     avatarSrc: it.avatar || '/images/category/default.png',
     preview: prefix + (it.lastContent || ''),
@@ -61,6 +64,13 @@ Page({
   },
 
   goChat(e) {
-    wx.navigateTo({ url: '/pages/chat/chat?peerId=' + e.currentTarget.dataset.user });
+    // 商品咨询会话带 productId（第四十九轮）：进对会话，不串到主会话
+    const d = e.currentTarget.dataset;
+    wx.navigateTo({
+      url:
+        '/pages/chat/chat?peerId=' +
+        d.user +
+        (d.product ? '&productId=' + d.product : ''),
+    });
   },
 });

@@ -42,6 +42,15 @@ public final class SocialDtos {
             /** 卡片 / 咨询类必填：商品 SPU、分享单或被分享用户 */
             Long bizId,
 
+            /**
+             * 可选：商品咨询会话上下文（第四十九轮）。
+             *
+             * <p>TEXT 消息带 productId 时落入该商品的咨询会话（会话键带商品段），
+             * 与其他商品的咨询、与互关主会话互不串线；不带则落 {@code lo:hi} 主会话。
+             * ASK 消息忽略此字段（会话商品恒取 bizId）。服务端校验商品存在。
+             */
+            Long productId,
+
             @Size(max = 1000, message = "消息内容不能超过 1000 字")
             String content
     ) {
@@ -150,7 +159,11 @@ public final class SocialDtos {
             boolean mutual,
             boolean canSend,
             /** 会话是否为商品咨询（豁免一条限制的可见证据） */
-            boolean consulting
+            boolean consulting,
+            /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
+            Long productId,
+            String productTitle,
+            String productImage
     ) {
     }
 
@@ -166,7 +179,9 @@ public final class SocialDtos {
             String peerAvatar,
             boolean mutual,
             boolean canSend,
-            boolean consulting
+            boolean consulting,
+            /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
+            Long productId
     ) {
     }
 }

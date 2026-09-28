@@ -224,6 +224,20 @@
 - **判定**：**后端判断正确**（409 = 该微信已绑定其他账号），是前端吞了异常：① `maybeBindWechat` 把失败归一成 `false`（错误对象被丢弃）；② 内部 toast 被随后的「登录成功」toast 覆盖。库内实证：该微信已绑在测试账号 `136****2050`（openid 前缀/长度与日志一致）。
 - **修复**：`maybeBindWechat` 返回 `{bound, error}` 保留错误；新增 `notifyBindFailure` 用 **modal** 展示真实原因（409/503/令牌失效各有文案），关闭后再跳转；`bindCurrentWechat` 成功不再自己 toast。提交 `c7a9ea5`。
 
+### 2026-09-28（第四十九轮 · 问一问会话按商品隔离——同卖家多商品不串线）
+
+> 用户 bug：官方客服卖多件商品，在商品 A「问一问」发「你好」后，再从商品 B「问一问」——新打开的会话仍显示商品 A 的历史。预期每件商品独立会话。
+
+- **根因**：R47 会话键 `conversation_id = "lo:hi"` 只按**用户对**拼装（MessageService#conversationId），ASK 咨询也落同一键 —— 同一买家对同一卖家（尤其官方客服一个人扛 13 个自营商品）的所有咨询必然混在一个会话里。这是 R47 模型遗留缺陷，数据无损坏。
+- **修复方案（会话键带商品段）**：`lo:hi` → 商品咨询场景扩展为 **`lo:hi:p{spuId}`**（VARCHAR(64) 实测最长 60，够用）：
+  - `send()`：ASK 恒取 bizId 作商品段；**TEXT 请求体新增可选 `productId`**（服务端校验商品存在 404），带则落该商品咨询会话，不带落主会话 —— 会话键由服务端拼装，前端无法伪造到任意会话（lo:hi 由登录态+服务端定人保证包含自己）；
+  - **豁免规则细化**：商品咨询会话整体豁免「非互关一条」，主会话（互关私聊/商品卡分享）语义不变（㉓-2 用例锁死）；`countAskInConversation` 保留兼容 R47 旧数据；
+  - `conversations()`：解析会话键商品段，批量取商品卡，`ConversationView` 尾部新增 `productId/productTitle/productImage`（失败降级 null 不挡列表）；
+  - `conversation()/markRead()`：签名加可选 productId，thread 按同规则拼键读取。
+- **前端适配**：chat 页整段对话（ASK 首条 + 后续 TEXT）都带 productId，进/读/发/已读全落商品会话；chat-list `wx:key` 从 peerId 改为 `peerId-productId` 会话级唯一（同一 peer 现在可有 1+N 个会话），goChat 透传 productId，列表项新增 🛒 商品副标题。
+- **兼容性**：无 DDL 变更（键是 VARCHAR 值，变长即可）；R47 旧会话保持原样不迁移（开发环境历史无价值），新咨询自动按商品分。
+- **验证**：新探针 `scripts/r49-ask-thread-smoke.py` **15/15**（两商品两会话独立、互不串线、主会话纯净、列表带商品标题、自由聊豁免、已读按会话生效）+ `social-smoke.py` **43/43**（㉓ 改版：商品会话豁免+主会话仍受限；㉗ 频控带 productId）+ `r48-ask-smoke.py` 8/8 + `share-circle-smoke.py` 39/39 + 静态自检 0 错误。social 容器重建健康。
+
 ### 2026-09-27（第四十八轮 · 问一问全站打通 + 私信入口上移 + 分享圈设计稿）
 
 > 用户三需求：① 私信入口从「我的」底部菜单移到右上角（短信/通知图标样式）；② 修复「问一问」报「该商品没有卖家」，生成完整卖家测试数据并验证聊天；③ 分享圈设计需求文档（商品分享+评论、跳蚤市场 C2C，对标闲鱼）。

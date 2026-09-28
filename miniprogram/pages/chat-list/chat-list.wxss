@@ -59,3 +59,9 @@
   text-align: center;
   padding: 20rpx 0;
 }
+
+/* 商品咨询会话的上下文商品（第四十九轮） */
+.cl-product {
+  color: #4f6ef7;
+  font-size: 22rpx;
+}
