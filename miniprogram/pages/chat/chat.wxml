@@ -1,3 +1,5 @@
+<nav-bar title="聊天" back="{{true}}" msg="{{false}}" />
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
@@ -5,7 +7,7 @@
 <view wx:elif="{{loading}}" class="empty">加载中…</view>
 
 <block wx:elif="{{page}}">
-  <view class="chat-page">
+  <view class="chat-page" style="height: calc(100vh - {{navTotal}}px)">
     <!-- 会话头部：对方资料 + 关系徽章（consulting 优先：咨询会话恒可发） -->
     <view class="chat-head">
       <image class="chat-avatar" src="{{page.peerAvatar || '/images/category/default.png'}}" mode="aspectFill" />

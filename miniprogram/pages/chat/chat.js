@@ -12,12 +12,14 @@
 //  * 每次拉到新消息后调 markRead（幂等），红点在下一次会话列表刷新时消失。
 const api = require('../../utils/api');
 const images = require('../../utils/images');
+const { getNavMetrics } = require('../../utils/nav');
 
 const PAGE_SIZE = 20;
 const POLL_MS = 4000;
 
 Page({
   data: {
+    navTotal: 0, // 自绘导航栏总高（第五十轮）：整页 flex 高度按它扣减
     peerId: '',
     productId: '',
     ask: false, // 首条按 ASK 发（问一问）
@@ -33,6 +35,7 @@ Page({
   },
 
   onLoad(query) {
+    this.setData({ navTotal: getNavMetrics().navTotalHeight });
     if (!query.peerId) {
       this.setData({ loading: false, error: '缺少对方用户，无法打开会话' });
       return;

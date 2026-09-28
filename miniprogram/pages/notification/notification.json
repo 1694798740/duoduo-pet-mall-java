@@ -1,0 +1,9 @@
+{
+  "navigationStyle": "custom",
+  "navigationBarTitleText": "通知",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "light",
+  "backgroundColor": "#f5f6fa",
+  "navigationBarBackgroundColor": "#4f6ef7",
+  "navigationBarTextStyle": "white"
+}

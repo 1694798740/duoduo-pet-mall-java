@@ -1,3 +1,5 @@
+<nav-bar title="登录" back="{{true}}" msg="{{false}}" />
+
 <view class="login-wrap">
   <view class="card">
     <view class="login-title">登录多多宠物商店</view>

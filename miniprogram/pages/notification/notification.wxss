@@ -1,0 +1,137 @@
+/* 通知中心（第五十轮）：列表风格与私信列表一致，蓝点标记未读 */
+
+.msg-entry {
+  display: flex;
+  align-items: center;
+  margin: 20rpx 24rpx;
+  padding: 24rpx;
+  background: #fff;
+  border-radius: 16rpx;
+}
+
+.me-icon {
+  font-size: 44rpx;
+  margin-right: 20rpx;
+}
+
+.me-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.me-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #111827;
+}
+
+.me-sub {
+  margin-top: 4rpx;
+  font-size: 24rpx;
+  color: #9ca3af;
+}
+
+.badge {
+  min-width: 34rpx;
+  padding: 2rpx 10rpx;
+  margin-right: 8rpx;
+  box-sizing: border-box;
+  border-radius: 999rpx;
+  background: #ef4444;
+  color: #fff;
+  font-size: 20rpx;
+  text-align: center;
+}
+
+.arrow {
+  color: #d1d5db;
+  font-size: 32rpx;
+}
+
+.card-hover {
+  opacity: 0.75;
+}
+
+.readall-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 32rpx 8rpx;
+}
+
+.readall-link {
+  font-size: 24rpx;
+  color: #4f6ef7;
+}
+
+.notice-list {
+  margin: 8rpx 24rpx 24rpx;
+}
+
+.notice-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+  background: #fff;
+  border-radius: 16rpx;
+}
+
+.notice-read {
+  opacity: 0.62;
+}
+
+.n-icon {
+  font-size: 40rpx;
+  margin-right: 20rpx;
+}
+
+.n-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.n-title {
+  display: flex;
+  align-items: center;
+  font-size: 29rpx;
+  font-weight: 600;
+  color: #111827;
+}
+
+.dot {
+  width: 14rpx;
+  height: 14rpx;
+  margin-left: 10rpx;
+  border-radius: 50%;
+  background: #4f6ef7;
+  flex-shrink: 0;
+}
+
+.n-content {
+  margin-top: 8rpx;
+  font-size: 26rpx;
+  line-height: 1.5;
+  color: #4b5563;
+}
+
+.n-time {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #9ca3af;
+}
+
+.empty {
+  padding: 140rpx 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 26rpx;
+}
+
+.empty-icon {
+  font-size: 72rpx;
+  margin-bottom: 16rpx;
+}
+
+.login-btn {
+  margin-top: 24rpx;
+}

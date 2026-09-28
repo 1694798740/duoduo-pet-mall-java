@@ -1,3 +1,5 @@
+<nav-bar title="私信" back="{{true}}" />
+
 <view wx:if="{{error && items.length === 0}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>

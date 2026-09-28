@@ -76,7 +76,10 @@ public final class SocialDtos {
 
     /** 某人的关注计数（公开页用） */
     public record FollowCounts(
+            // 计数不是标识：显式按数字输出（record 组件不走字段名白名单，见 NumericLongSerializer）
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long followers,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long following
     ) {
     }
@@ -90,7 +93,9 @@ public final class SocialDtos {
             Long userId,
             String nickname,
             String avatar,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long followers,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long following,
             boolean viewerFollowing,
             boolean viewerFollowedBy,
@@ -117,6 +122,8 @@ public final class SocialDtos {
             Long id,
             String title,
             String image,
+            // 金额不是标识：显式按数字输出（前端 price/100 需要数字）
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             Long minPrice,
             String nickname,
             String avatar
@@ -155,6 +162,7 @@ public final class SocialDtos {
             String lastBizType,
             Long lastBizId,
             String lastAt,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long unread,
             boolean mutual,
             boolean canSend,
@@ -170,6 +178,7 @@ public final class SocialDtos {
     /** 会话内消息分页 */
     public record MessagePage(
             java.util.List<MessageView> items,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long total,
             int page,
             int pageSize,
@@ -182,6 +191,47 @@ public final class SocialDtos {
             boolean consulting,
             /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
             Long productId
+    ) {
+    }
+
+    /**
+     * 通知中心列表项（第五十轮）。定向通知与全站公告在接口层统一为同一视图：
+     * {@code read} 对定向通知取行上 {@code readAt}，对公告取已读集合表。
+     */
+    public record NoticeView(
+            Long id,
+            String category,
+            String title,
+            String content,
+            String bizType,
+            String bizId,
+            String jumpPage,
+            boolean read,
+            String createdAt
+    ) {
+    }
+
+    /** 通知列表分页（定向 + 公告两源合并后切片） */
+    public record NoticePage(
+            java.util.List<NoticeView> items,
+            long total,
+            int page,
+            int pageSize
+    ) {
+    }
+
+    /**
+     * 通知未读数（定向未读 + 我没读过的公告数）。
+     *
+     * <p>{@code count} 显式标注按数字输出：它是**计数**不是标识，前端要参与比较与
+     * 显示（`count > 0`）；record 组件绕过 {@code BeanPropertyWriter} 白名单机制
+     * （见 {@code LongToStringJacksonModule} 类注释），不标注会被当标识转成字符串
+     * {@code "3"}，与同一接口族的 {@code PageResult.total}（数字）类型不一致。
+     */
+    public record UnreadCount(
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long count
     ) {
     }
 }

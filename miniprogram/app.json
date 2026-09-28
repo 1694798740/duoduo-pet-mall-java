@@ -16,6 +16,7 @@
     "pages/after-sale/after-sale",
     "pages/ai/ai",
     "pages/share-circle/share-circle",
+    "pages/notification/notification",
     "pages/share-detail/share-detail",
     "pages/user-profile/user-profile",
     "pages/follow-list/follow-list",
@@ -45,16 +46,16 @@
         "selectedIconPath": "images/tabbar/home-on.png"
       },
       {
-        "pagePath": "pages/category/category",
-        "text": "分类",
-        "iconPath": "images/tabbar/category.png",
-        "selectedIconPath": "images/tabbar/category-on.png"
-      },
-      {
         "pagePath": "pages/share-circle/share-circle",
         "text": "分享圈",
         "iconPath": "images/tabbar/share.png",
         "selectedIconPath": "images/tabbar/share-on.png"
+      },
+      {
+        "pagePath": "pages/notification/notification",
+        "text": "通知",
+        "iconPath": "images/tabbar/notice.png",
+        "selectedIconPath": "images/tabbar/notice-on.png"
       },
       {
         "pagePath": "pages/cart/cart",

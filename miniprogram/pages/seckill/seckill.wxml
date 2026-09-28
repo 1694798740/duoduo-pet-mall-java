@@ -1,3 +1,5 @@
+<nav-bar title="限时秒杀" back="{{true}}" />
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="fetch">重试</button>

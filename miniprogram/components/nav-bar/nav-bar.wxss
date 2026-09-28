@@ -54,3 +54,35 @@
   display: flex;
   align-items: center;
 }
+
+/* 左上角返回键（第五十轮）：非 tab 页推进式打开的返回路径，白箭头与标题同色系 */
+.nb-back {
+  position: absolute;
+  left: 4rpx;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 8rpx 24rpx;
+  color: #fff;
+  font-size: 56rpx;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.nb-back-hover {
+  opacity: 0.6;
+}
+
+/* 右上角通知图标（第五十轮）：全页面统一入口，💬 短信样式，点击进通知中心 */
+.nb-msg {
+  padding: 8rpx 4rpx;
+  margin-right: 8rpx;
+}
+
+.nb-msg-hover {
+  opacity: 0.6;
+}
+
+.nb-msg-icon {
+  font-size: 36rpx;
+  line-height: 1;
+}

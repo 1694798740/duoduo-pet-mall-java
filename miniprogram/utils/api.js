@@ -442,6 +442,23 @@ const social = {
       );
     },
   },
+  /** 通知中心（第五十轮）：定向通知 + 全站公告合并视图，前端无感两种存储 */
+  notice: {
+    list(page, pageSize) {
+      return req.get(
+        '/api/socials/notices?page=' + (page || 1) + '&pageSize=' + (pageSize || 50)
+      );
+    },
+    unreadCount() {
+      return req.get('/api/socials/notices/unread-count');
+    },
+    markRead(noticeId) {
+      return req.post('/api/socials/notices/' + noticeId + '/read');
+    },
+    readAll() {
+      return req.post('/api/socials/notices/read-all');
+    },
+  },
 };
 
 // ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────

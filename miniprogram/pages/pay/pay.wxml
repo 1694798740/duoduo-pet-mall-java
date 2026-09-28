@@ -1,3 +1,5 @@
+<nav-bar title="确认付款" back="{{true}}" />
+
 <view wx:if="{{error && !payNo}}" class="error-box">{{error}}</view>
 <block wx:else>
   <view class="card cashier">

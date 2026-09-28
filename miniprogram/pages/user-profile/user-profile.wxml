@@ -1,3 +1,5 @@
+<nav-bar title="个人主页" back="{{true}}" />
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>

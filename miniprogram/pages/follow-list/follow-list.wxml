@@ -1,3 +1,5 @@
+<nav-bar title="关注与粉丝" back="{{true}}" />
+
 <view class="fl-tabs">
   <view class="fl-tab {{tab === 'following' ? 'fl-tab-on' : ''}}" data-tab="following" bindtap="switchTab">
     我关注的

@@ -1,3 +1,5 @@
+<nav-bar title="分享详情" back="{{true}}" />
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="goShareCircle">去分享圈逛逛</button>

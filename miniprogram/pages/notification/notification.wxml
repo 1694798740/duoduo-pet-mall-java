@@ -1,0 +1,60 @@
+<!-- 通知中心（第五十轮）：tabBar 居中入口；数据 = 定向通知 + 全站公告（服务端合并为一个视图） -->
+<nav-bar title="通知" msg="{{false}}" loading="{{loading}}" />
+
+<!-- 未登录：通知是收件人数据，需登录后查看 -->
+<view wx:if="{{!logged}}" class="empty">
+  <view class="empty-icon">🔔</view>
+  <view>登录后查看你的通知</view>
+  <button class="btn btn-primary btn-mini login-btn" bindtap="goLogin">去登录</button>
+</view>
+
+<block wx:else>
+  <!-- 私信快捷入口：私信仍是消息主载体，通知页做统一收口 -->
+  <view class="msg-entry" hover-class="card-hover" bindtap="goChatList">
+    <view class="me-icon">💬</view>
+    <view class="me-main">
+      <view class="me-title">私信</view>
+      <view class="me-sub">好友消息 · 商家消息 · 商品咨询</view>
+    </view>
+    <view wx:if="{{msgUnread > 0}}" class="badge">{{msgUnread > 99 ? '99+' : msgUnread}}</view>
+    <text class="arrow">›</text>
+  </view>
+
+  <view wx:if="{{error}}" class="error-box">
+    <view>{{error}}</view>
+    <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+  </view>
+
+  <!-- 全部已读：仅在有未读时出现 -->
+  <view wx:if="{{hasUnread && items.length}}" class="readall-bar">
+    <text class="readall-link" bindtap="readAll">全部标为已读</text>
+  </view>
+
+  <!-- 通知列表：未读带蓝点；点击标已读，有落地页则跳转 -->
+  <view wx:if="{{items.length}}" class="notice-list">
+    <view
+      wx:for="{{items}}"
+      wx:key="id"
+      class="notice-item {{item.read ? 'notice-read' : ''}}"
+      hover-class="card-hover"
+      data-id="{{item.id}}"
+      data-jump="{{item.jumpPage}}"
+      bindtap="tapNotice"
+    >
+      <view class="n-icon">{{item.icon}}</view>
+      <view class="n-main">
+        <view class="n-title">
+          <text>{{item.title}}</text>
+          <view wx:if="{{!item.read}}" class="dot"></view>
+        </view>
+        <view class="n-content">{{item.content}}</view>
+        <view class="n-time">{{item.timeText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:elif="{{!loading && !error}}" class="empty">
+    <view class="empty-icon">🔔</view>
+    <view>暂无通知</view>
+  </view>
+</block>

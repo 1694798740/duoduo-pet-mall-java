@@ -5,6 +5,7 @@
 //  * 本地只保留最近 N 条消息，避免长会话反复 setData 整段历史（性能与 256KB 上限风险）；
 //  * 键盘高度自适配：输入条随键盘上移，且 iOS/Android 表现一致（adjust-position 关掉、自己定位）。
 const api = require('../../utils/api');
+const { getNavMetrics } = require('../../utils/nav');
 
 const MAX_KEEP = 60; // 本地最多保留的消息条数（超出丢最旧的）
 const HISTORY_LIMIT = 6; // 每次请求带的历史条数（后端 @Size(max=6)）
@@ -17,6 +18,7 @@ function nextId() {
 
 Page({
   data: {
+    navTotal: 0, // 自绘导航栏总高（第五十轮）：消息区高度按它扣减
     messages: [], // { id, role, content, recs?, error? }
     input: '',
     sending: false,
@@ -27,6 +29,7 @@ Page({
   _keyboardHandler: null,
 
   onLoad(query) {
+    this.setData({ navTotal: getNavMetrics().navTotalHeight });
     const initial = [this.greeting()];
     if (query && query.prefill) {
       // 从商品详情「问问 AI」进来：预填问题，同时保留问候语（否则首屏是空的）

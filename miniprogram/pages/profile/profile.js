@@ -35,10 +35,11 @@ Page({
 
   go(e) {
     const url = e.currentTarget.dataset.url;
+    // 第五十轮：分类移出 tabBar、通知升为居中 tab，清单与 app.json tabBar 同步
     const tabPages = [
       '/pages/index/index',
-      '/pages/category/category',
       '/pages/share-circle/share-circle',
+      '/pages/notification/notification',
       '/pages/cart/cart',
       '/pages/profile/profile',
     ];

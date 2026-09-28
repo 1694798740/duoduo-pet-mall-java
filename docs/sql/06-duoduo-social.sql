@@ -75,3 +75,13 @@ CREATE TABLE t_social_notice_read (
     read_at     TIMESTAMP NOT NULL,
     PRIMARY KEY (notice_id, user_id)
 );
+
+-- ---------- 通知中心种子公告（第五十轮启用页面；与增量 17 同款，全新环境由本文件直接带入） ----------
+INSERT INTO t_social_notice (id, user_id, category, title, content, biz_type, biz_id, jump_page, created_at)
+VALUES
+  (730000000000000001, 0, 'ANNOUNCEMENT', '欢迎来到多多宠物商店',
+   '这里有猫粮狗粮、罐头零食和宠物用品，下单后资金平台托管、确认收货才放款给商家，买得放心。', NULL, NULL, '/pages/index/index', UTC_TIMESTAMP()),
+  (730000000000000002, 0, 'ANNOUNCEMENT', '分享圈上线：晒宠物、看种草',
+   '把你家毛孩子的日常分享出来，别的铲屎官可以点赞、评论、收藏，还能一键跳到同款商品。', NULL, NULL, '/pages/share-circle/share-circle', UTC_TIMESTAMP()),
+  (730000000000000003, 0, 'ANNOUNCEMENT', '问一问已开通：买前先问官方客服',
+   '在商品页点「问一问」即可咨询，每个商品都有独立的咨询会话，官方客服在线答疑。', NULL, NULL, '/pages/index/index', UTC_TIMESTAMP());

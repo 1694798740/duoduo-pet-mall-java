@@ -113,8 +113,7 @@ public class LongToStringJacksonModule extends SimpleModule {
     }
 
     /** 默认策略：Long 一律按字符串输出（标识安全） */
-    private static final class IdToStringSerializer extends JsonSerializer<Object> {
-        @Override
+    private static final class IdToStringSerializer extends JsonSerializer<Object> {        @Override
         public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers)
                 throws IOException {
             if (value == null) {
@@ -126,12 +125,50 @@ public class LongToStringJacksonModule extends SimpleModule {
     }
 
     /**
+     * 显式「按数字输出」的 Long 序列化器（第五十轮新增）。
+     *
+     * <p>用途：Java {@code record} 组件的计数字段（如 {@code UnreadCount.count}）——
+     * 白名单修饰器对 record 不生效（见 {@code NumericFieldPreservingModifier} 局限说明），
+     * 需要在字段上直接标注本序列化器，让计数保持 JSON 数字，与
+     * {@code PageResult.total} 等普通 POJO 字段的类型口径一致。
+     *
+     * <pre>
+     * public record UnreadCount(
+     *     &#64;JsonSerialize(using = LongToStringJacksonModule.NumericLongSerializer.class)
+     *     long count) {}
+     * </pre>
+     */
+    public static final class NumericLongSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers)
+                throws IOException {
+            if (value == null) {
+                gen.writeNull();
+                return;
+            }
+            if (value instanceof BigInteger big) {
+                gen.writeNumber(big);
+            } else {
+                gen.writeNumber(((Number) value).longValue());
+            }
+        }
+    }
+
+    /**
      * 把命中 {@link #NUMERIC_LONG_FIELDS} 的 Long 字段改回"按数字输出"。
      *
      * <p>Jackson 的序列化器按 Java 类型注册在全局，无法在中途按字段回退；
      * 因此这里用 {@code BeanSerializerModifier} 在建序列化器阶段
      * 把该类字段的 writer **替换成标准版**（{@code BeanPropertyWriter} 默认行为
      * 即写数字），从而覆盖掉全局的 ToString 序列化器。
+     *
+     * <p><b>已知局限（第五十轮补记）</b>：本机制只对**普通 POJO** 生效 ——
+     * Java {@code record} 的属性由 {@code POJOPropertiesCollector} 的 record 分支
+     * 直接构造，不流经 {@code changeProperties}，白名单对其失效，record 组件里的
+     * {@code long} 会被当标识转成字符串（如 {@code UnreadCount.count} 下发 {@code "3"}，
+     * 而同一接口族的 {@code PageResult.total} 是数字 {@code 3} —— 同语义两种类型）。
+     * 因此 record 组件里的计数 / 金额字段必须显式标注
+     * {@code @JsonSerialize(using = NumericLongSerializer.class)}。
      */
     private static final class NumericFieldPreservingModifier extends BeanSerializerModifier {
 

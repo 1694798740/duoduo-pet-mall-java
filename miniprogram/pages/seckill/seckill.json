@@ -1,4 +1,5 @@
 {
+  "navigationStyle": "custom",
   "navigationBarTitleText": "限时秒杀",
   "navigationBarBackgroundColor": "#4f6ef7",
   "navigationBarTextStyle": "white"

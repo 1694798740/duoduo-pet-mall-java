@@ -1,4 +1,5 @@
 {
+  "navigationStyle": "custom",
   "navigationBarTitleText": "我的售后",
   "enablePullDownRefresh": true,
   "navigationBarBackgroundColor": "#4f6ef7",

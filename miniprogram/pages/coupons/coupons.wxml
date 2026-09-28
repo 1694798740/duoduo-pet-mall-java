@@ -1,3 +1,5 @@
+<nav-bar title="领券中心" back="{{true}}" />
+
 <view class="cp-tabs">
   <view class="tab-item {{tab === 'center' ? 'tab-active' : ''}}" data-tab="center" bindtap="switchTab">领券中心</view>
   <view class="tab-item {{tab === 'mine' ? 'tab-active' : ''}}" data-tab="mine" bindtap="switchTab">我的券包</view>

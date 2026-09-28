@@ -1,9 +1,5 @@
-<nav-bar title="我的">
-  <!-- 私信入口（第四十八轮）：从底部菜单上移到右上角信封图标，位置由组件按胶囊实算 -->
-  <view slot="right" class="nav-msg" hover-class="nav-msg-hover" bindtap="go" data-url="/pages/chat-list/chat-list">
-    <text class="nav-msg-icon">📩</text>
-  </view>
-</nav-bar>
+<!-- 第五十轮：右上角通知图标由 nav-bar 组件内置（💬，全页面统一），本页不再用插槽自定义 -->
+<nav-bar title="我的" />
 
 <view class="profile-head">
   <view class="avatar">{{logged ? '🐱' : '👤'}}</view>

@@ -1,4 +1,5 @@
 {
+  "navigationStyle": "custom",
   "navigationBarTitleText": "申请售后",
   "navigationBarBackgroundColor": "#4f6ef7",
   "navigationBarTextStyle": "white"

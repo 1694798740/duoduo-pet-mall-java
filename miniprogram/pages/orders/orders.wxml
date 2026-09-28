@@ -1,3 +1,5 @@
+<nav-bar title="我的订单" back="{{true}}" />
+
 <!-- 第四十五轮：orders 回归普通页面（tabBar 上限 5 项，订单 tab 由「我的 → 我的订单」入口替代），
      恢复原生导航栏（非 tab 页推进式打开需要返回键），R41 的自绘栏随之移除 -->
 <scroll-view scroll-x class="order-tabs">

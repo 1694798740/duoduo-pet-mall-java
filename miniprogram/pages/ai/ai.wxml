@@ -1,4 +1,6 @@
-<scroll-view scroll-y class="chat-list" scroll-into-view="{{scrollInto}}" scroll-with-animation>
+<nav-bar title="AI 助手" back="{{true}}" />
+
+<scroll-view scroll-y class="chat-list" style="height: calc(100vh - 120rpx - {{navTotal}}px)" scroll-into-view="{{scrollInto}}" scroll-with-animation>
   <view wx:for="{{messages}}" wx:key="id" wx:for-item="msg" id="msg-{{msg.id}}">
     <view class="bubble-row {{msg.role === 'user' ? 'row-user' : ''}}">
       <view wx:if="{{msg.role === 'assistant'}}" class="chat-avatar">🐱</view>

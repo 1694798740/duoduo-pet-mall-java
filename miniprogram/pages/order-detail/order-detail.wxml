@@ -1,3 +1,5 @@
+<nav-bar title="订单详情" back="{{true}}" />
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button wx:if="{{needLogin}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>

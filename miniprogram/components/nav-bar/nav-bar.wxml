@@ -3,10 +3,14 @@
 
 <view class="nb" style="height:{{navTotalHeight}}px;padding-top:{{statusBarHeight}}px">
   <view class="nb-inner" style="height:{{navBarHeight}}px">
+    <view wx:if="{{back}}" class="nb-back" hover-class="nb-back-hover" bindtap="goBack">‹</view>
     <view class="nb-spin" wx:if="{{loading}}"></view>
     <text class="nb-title">{{title}}</text>
-    <!-- 右侧命名插槽：定位在胶囊左侧，无内容时为空、不影响标题布局 -->
+    <!-- 右侧：内置通知图标（第五十轮起全页面统一）+ 命名插槽（msg 关闭时给页面自定义用） -->
     <view class="nb-right" style="right:{{navRightGap}}px">
+      <view wx:if="{{msg}}" class="nb-msg" hover-class="nb-msg-hover" bindtap="goNotice">
+        <text class="nb-msg-icon">💬</text>
+      </view>
       <slot name="right"></slot>
     </view>
   </view>
