@@ -1,0 +1,41 @@
+<view class="page">
+  <!-- 未登录 -->
+  <view wx:if="{{state === 'needLogin'}}" class="box">
+    <view class="box-title">需要登录</view>
+    <view class="box-text">实名是账号级的个人资料，登录后才能查看与提交。</view>
+    <button class="btn primary" bindtap="goLogin">去登录</button>
+  </view>
+
+  <!-- 已实名：只读回显 -->
+  <view wx:elif="{{state === 'verified'}}" class="box">
+    <view class="ok-badge">✓ 已完成实名认证</view>
+    <view class="field-line"><text class="fl-label">姓名</text><text class="fl-value">{{verifiedName}}</text></view>
+    <view class="field-line"><text class="fl-label">证件号</text><text class="fl-value">{{verifiedIdMasked || '已登记（脱敏）'}}</text></view>
+    <view class="tip">实名信息受平台保护，仅用于交易追责，不会公开展示。</view>
+  </view>
+
+  <!-- 未实名：表单 -->
+  <view wx:elif="{{state === 'unverified'}}" class="box">
+    <view class="box-title">提交实名信息</view>
+    <view class="box-text">发布闲置、申请提现前需要完成实名认证（出问题时平台要能追到人）。</view>
+
+    <view class="form-item">
+      <text class="label">真实姓名</text>
+      <input class="input" placeholder="2-20 位中文姓名" value="{{realName}}" data-field="realName" bindinput="onInput" />
+    </view>
+    <view class="form-item">
+      <text class="label">身份证号</text>
+      <input class="input" placeholder="18 位身份证号（末位可为 X）" value="{{idCard}}" data-field="idCard" bindinput="onInput" />
+    </view>
+
+    <view wx:if="{{error}}" class="error">{{error}}</view>
+
+    <button class="btn primary" loading="{{submitting}}" bindtap="onSubmit">提交实名</button>
+    <view class="tip">沙箱环境说明：现阶段仅校验格式，不连接公安实名服务；身份证号只保留脱敏掩码入库。</view>
+  </view>
+
+  <!-- 状态加载中 -->
+  <view wx:else class="box">
+    <view class="box-text">正在获取实名状态…</view>
+  </view>
+</view>

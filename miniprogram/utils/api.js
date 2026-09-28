@@ -123,6 +123,17 @@ function refreshSession() {
   return req.post('/api/auth/refresh/token', { refreshToken }, { silent: true }).then((data) => acceptSession(data));
 }
 
+/**
+ * 实名认证（第五十二轮热修新增）：提交真实姓名 + 身份证号。
+ *
+ * <p>发布闲置（POST /api/listings）硬性要求实名，此前小程序没有任何实名入口，
+ * 用户发布必然 403 且无处可去。成功后**必须 refreshSession() 换新令牌**：
+ * realNameVerified 写在访问令牌的 claim 里，旧令牌不会自动变。
+ */
+function submitRealName(realName, idCard) {
+  return req.post('/api/users/me/realname', { realName, idCard });
+}
+
 // ── 商品域（公开） ──────────────────────────────────────────────────────────
 const product = {
   list(params) {
@@ -571,6 +582,7 @@ module.exports = {
   register,
   ensureSession,
   refreshSession,
+  submitRealName,
   product,
   cart,
   order,

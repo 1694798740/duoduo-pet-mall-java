@@ -26,7 +26,8 @@
     "pages/flea-market/flea-market",
     "pages/flea-detail/flea-detail",
     "pages/flea-publish/flea-publish",
-    "pages/flea-mine/flea-mine"
+    "pages/flea-mine/flea-mine",
+    "pages/realname/realname"
   ],
   "window": {
     "navigationBarBackgroundColor": "#4f6ef7",

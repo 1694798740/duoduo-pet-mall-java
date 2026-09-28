@@ -1,6 +1,29 @@
 /* ── 发布闲置（第五十二轮） ── */
 .fp { padding-bottom: 60rpx; }
 
+/* 实名预检引导卡（第五十二轮热修）：未实名时替代表单显示 */
+.fp-gate {
+  margin: 32rpx 24rpx;
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 48rpx 36rpx;
+  text-align: center;
+}
+.fp-gate-icon { font-size: 72rpx; margin-bottom: 20rpx; }
+.fp-gate-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--text-1, #1f2430);
+  margin-bottom: 14rpx;
+}
+.fp-gate-text {
+  font-size: 26rpx;
+  color: var(--text-2, #6b7280);
+  line-height: 1.7;
+  margin-bottom: 32rpx;
+}
+.fp-gate-btn { margin: 0 auto; width: 60%; }
+
 .fp-tip {
   margin: 20rpx 24rpx 0;
   padding: 20rpx 24rpx;

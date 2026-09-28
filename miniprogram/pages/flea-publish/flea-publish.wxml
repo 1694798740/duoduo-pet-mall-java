@@ -1,5 +1,14 @@
 <!-- 发布闲置（第五十二轮） -->
 <view class="fp">
+  <!-- 实名预检（第五十二轮热修）：未实名直接给指引，不让用户填完一长串表单再吃 403 -->
+  <view wx:if="{{realNameState === 'needed'}}" class="fp-gate">
+    <view class="fp-gate-icon">🪪</view>
+    <view class="fp-gate-title">发布闲置前，请先完成实名认证</view>
+    <view class="fp-gate-text">闲置交易是真实个人之间的买卖，实名后出现问题平台才能介入追责。信息仅平台留存，不会公开展示。</view>
+    <button class="btn btn-accent fp-gate-btn" bindtap="goRealname">去实名认证</button>
+  </view>
+
+  <block wx:else>
   <view class="fp-tip">
     发布后需平台审核通过才会在跳蚤市场公开展示，可在「我的闲置」查看进度。
   </view>
@@ -123,4 +132,5 @@
       bindtap="onSubmit"
     >{{submitting ? '发布中…' : '发布闲置'}}</button>
   </view>
+  </block>
 </view>

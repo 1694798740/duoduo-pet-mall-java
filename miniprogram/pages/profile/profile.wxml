@@ -63,6 +63,12 @@
     <text>我的闲置</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 实名认证（第五十二轮热修）：发布闲置的前置条件，此前小程序无任何实名入口 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/realname/realname">
+    <text class="mi-icon">🪪</text>
+    <text>实名认证</text>
+    <text class="arrow">›</text>
+  </view>
   <!-- 社交（第四十七轮）：关注与粉丝，接口都要登录态；私信入口已上移右上角 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/follow-list/follow-list">
     <text class="mi-icon">👥</text>

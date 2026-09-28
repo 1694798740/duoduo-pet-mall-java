@@ -52,6 +52,10 @@ Page({
 
     submitting: false,
     error: '',
+
+    // 实名预检状态：loading（查询中）/ ok（可发布）/ needed（需先实名）。
+    // 查询失败时也按 needed 处理并显示重试 —— 宁可多拦一道，不让用户白填表单。
+    realNameState: 'loading',
   },
 
   onLoad() {
@@ -59,7 +63,38 @@ Page({
     if (!api.getToken()) {
       api.openLoginPage();
       wx.navigateBack();
+      return;
     }
+    this.checkRealName();
+  },
+
+  onShow() {
+    // 从实名页返回时重新检查（实名成功会静默换新令牌，这里复查一次即解锁表单）
+    if (api.getToken() && this.data.realNameState !== 'ok') {
+      this.checkRealName();
+    }
+  },
+
+  /** 查询实名状态：GET /api/users/me 的 realNameVerified（与后端 publish 的判定同源） */
+  checkRealName() {
+    this.setData({ realNameState: 'loading' });
+    api
+      .ensureSession()
+      .then((user) => {
+        this.setData({ realNameState: user && user.realNameVerified ? 'ok' : 'needed' });
+      })
+      .catch((e) => {
+        if (e && e.needLogin) {
+          api.openLoginPage();
+          wx.navigateBack();
+          return;
+        }
+        this.setData({ realNameState: 'needed', error: (e && e.message) || '实名状态获取失败' });
+      });
+  },
+
+  goRealname() {
+    wx.navigateTo({ url: '/pages/realname/realname' });
   },
 
   onInput(e) {
@@ -98,6 +133,11 @@ Page({
 
   onSubmit() {
     if (this.data.submitting) return;
+    // 兜底闸：预检未通过不允许提交（正常情况下表单已被 wx:if 隐藏，到不了这里）
+    if (this.data.realNameState !== 'ok') {
+      this.checkRealName();
+      return;
+    }
 
     const err = this.validate();
     if (err) {

@@ -53,7 +53,9 @@ function friendlyMessage(code, message) {
   //   · 登录接口 401 = 手机号或密码不正确 → 后端文案是「手机号或密码不正确」。
   // 一律透出后端文案，否则会出现「用未注册手机号登录却提示『请先登录』」这种误导。
   if (code === 'UNAUTHORIZED') return message || '登录已过期，请重新登录';
-  if (code === 'FORBIDDEN') return '没有权限执行该操作';
+  // FORBIDDEN 也透传后端文案（第五十二轮热修）：403 携带「该操作需要先完成实名认证」这类
+  // 可行动的指引，一刀切覆盖成通用文案会让用户不知道下一步该做什么（真机验收实测踩中）。
+  if (code === 'FORBIDDEN') return message || '没有权限执行该操作';
   if (code === 'NOT_FOUND') return '内容不存在或已删除';
   if (code === 'RATE_LIMITED') return message || '操作太频繁啦，请稍等再试';
   if (code === 'DEGRADED') return message || '服务暂时不可用，请稍后重试';
