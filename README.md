@@ -29,6 +29,7 @@
 
 **验证**：新增 `scripts/r54-listing-want-smoke.py` **26 PASS / 0 FAIL**（W 想要 20 项：初始 0 / 首次咨询 +1 / **同一买家重复咨询仍为 1** / **同会话 TEXT 不计** / 不同买家各计一次 / 详情·我的闲置·公开列表三处一致 / 内部端点无凭据 403 / 首次 `counted=true`、重复 `counted=false` 幂等 / 不存在闲置 404；V 浏览 4 项：**逐次 1→2→3 可累加** / 咨询不增浏览）；新增 `scripts/r54-miniprogram-copy-test.js` **23 PASS / 0 FAIL**（A 通知入口去重 9 项含 tabBar 入口仍在；B 计数文案 6 项；C 下拉刷新行为 8 项含「刷新重新请求详情」「静默不切加载态」「无 id 不发请求」）。回归全绿：`r53b` 26/26、`r53` 28/28、`r52` 57/57、`r53-hotfix-chat` 17/17、`api-id-payload-test.js` 19/19、`flea-mine-filter-test.js` 42/42、`short-time-test.js` 12/12（Asia/Shanghai）、静态自检 0 错 0 警；product / social 编译 0 错、镜像 Built、双容器 healthy；DDL 已落库并校验（`want_count int 0` + `t_listing_want` 主键 `(listing_id, buyer_id)`）。
 **★ 本轮最重要的一条工程教训（假阴性比不检查更危险）**：规则 7 首版用正则匹配 CSS 声明时，**匹配到了注释里写出的同名声明** —— `.fm-chip` 的注释里写着「由 height 定高、line-height:1 让文字不额外撑行」、`.fm-chips` 的注释里写着「★ align-items:center 是必须的」，于是**故意把这几条真声明删掉后检查依然报 0 错**，给出「已验证」的假象。修法：新增 `stripCssComments()`，**先剥 CSS 注释再匹配**；重跑反向验证，3 处全部命中。
+**真机验收（2026-09-29）**：用户在微信开发者工具点过一遍 —— 跳蚤市场 4 页 + 详情页新功能 + 近两轮修复（含本轮三修），**确认无问题，本轮收尾**。
 
 **R53 热修二（2026-09-29，用户真机验收发现）** — **按钮文字折行 / 浏览量恒为 0 / 一个闲置同时出现在两个状态标签下**。
 
