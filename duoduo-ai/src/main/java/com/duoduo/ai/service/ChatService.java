@@ -4,8 +4,13 @@ import com.duoduo.ai.client.ProductSearchClient;
 import com.duoduo.ai.client.dto.ProductCandidate;
 import com.duoduo.ai.dto.AiDtos.ChatResponse;
 import com.duoduo.ai.dto.AiDtos.ChatTurn;
+import com.duoduo.ai.dto.AiDtos.ClarifyOption;
+import com.duoduo.ai.dto.AiDtos.ClarifyView;
 import com.duoduo.ai.dto.AiDtos.ProductRecommendation;
+import com.duoduo.ai.support.CategoryCatalog;
+import com.duoduo.ai.support.ConstraintParser;
 import com.duoduo.ai.support.DashScopeClient;
+import com.duoduo.ai.support.ReplyGuard;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import org.slf4j.Logger;
@@ -17,16 +22,28 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * AI 导购对话编排（A9）。
+ * AI 导购对话编排（A9；第五十七轮补「约束 → 澄清 → 召回 → 组织 → 护栏 → 出口」）。
  *
- * <p>流水线：**召回 → 组织**。召回（真实商品）交给商品域；组织（说人话 + 挑货）交给 LLM 或
- * mock 规则。模型拿到的提示词里只有候选列表，且系统提示明确「候选是可选集合、只推符合的」——
- * 结构上杜绝编造（验收①）：模型回的是**商品 id**，服务端再拿 id 到候选里反查，
- * 编出来的 id 一律落空。不是事后用正则去抓幻觉。
+ * <h2>流水线（每一步都可单独测试，这是能长期维护的关键）
+ * <pre>
+ *   ① 出口预判：是不是「我答不了」的问题（物流/退换/优惠…）→ 如实说 + 给入口，不调模型
+ *   ② 约束解析：预算上下界、品类（规则解析，不押在模型身上）
+ *   ③ 召回：带约束去商品域取候选（**约束在 SQL 里生效**，超预算的商品根本进不来）
+ *   ④ 澄清判断：关键信息全缺且没澄清过 → 反问 1 次，给可点选项
+ *   ⑤ 组织：mock 规则拼装 / LLM 生成话术 + 结构化 id
+ *   ⑥ 护栏：合规词与价格一致性过一遍出口（命中即换成事实版回复）
+ * </pre>
  *
- * <p>降级三形态（见 {@code AiApplication} 类注释）：mock / unconfigured 503 / 超时 503。
- * mock 的回复也是**从真实候选拼出来的**，与真实模式共享召回链路 ——
- * 冒烟在 mock 下验证的「推荐必须来自商品库」，对真实模式同样成立。
+ * <h2>「不得编造」这条底线没有变
+ * 模型回的仍然是**商品 id**，服务端拿 id 到候选里**反查**，不在候选里的一律丢弃 ——
+ * 编出来的 id 天然落空。这不是事后用正则抓幻觉，而是让幻觉无处落脚。
+ * 第五十七轮新增的约束过滤是从**另一端**加固同一件事：连「符合条件但超预算」的商品
+ * 都进不了候选池，模型也就没机会推错。
+ *
+ * <h2>降级三形态（见 {@code AiApplication} 类注释）
+ * mock / unconfigured 503 / 超时 503。mock 的回复是从**真实候选**拼出来的，
+ * 与真实模式共享召回链路 —— 因此冒烟在 mock 下验证的「推荐不得超预算」，
+ * 对真实模式同样成立（这正是第五十七轮把那条断言改成无条件必查的依据）。
  */
 @Service
 public class ChatService {
@@ -40,6 +57,10 @@ public class ChatService {
      * 模型会理解成「把候选都给出去」，于是用户说「预算 200 以内」而候选里混着 328 元的商品时，
      * 回复正文只挑对的、`recommendations` 却把超预算的也渲染成卡片 —— 正文与卡片互相打脸。
      * 现在明确要求「先按用户条件筛，只推真正符合的」，并由模型显式产出选择结果。
+     *
+     * <p><b>第五十七轮新增第 7、8 条</b>：① 禁止绝对化用语（广告法口径）；
+     * ② **明确给出「答不了」的出口** —— 行业共识里「给模型一个说不会的出口」是
+     * 最有效的抑幻手段，比任何「不要编造」的叮嘱都管用。
      */
     private static final String SYSTEM_PROMPT = """
             你是宠物商店「多多宠物」的导购助手「多多」。规则：
@@ -47,46 +68,181 @@ public class ChatService {
                只把真正符合的挑出来推荐，并说明为什么符合；不符合的**不要出现在推荐里**；
             2. 只能推荐【候选商品列表】里出现的商品，绝不虚构不存在的商品、价格或促销；
             3. 价格单位是「分」，请换算成「元」表述（例如 19900 分 = 199 元）；
+               提到的任何价格都必须是候选里真实存在的数字，不要自己算总价、不要编折扣价；
             4. 用户提到下单 / 加购 / 购买时，引导用户登录后到对应商品页操作，不要承诺代下单；
             5. 没有符合条件（或完全没有）候选时如实说明，并请用户换个描述，不要硬推；
-            6. 回复简洁友好，控制在 150 字以内。
+            6. 回复简洁友好，控制在 150 字以内；
+            7. 禁止使用「绝对」「保证」「100%」「最低价」这类绝对化或承诺性说法 ——
+               说事实、给理由，不要打包票；
+            8. 用户问的是物流、退换货、发票、优惠券这类你**没有依据**回答的问题时，
+               直接说明你查不到并请用户去对应页面查看，**不要凭常识猜**。
             【候选商品列表】
             """;
 
+    /**
+     * 「我答不了」的问题识别（第五十七轮 · M5 失败出口分类）。
+     *
+     * <p>为什么要在调模型之前拦：这类问题**没有可依据的数据源**（本轮不含政策知识库），
+     * 交给模型只会得到一段听起来很像真的、但可能是编的答案 —— 售后政策说错是要担责任的。
+     * 所以这里直接给出「我查不到 + 你去哪儿看」，既诚实又省配额。
+     *
+     * <p>顺带的好处：把「没货」与「我答不了」分开。此前两者都落到
+     * 「暂时没找到匹配的商品，换个描述试试」—— 用户会一遍遍换说法，
+     * 而他问的其实是一件永远不会有结果的事。
+     */
+    private static final List<OffTopicRule> OFF_TOPIC_RULES = List.of(
+            new OffTopicRule(
+                    List.of("物流", "快递", "发货了", "到哪了", "什么时候到", "签收", "运单"),
+                    "包裹进度我这边查不到，去「我的 → 我的订单 → 订单详情」就能看到完整物流轨迹哦。"),
+            new OffTopicRule(
+                    List.of("退换", "退货", "退款", "换货", "售后", "保修"),
+                    "售后规则我给不了准数，怕说错。你可以在「我的 → 我的订单」里对具体订单发起售后，平台会按规则处理。"),
+            new OffTopicRule(
+                    List.of("运费", "包邮", "邮费", "发票", "开票"),
+                    "运费和发票的规则请以结算页／订单页显示为准，我这边看不到你的订单，不方便替你判断。"),
+            new OffTopicRule(
+                    List.of("优惠券", "有券吗", "折扣", "满减", "领券", "优惠"),
+                    "券我查不到你账户里的具体情况，去首页的「领券中心」能领到当前可用的券。"),
+            new OffTopicRule(
+                    List.of("怎么支付", "支付失败", "付款失败", "付不了"),
+                    "支付相关的问题请到结算页重试；如果一直失败，把订单号发给我，我帮你转人工客服。")
+    );
+
     private final ProductSearchClient productSearchClient;
     private final DashScopeClient dashScopeClient;
+    private final ConstraintParser constraintParser;
+    private final CategoryCatalog categoryCatalog;
+    private final ReplyGuard replyGuard;
     private final boolean mockEnabled;
 
     public ChatService(ProductSearchClient productSearchClient,
                        DashScopeClient dashScopeClient,
+                       ConstraintParser constraintParser,
+                       CategoryCatalog categoryCatalog,
+                       ReplyGuard replyGuard,
                        @Value("${duoduo.ai.mock-enabled:true}") boolean mockEnabled) {
         this.productSearchClient = productSearchClient;
         this.dashScopeClient = dashScopeClient;
+        this.constraintParser = constraintParser;
+        this.categoryCatalog = categoryCatalog;
+        this.replyGuard = replyGuard;
         this.mockEnabled = mockEnabled;
     }
 
-    public ChatResponse chat(String message, List<ChatTurn> history) {
-        // ① 召回：真实商品库（商品域内部接口）。商品域不可用 → 503，绝不用空候选硬答
-        List<ProductCandidate> candidates;
+    /**
+     * 一轮对话。
+     *
+     * @param clarifiedOnce 前端告知「之前已经澄清过一轮」→ 本轮不再反问（最多澄清 1 次）
+     */
+    public ChatResponse chat(String message, List<ChatTurn> history, boolean clarifiedOnce) {
+        // ① 出口预判：答不了的问题不调模型（诚实 + 省配额，且避免编造售后政策）
+        String offTopic = offTopicReply(message);
+        if (offTopic != null) {
+            log.info("命中「答不了」出口，未调用模型");
+            return new ChatResponse(offTopic, List.of(), mockEnabled ? "mock" : "llm", null);
+        }
+
+        // ② 约束解析：预算 + 品类（规则解析，确定性优先）
+        ConstraintParser.Constraints constraints = constraintParser.parse(message);
+
+        // ③ 召回（带约束；约束在商品域 SQL 里生效）
+        List<ProductCandidate> candidates = recall(message, history, constraints);
+
+        // ④ 澄清判断：关键信息全缺 + 没澄清过 + 有可选选项 → 反问 1 次
+        if (needsClarify(message, constraints, candidates, clarifiedOnce)) {
+            List<ClarifyOption> options = clarifyOptions();
+            if (!options.isEmpty()) {
+                log.info("信息不足，发起澄清（选项 {} 个）", options.size());
+                return new ChatResponse(
+                        "我先确认一下再帮你挑：你想买哪一类？",
+                        List.of(),
+                        mockEnabled ? "mock" : "llm",
+                        new ClarifyView("你想买哪一类？", options));
+            }
+            // 类目取不到 → 不问一个没有选项的问题（那等于把难题丢回给用户）
+        }
+
+        // ⑤ 组织回复（mock / LLM）
+        ChatResponse draft = mockEnabled
+                ? mockReply(candidates)
+                : llmReply(message, history, candidates, constraints);
+
+        // ⑥ 护栏：合规词与价格一致性（命中即换成事实版回复）
+        ReplyGuard.Verdict verdict = replyGuard.inspect(draft.reply(), candidates);
+        String reply = verdict.blocked() ? verdict.reply() : draft.reply();
+
+        // ⑦ 预算没听懂 → 必须如实告知（绝不能当成「用户没提预算」静默放过）
+        if (constraints.budgetUnparsed()) {
+            reply = "（我没听清你的预算数字，这次没按预算筛）" + reply;
+        }
+        return new ChatResponse(reply, draft.recommendations(), draft.mode(), null);
+    }
+
+    // ---------------- ① 出口预判 ----------------
+
+    /** 命中「答不了」规则则返回出口话术，否则 null */
+    private static String offTopicReply(String message) {
+        String text = message == null ? "" : message;
+        for (OffTopicRule rule : OFF_TOPIC_RULES) {
+            for (String kw : rule.keywords()) {
+                if (text.contains(kw)) {
+                    return rule.reply();
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---------------- ④ 澄清判断 ----------------
+
+    /**
+     * 是否需要澄清。
+     *
+     * <p>三个条件同时满足才问，缺一不问（问多了就是问卷）：
+     * <ol>
+     *   <li><b>没澄清过</b>：一次对话最多反问一次；</li>
+     *   <li><b>没有任何硬约束</b>：既没说品类也没说预算 —— 有任一条都能直接去查；</li>
+     *   <li><b>确实问不出结果</b>：召回为空，**或者**用户这句极短（≤6 字，如「买点吃的」「推荐一下」）。
+     *       用「召回为空」做主要判据是有意的 —— 它来自真实商品库的信号，
+     *       比「这句话看起来含糊吗」这种主观判断可靠得多。</li>
+     * </ol>
+     */
+    private static boolean needsClarify(String message, ConstraintParser.Constraints constraints,
+                                        List<ProductCandidate> candidates, boolean clarifiedOnce) {
+        if (clarifiedOnce) {
+            return false;
+        }
+        if (constraints.hasBudget() || !constraints.categoryIds().isEmpty()) {
+            return false;
+        }
+        String trimmed = message == null ? "" : message.trim();
+        return candidates.isEmpty() || trimmed.length() <= 6;
+    }
+
+    private List<ClarifyOption> clarifyOptions() {
+        return categoryCatalog.clarifyOptions(4).stream()
+                .map(c -> new ClarifyOption(c.name(), c.name()))
+                .toList();
+    }
+
+    // ---------------- ③ 召回 ----------------
+
+    private List<ProductCandidate> recall(String message, List<ChatTurn> history,
+                                          ConstraintParser.Constraints constraints) {
+        String categoryIds = constraints.categoryIds().isEmpty() ? null
+                : constraints.categoryIds().stream().map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(","));
         try {
-            candidates = productSearchClient.candidates(recallKeyword(message, history), 8).data();
+            var resp = productSearchClient.candidates(
+                    recallKeyword(message, history), 8,
+                    constraints.budgetMin(), constraints.budgetMax(), categoryIds);
+            List<ProductCandidate> list = resp == null ? null : resp.data();
+            return list == null ? List.of() : list;
         } catch (Exception ex) {
+            // 商品域取不到 → 503，绝不用空候选硬答（空候选喂给模型更容易诱导它编）
             log.error("候选召回失败: {}", ex.getMessage());
             throw new BizException(ErrorCode.DEGRADED, "商品服务暂时不可用，请稍后再试");
         }
-        if (candidates == null) {
-            candidates = List.of();
-        }
-
-        // ② 组织回复
-        if (mockEnabled) {
-            return new ChatResponse(mockReply(message, candidates), toRecommendations(topN(candidates, 3)), "mock");
-        }
-        if (candidates.isEmpty()) {
-            // 无候选时也如实说没有 —— 空候选喂给模型反而容易诱导它编
-            return new ChatResponse("暂时没找到匹配的商品，麻烦换个描述试试，比如「幼犬狗粮」或「猫玩具」。", List.of(), "llm");
-        }
-        return chatWithLlm(message, history, candidates);
     }
 
     /**
@@ -128,6 +284,14 @@ public class ChatService {
         return sb.toString();
     }
 
+    // ---------------- ⑤ 组织 ----------------
+
+    /** mock 回复：复用护栏里的事实版生成器（两条路径共用一处，价格口径就不会不一致） */
+    private static ChatResponse mockReply(List<ProductCandidate> candidates) {
+        return new ChatResponse(ReplyGuard.factsReply(candidates),
+                toRecommendations(topN(candidates, 3)), "mock", null);
+    }
+
     /**
      * LLM 形态：一次调用同时产出「给用户看的话术」与「真正被选中的商品 id」。
      *
@@ -136,8 +300,16 @@ public class ChatService {
      * id 列表，再由服务端**用 id 到候选里反查**（{@link #selectByIds}）——
      * id 不在候选里的一律丢弃，模型就算编了 id 也拼不出不存在的商品。
      */
-    private ChatResponse chatWithLlm(String message, List<ChatTurn> history, List<ProductCandidate> candidates) {
-        String prompt = SYSTEM_PROMPT + candidatesJson(candidates) + """
+    private ChatResponse llmReply(String message, List<ChatTurn> history,
+                                  List<ProductCandidate> candidates,
+                                  ConstraintParser.Constraints constraints) {
+        if (candidates.isEmpty()) {
+            // 无候选时也如实说没有 —— 空候选喂给模型反而容易诱导它编
+            return new ChatResponse(
+                    "暂时没找到匹配的商品，麻烦换个描述试试，比如「幼犬狗粮」或「猫玩具」。",
+                    List.of(), "llm", null);
+        }
+        String prompt = SYSTEM_PROMPT + candidatesJson(candidates) + constraintBlock(constraints) + """
 
                 【输出格式】
                 先输出给用户看的回复正文；正文结束后另起一行，输出一行严格 JSON：{"ids":[选中的商品id...]}
@@ -151,13 +323,50 @@ public class ChatService {
             String reply = parsed.reply().isBlank()
                     ? "这几款里暂时没有特别符合你要求的，换个描述试试？比如「幼猫粮 200 元内」。"
                     : parsed.reply();
-            return new ChatResponse(reply, List.of(), "llm");
+            return new ChatResponse(reply, List.of(), "llm", null);
         }
-        return new ChatResponse(parsed.reply(), toRecommendations(parsed.selected()), "llm");
+        return new ChatResponse(parsed.reply(), toRecommendations(parsed.selected()), "llm", null);
+    }
+
+    /**
+     * 把「服务端已经应用的约束」告诉模型。
+     *
+     * <p>不写这一段会怎样：候选已经按 200 元筛过了，但模型不知道，
+     * 于是它可能在回复里说「这些都在 200 元以内哦，不过我没有你的预算信息」——
+     * 一句话暴露两处不一致。约束既然是服务端落实的，就要作为**事实**同步给模型。
+     */
+    private static String constraintBlock(ConstraintParser.Constraints constraints) {
+        if (!constraints.hasBudget() && constraints.categoryNames().isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("\n【已生效的筛选条件（服务端已执行，候选里只剩符合的）】\n");
+        if (constraints.budgetMax() != null) {
+            sb.append("- 预算上限：").append(yuan(constraints.budgetMax())).append(" 元\n");
+        }
+        if (constraints.budgetMin() != null) {
+            sb.append("- 预算下限：").append(yuan(constraints.budgetMin())).append(" 元\n");
+        }
+        if (!constraints.categoryNames().isEmpty()) {
+            sb.append("- 品类：").append(String.join("、", constraints.categoryNames())).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String yuan(Long cents) {
+        if (cents == null) {
+            return "";
+        }
+        long abs = Math.abs(cents);
+        return abs % 100 == 0 ? String.valueOf(cents / 100)
+                : (cents / 100) + "." + String.format("%02d", abs % 100);
     }
 
     /** LLM 回复的解析结果：话术正文 + 被选中的候选（已按 id 反查回真实商品） */
     private record LlmReply(String reply, List<ProductCandidate> selected, List<Long> ids) {
+    }
+
+    /** 出口规则：关键词组 → 出口话术 */
+    private record OffTopicRule(List<String> keywords, String reply) {
     }
 
     /**
@@ -255,29 +464,6 @@ public class ChatService {
                 .map(t -> Map.of("role", "user".equalsIgnoreCase(t.role() == null ? "" : t.role().trim())
                         ? "user" : "assistant", "content", t.content()))
                 .toList();
-    }
-
-    /**
-     * mock 回复：确定性规则把召回结果拼成导购话术 —— 每个推荐都真实存在。
-     * 关键词不存在时如实说没有（这也是验收①「不得编造」的一部分）。
-     */
-    private static String mockReply(String message, List<ProductCandidate> candidates) {
-        if (candidates.isEmpty()) {
-            return "暂时没找到与「" + message + "」匹配的商品。换个说法试试，比如「幼犬狗粮」「猫零食」？";
-        }
-        StringBuilder sb = new StringBuilder("为你找到 " + candidates.size() + " 款相关商品：");
-        int top = Math.min(3, candidates.size());
-        for (int i = 0; i < top; i++) {
-            ProductCandidate c = candidates.get(i);
-            sb.append("「").append(c.title()).append("」")
-                    .append(c.minPrice() / 100).append("元起");
-            if (!c.inStock()) {
-                sb.append("（暂时缺货）");
-            }
-            sb.append("；");
-        }
-        sb.append("如需下单，请登录后在商品页加购。");
-        return sb.toString();
     }
 
     private static String candidatesJson(List<ProductCandidate> candidates) {

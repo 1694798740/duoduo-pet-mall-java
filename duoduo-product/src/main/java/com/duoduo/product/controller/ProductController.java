@@ -99,11 +99,52 @@ public class ProductController {
      *
      * <p>把一句用户消息变成**真实商品库**里的候选卡片 —— AI 服务只负责组织回复，
      * 推荐的每一个商品都出自这里，从根上堵死「模型编造不存在的商品」。
+     *
+     * <p><b>三个约束参数（第五十七轮）</b>：{@code budgetMin} / {@code budgetMax} 是用户
+     * 预算下/上限（单位**分**），{@code categoryIds} 是逗号分隔的类目 id。
+     * 它们在这里变成 SQL 条件而不是提示词里的一句话 —— 超预算的商品**根本进不了候选池**，
+     * 于是「模型推了超预算的货」在结构上不可能发生。
+     * 三个都可空：不传即无约束（行为与第五十七轮之前一致）。
      */
     @GetMapping("/internal/candidates")
     public ApiResponse<List<ProductCard>> candidates(@RequestParam("keyword") String keyword,
-                                                     @RequestParam(defaultValue = "8") int limit) {
-        return ApiResponse.ok(productService.internalCandidates(keyword, limit));
+                                                     @RequestParam(defaultValue = "8") int limit,
+                                                     @RequestParam(required = false) Long budgetMin,
+                                                     @RequestParam(required = false) Long budgetMax,
+                                                     @RequestParam(required = false) String categoryIds) {
+        return ApiResponse.ok(productService.internalCandidates(
+                keyword, limit, budgetMin, budgetMax, parseIds(categoryIds)));
+    }
+
+    /**
+     * 类目简表（内部接口，第五十七轮 · 供 AI 域用）。
+     *
+     * <p>落在 {@code /api/products/internal/**} 下，由 {@code InternalTokenFilter} 校验凭据。
+     * AI 域拿它做两件事：从用户话里认出品类、生成澄清问题的可点选项。
+     */
+    @GetMapping("/internal/categories")
+    public ApiResponse<List<ProductDtos.CategoryBrief>> internalCategories() {
+        return ApiResponse.ok(productService.internalCategories());
+    }
+
+    /** 逗号分隔的 id 串 → 列表；非法片段直接跳过（宁可少过滤，也不要因为脏参数整单 400） */
+    private static List<Long> parseIds(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return List.of();
+        }
+        List<Long> ids = new java.util.ArrayList<>();
+        for (String part : csv.split(",")) {
+            String trimmed = part.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            try {
+                ids.add(Long.parseLong(trimmed));
+            } catch (NumberFormatException ignored) {
+                // 跳过非法片段
+            }
+        }
+        return List.copyOf(ids);
     }
 
     /**

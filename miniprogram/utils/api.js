@@ -423,8 +423,20 @@ const coupon = {
 
 // ── AI 导购（A9，免登录可用，限流 429 / 降级 503 友好提示） ──────────────────
 const ai = {
-  chat(message, history) {
-    return req.post('/api/duoduo/chat', { message, history }, { timeout: 20000 });
+  /**
+   * 一轮对话。
+   *
+   * clarified（第五十七轮）：**本次之前是否已经澄清过一轮**。
+   * 服务端没有会话状态，只能由前端把这个事实带上去 —— 它的唯一用途是保证
+   * 「一次对话最多反问一次」，避免 AI 一直追问把导购变成填问卷。
+   * 响应里的 `clarify` 非空时，说明这一轮是反问而不是回答，前端要把 options 渲染成可点选项。
+   */
+  chat(message, history, clarified) {
+    return req.post(
+      '/api/duoduo/chat',
+      { message, history, clarified: !!clarified },
+      { timeout: 20000 }
+    );
   },
   capabilities() {
     return req.get('/api/duoduo/capabilities', { silent: true });

@@ -316,6 +316,10 @@ services:
       # 限流阈值是**运维要按流量调的**量，与相邻变量保持一致走环境变量覆盖，
       # 不写死 —— 否则改阈值必须动 compose 文件，容器编排与调参耦合在一起。
       DUODUO_AI_RATE_LIMIT: ${DUODUO_AI_RATE_LIMIT:-20}
+      # 全站总配额（第五十七轮）：单键限流防不住换 IP 刷，这一层保证总有上界。
+      DUODUO_AI_GLOBAL_RATE_LIMIT: ${DUODUO_AI_GLOBAL_RATE_LIMIT:-300}
+      # 商品召回跨域调用的读超时（第五十七轮）：与 LLM 超时分开，避免商品域慢拖垮 AI。
+      DUODUO_AI_RECALL_READ_TIMEOUT_MS: ${DUODUO_AI_RECALL_READ_TIMEOUT_MS:-1500}
     ports:
       - '8086:8086'
     depends_on:

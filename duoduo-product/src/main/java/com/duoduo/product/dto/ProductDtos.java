@@ -32,6 +32,20 @@ public final class ProductDtos {
     ) {
     }
 
+    /**
+     * 类目简表（第五十七轮 · AI 导购）。
+     *
+     * <p>只给 AI 域用：它需要「类目名 → 类目 id」来做两件事 —— ① 从用户话里认出品类、
+     * ② 生成澄清问题的可点选项。刻意只带 id / name / depth：
+     * 图标、状态、children 这些是给前端渲染用的，AI 不需要，按调用方真正需要的裁剪。
+     */
+    public record CategoryBrief(
+            Long id,
+            String name,
+            int depth
+    ) {
+    }
+
     public record BrandView(
             Long id,
             String name,

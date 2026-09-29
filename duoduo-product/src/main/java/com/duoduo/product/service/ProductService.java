@@ -689,9 +689,44 @@ public class ProductService {
      * 「命中词元数 + 销量」重排，噪声自然沉底，不需要真的分词器。
      *
      * <p>只回在售商品；上限 8 条 —— 候选列表是给 LLM 组织回复用的素材，
- * 不是搜索结果页，多了反而稀释推荐质量。
+     * 不是搜索结果页，多了反而稀释推荐质量。
+     *
+     * <p>（无约束重载：保留给不喜欢带条件的调用方，行为与第五十七轮之前完全一致）
      */
     public List<ProductCard> internalCandidates(String message, int limit) {
+        return internalCandidates(message, limit, null, null, null);
+    }
+
+    /**
+     * A9 · 候选召回（**带结构化约束**，第五十七轮）。
+     *
+     * <p><b>为什么约束必须在这里过滤，而不是写在提示词里</b>：提示词约束的是「模型的措辞」，
+     * 不是「模型能看到什么」。用户说「预算 200 以内」而候选里躺着 328 元的商品时，
+     * 模型一旦不听话就会把它推出去 —— 而这是用户**一眼就能发现**的那种错。
+     * 所以预算与品类在这里变成 SQL 条件：**模型根本看不到超预算的商品**，
+     * 也就没有「推错」的可能。这与「不得编造商品」的 id 反查是同一种思路：
+     * 把正确性做成结构，而不是做成提醒。
+     *
+     * <p><b>价格语义（容易搞反，写清楚）</b>：商品有价格区间 [minPrice, maxPrice]（分）。
+     * <ul>
+     *   <li>{@code budgetMax}（用户预算上限，如「200 元以内」）→ 条件是
+     *       {@code spu.min_price <= budgetMax}：「这个商品里有 200 元以内的选择」就算符合 ——
+     *       一个 199~299 的商品对「200 以内」的预算是有意义的（最低配 199 能买到）；</li>
+     *   <li>{@code budgetMin}（用户预算下限，如「200 元以上」）→ 条件是
+     *       {@code spu.max_price >= budgetMin}：对称地，「这个商品里有 200 元以上的选择」。</li>
+     * </ul>
+     * 反过来写（用 min_price 判下限）会把「199~299」这种商品误杀，而把「299~399」误放 ——
+     * 这正是「看起来对、实际反了」的典型。
+     *
+     * <p><b>品类会展开子类目</b>：用户说的「猫粮」通常是一级类目，直接按它过滤会一条都查不到；
+     * 复用 {@code CategoryService.expandCategoryIds} 把它展开成「自己 + 子类目」再过滤。
+     *
+     * <p><b>为什么不用 {@code having} 之类的后置过滤</b>：后置过滤会让「池子 60 → 过滤后剩 2」
+     * 这种形态变成常态，重排失去意义。条件放在 SQL 里，池子本身就是符合条件的。
+     */
+    public List<ProductCard> internalCandidates(String message, int limit,
+                                                Long budgetMin, Long budgetMax,
+                                                List<Long> categoryIds) {
         String msg = trimToNull(message);
         if (msg == null) {
             return List.of();
@@ -714,6 +749,17 @@ public class ProductService {
 
         LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
                 .eq(SpuEntity::getStatus, STATUS_ON_SALE);
+        // ★ 约束（第五十七轮）：在 SQL 层过滤，模型看不到不符合条件的商品
+        if (budgetMax != null) {
+            wrapper.le(SpuEntity::getMinPrice, budgetMax);
+        }
+        if (budgetMin != null) {
+            wrapper.ge(SpuEntity::getMaxPrice, budgetMin);
+        }
+        List<Long> expanded = expandCategories(categoryIds);
+        if (!expanded.isEmpty()) {
+            wrapper.in(SpuEntity::getCategoryId, expanded);
+        }
         wrapper.and(outer -> {
             for (String g : tokens) {
                 outer.or(i -> i.like(SpuEntity::getTitle, g).or().like(SpuEntity::getSubtitle, g));
@@ -736,6 +782,34 @@ public class ProductService {
                     a.getSalesCount() == null ? 0 : a.getSalesCount());
         });
         return toCards(pool.subList(0, Math.min(size, pool.size())));
+    }
+
+    /**
+     * 类目简表（内部接口，第五十七轮 · 供 AI 域用）。
+     *
+     * <p>AI 域拿它做两件事：从用户话里认出品类、生成澄清问题的可点选项。
+     * 只回启用中的类目（{@code CategoryService.flat()} 已保证），
+     * 否则「AI 推荐了一个已停用的类目」会变成新的脏数据来源。
+     */
+    public List<ProductDtos.CategoryBrief> internalCategories() {
+        return categoryService.flat().stream()
+                .map(n -> new ProductDtos.CategoryBrief(n.id(), n.name(), n.depth()))
+                .toList();
+    }
+
+    /** 把「可能是父类目」的 id 列表展开成「自己 + 子类目」的并集（去重、保序） */
+    private List<Long> expandCategories(List<Long> categoryIds) {
+        if (categoryIds == null || categoryIds.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        for (Long id : categoryIds) {
+            if (id == null) {
+                continue;
+            }
+            ids.addAll(categoryService.expandCategoryIds(id));
+        }
+        return List.copyOf(ids);
     }
 
     private static int matchedTokens(SpuEntity spu, List<String> tokens) {

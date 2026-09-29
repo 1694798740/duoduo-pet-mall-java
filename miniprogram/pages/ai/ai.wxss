@@ -59,3 +59,30 @@
   font-size: 26rpx;
 }
 .chat-send { width: 130rpx; height: 68rpx; }
+
+/* ── 澄清选项（第五十七轮）────────────────────────────────────────────────
+   胶囊四条齐备：显式 height + line-height:1 + 半径=半高 + **容器 align-items:center**。
+   最后一条最容易漏：容器是 flex 时子项默认 align-items:stretch，会被拉到与容器等高，
+   看起来就是「框比字大、各排高矮不一」（R54 教训，已写成静态检查规则 7）。 */
+.clarify-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16rpx;
+  margin: 12rpx 0 4rpx 108rpx;
+}
+.clarify-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 60rpx;
+  line-height: 1;
+  padding: 0 28rpx;
+  border-radius: 30rpx;
+  background: #fff;
+  border: 2rpx solid var(--brand);
+  color: var(--brand);
+  font-size: 26rpx;
+  white-space: nowrap;
+}

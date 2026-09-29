@@ -19,7 +19,7 @@ function nextId() {
 Page({
   data: {
     navTotal: 0, // 自绘导航栏总高（第五十轮）：消息区高度按它扣减
-    messages: [], // { id, role, content, recs?, error? }
+    messages: [], // { id, role, content, recs?, error?, options? }
     input: '',
     sending: false,
     scrollInto: '',
@@ -30,6 +30,13 @@ Page({
   },
 
   _keyboardHandler: null,
+  /**
+   * 本次会话是否已经澄清过一轮（第五十七轮）。
+   *
+   * <p>放在实例上而不是 data 里：它不参与渲染，只是要随请求带上；
+   * 放进 data 会让每次 setData 都白搬一个布尔值，也容易被误读成「界面状态」。
+   */
+  _clarifiedSent: false,
 
   onLoad(query) {
     this.setData({ navTotal: getNavMetrics().navTotalHeight });
@@ -107,8 +114,15 @@ Page({
     this.setData({ input: e.detail.value });
   },
 
-  send() {
-    const text = (this.data.input || '').trim();
+  /**
+   * 发一轮对话。
+   *
+   * @param textOverride 点了澄清选项时直接传选项文本，不必经过输入框
+   *                     （选项是「点一下就发」的交互，走输入框会多一步、还容易被用户改坏）
+   */
+  send(textOverride) {
+    const text =
+      typeof textOverride === 'string' ? textOverride.trim() : (this.data.input || '').trim();
     if (!text || this.data.sending) return;
     if (!this.data.aiReady) {
       // 已经知道不可用就先拦住：让用户看到明确原因，而不是发出去再等一句「走神了」
@@ -117,17 +131,27 @@ Page({
     }
 
     this.push({ id: nextId(), role: 'user', content: text });
-    this.setData({ input: '', sending: true });
+    // 用户已经作答，历史里的选项不该再能点（点了会重复发同一条）——发送时统一清掉
+    const cleared = this.data.messages.map((m) =>
+      m.options ? Object.assign({}, m, { options: null }) : m
+    );
+    this.setData({ messages: cleared, input: '', sending: true });
 
     // history 只带最近 6 条**非错误**消息的纯文本（后端 @Size(max=6)）
-    const history = this.data.messages
+    const history = cleared
       .filter((m) => !m.error)
       .slice(-HISTORY_LIMIT)
       .map((m) => ({ role: m.role, content: m.content }));
 
     return api.ai
-      .chat(text, history)
+      .chat(text, history, this._clarifiedSent)
       .then((res) => {
+        // 服务端这一轮是「反问」而不是「回答」：把选项渲染成可点 chips，
+        // 并记住「已澄清过」——避免它下一轮又问一次（一次对话最多问一次）
+        const clarify = res.clarify;
+        if (clarify && (clarify.options || []).length) {
+          this._clarifiedSent = true;
+        }
         this.push({
           id: nextId(),
           role: 'assistant',
@@ -135,6 +159,7 @@ Page({
           recs: (res.recommendations || []).map((r) =>
             Object.assign({}, r, { priceText: api.fen2yuan(r.minPrice) })
           ),
+          options: clarify && clarify.options ? clarify.options : null,
         });
       })
       .catch((err) => {
@@ -146,6 +171,13 @@ Page({
         });
       })
       .then(() => this.setData({ sending: false }));
+  },
+
+  /** 点澄清选项：直接把选项要发送的文本发出去（`send` 与 `label` 分离，见后端 DTO 注释） */
+  tapOption(e) {
+    const send = e.currentTarget.dataset.send;
+    if (!send) return;
+    this.send(String(send));
   },
 
   push(msg) {

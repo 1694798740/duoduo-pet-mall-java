@@ -46,6 +46,17 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     public static final String HEADER_REAL_NAME = "X-Real-Name-Verified";
     public static final String HEADER_REQUEST_ID = "X-Request-Id";
 
+    /**
+     * 可信客户端地址（第五十七轮）：网关写入，供下游做限流键。
+     *
+     * <p>与 {@code X-Forwarded-For} 的关键区别：后者是**事实上的多跳代理链**，
+     * 调用方可以在自己那一跳前面随便加内容；本头由网关**先清除同名字段再写入**，
+     * 因此下游可以把它当事实用。凡是要当事实用的头，都必须遵循这个模式。
+     */
+    public static final String HEADER_X_REAL_IP = "X-Real-IP";
+    /** 客户端同样能伪造的代理链头：进网关先清掉，避免下游误用 */
+    public static final String HEADER_X_FORWARDED_FOR = "X-Forwarded-For";
+
     private static final String COOKIE_ACCESS = "dd_at";
 
     private final JwtTokenService jwtTokenService;
@@ -85,7 +96,22 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     headers.remove(HEADER_USER_PHONE);
                     headers.remove(HEADER_USER_ROLE);
                     headers.remove(HEADER_REAL_NAME);
+                    // 第五十七轮：客户端能自己写的 IP 头同样要剥离，再由网关写入可信值。
+                    //
+                    // 为什么必须在这里做：AI 导购的限流键按「客户端 IP」区分（未登录时），
+                    // 而下游服务只能看到「从网关发来的请求」——它无法分辨这个 IP 头是网关写的
+                    // 还是调用方随手编的。若网关不清理，对方每次请求换一个假 X-Forwarded-For
+                    // 就等于无限额度，而 LLM 配额是按调用量付费的。
+                    // 判据很简单：**凡是被下游当作事实使用的头，上游就必须保证它只能由自己写入**。
+                    headers.remove(HEADER_X_FORWARDED_FOR);
+                    headers.remove(HEADER_X_REAL_IP);
                 });
+
+        // 写入本次连接的真实对端地址（不看请求头，只看 TCP 连接）
+        String peer = peerAddress(request);
+        if (peer != null) {
+            builder.header(HEADER_X_REAL_IP, peer);
+        }
 
         if (payload.valid()) {
             builder.header(HEADER_USER_ID, String.valueOf(payload.userId()))
@@ -127,6 +153,25 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return false;
         }
         return whitelist.stream().anyMatch(pattern -> pathMatcher.match(pattern, path));
+    }
+
+    /**
+     * 本次请求的真实对端地址：**只看 TCP 连接，不看任何请求头**。
+     *
+     * <p>为什么不用 X-Forwarded-For 的第一段：那是调用方提供的数据。
+     * 在本项目的部署形态下（网关是最外层入口），{@code getRemoteAddress()} 就是
+     * 「谁连上了网关」这个客观事实 —— 客户端无法伪造成别人的地址。
+     *
+     * <p>将来若在网关前面再加一层负载均衡，这里会变成负载均衡的地址，
+     * 届时正确做法是**只信任已知 LB 的 IP**、从它写入的链里取最后一跳，
+     * 而不是退回「相信请求头」。这一点写在这里，避免以后有人图省事改回去。
+     */
+    private static String peerAddress(org.springframework.http.server.reactive.ServerHttpRequest request) {
+        var remote = request.getRemoteAddress();
+        if (remote == null || remote.getAddress() == null) {
+            return null;
+        }
+        return remote.getAddress().getHostAddress();
     }
 
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {

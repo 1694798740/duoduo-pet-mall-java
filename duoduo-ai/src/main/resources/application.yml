@@ -32,7 +32,18 @@ duoduo:
     # LLM 调用超时（秒）：导购对话用户可感知等待，超过就降级提示，不挂死请求线程
     timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:15}
     # 每 IP 每分钟对话次数：保护 LLM 配额的第一道闸。超限 429 RATE_LIMITED。
+    # 限流键**不是**客户端可伪造的请求头（第五十七轮加固，见 AiController.clientKey）。
     rate-limit-per-minute: ${DUODUO_AI_RATE_LIMIT:20}
+    # 全站每分钟总配额：单键限流防不住「换 IP 分布式刷」，总配额保证
+    # 「无论怎么绕，每分钟的调用总数有上界」。两道闸都需要，缺一不可。
+    global-rate-limit-per-minute: ${DUODUO_AI_GLOBAL_RATE_LIMIT:300}
+    # 商品召回（跨域内部调用）的超时：与 LLM 的 15s **刻意分开**。
+    # 召回是库内查询，正常百毫秒级；给 1.5s 已经很宽松。分开的意义在于
+    # 商品域变慢时 AI 能快速降级并指出「商品信息取不到」，而不是被拖到线程池耗尽、
+    # 表现成「AI 全挂了」——故障归因清楚的代价只是多两个数字。
+    recall:
+      connect-timeout-ms: ${DUODUO_AI_RECALL_CONNECT_TIMEOUT_MS:300}
+      read-timeout-ms: ${DUODUO_AI_RECALL_READ_TIMEOUT_MS:1500}
   internal:
     # 调商品域内部候选接口用的共享密钥（与其它服务同一个环境变量）
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}

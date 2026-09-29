@@ -28,6 +28,19 @@
         </view>
       </view>
     </view>
+
+    <!-- 澄清选项（第五十七轮）：点一下就发出去，用户不必打字。
+         开放式追问（「请补充更多信息」）用户往往直接忽略，把澄清成本降到一次点击它才会被用。 -->
+    <view wx:if="{{msg.options && msg.options.length > 0}}" class="clarify-list">
+      <view
+        wx:for="{{msg.options}}"
+        wx:for-item="opt"
+        wx:key="label"
+        class="clarify-chip"
+        data-send="{{opt.send}}"
+        bindtap="tapOption"
+      >{{opt.label}}</view>
+    </view>
   </view>
   <view wx:if="{{sending}}" class="bubble-row">
     <view class="chat-avatar">🐱</view>

@@ -4,6 +4,31 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R57（2026-09-29，用户要求：「仅实现 6 项必修」AI 改造）** — **约束硬过滤 / 超时隔离 / 限流加固 / 输出护栏 / 澄清与失败出口 / 测试真绿**（必修 M1-M6；选修 S1-S3 按用户指令不做）。
+
+**① M1 预算与品类的服务端硬过滤（本轮核心）**
+- `ConstraintParser` 规则解析（正则，不押在模型身上）：预算上限/下限/区间 + 品类；**三种状态严格区分** —— 解析到（过滤）、没提（不过滤）、**提了但没解析出来（必须回复「我没听清你的预算数字，这次没按预算筛」，绝不静默当没提）**。
+- `CategoryCatalog` 显式别名表解决「类目名 vs 口语」鸿沟：库里一级类目叫「宠物主粮」、用户说的是「猫粮/狗粮/口粮」，直接子串匹配必败。别名表要维护：漏配只是召回变窄，不会错推荐。
+- **约束在商品域 SQL 里生效**（`min_price <= budgetMax`、`max_price >= budgetMin`、`category_id IN (...)`）：「预算等约束写在提示词里 = 没有约束」—— 过滤必须发生在数据库查询里，超预算的商品根本进不了候选池。价格语义是**重叠**：`budgetMin` 用 `max_price >= ?`（199~299 对「100 以上」有意义），写反会误杀。
+- **★ 单测抓到真缺陷（不报错、只悄悄推荐错）**：「预算 200 元以内」被 MAX/MIN 两套正则**同位重匹配**成 min=max=200 → 99~159 元的便宜货被 `max_price >= 200` 误杀且无任何报错。修法：下限匹配跳过与上限命中区间重叠的命中。另修「最便宜的是哪个？」被信号词「便宜」误判成预算未解析（负向后视 `(?<!最)`）。
+
+**② M2 召回独立超时**：`AiFeignConfig`（connect 300ms / read 1500ms），**刻意不加 `@Configuration`**（否则被组件扫描当全局配置）；商品域慢不再占住 AI 线程池。
+
+**③ M3 限流键不可伪造 + 全站总配额**
+- 网关**先剥离**客户端可写的 `X-Forwarded-For`/`X-Real-IP`，再写入 TCP 对端地址 —— **判据：凡是被下游当作事实使用的头，上游必须保证它只能由自己写入**。旧实现取 XFF 首段当限流键：换个假 IP 等于新用户、永不限流，而 LLM 配额真金白银。
+- `IpRateLimiter` 加全站总配额（默认 300/分钟）防「分布式换键刷」；**两道判断都计数**（被单键挡住的流量也消耗全局额度，口径才不乱）。
+
+**④ M4 输出护栏**：`ReplyGuard` 拦两类 —— 绝对化/承诺词（广告法口径；刻意不含「最好/最适合」这类主观推荐语，拦了 AI 就不会说人话）与**价格一致性**（正文价格必须能在候选 min/max 里找到，只认带 ¥/元/块 的数字防「2 岁」误伤）。命中后**替换为事实版回复而不是拒绝回答**（防 over-refusal）；mock 复用同一事实版生成器，两条路径价格口径天然一致；命中记 WARN + micrometer 计数（可选注入，监控缺席不阻断启动）。
+
+**⑤ M5 失败出口 + 轻量澄清**
+- 五类「答不了」（物流/退换/优惠/发票/支付）在调模型**之前**拦截，如实说「我查不到」+ 给入口 —— 这类问题没有数据源，交给模型只会得到听起来像真的编造（售后政策说错要担责）；顺带把「没货」与「我答不了」分开，用户不再一遍遍换说法试。
+- 澄清：没澄清过 + 无硬约束 + （召回为空或 ≤6 字）→ 反问**一次**，给**可点选项**（`clarify.options` 的 label/send 分离，前端 chips 点一下直接发）；`clarified` 布尔随每次请求上行（服务端无会话状态，靠前端带上「已澄清过」）。
+
+**⑥ M6 测试真绿**：预算断言从「仅 llm 模式」改**无条件必查**（旧版在 mock 下 SKIP，而 CI 永远跑 mock → **长期空转假绿**）；新增 11 项探针：区间重叠、**极小预算（1 元）必得空结果**（证明预算参数真的传进了 SQL 而不是被半路丢掉）、预算未解析告知、「最便宜」不误判、出口预判、澄清两次探针、**伪造 XFF 不能绕过限流**（每次换假 IP 夹进限流循环）。
+
+**验证**：ai 单测 **29/0**（`ConstraintParserTest` 18 + `ReplyGuardTest` 11）+ 前端 `r57-ai-clarify-test` **23/0**（真实加载 api.js/ai.js 桩 wx.request 断言出参；含 3 组反向验证，并修掉谓词 `height` 误配 `line-height` 的洞）+ `ai-smoke` **37/0** + 回归 **346/0**（order 77 / address 82 / payment 71 / share-circle 74 / notice 42）+ 静态自检 0 错 0 警 + 三镜像重建 healthy。
+**★ 部署教训（R52 二次踩坑）**：改完只 `compile` 不 `package` → `compose build` COPY 层缓存命中 → **旧 jar 进镜像、容器行为照旧**；必须重打 jar 并解包验证内容（`unzip -l` 见新类），别只看构建退出码。
+
 **R56（2026-09-29，用户要求：优先「完善分享圈功能」）** — **评论+回复+评论点赞 / 关注流 / 删除·编辑自己的分享 + 举报（含运营处理台）/ 话题标签 #**。
 
 **① 评论（全仓此前「零实现」）**
@@ -529,7 +554,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1      # 82 项：收货地址簿（CRUD/默认唯一性与删除顺延/归属统一 404/下单写快照/清理复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1 # 56 项：跨域 ID 精度回归（只断言 JSON 原始文本，绕开反序列化的精度掩盖）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1  # 26 项：微信登录绑定（未绑 422/未配置 503/幂等/抢绑 409/免登 401）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 24 项：AI 导购（形态自适应/推荐真实性/无 sellerId 泄露/匿名可问答/多轮追问/推荐上限/429 限流）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 37 项：AI 导购（形态自适应/推荐真实性/多轮追问/预算硬过滤与区间/极小预算空结果/预算未解析告知/出口预判/澄清反问/推荐上限/伪造 XFF 不能绕过限流/429）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 26 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补）
