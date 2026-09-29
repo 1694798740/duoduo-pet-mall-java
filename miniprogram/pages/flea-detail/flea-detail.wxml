@@ -22,7 +22,8 @@
       <view class="fd-price-row">
         <text class="fd-price">¥{{card.priceText}}</text>
         <text class="fd-original" wx:if="{{card.originalText}}">¥{{card.originalText}}</text>
-        <text class="fd-views">{{card.viewCount}} 人看过</text>
+        <text class="fd-views">{{card.viewCount}} 次浏览</text>
+        <text class="fd-wants">{{card.wantCount}} 人想要</text>
       </view>
       <view class="fd-title">{{card.title}}</view>
       <view class="fd-tags">

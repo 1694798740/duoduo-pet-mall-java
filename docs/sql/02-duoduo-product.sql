@@ -23,6 +23,7 @@ USE `duoduo_product`;
 --     因为这些字段只在「筛选」与「适配度展示」时读取，且取值集合很小；
 --     生产若改为 ES 检索，这些字段会在索引中展开成 keyword 数组
 
+DROP TABLE IF EXISTS t_listing_want;
 DROP TABLE IF EXISTS t_listing;
 DROP TABLE IF EXISTS t_sku;
 DROP TABLE IF EXISTS t_spu;
@@ -133,7 +134,10 @@ CREATE TABLE t_listing (
     -- 审核结论要可追溯：驳回原因 + 审核时间，不能只留一个状态码
     audit_reason     VARCHAR(200),
     audit_at         TIMESTAMP,
+    -- 浏览次数：页面每被打开或刷新一次 +1（同一人可累加）
     view_count       INT          NOT NULL DEFAULT 0,
+    -- 想要人数：按咨询行为去重统计（同一买家对同一闲置只计 1 次）；与 view_count 是两个口径
+    want_count       INT          NOT NULL DEFAULT 0,
     created_at       TIMESTAMP    NOT NULL,
     updated_at       TIMESTAMP    NOT NULL,
     PRIMARY KEY (id)
@@ -141,6 +145,16 @@ CREATE TABLE t_listing (
 CREATE INDEX idx_listing_seller ON t_listing (seller_id);
 CREATE INDEX idx_listing_status ON t_listing (status, audit_status);
 CREATE INDEX idx_listing_price ON t_listing (price);
+
+-- 闲置「想要」去重表：主键 (listing_id, buyer_id) 就是「一人一次」的硬约束。
+-- 上报走 INSERT IGNORE，只有真插进去才给 t_listing.want_count 加 1 —— 幂等由库保证。
+CREATE TABLE t_listing_want (
+    listing_id BIGINT    NOT NULL,
+    buyer_id   BIGINT    NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (listing_id, buyer_id)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4;
 
 
 -- ============================================================

@@ -49,8 +49,23 @@ Page({
     }
   },
 
-  load(id) {
-    this.setData({ loading: true, error: '' });
+  /**
+   * 拉取详情。
+   *
+   * @param {string} id 闲置 id
+   * @param {{silent?: boolean, done?: Function}} [opts]
+   *   silent：下拉刷新专用 —— 不清空已渲染内容、不显示「正在加载」。
+   *           用户下拉只是想让计数更新，此刻整页闪成加载态、内容消失，反而像出错了。
+   *   done：  交给调用方收尾（例如 wx.stopPullDownRefresh）。
+   */
+  load(id, opts) {
+    const opt = opts || {};
+    // 非静默（首次进入）才切加载态；静默刷新保留现有内容，只清错误
+    if (opt.silent) {
+      this.setData({ error: '' });
+    } else {
+      this.setData({ loading: true, error: '' });
+    }
     api.listing
       .detail(id)
       .then((res) => {
@@ -77,13 +92,30 @@ Page({
           loading: false,
         });
         if (card.sellerId) this.loadSeller(card.sellerId);
+        if (opt.done) opt.done();
       })
       .catch((err) => {
         this.setData({
           loading: false,
           error: (err && err.message) || '该闲置已下架或不存在',
         });
+        if (opt.done) opt.done();
       });
+  },
+
+  /**
+   * 下拉刷新（第五十四轮）：与「打开页面」共同构成浏览量口径。
+   *
+   * <p>用户口径是「页面每被打开或刷新一次即累计一次浏览量，同一用户多次查看可累加」——
+   * 「打开」由 onLoad 的首次加载承担，「刷新」由这里承担（服务端每次详情请求都会 +1）。
+   * 刷新走 silent：内容留在屏幕上，只有两个计数在变。
+   */
+  onPullDownRefresh() {
+    if (!this.data.id) {
+      wx.stopPullDownRefresh();
+      return;
+    }
+    this.load(this.data.id, { silent: true, done: () => wx.stopPullDownRefresh() });
   },
 
   /**

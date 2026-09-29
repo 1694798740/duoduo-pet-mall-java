@@ -117,6 +117,7 @@ public final class ProductDtos {
             String auditStatus,
             String auditReason,
             int viewCount,
+            int wantCount,
             String createdAt
     ) {
     }
@@ -276,7 +277,10 @@ public final class ProductDtos {
             String cover,
             String species,
             String breed,
+            /** 浏览次数：页面每被打开或刷新一次 +1（同一人可累加） */
             int viewCount,
+            /** 想要人数：按咨询行为去重统计（同一买家对同一闲置只计 1 次）—— 与 viewCount 是不同口径 */
+            int wantCount,
             Long sellerId
     ) {
     }
@@ -317,6 +321,7 @@ public final class ProductDtos {
             String auditStatus,
             String auditReason,
             int viewCount,
+            int wantCount,
             String createdAt
     ) {
     }
@@ -329,6 +334,20 @@ public final class ProductDtos {
      * <b>内部接口</b>：落在 {@code /api/listings/internal/**}，由 InternalTokenFilter
      * 校验 {@code X-Internal-Token}（带出 sellerId 属内部口径，不能匿名枚举）。
      */
+    /**
+     * 「想要」上报结果（第五十四轮，服务间）。
+     *
+     * <p>{@code counted}：{@code true} = 这位买家是第一次咨询，计数已 +1；
+     * {@code false} = 已在册（同一买家对同一闲置只记一次），本次未计数。
+     *
+     * <p>调用方<b>不需要</b>据此改变用户可见行为（消息照发）—— 它的价值在于
+     * 给联调与自动化断言一个明确的可判定返回值，而不是让调用方去猜「到底计没计」。
+     */
+    public record WantResult(
+            boolean counted
+    ) {
+    }
+
     public record InternalListingView(
             Long id,
             String title,

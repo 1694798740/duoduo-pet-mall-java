@@ -248,50 +248,85 @@ function readWxss(relPath) {
   return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null;
 }
 
-const NOWRAP_TARGETS = [
-  { file: 'app.wxss', sel: 'btn', why: '按钮基类' },
-  { file: 'app.wxss', sel: 'btn-mini', why: '小按钮基类' },
-];
-for (const t of NOWRAP_TARGETS) {
-  const src = readWxss(t.file);
-  if (src === null) continue;
-  const block = cssBlock(src, t.sel);
-  if (block === null) {
-    warnings.push(`[按钮换行] ${t.file} 未找到 .${t.sel} 规则块，无法校验「禁止换行」约定`);
-    continue;
-  }
-  if (!/white-space\s*:\s*nowrap/.test(block)) {
-    errors.push(
-      `[按钮换行] ${t.file} 的 .${t.sel}（${t.why}）缺少 white-space:nowrap —— ` +
-        `长文案按钮会折成两行，按钮高度忽大忽小`
-    );
+/**
+ * 剥掉 CSS 注释。
+ *
+ * <p><b>不剥会出假阴性</b>（第五十四轮实测踩到）：注释里常常写出声明本身的字面形式
+ * （例如「由 height 定高、line-height:1 让文字不撑行」「★ align-items:center 是必须的」），
+ * 于是规则在这些**注释文本**上匹配成功 —— 声明真的被删掉了，检查却报「没问题」。
+ * 这类假阴性比不检查更危险：它给出的是「已验证」的错觉。
+ */
+function stripCssComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/** 通用声明校验：指定选择器块必须含某声明（找不到块→告警；块在但缺声明→error） */
+function requireDecl(targets, re, label, whyItMatters) {
+  for (const t of targets) {
+    const src = readWxss(t.file);
+    if (src === null) continue;
+    const block = cssBlock(src, t.sel);
+    if (block === null) {
+      warnings.push(`[布局约定] ${t.file} 未找到 .${t.sel} 规则块，无法校验${label}`);
+      continue;
+    }
+    if (!re.test(stripCssComments(block))) {
+      errors.push(
+        `[布局约定] ${t.file} 的 .${t.sel}（${t.why}）缺少${label} —— ${whyItMatters}`
+      );
+    }
   }
 }
 
-// 横向排布中必须「不被压缩」的成员：写死 flex:none，否则被容器挤窄后文字折行
-const NOFLEX_TARGETS = [
-  { file: 'pages/product/product.wxss', sel: 'footer-share', why: '详情页底部工具按钮' },
-  { file: 'pages/flea-detail/flea-detail.wxss', sel: 'fd-foot-buy', why: '闲置详情购买按钮' },
-  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-filter', why: '我的闲置筛选标签' },
-  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-add', why: '我的闲置发布按钮' },
-  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-btn', why: '我的闲置操作按钮' },
-  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-badge', why: '状态徽章' },
-];
-for (const t of NOFLEX_TARGETS) {
-  const src = readWxss(t.file);
-  if (src === null) continue;
-  const block = cssBlock(src, t.sel);
-  if (block === null) {
-    warnings.push(`[按钮换行] ${t.file} 未找到 .${t.sel} 规则块，无法校验 flex:none 约定`);
-    continue;
-  }
-  if (!/flex\s*:\s*none/.test(block)) {
-    errors.push(
-      `[按钮换行] ${t.file} 的 .${t.sel}（${t.why}）缺少 flex:none —— ` +
-        `横向排布时会被挤窄导致文字折行`
-    );
-  }
-}
+// ① 按钮基类必须禁止换行（否则长文案折两行、按钮高度忽大忽小）
+requireDecl(
+  [
+    { file: 'app.wxss', sel: 'btn', why: '按钮基类' },
+    { file: 'app.wxss', sel: 'btn-mini', why: '小按钮基类' },
+  ],
+  /white-space\s*:\s*nowrap/,
+  'white-space:nowrap',
+  '长文案按钮会折成两行，按钮高度忽大忽小'
+);
+
+// ② 横向排布成员必须「不被压缩」（写死 flex:none；否则被容器挤窄 → 折行 → 行高不一）
+requireDecl(
+  [
+    { file: 'pages/product/product.wxss', sel: 'footer-share', why: '详情页底部工具按钮' },
+    { file: 'pages/flea-detail/flea-detail.wxss', sel: 'fd-foot-buy', why: '闲置详情购买按钮' },
+    { file: 'pages/flea-market/flea-market.wxss', sel: 'fm-chip', why: '跳蚤市场筛选胶囊' },
+    { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-filter', why: '我的闲置筛选标签' },
+    { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-add', why: '我的闲置发布按钮' },
+    { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-btn', why: '我的闲置操作按钮' },
+    { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-badge', why: '状态徽章' },
+  ],
+  /flex\s*:\s*none/,
+  'flex:none',
+  '横向排布时会被挤窄导致文字折行'
+);
+
+// ③ 胶囊三项定高约定（第五十四轮）：
+//    用户截图里「背景框比文字大一圈」，根因是 scroll-view 内的 flex 子项**默认按容器高拉伸**，
+//    加上行高额外撑高、圆角大于半高，就成了「胖椭圆」。三条缺一不可 —— 且都不体现在 JS 里，
+//    删掉任何一条都不会有编译或运行报错，只会让视觉悄悄变糟，故必须静态守住。
+requireDecl(
+  [{ file: 'pages/flea-market/flea-market.wxss', sel: 'fm-chip', why: '跳蚤市场筛选胶囊' }],
+  /height\s*:\s*\d/,
+  '显式 height',
+  '没有固定高度就会随行高与容器拉伸变化，背景框大于文字'
+);
+requireDecl(
+  [{ file: 'pages/flea-market/flea-market.wxss', sel: 'fm-chip', why: '跳蚤市场筛选胶囊' }],
+  /line-height\s*:\s*1\b/,
+  'line-height:1',
+  '行高会额外撑高背景框，使胶囊不贴合文字'
+);
+requireDecl(
+  [{ file: 'pages/flea-market/flea-market.wxss', sel: 'fm-chips', why: '跳蚤市场横排筛选条' }],
+  /align-items\s*:\s*center/,
+  'align-items:center',
+  'scroll-view 子项默认按容器高拉伸，胶囊会被撑大且各排高度不一'
+);
 
 // ---------- 输出 ----------
 const rel = (s) => s.replace(/\\/g, '/');

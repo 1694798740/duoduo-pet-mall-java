@@ -2,5 +2,7 @@
   "navigationBarTitleText": "闲置详情",
   "navigationBarBackgroundColor": "#4f6ef7",
   "navigationBarTextStyle": "white",
-  "backgroundColor": "#f5f6fa"
+  "backgroundColor": "#f5f6fa",
+  "backgroundTextStyle": "dark",
+  "enablePullDownRefresh": true
 }

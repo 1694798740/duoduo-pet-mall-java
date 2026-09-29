@@ -93,8 +93,11 @@
           <text class="fm-price">¥{{item.priceText}}</text>
           <text class="fm-original" wx:if="{{item.originalText}}">¥{{item.originalText}}</text>
         </view>
+        <!-- 两个口径分开显示（第五十四轮）：「次浏览」= 页面被打开/刷新的次数（同一人可累加）；
+             「人想要」= 为此咨询过的买家数（按人去重）。混为一谈会把「路过看一眼」当成购买意向 -->
         <view class="fm-foot">
-          <text class="fm-views">{{item.viewCount}} 人看过</text>
+          <text class="fm-views">{{item.viewCount}} 次浏览</text>
+          <text class="fm-wants">{{item.wantCount}} 人想要</text>
         </view>
       </view>
     </view>

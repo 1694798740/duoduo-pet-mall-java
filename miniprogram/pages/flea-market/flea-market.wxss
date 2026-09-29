@@ -71,18 +71,29 @@
 .fm-filter { padding: 6rpx 0 0; }
 .fm-chips {
   display: flex;
+  /* ★ align-items:center 是必须的（第五十四轮修）：scroll-view 的子项默认按容器高拉伸，
+     没有它 chip 会被撑成「胖胶囊」且各排高度不一（用户截图里背景框明显大于文字就是这个原因） */
+  align-items: center;
   gap: 12rpx;
   padding: 4rpx 24rpx;
   white-space: nowrap;
 }
 .fm-chips-sort { padding-top: 10rpx; }
 .fm-chip {
-  flex: none;
-  padding: 10rpx 24rpx;
+  flex: none; /* 不许被压缩：压缩会让文字折行、胶囊高矮不一 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 高度与文字尺寸解耦：由 height 定高、line-height:1 让文字不额外撑行，
+     这样胶囊永远贴合文字（上下各留 12rpx），不会随字号/行高忽大忽小 */
+  height: 48rpx;
+  padding: 0 20rpx;
   background: var(--card);
   color: var(--text-2);
-  border-radius: 30rpx;
-  font-size: 25rpx;
+  border-radius: 24rpx; /* = height/2，是标准胶囊；圆角大于半高才会显成「胖椭圆」 */
+  font-size: 24rpx;
+  line-height: 1;
+  white-space: nowrap;
 }
 .fm-chip-on {
   background: var(--brand-weak);
@@ -146,8 +157,10 @@
   font-size: 24rpx;
   text-decoration: line-through;
 }
-.fm-foot { margin-top: 8rpx; }
+/* 两个计数并列（第五十四轮）：浏览 = 打开/刷新次数（可累加）；想要 = 按咨询去重的人数 */
+.fm-foot { margin-top: 8rpx; display: flex; align-items: center; gap: 16rpx; }
 .fm-views { font-size: 22rpx; color: var(--text-3); }
+.fm-wants { font-size: 22rpx; color: var(--accent); }
 
 /* 状态 */
 .fm-state {

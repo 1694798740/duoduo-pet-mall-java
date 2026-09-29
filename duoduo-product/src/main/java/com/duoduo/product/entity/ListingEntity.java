@@ -40,7 +40,10 @@ public class ListingEntity {
     private String auditReason;
     /** 审核时间 */
     private LocalDateTime auditAt;
+    /** 浏览次数：页面每被打开或刷新一次 +1（同一人可累加） */
     private Integer viewCount;
+    /** 想要人数：按咨询行为去重统计（同一买家对同一闲置只计 1 次），与 viewCount 是两个口径 */
+    private Integer wantCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -178,6 +181,14 @@ public class ListingEntity {
 
     public void setViewCount(Integer viewCount) {
         this.viewCount = viewCount;
+    }
+
+    public Integer getWantCount() {
+        return wantCount;
+    }
+
+    public void setWantCount(Integer wantCount) {
+        this.wantCount = wantCount;
     }
 
     public LocalDateTime getCreatedAt() {

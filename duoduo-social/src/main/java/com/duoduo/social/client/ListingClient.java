@@ -2,8 +2,11 @@ package com.duoduo.social.client;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.social.client.dto.ListingCardBrief;
+import com.duoduo.social.client.dto.WantResult;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
@@ -23,4 +26,18 @@ public interface ListingClient {
 
     @GetMapping("/internal/cards")
     ApiResponse<List<ListingCardBrief>> cards(@RequestParam("ids") String listingIds);
+
+    /**
+     * 「想要」上报（第五十四轮）：买家首次向闲置卖家发出咨询消息时计入 1 人。
+     *
+     * <p>幂等由商品域唯一键保证：同一买家对同一闲置重复上报返回 {@code counted=false}，
+     * 不报错也不重复计数 —— 所以这里可以放心地在每次 LISTING 咨询时调用。
+     *
+     * <p>调用是 <b>best-effort</b>：失败只记日志（见 {@code MessageService#markWantQuietly}）。
+     * 消息本身已经落库，为一个附属统计把整次发送判成失败，用户会看到「发送失败」
+     * 但消息其实已经发出去了 —— 那比计数不准更难排查。
+     */
+    @PostMapping("/internal/{id}/want")
+    ApiResponse<WantResult> markWant(@PathVariable("id") Long listingId,
+                                     @RequestParam("buyerId") Long buyerId);
 }

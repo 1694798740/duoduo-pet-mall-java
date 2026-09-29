@@ -1,5 +1,5 @@
 <!-- 通知中心（第五十轮）：tabBar 居中入口；数据 = 定向通知 + 全站公告（服务端合并为一个视图） -->
-<nav-bar title="通知" msg="{{false}}" loading="{{loading}}" />
+<nav-bar title="通知" loading="{{loading}}" />
 
 <!-- 未登录：通知是收件人数据，需登录后查看 -->
 <view wx:if="{{!logged}}" class="empty">

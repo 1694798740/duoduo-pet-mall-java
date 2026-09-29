@@ -33,7 +33,7 @@
 
         <view class="fmine-price-row">
           <text class="fmine-price">¥{{item.priceText}}</text>
-          <text class="fmine-views">{{item.viewCount}} 人看过</text>
+          <text class="fmine-stat">{{item.viewCount}} 次浏览 · {{item.wantCount}} 人想要</text>
         </view>
 
         <!-- 驳回原因：不给原因，卖家只能猜着改 -->

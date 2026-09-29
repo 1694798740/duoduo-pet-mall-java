@@ -1,4 +1,4 @@
-<nav-bar title="登录" back="{{true}}" msg="{{false}}" />
+<nav-bar title="登录" back="{{true}}" />
 
 <view class="login-wrap">
   <view class="card">

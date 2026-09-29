@@ -13,6 +13,8 @@
   text-decoration: line-through;
 }
 .fd-views { margin-left: auto; font-size: 23rpx; color: var(--text-3); }
+/* 「想要」与「浏览」量级意义不同（一个是有意向的人、一个是打开的次数），用强调色区分 */
+.fd-wants { font-size: 23rpx; color: var(--accent); }
 
 .fd-title {
   margin-top: 16rpx;

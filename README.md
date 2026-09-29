@@ -4,6 +4,32 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R54（2026-09-29，用户真机验收发现）** — **成色筛选胶囊框大于文字 / 导航栏残留冗余通知入口 / 「浏览」与「想要」两个计数口径被混成一个**。
+
+**① 成色筛选的胶囊背景框大于文字（纯样式问题）**
+- **根因（`scroll-view` 内 flex 子项默认按容器高拉伸）**：`.fm-chip` 原来只有 `padding` 与 `border-radius`，**没有显式高度、也没定 `line-height`** —— 高度由字号 + 内边距撑出；而 `.fm-chips` 是 `display:flex` 且落在 `scroll-view` 里，flex 子项默认 `align-items:stretch` 会被拉伸到与容器等高 → **背景框比文字高出一截，且各排高矮不一**（用户截图里「全部成色 / 全新 / 九成新 / 良好可用」宽窄与高矮都不统一，就是这个原因）；圆角大于半高时视觉上还会从胶囊退化成「胖椭圆」。
+- **修改位置**：`miniprogram/pages/flea-market/flea-market.wxss` —— `.fm-chips` 加 `align-items: center`（**关键：阻止子项按容器高拉伸**）；`.fm-chip` 改为**显式定高**（`height: 48rpx`）+ `line-height: 1`（高度与字号解耦，字号再变框不变）+ `flex: none`（不被压缩、不折行）+ `display:inline-flex; align-items:center; justify-content:center` + `padding: 0 20rpx` + `border-radius: 24rpx`（**恰好等于半高，两端是半圆才是标准胶囊**）+ `white-space: nowrap`。
+- **★ 防复发**：`scripts/check-miniprogram.js` 规则 7 增补 3 条**胶囊约定**（error 级）—— `.fm-chip` 必须有显式 `height`、必须 `line-height:1`、`.fm-chips` 必须 `align-items:center`；并用「故意删掉」反向验证，3 处全部命中。
+
+**② 导航栏右上角残留冗余通知图标**
+- **根因（同一功能有两个入口）**：`components/nav-bar` 内置了一个右上角消息图标（`nb-msg`，💬），点击 `navigateTo` 到 `/pages/notification/notification` —— 而该页**已经是 tabBar 的居中一项**（R50 重排后）。两个入口指向同一页面，用户会以为是两个不同功能。
+- **修改位置**：`components/nav-bar/nav-bar.wxml` 删除 `.nb-msg` 图标块（`nb-right` 只留 `<slot name="right">` 插槽）、`nav-bar.js` 删 `msg` 属性与 `goNotice()` 方法、`nav-bar.wxss` 删 `.nb-msg` / `.nb-msg-hover` / `.nb-msg-icon` 三条规则；`pages/chat`、`pages/login`、`pages/notification` 三处 wxml 去掉 `msg="{{false}}"` 传参。
+- **★ 只删导航栏那个，tabBar 入口必须保留**：删掉 tabBar 项会让通知页**再也进不去**（且不会报任何编译错误）。故新增页面级单测 `scripts/r54-miniprogram-copy-test.js` 的 A8 断言「tabBar 通知入口仍在」，并做反向验证（故意删掉 tabBar 项时检查确实报错）。
+
+**③ 「多少人想要」与「浏览量」是两件事，此前被混成一个**
+- **用户口径**：① **浏览** = 页面每被打开或刷新一次就 +1，**同一用户多次查看可累加**；② **想要** = 只按**咨询行为**统计，买家**首次**向卖家发咨询消息计入 1 人，同一买家后续再发消息不重复计数（**每位买家只记 1 次**）。
+- **根因**：卡片上只显示一个 `viewCount`，文案却写作「N 人看过」—— 把可累加的**次数**说成**人数**；而「想要」根本没有独立的数据结构，也就不存在去重口径。
+- **修改位置（后端）**：
+  - **DDL**：`t_listing` 新增 `want_count INT NOT NULL DEFAULT 0`；新增**去重表** `t_listing_want (listing_id, buyer_id)`，**主键就是 `(listing_id, buyer_id)`**（增量脚本 `docs/sql/incremental/18-r54-listing-want.sql`，全量 DDL `docs/sql/02-duoduo-product.sql` 同步）。
+  - **★ 去重必须落在数据库唯一键**：应用层「先查有没有、没有再加一」在并发下会双写；`ListingMapper.insertWantIgnore`（`INSERT IGNORE`）**只有真插进去（返回 1）才给 `want_count` 加 1**，天然幂等。`ListingService.markWant(listingId, buyerId)` 会先校验闲置存在（去重表无外键，防孤儿行），**重复上报返回 `false` 而不报错**。
+  - **新端点**：`POST /api/listings/internal/{id}/want?buyerId=`（product 域，内部凭据保护）。**用 POST 而不是 GET**：这是一次**写**（登记 + 计数），GET 会被预取 / 重试 / 爬虫无意触发，把计数刷歪且难以归因。
+  - **social 域**：`MessageService.send()` 在消息落库后、且 `bizType=LISTING` 时 best-effort 调 `markWant` —— **异常只 `log.warn`**：消息已经发出去、真实状态就是「已发送」，为一个附属统计把发送判成失败，会让用户看到与真实状态相反的提示。
+  - **三处出参**（`ListingCard` / `ListingMineView` / `ListingOwnerView`）统一补 `wantCount`。
+- **修改位置（前端）**：`pages/flea-market`、`pages/flea-detail`、`pages/flea-mine` 三处文案改为「**N 次浏览**」+「**N 人想要**」（两个计数并列展示）；`pages/flea-detail/flea-detail.json` 开启 `enablePullDownRefresh` + `backgroundTextStyle: dark`，`flea-detail.js` 新增 `onPullDownRefresh()` 走**静默重拉**（不切加载态、不闪屏、无 id 不发请求）→ 让「**刷新也算一次浏览**」真正落地。
+
+**验证**：新增 `scripts/r54-listing-want-smoke.py` **26 PASS / 0 FAIL**（W 想要 20 项：初始 0 / 首次咨询 +1 / **同一买家重复咨询仍为 1** / **同会话 TEXT 不计** / 不同买家各计一次 / 详情·我的闲置·公开列表三处一致 / 内部端点无凭据 403 / 首次 `counted=true`、重复 `counted=false` 幂等 / 不存在闲置 404；V 浏览 4 项：**逐次 1→2→3 可累加** / 咨询不增浏览）；新增 `scripts/r54-miniprogram-copy-test.js` **23 PASS / 0 FAIL**（A 通知入口去重 9 项含 tabBar 入口仍在；B 计数文案 6 项；C 下拉刷新行为 8 项含「刷新重新请求详情」「静默不切加载态」「无 id 不发请求」）。回归全绿：`r53b` 26/26、`r53` 28/28、`r52` 57/57、`r53-hotfix-chat` 17/17、`api-id-payload-test.js` 19/19、`flea-mine-filter-test.js` 42/42、`short-time-test.js` 12/12（Asia/Shanghai）、静态自检 0 错 0 警；product / social 编译 0 错、镜像 Built、双容器 healthy；DDL 已落库并校验（`want_count int 0` + `t_listing_want` 主键 `(listing_id, buyer_id)`）。
+**★ 本轮最重要的一条工程教训（假阴性比不检查更危险）**：规则 7 首版用正则匹配 CSS 声明时，**匹配到了注释里写出的同名声明** —— `.fm-chip` 的注释里写着「由 height 定高、line-height:1 让文字不额外撑行」、`.fm-chips` 的注释里写着「★ align-items:center 是必须的」，于是**故意把这几条真声明删掉后检查依然报 0 错**，给出「已验证」的假象。修法：新增 `stripCssComments()`，**先剥 CSS 注释再匹配**；重跑反向验证，3 处全部命中。
+
 **R53 热修二（2026-09-29，用户真机验收发现）** — **按钮文字折行 / 浏览量恒为 0 / 一个闲置同时出现在两个状态标签下**。
 
 **① 按钮文字折行、尺寸忽大忽小（纯样式问题）**
@@ -552,13 +578,14 @@ duoduo-pet-mall-java/
 | GET | `/api/products/{spuId}` | 商品详情：SKU、适用属性聚合、同类推荐 | 免 |
 | GET | `/api/products/skus/batch?ids=2001,2002` | **批量 SKU 采购视图**（供交易服务调用；一次取几十个，避免 N 次跨服务调用） | 免 |
 | POST | `/api/products/skus/stock/{freeze,release,deduct,restock}` | **库存写接口**（冻结 / 释放 / 扣减 / 退货入库），见下 | **内部凭据** |
-| GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐。**详情每次访问浏览量 +1**（数据库侧原子自增，响应即最新值；卖家看自己的走 `mine/{id}` 不计） | 免 |
+| GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐。**详情每次访问浏览量 +1**（数据库侧原子自增，响应即最新值；卖家看自己的走 `mine/{id}` 不计）。**卡片的两个计数口径不同**：`viewCount` = 浏览次数（打开/下拉刷新各 +1，同一用户可累加）；`wantCount` = 想要人数（买家首次咨询时 +1，按买家去重，每人只记一次） | 免 |
 | POST | `/api/listings` | **发布闲置**（落 `PENDING` 待审；需实名；`sellerId`/`status`/`auditStatus` 概不接受客户端传值） | 需登录 |
 | GET | `/api/listings/mine/list` | **我的发布**（`status` 与 `auditStatus` 两维筛选：`ON_SALE`/`OFF_SHELF`/`SOLD` × `PENDING`/`APPROVED`/`REJECTED`，含驳回原因；`auditStatus` 非法值 400）。**服务端两维正交**，小程序 5 个标签按**互斥单状态**拼参（交易三标签必须同时带 `auditStatus=APPROVED`，否则待审件会同时出现在「审核中」与「在售」——见 R53 热修二） | 需登录 |
 | GET | `/api/listings/mine/{id}` | **卖家视角详情**（`ListingOwnerView` 全集字段含审核原因；未过审也可读自己条目；非本人 403） | 需登录 |
 | POST | `/api/listings/{id}/resubmit` | **重新提审**（仅 `REJECTED` 可调，PENDING/APPROVED 均 422；实名与违禁词复检；成功后回 `PENDING` + `ON_SALE`，清空驳回原因） | 需登录 |
 | POST | `/api/listings/{id}/status` | **上架 / 下架**（`action=ON_SALE`/`OFF_SHELF`；幂等开关；上架要求已过审；他人闲置 403、不存在 404） | 需登录 |
 | GET | `/api/listings/internal/cards` | **闲置卡批量视图**（供社交域取 `sellerId` 等事实；`X-Internal-Token` 保护） | 内部凭据 |
+| POST | `/api/listings/internal/{id}/want?buyerId=` | **「想要」上报**（供社交域在买家**首次**发咨询消息时调用；`INSERT IGNORE` 去重表，**重复上报返回 `counted=false` 且不重复计数**；闲置不存在 404。**刻意用 POST**：这是写操作，GET 会被预取/重试刷歪计数） | 内部凭据 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
 
 `GET /api/products` 查询参数：

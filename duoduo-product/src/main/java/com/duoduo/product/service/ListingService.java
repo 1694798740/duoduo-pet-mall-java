@@ -152,7 +152,11 @@ public class ListingService {
     /**
      * 闲置公开详情（免登可读）。
      *
-     * <p><b>浏览量在此自增</b>（第五十三轮热修）：这个方法是「对外可见详情」的唯一出口 ——
+     * <p><b>浏览量（{@code view_count}）在此自增</b>（第五十三轮热修）：
+     * 口径是「<b>页面每被打开或刷新一次即 +1，同一用户多次查看可累加</b>」——
+     * 所以它是「浏览次数」而不是「看过的人次去重」。想要「按人去重的意向人数」走
+     * {@link #markWant(Long, Long)}（{@code want_count}），两者不可互相顶替。
+     * 这个方法是「对外可见详情」的唯一出口 ——
      * 未过审 / 已下架 / 已售的条目在上面已 404 抛错，不会走到这里，因此计数天然不脏；
      * 卖家视角详情走 {@link #ownerDetail(Long)}（另一个方法），自己的后台查看不计数。
      * 详情接口被别处复用会虚增计数，故调用方只允许 {@code GET /api/listings/{id}}。
@@ -186,6 +190,47 @@ public class ListingService {
                 listing.getDescription(),
                 images,
                 productService.byCategory(listing.getCategoryId(), null, 4));
+    }
+
+    /**
+     * 「想要」上报（第五十四轮）：社交域在买家**首次**向该闲置卖家发出咨询消息时调用。
+     *
+     * <p>与 {@link #detail(Long)} 的浏览量是<b>两个口径</b>，不要混：
+     * <ul>
+     *   <li>{@code view_count}（浏览次数）：页面每被打开或刷新一次 +1，<b>同一人可累加</b>；</li>
+     *   <li>{@code want_count}（想要人数）：按<b>咨询行为</b>统计，<b>同一买家对同一闲置只计 1 次</b>。</li>
+     * </ul>
+     * 混用的后果很具体：拿浏览量当「想要」，卖家会把「路过看一眼」当成购买意向，据此备货或让价都会失真。
+     *
+     * <p>三个刻意的设计：
+     * <ol>
+     *   <li><b>去重交给数据库唯一键</b>（{@link ListingMapper#insertWantIgnore}）：只有真的插进去
+     *       （返回 1）才给 {@code want_count} 加一。同一买家反复咨询、反复点「我想要」都不会重复计数 ——
+     *       应用层「先查后写」在并发下会双写，这里不给它留口子。</li>
+     *   <li><b>重复上报返回 false 而不是报错</b>：调用方是「发消息」主链路，
+     *       统计去重这种附属逻辑不该让用户的消息发不出去。</li>
+     *   <li><b>先校验闲置存在</b>：去重表没有外键，不校验就会攒下指向幽灵闲置的孤儿行，
+     *       而这类脏数据事后极难排查（统计口径会永久偏大且看不出原因）。</li>
+     * </ol>
+     *
+     * @return {@code true} = 本次是新增（计数 +1）；{@code false} = 该买家已在册（未计数）
+     */
+    public boolean markWant(Long listingId, Long buyerId) {
+        if (listingId == null || buyerId == null) {
+            throw BizException.validation("listingId 与 buyerId 均不能为空");
+        }
+        Long exists = listingMapper.selectCount(
+                new LambdaQueryWrapper<ListingEntity>().eq(ListingEntity::getId, listingId));
+        if (exists == null || exists == 0) {
+            throw BizException.notFound("闲置商品");
+        }
+        int inserted = listingMapper.insertWantIgnore(listingId, buyerId, LocalDateTime.now(ZoneOffset.UTC));
+        if (inserted <= 0) {
+            return false;
+        }
+        listingMapper.incrementWantCount(listingId);
+        log.info("闲置 {} 新增一位想要买家 {}（首次咨询）", listingId, buyerId);
+        return true;
     }
 
     /** 首页「新鲜闲置」用：最近审核通过的若干条 */
@@ -244,6 +289,7 @@ public class ListingService {
         entity.setStatus(STATUS_ON_SALE);
         entity.setAuditStatus(AUDIT_PENDING);
         entity.setViewCount(0);
+        entity.setWantCount(0);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         listingMapper.insert(entity);
@@ -584,6 +630,7 @@ public class ListingService {
                 listing.getAuditStatus(),
                 listing.getAuditReason(),
                 listing.getViewCount() == null ? 0 : listing.getViewCount(),
+                listing.getWantCount() == null ? 0 : listing.getWantCount(),
                 listing.getCreatedAt() == null ? null
                         : listing.getCreatedAt().toInstant(ZoneOffset.UTC).toString());
     }
@@ -607,6 +654,7 @@ public class ListingService {
                 listing.getAuditStatus(),
                 listing.getAuditReason(),
                 listing.getViewCount() == null ? 0 : listing.getViewCount(),
+                listing.getWantCount() == null ? 0 : listing.getWantCount(),
                 listing.getCreatedAt() == null ? null
                         : listing.getCreatedAt().toInstant(ZoneOffset.UTC).toString());
     }
@@ -664,6 +712,7 @@ public class ListingService {
                 listing.getSpecies(),
                 listing.getBreed(),
                 listing.getViewCount() == null ? 0 : listing.getViewCount(),
+                listing.getWantCount() == null ? 0 : listing.getWantCount(),
                 listing.getSellerId());
     }
 

@@ -200,7 +200,32 @@ public class MessageService {
         messageMapper.insert(entity);
         log.info("用户 {} 向用户 {} 发送 {} 消息（会话 {}）", userId, receiverId, bizType, conversationId);
 
+        // 「想要」上报（第五十四轮）：只有 LISTING（= 向闲置卖家发出的咨询）计入想要人数。
+        //  * 为什么只认 LISTING：ASK/product 是商城商品咨询、TEXT 是会话内闲聊 ——
+        //    只有「点了我想要」这一次才是明确的意向表达。同会话后续消息不会再计，
+        //    且去重键在商品域，即使重复调用也只记一次。
+        //  * 为什么放在 insert 之后：消息先落库再计意向，避免「统计成功、消息失败」的假象。
+        if (SocialDtos.BIZ_LISTING.equals(bizType) && bizId != null) {
+            markWantQuietly(bizId, userId);
+        }
+
         return toView(entity, userId, cardView(bizType, bizId, product, listing));
+    }
+
+    /**
+     * 「想要」上报（第五十四轮）：best-effort，失败只记日志。
+     *
+     * <p>这里刻意<b>吞掉</b>异常，理由不是「省事」而是优先级：
+     * 消息此时已经落库并即将返回成功，若因为一个附属统计把整次发送判为失败，
+     * 用户看到的「发送失败」与真实状态相反（消息其实发出去了）—— 那比计数不准更难排查。
+     * 商品域挂了也不影响聊天，这符合「聊天是主链路、统计是附属」的取舍。
+     */
+    private void markWantQuietly(Long listingId, Long buyerId) {
+        try {
+            listingClient.markWant(listingId, buyerId);
+        } catch (Exception e) {
+            log.warn("想要人数上报失败 listingId={} buyerId={}（不影响消息发送）", listingId, buyerId, e);
+        }
     }
 
     // ---------------- 读：会话列表 / 会话消息 / 已读 ----------------

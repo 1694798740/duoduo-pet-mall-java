@@ -109,7 +109,8 @@
   padding-top: 12rpx;
 }
 .fmine-price { color: var(--accent); font-size: 32rpx; font-weight: 700; }
-.fmine-views { font-size: 22rpx; color: var(--text-3); }
+/* 浏览与想要并列（第五十四轮）：卖家看到的「想要」= 有多少买家为它咨询过 */
+.fmine-stat { font-size: 22rpx; color: var(--text-3); }
 
 .fmine-reason {
   margin-top: 10rpx;

@@ -1,4 +1,4 @@
-<nav-bar title="聊天" back="{{true}}" msg="{{false}}" />
+<nav-bar title="聊天" back="{{true}}" />
 
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
