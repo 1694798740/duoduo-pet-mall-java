@@ -142,6 +142,14 @@
         bindinput="onShareContentInput"
         maxlength="500"
       />
+      <!-- 话题（第五十六轮）：最多 2 个，空格分隔；不填也能发布 -->
+      <input
+        class="sp-input sp-tags"
+        placeholder="加话题（选填，最多 2 个，空格分隔，不用打 #）"
+        value="{{shareTopics}}"
+        bindinput="onShareTopicsInput"
+        maxlength="70"
+      />
       <view class="sp-actions">
         <button class="btn btn-plain sp-btn" open-type="share" bindtap="onForwardTap">
           转发给好友

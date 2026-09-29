@@ -27,7 +27,9 @@
     "pages/flea-detail/flea-detail",
     "pages/flea-publish/flea-publish",
     "pages/flea-mine/flea-mine",
-    "pages/realname/realname"
+    "pages/realname/realname",
+    "pages/share-mine/share-mine",
+    "pages/share-topic/share-topic"
   ],
   "window": {
     "navigationBarBackgroundColor": "#4f6ef7",

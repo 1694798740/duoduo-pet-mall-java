@@ -1,0 +1,134 @@
+/* ── 我的分享（第五十六轮） ── */
+.sm-go { margin-top: 24rpx; }
+
+.sm-item { margin-bottom: 20rpx; }
+.sm-body { display: block; }
+.sm-meta { font-size: 24rpx; }
+.sm-content {
+  font-size: 28rpx;
+  line-height: 1.7;
+  margin-top: 10rpx;
+  word-break: break-all;
+}
+
+/* 话题胶囊：显式定高 + line-height:1 + 半径=半高；容器 align-items:center 防拉伸 */
+.sm-topics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 14rpx;
+}
+.sm-topic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 44rpx;
+  line-height: 1;
+  padding: 0 20rpx;
+  border-radius: 22rpx;
+  background: var(--brand-weak, #eef1ff);
+  color: var(--brand);
+  font-size: 23rpx;
+  white-space: nowrap;
+}
+
+.sm-product {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  margin-top: 18rpx;
+  padding: 16rpx;
+  background: var(--bg);
+  border-radius: 14rpx;
+}
+.sm-img {
+  width: 110rpx;
+  height: 110rpx;
+  border-radius: 12rpx;
+  background: #fff;
+  flex: none;
+}
+.sm-p-info { flex: 1; min-width: 0; }
+.sm-p-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-stats { font-size: 23rpx; margin-top: 14rpx; }
+
+/* 操作按钮：横排成员必须 flex:none，否则被压缩后文字折行（R53 热修二纪律） */
+.sm-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18rpx;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx solid var(--line);
+}
+.sm-op {
+  flex: none;
+  height: 60rpx;
+  line-height: 60rpx;
+  padding: 0 32rpx;
+  font-size: 26rpx;
+}
+.sm-op-danger { color: #e54d42; }
+
+.sm-end { text-align: center; padding: 20rpx 0; }
+
+/* ── 编辑弹层 ── */
+.sm-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 20, 28, 0.45);
+  z-index: 300;
+}
+.sm-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+.sm-panel-title { font-size: 32rpx; font-weight: 700; text-align: center; }
+.sm-panel-sub { font-size: 23rpx; text-align: center; margin-top: 8rpx; }
+.sm-panel-label { font-size: 24rpx; margin-top: 24rpx; }
+.sm-panel-input {
+  width: 100%;
+  height: 200rpx;
+  margin-top: 24rpx;
+  padding: 18rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+  background: var(--bg);
+}
+.sm-panel-tags {
+  width: 100%;
+  height: 76rpx;
+  margin-top: 12rpx;
+  padding: 0 18rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+  background: var(--bg);
+}
+.sm-panel-ph { color: var(--text-3); }
+.sm-panel-actions { display: flex; margin-top: 24rpx; }
+.sm-panel-btn { flex: 1; height: 80rpx; line-height: 80rpx; }
+.sm-panel-cancel {
+  text-align: center;
+  color: var(--text-3);
+  font-size: 26rpx;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--line);
+}

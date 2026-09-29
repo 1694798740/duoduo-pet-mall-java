@@ -87,6 +87,17 @@ public class GatewaySecurityProperties {
             // 与第四十六轮的 /{id}/repost 三类两段写路径都落不到这里，一律强制登录。
             "/api/shares/feed",
             "/api/shares/*",
+            // 话题（第五十六轮）：热门话题榜（/api/shares/topics，一段）已被上面的
+            // /api/shares/* 覆盖；话题聚合页是两段（/api/shares/topics/{name}），
+            // 单独放行这一条 —— 必须写 /topics/* 而不是 /*/*：
+            // 后者会把 /api/shares/{id}/edit、/delete、/report、/comments 四条**写路径**
+            // 一起放成匿名可调。这是本文件里最需要逐字核对的一类判断。
+            "/api/shares/topics/*",
+            // 评论列表（第五十六轮）：GET /api/shares/comments?shareId=（一段）已被 /api/shares/* 覆盖。
+            // 发表评论刻意留在两段路径 POST /api/shares/{id}/comments，
+            // 点评赞与举报同理（/comments/{id}/like|report，三段）—— 都不落进白名单。
+            // 若当初把列表写成 /{id}/comments，要放行它就得加 /api/shares/*/comments，
+            // 而那会连带放行匿名 POST 评论。路径形状本身就是这里的防线。
             // AI 导购（A9）：购物咨询本身就是「还没决定买不买」的场景，
             // 未登录访客先问两句再决定注册，是这个入口存在的意义 —— 强制登录等于把导购废掉。
             // 只放行 chat（对话）与 capabilities（前端据此决定按钮是否可点）两条精确只读路径；

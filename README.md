@@ -4,6 +4,44 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R56（2026-09-29，用户要求：优先「完善分享圈功能」）** — **评论+回复+评论点赞 / 关注流 / 删除·编辑自己的分享 + 举报（含运营处理台）/ 话题标签 #**。
+
+**① 评论（全仓此前「零实现」）**
+- 新增 `t_share_comment`（`parent_comment_id` 为 NULL = 一级评论，非 NULL = 回复）+ `t_share_comment_like`（复合主键防重）。**刻意只做二级** —— 二级以上要处理「回复谁的回复」的折叠与 @ 链路，属另一个量级。
+- 计数口径：`t_product_share.comment_count` **一级与回复都算**（与卡片上那个数字的语义一致）；发表 +1，运营下架评论时 `-(1 + 其下未删回复数)`。
+- **★ 评论列表用查询参数而不是 `/{id}/comments`**：网关白名单按**路径**匹配、**不区分 HTTP 方法**。列表若写成两段路径，要放行它就得加 `/api/shares/*/comments`，而那会**连带把「发表评论」放成匿名可调**（等于开放匿名 UGC 直写）。故：`GET /api/shares/comments?shareId=`（**一段**，落进既有白名单条目 → 匿名可读）+ `POST /api/shares/{id}/comments`（**两段** → 强制登录）。**路径形状本身就是这里的防线**，不是命名风格问题。
+- 发布后 best-effort 推通知（复用 R55 的生产者端点）：一级评论通知分享作者；回复通知被回复者，**并同时通知分享作者**（批量端点一次带两条）；三种不推：评论自己的分享、回复自己的评论、分享作者就是被回复者。
+
+**② 关注流**
+- 分享在履约库、关注关系在社交库 —— **跨域**。social 新增内部端点 `GET /api/socials/internal/following?userId=&limit=`（凭据保护、**只返回 id**、服务端再夹一次上限 500）；fulfilment 新增 `SocialClient`（`contextId = "socialFollowingIds"`，与本域既有的 `socialNoticePush` 必须区分）。
+- `GET /api/shares/feed?scope=FOLLOWING`。**未关注任何人时返回空列表，绝不退化成全站内容** —— 那会让用户以为自己关注的人发了一堆没看过的内容。
+- 社交域不可用时**显式报错**（「关注列表暂时获取不到，请稍后重试」）而不是静默空列表：空列表会让用户去检查自己的关注列表，然后找不到问题。
+
+**③ 删除 / 编辑 / 举报（含运营处理台）**
+- **★ 删除是软删**（`t_product_share.deleted_at`），两个具体原因：① 转发单的「原帖引用」是查询时按 `parent_share_id` 回查原帖行得到的 —— **物理删掉原帖，转发单的引用块会变空**（用户视角像页面坏了）；② 举报留痕与计数需要「这条内容曾经存在」。所有读路径一律带 `deleted_at IS NULL`。按用户选定口径：原帖删除后转发单仍在，引用块显示**「原内容已被作者删除」**（服务端把 `parentContent` 置 null + `parentDeleted=true`）。
+- 编辑**只能改文字与话题**（商品是发布时点的快照，改商品等于把这条分享换成另一件商品的评价 —— 那应该「删掉重发」）。`topics` 的**三态必须区分**：`null` = 不改 / `[]` = 清空 / 数组 = 替换 —— 混淆「不改」与「清空」会让用户**永远删不掉话题**（前端单测专门锁死这条）。
+- 举报：`t_share_report`（SHARE 与 COMMENT 合成一张表，处理流程完全一致），唯一键 `(target_type, target_id, reporter_id)` 兜住并发重复提交；理由必填、不能举报自己、重复 409。**运营处理台**（`/admin/share-reports`，后台第 8 个页签）：列表**直接显示被举报内容摘要**（服务端 `targetExcerpt`）——要运营逐条点开才知道在举报什么的话，这个入口迟早没人用；弹窗**默认结论为「举报不成立」**（一次误点不会把别人的内容删掉）；裁定成立才下架（软删 + 回退话题 / 评论计数）。
+- **明确不做**：自动判定（关键词 / 模型）与「被举报 N 次自动下架」—— 那需要误伤评估与申诉链路，是另一个量级的产品决策。
+
+**④ 话题标签 `#`**
+- `t_share_topic`（`name` 唯一 + `share_count`）+ `t_share_topic_rel`（主键即去重键）。发布 / 编辑最多 2 个；**服务端规范化是权威**：剥 `#`、去空白、去重、限长 30、非法名丢弃；**超上限是「截断」而不是「报错」**（用户多打一个词就发不出分享是糟糕体验）—— 故 DTO 上刻意**不加** `@Size(max = 2)`（注解会把截断变成 400，让服务层的截断逻辑永远不执行）。
+- 「查不到就建」用 **INSERT 撞唯一键再回查**，不用「先 SELECT 再 INSERT」：两个用户同时首发同一个话题时，先查后插会让其中一个拿到 500 —— 而「两人同时发同一个话题」本来就是正常行为。
+- 端点：`GET /api/shares/topics?limit=`（热门榜，公开）、`GET /api/shares/topics/{name}`（聚合页，公开，白名单**单独放行 `/api/shares/topics/*`**）。话题聚合用 **JOIN 一条 SQL** 而不是「先查关系表拿 id 再 `selectBatchIds`」：后者在「命中的分享有一部分已被删除」时这一页会少几条，分页页数越翻越诡异。
+
+**⑤ ★ 本轮抓到的三个真缺陷（都是探针/单测当场抓到，不是事后猜的）**
+1. **新计数字段漏进数字白名单**：`commentCount` / `replyCount` / `shareCount` 未列入 `LongToStringJacksonModule.NUMERIC_LONG_FIELDS` → 以**字符串**下发，前端比较退化成字典序（`"10" < "9"`），「话题按使用次数排序」直接排错。规律很稳定：**新增任何「前端会拿去比大小 / 加减」的计数字段，必须同时加进白名单**（同 R44 的 likeCount、同 R50 的 record 计数）。
+2. **DTO 注解与设计直接冲突**：`ShareCreateRequest.topics` 上的 `@Size(max = 2)` 会让「多带一个话题」变成 **400 整单失败**，与「截断而非报错」的设计矛盾 —— 服务层的截断逻辑因此**永远不被执行**（写得漂亮但不可达的代码）。
+3. **新建路径的回执缺昵称**：评论创建时把 briefs 传成了空表 → 回执里昵称是「用户3612…」这种长号，与随后重拉列表的显示不一致（用户视角是「刚发的评论显示错了」）。
+
+**验证**：
+- 新增 `scripts/r56-share-circle-smoke.py` **74 PASS / 0 FAIL**（A 话题 12 + B 评论与回复 15 + C 删除与编辑 18 + D 举报与运营处理 19 + E 关注流 7；含「原帖删除后转发单 `parentDeleted=true` 且不再下发原文」「关注流为空 ≠ 全站」「评论下架后 commentCount 回退」「非运营 403 / 重复处理 409」）。
+- 新增 `scripts/r56-share-comment-test.js` **74 PASS / 0 FAIL**（真实加载 `api.js` + 四个页面 js，桩掉 `wx.request` 断言**前端实际发出了什么**：编辑话题三态、评论/回复/举报请求体、路径形状、19 位 id 未被 `Number()` 破坏、五处胶囊四条齐备、`MiniProgramPages` 与 `app.json` 一一对应；含反向验证「改坏 line-height 能被抓出」）。
+- 新增 `scripts/e2e/share-report-ui-check.mjs` **24 PASS / 0 FAIL**（真实 Chromium 走运营处理台：列表显示摘要 / 弹窗默认**不**选中「下架」/ 说明必填 / 驳回后该行从「待处理」消失 / **驳回不误删内容** / 非运营看到准入提示；截图 `frontend/docs/screenshots/report_*.png`）。
+- **回归 614 项全过** —— 接口探针 385（r55 42 · r54 26 · r53b 26 · r53 28 · r53-hotfix-chat 17 · r52 57 · r50 18 · r49 15 · share-circle 39 · social 43）+ 前端单测 229（角标 59 · r54 文案 23 · r56 74 · 请求体精度 19 · 闲置筛选 42 · 时间换算 12）。
+- `scripts/check-miniprogram.js` **0 错误 / 0 告警**，并**修掉一处误报**：检查器原先靠一份硬编码别名表识别 `wx:for-item="tag"` 这类循环变量，漏一个就对**合法写法**报「字段可疑」；改为**从 WXML 里实际读出声明的别名**，并做两轮反向验证（裸标识符拼错仍能抓到 / 删掉声明后立刻重新报警 —— 证明确实是「读声明」而不是「一律放行」）。
+- 前端 `tsc --noEmit` 零错误、`vite build` 通过（84 模块）。
+- 9 容器健康。**改了共用模块 `duoduo-common-web`，8 个业务镜像全部重打**（R52 教训：只重建「改动的那个服务」会留下内嵌旧版 `common-web` 的容器），并解包校验产物里确实含新白名单字段。
+
 **R55（2026-09-29，用户要求：暂缓担保交易与微信一键登录，优先「完善通知功能」）** — **收到他人消息时的数字未读角标 + 首页卡片式弹窗；通知体系从「零生产者」补成完整链路**。
 
 **① 真正的缺口不是界面，是「没有生产者」**
@@ -465,7 +503,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十二套 1513 项接口断言 + 六套真实浏览器 UI 断言 244 项）
+### 端到端冒烟（二十二套 1513 项接口断言 + 七套真实浏览器 UI 断言 268 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
@@ -506,6 +544,7 @@ cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs     
 UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs                # 评价与晒单 20 项
 UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项（买家→卖家→运营整条链）
 UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
+UI_BASE=http://localhost:3000 node scripts/e2e/share-report-ui-check.mjs          # 举报处理台 24 项（运营视角：摘要可见 / 默认不下架 / 驳回不误删内容 / 非运营拦截）
 # 优惠券（A5）43 项：夹具先建、跑完再删（**SQL 由 PowerShell 执行，别放进 Node**，踩坑见 T-38）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\coupon-ui-fixture.ps1 -Action create
 UI_BASE=http://localhost:3000 node scripts/e2e/coupon-ui-check.mjs                 # 优惠券 43 项（未登录态 / 领券 / 券包 / 结算选券与费用口径 / 订单详情券码 / 取消退回 / 噪声）
@@ -550,7 +589,7 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 + 01~05 从零建库）与 incremental/（06~08 存量库增量，不进容器初始化目录，T-46）
-├── scripts/                    一键启动、冒烟测试（19 套接口断言 + 6 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
+├── scripts/                    一键启动、冒烟测试（22 套接口断言 + 7 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
 ├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
 ├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
@@ -891,6 +930,56 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 领券幂等 / 并发防超发 / 锁·解·核销 CAS / 折扣落交易域 / 生命周期闭环，另加公开只读边界、内部凭据 403、
 并发锁券、归属校验、门槛文案、券码非雪花、sweep 幂等、TTL 环境变量校验、运营建券准入、清理复原。
 前端 `/coupons`（领券中心 + 我的券包，**刻意不套 `RequireAuth`**）+ 结算页选券 + 订单详情展示优惠金额与券码。
+
+### 履约域：分享圈（`duoduo-fulfilment` `/api/shares`，R43 起 / R56 补全）
+
+分享圈是「带用户评价的商品口碑内容」，与商品评价同性质 —— **未登录也要能逛**，
+所以公开读与需登录写的分界线是这一块的核心设计，且**靠路径形状区分**
+（网关白名单按路径匹配、**不区分方法**，见 `GatewaySecurityProperties` 里的逐条注解）。
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/shares/feed?scope=` | 信息流；`scope=RECOMMEND`（默认）/ `FOLLOWING`（只看我关注的人，需登录） | **免登录**（RECOMMEND） |
+| GET | `/api/shares/topics?limit=` | 热门话题榜（发布页「大家都在聊」） | **免登录** |
+| GET | `/api/shares/topics/{name}` | 话题聚合页（该话题下的分享） | **免登录** |
+| GET | `/api/shares/comments?shareId=&parentId=` | 评论列表；`parentId` 省略 = 一级评论（带回复数），传值 = 该评论的回复 | **免登录** |
+| GET | `/api/shares/{id}` | 分享详情（分享落地页数据源） | **免登录** |
+| GET | `/api/shares/mine/list` | 我的分享（编辑 / 删除入口的数据源） | 需登录 |
+| POST | `/api/shares` | 发布（`spuId` + `content` + 最多 2 个 `topics`） | 需登录 |
+| POST | `/api/shares/{id}/repost` | 转发到分享圈（落一条以**我**为作者的新分享） | 需登录 |
+| POST | `/api/shares/{id}/edit` | 编辑自己的分享（**只改文字与话题**） | 需登录 |
+| POST | `/api/shares/{id}/delete` | 删除自己的分享（**软删**） | 需登录 |
+| POST | `/api/shares/{id}/like` · `/{id}/favorite` | 点赞 / 收藏 toggle | 需登录 |
+| POST | `/api/shares/{id}/report` | 举报分享 | 需登录 |
+| POST | `/api/shares/{id}/comments` | 发表评论 / 回复（`parentCommentId` 省略 = 一级评论） | 需登录 |
+| POST | `/api/shares/comments/{commentId}/like` | 评论点赞 toggle | 需登录 |
+| POST | `/api/shares/comments/{commentId}/report` | 举报评论 | 需登录 |
+
+**运营（平台管理后台，落在履约域）**：
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/admin/share-reports?status=` | 举报列表（带被举报内容摘要 `targetExcerpt`） | 运营 / 管理员 |
+| POST | `/api/admin/share-reports/{id}/handle` | 处理：`ACCEPT`（成立 → 下架内容）/ `REJECT`，**说明必填** | 运营 / 管理员 |
+
+**为什么公开读的这几条都是一段路径、而所有写路径都在两段以上**：这是刻意的。
+白名单里放的是 `/api/shares/feed`、`/api/shares/topics`、`/api/shares/topics/*`、`/api/shares/*`
+四条；`AntPathMatcher` 的 `*` **不跨 `/`**，所以 `/{id}/edit`、`/mine/list`、`/{id}/comments`、
+`/comments/{id}/like` 这些写路径**永远落不进白名单**。
+反面例子（也是本块最需要提醒后来者的地方）：若把评论列表做成 `GET /{id}/comments`（两段），
+要放行它就得加 `/api/shares/*/comments` —— 那会**连带把 `POST /{id}/comments`（发表评论）
+放成匿名可调**。命名在这里不是风格问题，是安全边界。
+
+**内部接口**（`X-Internal-Token`，不经网关）：`POST /api/socials/internal/notices`
+（评论 / 回复通知，**落在社交域**，见上节）；社交域的 `GET /api/socials/internal/following`
+供本域关注流取「我关注的人」id 列表。
+
+**其它要点**：`deleted_at` 软删（转发单的引用块要靠回查原帖才能显示，物理删会变空白）；
+`edited_at` 与 `updated_at` 分开（后者会被点赞计数等非内容变更刷新，拿它当「已编辑」判据会误报）；
+话题名 `name` 唯一（并发建同名话题靠唯一键 + 回查，而不是「先查再插」）；
+举报唯一键 `(target_type, target_id, reporter_id)` 兜住并发重复提交。
+
+---
 
 ### 社交域：通知中心与合并未读（`duoduo-social`，R50 上线 / R55 补生产者）
 

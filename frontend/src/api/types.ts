@@ -990,3 +990,40 @@ export interface PlaceSeckillResult {
   /** true = 同幂等键重放，返回的是首次订单 */
   replay: boolean;
 }
+
+/* ── 分享 / 评论举报（第五十六轮，落在 duoduo-fulfilment） ── */
+
+/** 举报对象类型：分享 或 评论 */
+export type ShareReportTargetType = 'SHARE' | 'COMMENT';
+/** 举报处理状态：待处理 / 成立（内容已下架）/ 不成立 */
+export type ShareReportStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
+
+export interface ShareReportView {
+  /** 雪花 id —— 一律 string，禁止参与数值运算（JS 安全整数只有 16 位） */
+  id: string;
+  targetType: ShareReportTargetType | string;
+  targetId: string;
+  reporterId: string;
+  reason: string;
+  status: ShareReportStatus | string;
+  createdAt: string;
+  handledBy: string | null;
+  handledAt: string | null;
+  handleNote: string | null;
+  /**
+   * 被举报内容的摘要（服务端裁剪到 ~60 字）。
+   * 列表里必须显示它 —— 否则运营得逐条点开才知道在举报什么，处理效率低到没人愿意处理。
+   */
+  targetExcerpt: string;
+  /** 被举报内容的作者 id（用于识别「同一个人反复被举报」） */
+  targetAuthorId: string | null;
+  /** 被举报内容所属分享 id（举报评论时用于核对上下文） */
+  targetShareId: string | null;
+}
+
+export interface ShareReportHandleRequest {
+  /** ACCEPT = 成立（会把内容下架）；REJECT = 不成立 */
+  action: 'ACCEPT' | 'REJECT';
+  /** 处理说明，必填 —— 这是回应申诉的唯一凭据 */
+  note: string;
+}

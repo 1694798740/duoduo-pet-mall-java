@@ -185,6 +185,14 @@ CREATE TABLE t_product_share (
     -- 第四十四轮：互动计数（冗余列，事实源是 t_share_like / t_share_favorite）
     like_count     INT          NOT NULL DEFAULT 0,
     favorite_count INT          NOT NULL DEFAULT 0,
+    -- 第五十六轮：评论数（冗余列，事实源 t_share_comment）
+    comment_count  INT          NOT NULL DEFAULT 0,
+    -- 第五十六轮：软删时间（非 NULL = 已删除）。
+    -- 必须软删不能物理删 —— 转发单的「原帖引用」是查询时回查原帖行得到的，
+    -- 物理删掉原帖会让转发单的引用块变成空内容。
+    deleted_at     TIMESTAMP    NULL,
+    -- 第五十六轮：内容编辑时间；NULL = 未编辑过（前端据此显示「已编辑」）
+    edited_at      TIMESTAMP    NULL,
     created_at     TIMESTAMP    NOT NULL,
     updated_at     TIMESTAMP    NOT NULL,
     PRIMARY KEY (id),
@@ -199,6 +207,75 @@ CREATE INDEX idx_share_user ON t_product_share (user_id, created_at);
 CREATE INDEX idx_share_spu ON t_product_share (spu_id);
 -- 原帖的转发列表 / 转发链路回溯（第四十六轮）
 CREATE INDEX idx_share_parent ON t_product_share (parent_share_id);
+
+-- ---------- 分享圈评论（第五十六轮） ----------
+-- 二级结构：parent_comment_id IS NULL = 一级评论；非 NULL = 对某条一级评论的回复。
+-- 刻意只做二级 —— 二级以上要处理「回复谁的回复」的折叠与 @ 链路，属另一类复杂度。
+CREATE TABLE t_share_comment (
+    id                BIGINT       NOT NULL,
+    share_id          BIGINT       NOT NULL,
+    user_id           BIGINT       NOT NULL,
+    parent_comment_id BIGINT       NULL,
+    content           VARCHAR(300) NOT NULL,
+    like_count        INT          NOT NULL DEFAULT 0,
+    -- 运营处理举报时「下架评论」置此列，不物理删（留痕，也保住回复链）
+    deleted_at        TIMESTAMP    NULL,
+    created_at        TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_share_comment_share ON t_share_comment (share_id, parent_comment_id, created_at);
+CREATE INDEX idx_share_comment_parent ON t_share_comment (parent_comment_id);
+CREATE INDEX idx_share_comment_user ON t_share_comment (user_id, created_at);
+
+-- 评论点赞（与分享点赞同构：复合主键即唯一约束，并发重复插入撞键幂等）
+CREATE TABLE t_share_comment_like (
+    comment_id BIGINT    NOT NULL,
+    user_id    BIGINT    NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (comment_id, user_id)
+);
+
+-- ---------- 分享圈举报（第五十六轮） ----------
+-- SHARE 与 COMMENT 合成一张表：处理流程完全一致，拆两张等于把同一套运营逻辑写两遍。
+CREATE TABLE t_share_report (
+    id          BIGINT       NOT NULL,
+    target_type VARCHAR(16)  NOT NULL,
+    target_id   BIGINT       NOT NULL,
+    reporter_id BIGINT       NOT NULL,
+    reason      VARCHAR(200) NOT NULL,
+    -- PENDING | ACCEPTED（成立，内容已下架）| REJECTED（不成立）
+    status      VARCHAR(16)  NOT NULL DEFAULT 'PENDING',
+    handled_by  BIGINT       NULL,
+    handled_at  TIMESTAMP    NULL,
+    handle_note VARCHAR(200) NULL,
+    created_at  TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id),
+    -- 同一人对同一对象只能举报一次（唯一键兜住并发重复提交）
+    CONSTRAINT uk_share_report_once UNIQUE (target_type, target_id, reporter_id)
+);
+CREATE INDEX idx_share_report_status ON t_share_report (status, created_at);
+CREATE INDEX idx_share_report_target ON t_share_report (target_type, target_id);
+
+-- ---------- 分享圈话题标签（第五十六轮） ----------
+CREATE TABLE t_share_topic (
+    id          BIGINT      NOT NULL,
+    -- 话题名（不含 # 号）；唯一键兜住「两人同时新建同名话题」的并发双写
+    name        VARCHAR(30) NOT NULL,
+    share_count INT         NOT NULL DEFAULT 0,
+    created_at  TIMESTAMP   NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_share_topic_name UNIQUE (name)
+);
+CREATE INDEX idx_share_topic_count ON t_share_topic (share_count);
+
+-- 分享 ↔ 话题（一条分享最多 2 个话题；主键即去重键）
+CREATE TABLE t_share_topic_rel (
+    share_id BIGINT NOT NULL,
+    topic_id BIGINT NOT NULL,
+    PRIMARY KEY (share_id, topic_id)
+);
+-- 话题聚合页按话题查分享：主键左侧是 share_id，故补一条反向索引
+CREATE INDEX idx_share_topic_rel_topic ON t_share_topic_rel (topic_id, share_id);
 
 -- ---------- 分享圈互动（点赞 / 收藏，第四十四轮） ----------
 -- 一人一分享一票：复合主键即唯一约束，并发重复插入撞键幂等。

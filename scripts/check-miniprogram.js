@@ -163,9 +163,18 @@ for (const wxml of wxmlFiles) {
   const exprRe = /\{\{([^}]*)\}\}/g;
   const allowed = new Set([
     'true', 'false', 'null', 'undefined',
-    // wx:for-item / wx:for-index 的自定义别名（WXML 里内联定义的循环变量）
+    // 内联循环别名的兜底（下方还会从本文件里**实际读出** wx:for-item/index）
     'item', 'index', 'idx', 'msg', 'rec', 'sku', 'act', 'seg', 'part', 'node', 'val', 'row', 'col',
   ]);
+  // 从 WXML 里读出真正的循环变量名：wx:for-item="tag" / wx:for-index="i"。
+  //
+  // 为什么不能只靠上面那份固定白名单（第五十六轮修）：白名单每遇到一个新别名就要加一行，
+  // 「加了没加」全凭人记 —— 漏了就会对**合法写法**报「字段可疑」。
+  // 误报比漏报更伤：告警一旦有噪声，下一次真有问题的告警也会被当成噪声忽略。
+  // 直接解析本文件声明的名字是自洽的，也不怕将来出现新别名。
+  const loopAliasRe = /wx:for-(?:item|index)\s*=\s*"([A-Za-z_$][\w$]*)"/g;
+  let alias;
+  while ((alias = loopAliasRe.exec(content))) allowed.add(alias[1]);
   const seenWarn = new Set();
   while ((m = exprRe.exec(content))) {
     // 先剥掉表达式里的字符串字面量：'tag-gray' 这种是 CSS 类名，不是数据字段

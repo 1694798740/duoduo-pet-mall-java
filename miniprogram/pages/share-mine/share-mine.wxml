@@ -1,0 +1,87 @@
+<nav-bar title="我的分享" back="{{true}}" />
+
+<view wx:if="{{error && items.length === 0}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+</view>
+
+<view wx:elif="{{items.length === 0 && !loading}}" class="empty">
+  <view>你还没有发过分享</view>
+  <button class="btn btn-plain btn-mini sm-go" bindtap="goShareCircle">去分享圈看看</button>
+</view>
+
+<block wx:else>
+  <view wx:for="{{items}}" wx:key="id" class="card sm-item">
+    <!-- 点正文区进详情（操作按钮单独一行，避免误触） -->
+    <view class="sm-body" data-id="{{item.id}}" bindtap="goDetail">
+      <view class="sm-meta t3">
+        {{item.timeText}}{{item.isRepost ? ' · 转发' : ''}}{{item.edited ? ' · 已编辑' : ''}}
+      </view>
+      <view wx:if="{{item.content}}" class="sm-content">{{item.content}}</view>
+      <view wx:else class="sm-content t3">（纯转发，没有附言）</view>
+
+      <view wx:if="{{item.topics.length}}" class="sm-topics">
+        <text
+          wx:for="{{item.topics}}"
+          wx:for-item="tag"
+          wx:key="*this"
+          class="sm-topic"
+          data-name="{{tag}}"
+          catchtap="goTopic"
+        >#{{tag}}</text>
+      </view>
+
+      <view class="sm-product" data-spu="{{item.spuId}}" catchtap="goProduct">
+        <image class="sm-img" src="{{item.image}}" mode="aspectFill" lazy-load />
+        <view class="sm-p-info">
+          <view class="sm-p-title">{{item.productTitle}}</view>
+          <view class="price">¥{{item.priceText}}</view>
+        </view>
+      </view>
+
+      <view class="sm-stats t3">
+        浏览/互动：❤️ {{item.likeCount}} · ⭐ {{item.favoriteCount}} · 💬 {{item.commentCount || 0}}
+      </view>
+    </view>
+
+    <view class="sm-ops">
+      <button class="btn btn-plain btn-mini sm-op" data-id="{{item.id}}" bindtap="openEdit">编辑</button>
+      <button class="btn btn-plain btn-mini sm-op sm-op-danger" data-id="{{item.id}}" bindtap="confirmDelete">删除</button>
+    </view>
+  </view>
+
+  <view wx:if="{{noMore && items.length > 0}}" class="t3 sm-end">— 到底啦 —</view>
+  <view wx:elif="{{loading}}" class="t3 sm-end">加载中…</view>
+  <view style="height: 40rpx"></view>
+</block>
+
+<!-- 编辑弹层（第五十六轮）：正文 + 话题（空格分隔，最多 2 个） -->
+<view wx:if="{{editPanel}}" class="sm-mask" bindtap="closeEdit">
+  <view class="sm-panel" catchtap="noop">
+    <view class="sm-panel-title">编辑分享</view>
+    <view class="sm-panel-sub t3">只能改文字和话题；商品是发布时的快照，改商品请删掉重发</view>
+    <textarea
+      class="sm-panel-input"
+      value="{{editContent}}"
+      bindinput="onEditContentInput"
+      maxlength="500"
+      placeholder="{{editTarget.isRepost ? '转发附言（可留空）' : '写点评价，说说好在哪…'}}"
+      placeholder-class="sm-panel-ph"
+    />
+    <view class="sm-panel-label t3">话题（最多 2 个，空格分隔，不用打 #）</view>
+    <input
+      class="sm-panel-tags"
+      value="{{editTopics}}"
+      bindinput="onEditTopicsInput"
+      maxlength="70"
+      placeholder="例如：养宠日常 新手养猫"
+      placeholder-class="sm-panel-ph"
+    />
+    <view class="sm-panel-actions">
+      <button class="btn btn-accent sm-panel-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="saveEdit">
+        保存
+      </button>
+    </view>
+    <view class="sm-panel-cancel" bindtap="closeEdit">取消</view>
+  </view>
+</view>

@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RequestBody;
  *
  * <p><b>{@code contextId} 必须写</b>：Feign 以 {@code name} 为注册键，同 name 的多个接口
  * 不区分 {@code contextId} 会互相覆盖，表现为启动即炸（{@code BeanDefinitionOverrideException}）。
- * 本域目前只有这一个指向 {@code duoduo-social} 的接口，按说可以不写 —— 仍然显式写上，
- * 让「加第二个客户端」的人不必先踩一次坑。
+ * 本域指向 {@code duoduo-social} 的接口已有两个（本接口 + 第五十六轮的
+ * {@link SocialClient} 关注列表），各自显式声明 —— 不加就会被覆盖。
  *
  * <p>凭据由 {@code InternalCallConfig} 注入 {@code X-Internal-Token}；走服务发现，不经网关。
  * 调用方是 {@link FulfilmentNotifier}（best-effort 包装），不在业务路径上直接调。

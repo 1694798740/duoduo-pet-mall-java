@@ -159,3 +159,9 @@
   padding-top: 20rpx;
   border-top: 1rpx solid var(--line);
 }
+
+/* 话题输入框（第五十六轮）：复用 .sp-input 的边框与底色，只把高度改成单行 */
+.sp-tags {
+  height: 76rpx;
+  margin-top: 16rpx;
+}

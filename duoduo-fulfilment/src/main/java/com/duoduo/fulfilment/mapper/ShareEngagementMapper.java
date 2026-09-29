@@ -61,4 +61,14 @@ public interface ShareEngagementMapper {
 
     @Update("UPDATE t_product_share SET favorite_count = GREATEST(0, favorite_count + #{delta}) WHERE id = #{shareId}")
     int bumpFavoriteCount(@Param("shareId") Long shareId, @Param("delta") int delta);
+
+    /**
+     * 评论数回写（第五十六轮）。
+     *
+     * <p>口径：**一级评论与回复都算**（与主流 App 卡片上那个数字一致 ——
+     * 用户看到「12 条评论」时想的是评论区里有多少条，而不是有多少个话题串）。
+     * 因此发表评论 +1、运营下架评论时 -(1 + 其下未删回复数)。
+     */
+    @Update("UPDATE t_product_share SET comment_count = GREATEST(0, comment_count + #{delta}) WHERE id = #{shareId}")
+    int bumpCommentCount(@Param("shareId") Long shareId, @Param("delta") int delta);
 }

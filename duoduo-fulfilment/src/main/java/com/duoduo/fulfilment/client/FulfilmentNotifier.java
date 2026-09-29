@@ -36,6 +36,15 @@ public class FulfilmentNotifier {
     private static final String CATEGORY_ORDER = "ORDER";
 
     /**
+     * 通知中心分类：好友 / 社交（第五十六轮，分享圈评论走这一类）。
+     *
+     * <p>为什么不用 ORDER：评论通知讲的是「有人在你发的内容下说话」，
+     * 与订单无关。分类混错会让用户在「订单」筛选里看到一堆社交提醒 ——
+     * 分类是给用户做筛选用的，语义必须站得住。
+     */
+    private static final String CATEGORY_FRIEND = "FRIEND";
+
+    /**
      * 售后相关的落地页：小程序的「我的售后」列表。
      *
      * <p>不深链到具体售后单：目前没有独立的售后详情页，拼一个不存在的路径
@@ -43,6 +52,8 @@ public class FulfilmentNotifier {
      */
     private static final String PAGE_AFTER_SALES = "/pages/after-sales/after-sales";
     private static final String PAGE_ORDER_DETAIL = "/pages/order-detail/order-detail";
+    /** 分享详情页（第五十六轮）：评论通知的落地页 —— 点进去直接看到被评论的那条分享 */
+    private static final String PAGE_SHARE_DETAIL = "/pages/share-detail/share-detail";
 
     /** 摘要在通知里只占几行，用户原因 / 裁定说明可能很长，超长截断（服务端另有 500 字硬限） */
     private static final int MAX_BRIEF = 200;
@@ -101,17 +112,47 @@ public class FulfilmentNotifier {
                 "LOGISTICS_SIGNED", orderNo, PAGE_ORDER_DETAIL + "?orderNo=" + orderNo);
     }
 
+    // ---------------- 分享圈（第五十六轮） ----------------
+
+    /**
+     * 有人评论了你的分享。
+     *
+     * <p>bizId 用**分享 id**（不是评论 id）：同一条分享下的多条评论会被社交域
+     * 按「同来源合并成一条未读」处理 —— 用户看到的是「有人评论了你的分享」，
+     * 而不是十条各说各话的提醒。用户点进去就是那条分享的评论区。
+     */
+    public void notifyShareCommented(Long authorId, Long shareId, String commenterNickname, String excerpt) {
+        push(authorId, "有人评论了你的分享",
+                who(commenterNickname) + "评论道：" + brief(excerpt),
+                "SHARE_COMMENT", String.valueOf(shareId),
+                PAGE_SHARE_DETAIL + "?id=" + shareId);
+    }
+
+    /** 有人回复了你的评论 */
+    public void notifyShareReplied(Long commentAuthorId, Long shareId, String replyNickname, String excerpt) {
+        push(commentAuthorId, "有人回复了你",
+                who(replyNickname) + "回复：" + brief(excerpt),
+                "SHARE_COMMENT", String.valueOf(shareId),
+                PAGE_SHARE_DETAIL + "?id=" + shareId);
+    }
+
     // ---------------- 内部 ----------------
 
     /** 真正的推送（唯一一处 try/catch）：失败只记日志，绝不向上抛 */
     private void push(Long userId, String title, String content, String bizType,
+                      String bizId, String jumpPage) {
+        push(userId, CATEGORY_ORDER, title, content, bizType, bizId, jumpPage);
+    }
+
+    /** 真正的推送（唯一一处 try/catch）：失败只记日志，绝不向上抛 */
+    private void push(Long userId, String category, String title, String content, String bizType,
                       String bizId, String jumpPage) {
         if (userId == null) {
             return;
         }
         try {
             var response = socialNoticeClient.push(new PushRequest(List.of(
-                    new Item(userId, CATEGORY_ORDER, title, content, bizType, bizId, jumpPage))));
+                    new Item(userId, category, title, content, bizType, bizId, jumpPage))));
             PushResult result = response == null ? null : response.data();
             if (result == null || result.accepted() < 1) {
                 log.warn("履约通知未被接受 userId={} bizType={} bizId={}（不影响主流程）",
@@ -123,6 +164,12 @@ public class FulfilmentNotifier {
             log.error("履约通知推送失败 userId={} bizType={} bizId={}（不影响主流程）",
                     userId, bizType, bizId, e);
         }
+    }
+
+    /** 「某某」：昵称不可得时退化成一个中性主语，不出现「null 评论道」这种句子 */
+    private static String who(String nickname) {
+        String normalized = nickname == null ? "" : nickname.trim();
+        return normalized.isEmpty() ? "有人" : normalized;
     }
 
     /** 摘要裁剪：通知里只放得下几行，超长截断加省略号 */

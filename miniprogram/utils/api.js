@@ -450,15 +450,24 @@ const seckill = {
   },
 };
 
-// ── 分享圈（第四十三轮，履约域）：发布需登录，信息流 / 详情公开 ────────────────
+// ── 分享圈（第四十三轮，履约域）：发布需登录，信息流 / 详情 / 话题 / 评论列表公开 ──
 const share = {
-  /** 发布分享：spuId + 用户自撰评价内容（必填，≤500 字） */
-  publish(spuId, content) {
-    return req.post('/api/shares', { spuId: String(spuId), content });
+  /** 发布分享：spuId + 用户自撰评价内容（必填，≤500 字）+ 话题（可选，最多 2 个） */
+  publish(spuId, content, topics) {
+    return req.post('/api/shares', { spuId: String(spuId), content, topics: topics || [] });
   },
-  /** 信息流（公开）：按发布时间倒序，{ items, total }；登录时带 liked/favorited 标记 */
-  feed(page, pageSize) {
-    return req.get('/api/shares/feed?page=' + (page || 1) + '&pageSize=' + (pageSize || 10));
+  /**
+   * 信息流（公开）：按发布时间倒序，{ items, total }；登录时带 liked/favorited/mine 标记。
+   *
+   * scope（第五十六轮）：'RECOMMEND'（默认，全站）或 'FOLLOWING'（只看我关注的人）。
+   * FOLLOWING 需要登录 —— 服务端会拒（401），所以调用方只在已登录时传它。
+   */
+  feed(page, pageSize, scope) {
+    let url = '/api/shares/feed?page=' + (page || 1) + '&pageSize=' + (pageSize || 10);
+    // RECOMMEND 是**服务端的默认值**，不显式传：URL 只有一种规范形式，
+    // 免得同一份内容出现两个等价 URL（浏览器/网关/CDN 缓存会当成两份）。
+    if (scope && scope !== 'RECOMMEND') url += '&scope=' + scope;
+    return req.get(url);
   },
   /** 分享详情（公开）：分享落地页数据源 */
   detail(id) {
@@ -481,6 +490,85 @@ const share = {
    */
   repost(id, content) {
     return req.post('/api/shares/' + id + '/repost', { content: content || '' });
+  },
+
+  // ---------------- 第五十六轮 ----------------
+
+  /**
+   * 编辑自己的分享：只改文字与话题。
+   *
+   * topics 的三态必须区分（服务端按此判断，混了就永远删不掉话题）：
+   *   undefined → 不改话题；null → 不改话题；[] → 清空话题；[...] → 替换
+   * 故这里显式把 undefined 归一成 null 再上行。
+   */
+  edit(id, content, topics) {
+    return req.post('/api/shares/' + id + '/edit', {
+      content: content,
+      topics: topics === undefined ? null : topics,
+    });
+  },
+  /** 删除自己的分享（软删；别人转发过它的转发单仍在，引用块显示「原内容已被作者删除」） */
+  remove(id) {
+    return req.post('/api/shares/' + id + '/delete');
+  },
+  /** 我的分享（需登录）：管理页数据源，编辑 / 删除入口挂在这里 */
+  mine(page, pageSize) {
+    return req.get(
+      '/api/shares/mine/list?page=' + (page || 1) + '&pageSize=' + (pageSize || 10)
+    );
+  },
+  /** 举报分享（需登录）：理由必填，重复举报 409 */
+  report(id, reason) {
+    return req.post('/api/shares/' + id + '/report', { reason: reason });
+  },
+
+  /**
+   * 评论列表（公开）。
+   *
+   * parentId 省略 = 一级评论分页（每条带 replyCount）；传值 = 该评论下的回复分页。
+   * 走查询参数而不是 /{id}/comments：后者会让白名单不得不放行
+   * `/*​/comments`，连带把「发表评论」也放成匿名可调（详见后端控制器注释）。
+   */
+  comments(shareId, page, pageSize, parentId) {
+    let url =
+      '/api/shares/comments?shareId=' +
+      shareId +
+      '&page=' +
+      (page || 1) +
+      '&pageSize=' +
+      (pageSize || 20);
+    if (parentId) url += '&parentId=' + parentId;
+    return req.get(url);
+  },
+  /** 发表评论 / 回复（需登录）：parentCommentId 省略 = 一级评论 */
+  comment(shareId, content, parentCommentId) {
+    const body = { content: content };
+    if (parentCommentId) body.parentCommentId = parentCommentId;
+    return req.post('/api/shares/' + shareId + '/comments', body);
+  },
+  /** 评论点赞 / 取消（toggle，需登录）→ { active, count } */
+  likeComment(commentId) {
+    return req.post('/api/shares/comments/' + commentId + '/like');
+  },
+  /** 举报评论（需登录） */
+  reportComment(commentId, reason) {
+    return req.post('/api/shares/comments/' + commentId + '/report', { reason: reason });
+  },
+
+  /** 热门话题榜（公开）：发布页的「大家都在聊」 */
+  hotTopics(limit) {
+    return req.get('/api/shares/topics?limit=' + (limit || 10));
+  },
+  /** 话题聚合页（公开）：按话题名查分享 */
+  topicFeed(name, page, pageSize) {
+    return req.get(
+      '/api/shares/topics/' +
+        encodeURIComponent(name) +
+        '?page=' +
+        (page || 1) +
+        '&pageSize=' +
+        (pageSize || 10)
+    );
   },
 };
 

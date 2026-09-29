@@ -123,3 +123,76 @@
   padding-top: 20rpx;
   border-top: 1rpx solid var(--line);
 }
+
+/* ── 推荐 / 关注 双 tab + 我的分享入口（第五十六轮）─────────────────────────
+   两条不变量：容器 align-items:center（阻止 tab 胶囊被拉伸到与容器等高）、
+   每个成员 flex:none（不被压缩 → 文字不折行）。这是 R54 定下的胶囊/横排纪律。 */
+.sc-tabs {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 16rpx 24rpx;
+  background: #fff;
+}
+.sc-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 60rpx;
+  line-height: 1;
+  padding: 0 32rpx;
+  border-radius: 30rpx;
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: 28rpx;
+  white-space: nowrap;
+}
+.sc-tab-on {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+.sc-mine {
+  margin-left: auto;
+  flex: none;
+  font-size: 26rpx;
+  color: var(--brand);
+  white-space: nowrap;
+}
+
+/* 话题标签（第五十六轮）：与 .sc-tab 同一套胶囊纪律 */
+.sc-topics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 14rpx;
+}
+.sc-topic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 44rpx;
+  line-height: 1;
+  padding: 0 20rpx;
+  border-radius: 22rpx;
+  background: var(--brand-weak, #eef1ff);
+  color: var(--brand);
+  font-size: 23rpx;
+  white-space: nowrap;
+}
+
+/* 举报按钮推到互动条最右：与点赞/收藏拉开距离，避免误触 */
+.sc-act-more { margin-left: auto; }
+
+/* 举报理由列表（第五十六轮） */
+.sc-report-list { margin-top: 24rpx; }
+.sc-report-item {
+  height: 92rpx;
+  line-height: 92rpx;
+  text-align: center;
+  font-size: 28rpx;
+  border-bottom: 1rpx solid var(--line);
+}

@@ -50,6 +50,10 @@ public class FollowService {
     private static final int MAX_PAGE_SIZE = 50;
     private static final int DEFAULT_PAGE_SIZE = 20;
 
+    /** 「我关注的人」id 列表的默认 / 上限条数（第五十六轮，见 {@link #followingIds}） */
+    private static final int DEFAULT_FOLLOWING_LIMIT = 200;
+    private static final int MAX_FOLLOWING_LIMIT = 500;
+
     private final SocialFollowMapper followMapper;
     private final UserClient userClient;
 
@@ -120,6 +124,33 @@ public class FollowService {
         Long following = followMapper.selectCount(new LambdaQueryWrapper<SocialFollowEntity>()
                 .eq(SocialFollowEntity::getFollowerId, userId));
         return new FollowCounts(nz(followers), nz(following));
+    }
+
+    /**
+     * 「我关注的人」的 id 列表（第五十六轮，供分享圈的**关注流**使用）。
+     *
+     * <p><b>为什么要设上限</b>：调用方（履约域）拿这批 id 去拼
+     * {@code WHERE user_id IN (...)}。关注几千人时这条 SQL 会变成超长 IN 列表，
+     * 既慢又容易撞 MySQL 的包大小限制 —— 宁可只取最近关注的一批，
+     * 让「关注流」在最坏情况下少几条内容，也不要让整个信息流查不出来。
+     * 上限取 500：远超普通用户的关注数，同时 IN 列表仍在安全范围内。
+     *
+     * <p>只返回 id，不返回昵称头像 —— 调用方要的是过滤条件，不是展示数据。
+     */
+    public List<Long> followingIds(Long userId, int limit) {
+        int capped = limit <= 0 ? DEFAULT_FOLLOWING_LIMIT : Math.min(limit, MAX_FOLLOWING_LIMIT);
+        if (userId == null) {
+            return List.of();
+        }
+        return followMapper.selectList(new LambdaQueryWrapper<SocialFollowEntity>()
+                        .select(SocialFollowEntity::getFolloweeId)
+                        .eq(SocialFollowEntity::getFollowerId, userId)
+                        .orderByDesc(SocialFollowEntity::getCreatedAt)
+                        .last("LIMIT " + capped))
+                .stream()
+                .map(SocialFollowEntity::getFolloweeId)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     /**

@@ -78,6 +78,8 @@ import type {
   UserView,
   PlaceSeckillResult,
   SeckillActivityView,
+  ShareReportHandleRequest,
+  ShareReportView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -368,6 +370,25 @@ export const adminApi = {
    */
   arbitrateAfterSale: (id: string, body: AfterSaleArbitrateRequest) =>
     api.post<AfterSaleView>(`/api/admin/aftersales/${id}/arbitrate`, body),
+
+  // ---- 分享 / 评论举报处理台（第五十六轮，落在 duoduo-fulfilment） ----
+
+  /**
+   * 全平台举报列表（按状态过滤；不传 status 即全部）。
+   *
+   * 服务端会把被举报内容的摘要（`targetExcerpt`）一并下发 —— 列表里直接显示摘要，
+   * 运营不必逐条点开才知道在举报什么。内容已被删除时摘要是「（内容已被删除）」。
+   */
+  shareReports: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ShareReportView>>('/api/admin/share-reports', { query }),
+
+  /**
+   * 处理举报。`ACCEPT` = 举报成立，**会把内容下架**（分享 / 评论置为已删除，
+   * 并回退相关计数），不可撤销 —— 所以确认文案必须写清后果。
+   * `note` 必填：它是回应申诉与事后复盘的唯一凭据。
+   */
+  handleShareReport: (id: string, body: ShareReportHandleRequest) =>
+    api.post<ShareReportView>(`/api/admin/share-reports/${id}/handle`, body),
 };
 
 // ---------- 支付（/api/payments） ----------

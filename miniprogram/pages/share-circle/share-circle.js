@@ -22,6 +22,13 @@ const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
 
+/** 信息流两种范围（第五十六轮）：推荐 = 全站，关注 = 只看我关注的人 */
+const SCOPE_RECOMMEND = 'RECOMMEND';
+const SCOPE_FOLLOWING = 'FOLLOWING';
+
+/** 举报理由：预置项而不是自由输入 —— 运营拿到的理由才可归类 */
+const REPORT_REASONS = ['垃圾广告', '色情低俗', '违法违规', '不实信息', '引战辱骂', '其他'];
+
 /** 列表项装饰：图片映射 + 金额 + 时间文本 + 转发标记（isRepost 由 parentId 派生） */
 function decorate(it) {
   return Object.assign({}, it, {
@@ -29,6 +36,7 @@ function decorate(it) {
     priceText: api.fen2yuan(it.minPrice),
     timeText: api.shortTime(it.createdAt),
     isRepost: !!it.parentId,
+    topics: it.topics || [],
   });
 }
 
@@ -46,6 +54,12 @@ Page({
     repostTarget: null,
     repostContent: '',
     reposting: false,
+    // 关注流 / 举报（第五十六轮）
+    scope: SCOPE_RECOMMEND,
+    reportPanel: false,
+    reportTarget: null,
+    reportReasons: REPORT_REASONS,
+    reporting: false,
   },
 
   onLoad() {
@@ -81,7 +95,7 @@ Page({
     const page = reset ? 1 : this.data.page + 1;
     this.setData({ loading: true, error: '' });
     api.share
-      .feed(page, PAGE_SIZE)
+      .feed(page, PAGE_SIZE, this.data.scope)
       .then((data) => {
         const rows = ((data && data.items) || []).map(decorate);
         this.setData({
@@ -102,6 +116,89 @@ Page({
 
   retry() {
     this.fetch(true);
+  },
+
+  // ---------------- 推荐 / 关注双 tab（第五十六轮） ----------------
+
+  /**
+   * 切换信息流范围。
+   *
+   * <p>切到「关注」用 requireLogin 而不是 ensureLogin：关注流要按「我关注了谁」过滤，
+   * 未登录根本无从谈起 —— 静默 wx.login 会无感登进一个微信绑定账号，
+   * 用户莫名其妙看到一堆「关注的人的动态」（第四十四轮同源教训）。
+   *
+   * <p>切换时清空列表再拉：不清空的话，上一段范围的内容会短暂留在屏上，
+   * 用户以为关注流里混进了陌生人。
+   */
+  switchScope(e) {
+    const scope = e.currentTarget.dataset.scope;
+    if (!scope || scope === this.data.scope) return;
+    const go = () => {
+      this.setData({ scope: scope, items: [], page: 1, noMore: false, error: '' });
+      this.fetch(true);
+    };
+    if (scope === SCOPE_FOLLOWING) {
+      getApp()
+        .requireLogin()
+        .then(go)
+        .catch((err) => {
+          if (err && err.needLogin) return; // 已引导登录页
+          wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+        });
+      return;
+    }
+    go();
+  },
+
+  /** 我的分享（第五十六轮）：删除 / 编辑自己的分享都在那一页 */
+  goMine() {
+    getApp()
+      .requireLogin()
+      .then(() => wx.navigateTo({ url: '/pages/share-mine/share-mine' }))
+      .catch((err) => {
+        if (err && err.needLogin) return;
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
+  },
+
+  /** 话题标签 → 话题聚合页（第五十六轮） */
+  goTopic(e) {
+    const name = e.currentTarget.dataset.name;
+    if (!name) return;
+    wx.navigateTo({ url: '/pages/share-topic/share-topic?name=' + encodeURIComponent(name) });
+  },
+
+  // ---------------- 举报（第五十六轮） ----------------
+
+  openReport(e) {
+    const id = e.currentTarget.dataset.id;
+    const target = this.data.items.find((it) => String(it.id) === String(id)) || null;
+    if (!target) return;
+    this.setData({ reportPanel: true, reportTarget: target });
+  },
+
+  closeReport() {
+    this.setData({ reportPanel: false, reportTarget: null });
+  },
+
+  /** 选一个理由即提交（理由是预置项，不需要再让用户确认一次） */
+  pickReport(e) {
+    const reason = this.data.reportReasons[e.currentTarget.dataset.index];
+    const target = this.data.reportTarget;
+    if (!reason || !target || this.data.reporting) return;
+    this.setData({ reporting: true });
+    getApp()
+      .requireLogin()
+      .then(() => api.share.report(target.id, reason))
+      .then(() => {
+        this.setData({ reporting: false, reportPanel: false, reportTarget: null });
+        wx.showToast({ title: '已收到举报，平台会尽快处理', icon: 'none' });
+      })
+      .catch((err) => {
+        this.setData({ reporting: false, reportPanel: false, reportTarget: null });
+        if (err && err.needLogin) return;
+        wx.showToast({ title: (err && err.message) || '举报失败', icon: 'none' });
+      });
   },
 
   /** 阻止互动条内点击冒泡到整条卡片 */

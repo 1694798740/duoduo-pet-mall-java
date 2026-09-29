@@ -52,6 +52,8 @@ Page({
     // 第四十三轮：分享面板（写评价 → 转发好友 / 发布到分享圈）
     showSharePanel: false,
     shareContent: '',
+    /** 话题（第五十六轮）：空格分隔的一行文本，最多 2 个；服务端会再做规范化 */
+    shareTopics: '',
     publishing: false,
   },
 
@@ -307,6 +309,25 @@ Page({
     this.setData({ shareContent: e.detail.value });
   },
 
+  onShareTopicsInput(e) {
+    this.setData({ shareTopics: e.detail.value });
+  },
+
+  /**
+   * 把话题输入框解析成数组：按空白 / # / 顿号 / 逗号切分，去空、取前 2 个。
+   *
+   * <p>客户端切分只是输入体验（让用户能看到自己打了几个）；
+   * **最终以服务端 normalize 的结果为准** —— 服务端会剥 #、去重、限长、丢非法名。
+   * 这里即使切错也不会造成脏数据。
+   */
+  parseTopics() {
+    return (this.data.shareTopics || '')
+      .split(/[\s#、,，]+/)
+      .map((s) => s.trim())
+      .filter((s) => !!s)
+      .slice(0, 2);
+  },
+
   /** 转发给好友：open-type=share 按钮的伴随点击，只负责收起面板（转发由微信接管） */
   onForwardTap() {
     this.setData({ showSharePanel: false });
@@ -322,9 +343,9 @@ Page({
     if (this.data.publishing) return;
     this.setData({ publishing: true });
     api.share
-      .publish(this.data.id, content)
+      .publish(this.data.id, content, this.parseTopics())
       .then(() => {
-        this.setData({ publishing: false, showSharePanel: false, shareContent: '' });
+        this.setData({ publishing: false, showSharePanel: false, shareContent: '', shareTopics: '' });
         wx.showToast({ title: '已发布到分享圈', icon: 'success' });
       })
       .catch((err) => {

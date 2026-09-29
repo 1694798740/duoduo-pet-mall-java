@@ -55,6 +55,7 @@ import { AdminBrandsPage } from './pages/admin/Brands';
 import { AdminOperatorsPage } from './pages/admin/Operators';
 import { AdminOrdersPage } from './pages/admin/Orders';
 import { AdminAfterSalesPage } from './pages/admin/AfterSales';
+import { AdminShareReportsPage } from './pages/admin/ShareReports';
 import { AfterSalesPage } from './pages/AfterSales';
 import { AfterSaleNewPage } from './pages/AfterSaleNew';
 import { AfterSaleDetailPage } from './pages/AfterSaleDetail';
@@ -343,6 +344,14 @@ export const App: React.FC = () => (
         element={
           <RequireOperator>
             <AdminAfterSalesPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/share-reports"
+        element={
+          <RequireOperator>
+            <AdminShareReportsPage />
           </RequireOperator>
         }
       />

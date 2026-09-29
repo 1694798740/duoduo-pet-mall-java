@@ -1,12 +1,29 @@
 <nav-bar title="分享圈" loading="{{refreshing}}" />
 
+<!-- 推荐 / 关注 双 tab（第五十六轮）+ 我的分享入口。
+     容器 align-items:center 是必须的 —— 否则 flex 子项默认 stretch，
+     tab 胶囊会被拉到与容器等高（R54 那次「框比字大」的同一根因）。 -->
+<view class="sc-tabs">
+  <view
+    class="sc-tab {{scope === 'RECOMMEND' ? 'sc-tab-on' : ''}}"
+    data-scope="RECOMMEND"
+    bindtap="switchScope"
+  >推荐</view>
+  <view
+    class="sc-tab {{scope === 'FOLLOWING' ? 'sc-tab-on' : ''}}"
+    data-scope="FOLLOWING"
+    bindtap="switchScope"
+  >关注</view>
+  <view class="sc-mine" bindtap="goMine">我的分享 ›</view>
+</view>
+
 <view wx:if="{{error && items.length === 0}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
 </view>
 
 <view wx:elif="{{items.length === 0 && !loading}}" class="empty">
-  分享圈还没有内容，去商品页发布第一条分享吧
+  {{scope === 'FOLLOWING' ? '关注的人还没有发过分享，去「推荐」里逛逛并关注几个吧' : '分享圈还没有内容，去商品页发布第一条分享吧'}}
 </view>
 
 <block wx:else>
@@ -29,11 +46,24 @@
     <!-- 用户自己的话：原创是评价，转发是附言（可为空） -->
     <view wx:if="{{item.content}}" class="sc-content">{{item.content}}</view>
 
-    <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮） -->
+    <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮；第五十六轮支持原帖已删除） -->
     <view wx:if="{{item.isRepost}}" class="sc-quote">
       <view class="sc-quote-hd">转发自 @{{item.parentNickname}}</view>
-      <view wx:if="{{item.parentContent}}" class="sc-quote-body">{{item.parentContent}}</view>
+      <view wx:if="{{item.parentDeleted}}" class="sc-quote-body t3">原内容已被作者删除</view>
+      <view wx:elif="{{item.parentContent}}" class="sc-quote-body">{{item.parentContent}}</view>
       <view wx:else class="sc-quote-body t3">（原分享没有写评价）</view>
+    </view>
+
+    <!-- 话题标签（第五十六轮）：catchtap 阻断冒泡，点了进话题聚合页 -->
+    <view wx:if="{{item.topics.length}}" class="sc-topics">
+      <text
+        wx:for="{{item.topics}}"
+        wx:for-item="tag"
+        wx:key="*this"
+        class="sc-topic"
+        data-name="{{tag}}"
+        catchtap="goTopic"
+      >#{{tag}}</text>
     </view>
 
     <!-- 商品卡（快照）：点击跳商品详情，不冒泡到整条卡片 -->
@@ -46,7 +76,7 @@
       <text class="sc-arrow">›</text>
     </view>
 
-    <!-- 互动条（第四十四轮）：点赞 / 收藏 / 转发，均不冒泡到整条卡片 -->
+    <!-- 互动条（第四十四轮）：点赞 / 收藏 / 评论 / 转发，均不冒泡到整条卡片 -->
     <view class="sc-actions" catchtap="noop">
       <view
         class="sc-act {{item.liked ? 'sc-act-on' : ''}}"
@@ -64,10 +94,25 @@
         <text>{{item.favorited ? '⭐' : '☆'}}</text>
         <text>{{item.favoriteCount}}</text>
       </view>
+      <!-- 评论数（第五十六轮）：点进详情页评论区 -->
+      <view class="sc-act" data-id="{{item.id}}" catchtap="goDetail">
+        <text>💬</text>
+        <text>{{item.commentCount || 0}}</text>
+      </view>
       <!-- 转发：开弹层选出路（转发到分享圈 / 分享给好友），第四十六轮 -->
       <view class="sc-act" data-id="{{item.id}}" catchtap="openForward">
         <text>🔁</text>
         <text>转发</text>
+      </view>
+      <!-- 举报：只对**他人**的内容显示（自己的内容在「我的分享」里删除；后端也会拒 422） -->
+      <view
+        wx:if="{{!item.mine}}"
+        class="sc-act sc-act-more"
+        data-id="{{item.id}}"
+        catchtap="openReport"
+      >
+        <text>⋯</text>
+        <text>举报</text>
       </view>
     </view>
   </view>
@@ -107,5 +152,23 @@
       </button>
     </view>
     <view class="sc-panel-cancel" bindtap="closeForward">取消</view>
+  </view>
+</view>
+
+<!-- 举报弹层（第五十六轮）：理由是预置项，选一个即提交 -->
+<view wx:if="{{reportPanel}}" class="sc-mask" bindtap="closeReport">
+  <view class="sc-panel" catchtap="noop">
+    <view class="sc-panel-title">举报这条分享</view>
+    <view class="sc-panel-sub t3">请选择举报理由，平台会尽快处理</view>
+    <view class="sc-report-list">
+      <view
+        wx:for="{{reportReasons}}"
+        wx:key="*this"
+        class="sc-report-item"
+        data-index="{{index}}"
+        bindtap="pickReport"
+      >{{item}}</view>
+    </view>
+    <view class="sc-panel-cancel" bindtap="closeReport">取消</view>
   </view>
 </view>

@@ -94,6 +94,13 @@ public class LongToStringJacksonModule extends SimpleModule {
             "completedCount", "refundedCount", "closedCount", "totalOrderCount",
             // 第四十四轮补齐：分享圈互动计数（信息流展示 + 前端 toggle 后直接回填比较）
             "likeCount", "favoriteCount", "count",
+            // 第五十六轮补齐：分享圈评论数 / 评论回复数 / 话题被使用次数。
+            // 这三个字段是 R56 新增的，**漏列的后果当场就被探针抓到了**：
+            // `commentCount` / `shareCount` / `replyCount` 以字符串下发，
+            // 前端 `count > 0` 之类的比较退化成字典序（"10" < "9"），
+            // 而「话题按使用次数排序」更是直接排错。规律很稳定 ——
+            // **新增任何「前端会拿去比大小 / 加减」的计数字段，必须同时加进本集合**。
+            "commentCount", "replyCount", "shareCount",
             "closeMinutes", "expireMinutes", "durationMinutes", "expiresInSeconds",
             // 第十七轮补齐：**分页总数**。此前漏列导致 `PageResult.total` 以字符串下发，
             // 于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里退化成**字典序比较**

@@ -63,6 +63,13 @@
     <text>我的闲置</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 我的分享（第五十六轮）：自己发过的分享的编辑 / 删除入口。
+       分享圈页也有一个入口，但「我的东西」用户第一反应是来这里找。 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/share-mine/share-mine">
+    <text class="mi-icon">📝</text>
+    <text>我的分享</text>
+    <text class="arrow">›</text>
+  </view>
   <!-- 实名认证（第五十二轮热修）：发布闲置的前置条件，此前小程序无任何实名入口 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/realname/realname">
     <text class="mi-icon">🪪</text>

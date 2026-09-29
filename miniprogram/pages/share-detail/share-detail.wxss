@@ -113,3 +113,155 @@
   padding-top: 20rpx;
   border-top: 1rpx solid var(--line);
 }
+
+/* ── 话题标签（第五十六轮）────────────────────────────────────────────────
+   胶囊四条齐备：显式 height + line-height:1 + 半径=半高 + **容器 align-items:center**。
+   最后一条最容易漏 —— 容器是 flex 时子项默认 align-items:stretch，胶囊会被拉到
+   跟容器一样高，看起来就是「框比字大」（R54 教训，已写成静态检查规则 7）。 */
+.sd-topics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16rpx;
+  padding: 0 24rpx;
+  margin-top: 16rpx;
+}
+.sd-topic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 48rpx;
+  line-height: 1;
+  padding: 0 22rpx;
+  border-radius: 24rpx;
+  background: var(--brand-weak, #eef1ff);
+  color: var(--brand);
+  font-size: 24rpx;
+  white-space: nowrap;
+}
+
+/* ── 举报入口（第五十六轮） ── */
+.sd-report {
+  text-align: center;
+  color: var(--text-3);
+  font-size: 24rpx;
+  margin-top: 24rpx;
+}
+.sd-report-list { margin-top: 24rpx; }
+.sd-report-item {
+  height: 92rpx;
+  line-height: 92rpx;
+  text-align: center;
+  font-size: 28rpx;
+  border-bottom: 1rpx solid var(--line);
+}
+
+/* ── 评论区（第五十六轮） ── */
+.sd-comments { margin-top: 24rpx; }
+.sd-c-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  margin-bottom: 20rpx;
+}
+.sd-c-empty { font-size: 26rpx; padding: 20rpx 0; text-align: center; }
+.sd-c-item { display: flex; gap: 16rpx; padding: 18rpx 0; }
+.sd-c-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: var(--bg);
+  flex: none;
+}
+.sd-c-main { flex: 1; min-width: 0; }
+.sd-c-hd { display: flex; align-items: center; gap: 12rpx; }
+.sd-c-name { font-size: 26rpx; color: var(--text-2); font-weight: 600; }
+.sd-c-me {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 32rpx;
+  line-height: 1;
+  padding: 0 12rpx;
+  border-radius: 16rpx;
+  background: var(--brand-weak, #eef1ff);
+  color: var(--brand);
+  font-size: 20rpx;
+}
+.sd-c-body {
+  font-size: 28rpx;
+  line-height: 1.6;
+  margin-top: 8rpx;
+  word-break: break-all;
+}
+.sd-c-meta {
+  display: flex;
+  align-items: center;
+  gap: 28rpx;
+  margin-top: 10rpx;
+  font-size: 24rpx;
+}
+.sd-c-act { color: var(--text-3); flex: none; }
+.sd-c-act.on { color: var(--brand); }
+.sd-c-more {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: var(--brand);
+}
+.sd-c-replies {
+  margin-top: 14rpx;
+  padding: 14rpx 18rpx;
+  background: var(--bg);
+  border-radius: 12rpx;
+}
+.sd-c-reply { font-size: 26rpx; line-height: 1.6; margin-bottom: 10rpx; }
+.sd-c-reply:last-child { margin-bottom: 0; }
+.sd-c-reply-txt { color: var(--text); }
+.sd-c-more-more {
+  text-align: center;
+  color: var(--brand);
+  font-size: 26rpx;
+  padding: 16rpx 0;
+}
+
+/* 底部输入条：固定定位 + 页面尾部留同高空位（否则最后一条评论被遮住） */
+.sd-cbar-pad { height: 140rpx; }
+.sd-cbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-top: 1rpx solid var(--line);
+  padding: 14rpx 24rpx calc(14rpx + env(safe-area-inset-bottom));
+  z-index: 260;
+}
+.sd-cbar-to {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 24rpx;
+  color: var(--text-3);
+  padding-bottom: 10rpx;
+}
+.sd-cbar-x { font-size: 32rpx; padding: 0 12rpx; color: var(--text-3); }
+.sd-cbar-row { display: flex; align-items: center; gap: 16rpx; }
+.sd-cbar-input {
+  flex: 1;
+  height: 72rpx;
+  padding: 0 24rpx;
+  box-sizing: border-box;
+  background: var(--bg);
+  border-radius: 36rpx;
+  font-size: 27rpx;
+}
+.sd-c-ph { color: var(--text-3); }
+.sd-cbar-btn {
+  flex: none;
+  height: 72rpx;
+  line-height: 72rpx;
+  padding: 0 32rpx;
+  font-size: 27rpx;
+  border-radius: 36rpx;
+}

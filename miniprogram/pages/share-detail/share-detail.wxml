@@ -16,10 +16,10 @@
   <!-- 分享者信息（分享圈发布的内容才带）：第四十六轮起转发时这里是**转发人本人** -->
   <view wx:else class="card sd-user">
     <image class="sd-avatar" src="{{view.avatar || '/images/category/default.png'}}" mode="aspectFill" />
-    <view class="sd-user-info">
+      <view class="sd-user-info">
       <view class="t2">{{view.nickname}}</view>
       <view class="t3">
-        {{view.shareType === 'REPOST' ? '转发了一条分享' : '觉得这个商品不错'}} · {{view.timeText}}
+        {{view.shareType === 'REPOST' ? '转发了一条分享' : '觉得这个商品不错'}} · {{view.timeText}}{{view.edited ? ' · 已编辑' : ''}}
       </view>
     </view>
   </view>
@@ -29,10 +29,22 @@
     <view class="sd-quote">{{view.content}}</view>
   </view>
 
-  <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮） -->
+  <!-- 话题标签（第五十六轮）：点进话题聚合页；容器 align-items:center 保证胶囊不被拉伸 -->
+  <view wx:if="{{view.topics.length}}" class="sd-topics">
+    <text
+      wx:for="{{view.topics}}"
+      wx:key="*this"
+      class="sd-topic"
+      data-name="{{item}}"
+      bindtap="goTopic"
+    >#{{item}}</text>
+  </view>
+
+  <!-- 转发引自原帖：署名原作者 + 引出原评价（第四十六轮；第五十六轮支持原帖已删除） -->
   <view wx:if="{{view.shareType === 'REPOST'}}" class="card sd-ref">
     <view class="sd-ref-hd">转发自 @{{view.parentNickname}}</view>
-    <view wx:if="{{view.parentContent}}" class="sd-ref-body">{{view.parentContent}}</view>
+    <view wx:if="{{view.parentDeleted}}" class="sd-ref-body t3">原内容已被作者删除</view>
+    <view wx:elif="{{view.parentContent}}" class="sd-ref-body">{{view.parentContent}}</view>
     <view wx:else class="sd-ref-body t3">（原分享没有写评价）</view>
   </view>
 
@@ -51,7 +63,103 @@
     <button class="btn btn-plain sd-act-btn" bindtap="openForward">转发到分享圈</button>
   </view>
   <view class="sd-link" bindtap="goShareCircle">逛逛分享圈 ›</view>
+  <!-- 举报只对**他人**的内容显示：自己的内容该走「我的分享」里的删除（后端也会拒 422） -->
+  <view wx:if="{{!friendShare && !view.mine}}" class="sd-report" bindtap="openReport">举报这条分享</view>
+
+  <!-- 评论区（第五十六轮）：好友直转的商品卡没有分享单，没有评论区 -->
+  <view wx:if="{{!friendShare}}" class="card sd-comments">
+    <view class="sd-c-title">评论 {{view.commentCount || 0}}</view>
+    <view wx:if="{{!comments.length}}" class="sd-c-empty t3">
+      {{commentLoading ? '加载中…' : '还没有评论，来说两句'}}
+    </view>
+    <view wx:for="{{comments}}" wx:key="id" class="sd-c-item">
+      <image
+        class="sd-c-avatar"
+        src="{{item.avatar || '/images/category/default.png'}}"
+        mode="aspectFill"
+      />
+      <view class="sd-c-main">
+        <view class="sd-c-hd">
+          <text class="sd-c-name">{{item.nickname}}</text>
+          <text wx:if="{{item.mine}}" class="sd-c-me">我</text>
+        </view>
+        <view class="sd-c-body">{{item.content}}</view>
+        <view class="sd-c-meta">
+          <text class="t3">{{item.timeText}}</text>
+          <text class="sd-c-act" data-index="{{index}}" bindtap="openReply">回复</text>
+          <text
+            class="sd-c-act sd-c-like {{item.liked ? 'on' : ''}}"
+            data-index="{{index}}"
+            bindtap="toggleCommentLike"
+          >♥ {{item.likeCount || 0}}</text>
+        </view>
+        <view
+          wx:if="{{item.replyCount}}"
+          class="sd-c-more"
+          data-index="{{index}}"
+          bindtap="toggleReplies"
+        >{{item.expanded ? '收起回复' : '展开 ' + item.replyCount + ' 条回复'}}</view>
+        <view wx:if="{{item.expanded}}" class="sd-c-replies">
+          <view wx:for="{{item.replies}}" wx:for-item="rep" wx:key="id" class="sd-c-reply">
+            <text class="sd-c-name">{{rep.nickname}}</text>
+            <text class="t3"> 回复 @{{rep.replyToNickname}}：</text>
+            <text class="sd-c-reply-txt">{{rep.content}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view
+      wx:if="{{comments.length && !commentNoMore}}"
+      class="sd-c-more-more"
+      bindtap="loadMoreComments"
+    >{{commentLoading ? '加载中…' : '加载更多评论'}}</view>
+  </view>
+  <view wx:if="{{!friendShare}}" class="sd-cbar-pad"></view>
 </block>
+
+<!-- 评论输入条（第五十六轮）：固定在底部，页面尾部用 .sd-cbar-pad 留出等高空位 -->
+<view wx:if="{{!friendShare && view}}" class="sd-cbar">
+  <view wx:if="{{replyTo}}" class="sd-cbar-to">
+    <text>回复 @{{replyTo.nickname}}</text>
+    <text class="sd-cbar-x" bindtap="cancelReply">×</text>
+  </view>
+  <view class="sd-cbar-row">
+    <input
+      class="sd-cbar-input"
+      value="{{commentInput}}"
+      bindinput="onCommentInput"
+      maxlength="300"
+      confirm-type="send"
+      bindconfirm="submitComment"
+      placeholder="{{replyTo ? '回复 @' + replyTo.nickname : '说点什么…'}}"
+      placeholder-class="sd-c-ph"
+    />
+    <button
+      class="btn btn-accent sd-cbar-btn"
+      loading="{{sendingComment}}"
+      disabled="{{sendingComment}}"
+      bindtap="submitComment"
+    >发送</button>
+  </view>
+</view>
+
+<!-- 举报弹层（第五十六轮）：理由是预置项，选一个即提交 -->
+<view wx:if="{{reportPanel}}" class="sd-mask" bindtap="closeReport">
+  <view class="sd-panel" catchtap="noop">
+    <view class="sd-panel-title">举报这条分享</view>
+    <view class="sd-panel-sub t3">请选择举报理由，平台会尽快处理</view>
+    <view class="sd-report-list">
+      <view
+        wx:for="{{reportReasons}}"
+        wx:key="*this"
+        class="sd-report-item"
+        data-index="{{index}}"
+        bindtap="pickReport"
+      >{{item}}</view>
+    </view>
+    <view class="sd-panel-cancel" bindtap="closeReport">取消</view>
+  </view>
+</view>
 
 <!-- 转发弹层（第四十六轮）：与分享圈同一套交互 -->
 <view wx:if="{{sharePanel}}" class="sd-mask" bindtap="closeForward">

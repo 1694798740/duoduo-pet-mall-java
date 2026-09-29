@@ -52,7 +52,10 @@ public final class MiniProgramPages {
             "/pages/flea-detail/flea-detail",
             "/pages/flea-publish/flea-publish",
             "/pages/flea-mine/flea-mine",
-            "/pages/realname/realname"
+            "/pages/realname/realname",
+            // 第五十六轮新增（分享圈补全）
+            "/pages/share-mine/share-mine",
+            "/pages/share-topic/share-topic"
     );
 
     private MiniProgramPages() {
