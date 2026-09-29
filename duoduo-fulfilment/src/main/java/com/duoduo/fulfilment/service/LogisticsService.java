@@ -4,6 +4,7 @@ import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.FulfilmentNotifier;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.dto.LogisticsDtos.TrackIngestRequest;
 import com.duoduo.fulfilment.dto.LogisticsDtos.TrackIngestResult;
@@ -87,15 +88,18 @@ public class LogisticsService {
     private final OrderFacts orderFacts;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final FulfilmentNotifier fulfilmentNotifier;
 
     public LogisticsService(LogisticsTrackMapper trackMapper,
                             OrderFacts orderFacts,
                             SnowflakeIdGenerator idGenerator,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            FulfilmentNotifier fulfilmentNotifier) {
         this.trackMapper = trackMapper;
         this.orderFacts = orderFacts;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.fulfilmentNotifier = fulfilmentNotifier;
     }
 
     // ---------------- 内部：轨迹摄入 ----------------
@@ -134,9 +138,11 @@ public class LogisticsService {
 
         int inserted = 0;
         int skipped = 0;
+        List<LogisticsTrackEntity> fresh = new ArrayList<>(prepared.size());
         for (LogisticsTrackEntity entity : prepared) {
             try {
                 trackMapper.insert(entity);
+                fresh.add(entity);
                 inserted++;
             } catch (DuplicateKeyException e) {
                 // 重推 / 补推：同订单 + 同节点 + 同发生时间已经在了，这正是唯一索引要挡住的情况
@@ -145,7 +151,28 @@ public class LogisticsService {
         }
         log.info("订单 {} 上报轨迹 {} 条（来源 {}）：新增 {}，重复跳过 {}",
                 fact.orderNo(), nodes.size(), source, inserted, skipped);
+
+        notifySignedQuietly(fact, fresh);
+
         return new TrackIngestResult(fact.orderNo(), nodes.size(), inserted, skipped);
+    }
+
+    /**
+     * 包裹已签收通知（第五十五轮）：best-effort（异常在 {@link FulfilmentNotifier} 内部吞掉）。
+     *
+     * <p><b>只推「已签收」</b>：一个包裹一生有十来个节点（揽收 / 中转 / 派送…），
+     * 逐个推会把通知中心变成快递流水账 —— 订单详情的时间线本来就是为看这个准备的。
+     * 「已签收」是唯一需要用户立刻行动（去确认收货、检查货）的节点，只推它。
+     *
+     * <p><b>判据是「本次真的写进去了」而不是「请求里带了它」</b>：
+     * 快递公司重推同一节点是常态（唯一索引会挡掉重复），按请求推就会推出 N 条同样的通知。
+     */
+    private void notifySignedQuietly(OrderFact fact, List<LogisticsTrackEntity> freshNodes) {
+        boolean signed = freshNodes.stream()
+                .anyMatch(n -> LogisticsNode.SIGNED.equals(n.getNodeCode()));
+        if (signed) {
+            fulfilmentNotifier.notifySigned(fact.userId(), fact.orderNo());
+        }
     }
 
     private LogisticsTrackEntity prepare(Long orderId, String orderNo, TrackNode node,

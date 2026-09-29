@@ -4,6 +4,39 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R55（2026-09-29，用户要求：暂缓担保交易与微信一键登录，优先「完善通知功能」）** — **收到他人消息时的数字未读角标 + 首页卡片式弹窗；通知体系从「零生产者」补成完整链路**。
+
+**① 真正的缺口不是界面，是「没有生产者」**
+- **实测结论**：`t_social_notice` 全库只有 2 处种子共 **3 条公告**；全仓搜 `internal/notices` **零命中** —— 设计稿里「订单 / 物流 / 售后各域推通知」的端点**从未实现**；`MessageService` 里搜 notice 也零命中 → **收到私信不产生任何通知**。小程序端的通知页、角标、已读 R50 就已就绪，但列表里**永远只有 3 条公告**。
+- **新增内部端点**：`POST /api/socials/internal/notices`（批量推送）+ `POST /api/socials/internal/notices/announce`，由 `InternalTokenFilter` 保护（`/api/socials/internal/**`，**只写不读、不进网关**）。
+- **两阶段落库**：先全校验（分类白名单 / 长度 / `jump_page` 真实性）再统一 insert —— 第 N 条非法则**整批不写**（失败 = 什么都没发生）。
+- **★ `jump_page` 白名单**：`MiniProgramPages` 与 `app.json` 的 **28 个页面路径一一对应**，只校验路径段（query 不参与）。拼错路径**编译期不报错、运行日志也不报错**，只在用户点击时表现为「点了没反应」，故必须硬校验。
+- **trade 域推 ORDER 通知**：下单 / 付款 / 发货 / 退款**四处**经 Feign 推送（`SocialNoticeClient`，**必配唯一 `contextId`** —— 沿用 R53「同名 Feign 客户端启动即炸」的教训）；一律用 `@TransactionalEventListener(phase = AFTER_COMMIT)`：事务没提交完就推，用户点进落地页会**查不到订单**。
+- **fulfilment 域推售后与签收**：售后立案 / 同意 / 拒绝 / 升级 / 运营裁定（支持与驳回）**六处** + **物流签收**（只推 SIGNED）。签收的推送判据是「**本次真的写进去了**」（按首次 insert 成功推送），被唯一索引挡掉的重推**不重复推**。
+- **best-effort 旁路纪律**：通知写入失败只 `log.warn`，**绝不影响主流程** —— 消息 / 订单此时已落库，若因附属写入把主流程判成失败，用户看到的「失败」与事实相反，会去重发。
+
+**② ★ 私信不能被数两次（本轮实测发现的真实设计缺陷）**
+- **现象**：合并未读角标显示 **7**，实际只有 **5** 条未读。
+- **根因**：私信到达时会写一条 `bizType=MESSAGE` 的通知（作为「有人找你」的引导），而**同一批私信又按条计入私信未读**（`t_social_message.read_at`）→ **一条消息被数成 2**。
+- **修法**：`NoticeService.unreadCount` **排除** `bizType=MESSAGE` 的通知行，合并口径固定为「**通知（不含私信）+ 私信未读**」；该通知行**仍留在列表里**当入口。
+- **★ 顺带发现的 SQL 坑**：`biz_type <> 'MESSAGE'` 对 `biz_type IS NULL` 的行返回 **NULL（即不匹配）**，而**全站公告的 `biz_type` 恰好是 NULL** —— 少写那个分支会把**整类公告漏掉**。故写成 `biz_type IS NULL OR biz_type <> 'MESSAGE'`。
+
+**③ 未读角标此前只在通知页刷新（所以别处看不见数字）**
+- **实测**：全仓 `setTabBarBadge` **唯一调用点**是 `notification.js`，由该页 `onShow` 触发 → 用户在首页 / 分享圈 / 我的页面**完全看不到数字**。
+- **修法**：收敛到唯一出口 `utils/unread.js`，新增 **4 类刷新点** —— `app.onShow`（冷启 + 回前台）+ 首页 / 分享圈 / 我的三个 tab 的 `onShow` + **60s 轮询**（`app.onHide` 清理定时器）。并发请求**单飞**（复用 `inflight`）；**请求失败返回 `-1` 而不是 `0`**，避免「网络抖一下就把未读提示抹掉」。
+- **99 封顶**：微信 tabBar 角标超过两位会被裁成省略号，故 `>99 → '99+'`。
+- **静态规则新增第 8 条**：全仓禁止绕过 `utils/unread.js` 直接调 `setTabBarBadge`（error 级；匹配前**先剥注释** —— 注释里提到这个名字正是 R54 那次假阴性的来源）。
+
+**④ 首页卡片式弹窗（新组件 `components/notice-toast`）**
+- 顶部滑入小卡片，**4 秒自动收起**、可点击进入对应页面；**同来源 5 分钟冷却**（key 取 `bizType:bizId`，无 bizId 退化为 `notice:id`，最多记 50 条），避免同一会话连发消息反复弹。
+- z-index **900**（高于自绘导航栏的 200）；`detached` 时清定时器（否则页面销毁后定时器仍会回调）。
+
+**⑤ 通知页分类与分页 + AI 契约死代码修复**
+- 通知页新增**分类 chip**（全部 / 系统 / 公告 / 好友 / 商家 / 订单）与**触底分页**，`pageSize` 默认 20；空态文案按分类变化。
+- 顺带修 `api.ai.capabilities` **死代码**（`onLoad` 从未调用它 → 服务不可用时用户敲完发送才失败）：不可用时 `aiReady=false`，提示**推进消息流**（**不做流内浮层条** —— 消息区高度是按 `calc(100vh - …)` 算出来的，插块会把底部输入条挤出屏幕），输入框与发送按钮联动禁用。
+
+**验证**：新增 `scripts/r55-notice-smoke.py` **42 PASS / 0 FAIL**（A 内部端点凭据与契约 10 + B 私信→通知 9 + C 合并口径 4 + D 已读幂等与越权 5 + E 订单通知 9 + F 物流签收 3）；新增 `scripts/r55-unread-badge-test.js` **59 PASS / 0 FAIL**（A 角标口径 17 + B 全局刷新点 12（含**全仓 `setTabBarBadge` 唯一出口扫描**）+ C 定时器生命周期 9 + D 卡片冷却 9 + E 跳转口径 4 + F 结构与胶囊 CSS 8）；`scripts/check-miniprogram.js` 新增**第 8 条规则**（角标唯一出口）后仍 **0 错误 / 0 告警**。**回归 342 项全过**：`r50` 18 · `r49` 15 · `r53-hotfix-chat` 17 · `r54` 26 · `share-circle` 39 · `social` 43 · `r52` 57 · `r53` 28 · `r53b` 26 · `api-id-payload` 19 · `short-time` 12 · `flea-mine-filter` 42。三容器（social / trade / fulfilment）重建至 healthy。
+
 **R54（2026-09-29，用户真机验收发现）** — **成色筛选胶囊框大于文字 / 导航栏残留冗余通知入口 / 「浏览」与「想要」两个计数口径被混成一个**。
 
 **① 成色筛选的胶囊背景框大于文字（纯样式问题）**
@@ -858,6 +891,45 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 领券幂等 / 并发防超发 / 锁·解·核销 CAS / 折扣落交易域 / 生命周期闭环，另加公开只读边界、内部凭据 403、
 并发锁券、归属校验、门槛文案、券码非雪花、sweep 幂等、TTL 环境变量校验、运营建券准入、清理复原。
 前端 `/coupons`（领券中心 + 我的券包，**刻意不套 `RequireAuth`**）+ 结算页选券 + 订单详情展示优惠金额与券码。
+
+### 社交域：通知中心与合并未读（`duoduo-social`，R50 上线 / R55 补生产者）
+
+通知中心页面 R50 就已上线，但**此前没有任何业务生产者**（全库只有 3 条种子公告），
+页面能打开、永远没有新通知。R55 把它补成完整链路（细节见顶部 R55 段）。
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/socials/notices?page=&pageSize=&category=` | 通知列表（定向通知 + 全站公告合并视图；`category` 可选 `SYSTEM` / `ANNOUNCEMENT` / `FRIEND` / `MERCHANT` / `ORDER`） | 需登录 |
+| GET | `/api/socials/notices/unread-count` | 通知未读数（**已排除私信通知行**） | 需登录 |
+| GET | `/api/socials/notices/unread-summary` | **合并未读** `{notice, message, total}` —— tabBar 角标的**唯一数据源** | 需登录 |
+| POST | `/api/socials/notices/{noticeId}/read` | 标记单条已读（幂等；他人 / 不存在 404，不区分以防枚举） | 需登录 |
+| POST | `/api/socials/notices/read-all` | 全部已读（幂等） | 需登录 |
+| GET | `/api/socials/messages/unread-count` | 私信未读数（**按条计**，对齐主流 App 的「3 条未读」语义） | 需登录 |
+
+**内部接口**（`X-Internal-Token` 保护，**只写不读、不进网关**，trade / fulfilment 直连 8087）：
+`POST /api/socials/internal/notices`（批量推送，返回本次落库条数 `accepted`）、
+`POST /api/socials/internal/notices/announce`（全站公告；收件人由服务端固定为 `0`，契约里干脆不给这个字段）。
+
+**关键设计（为什么这样做）**：
+
+- **两阶段落库**：先把整批逐条校验（分类白名单 / 标题正文长度 / `jump_page` 必须落在
+  `MiniProgramPages` 的 28 个真实页面内）再统一 insert —— 第 N 条非法则**整批不写**，
+  失败就是「什么都没发生」，不会出现半批生效。
+- **★ 合并口径落服务端，前端只显示**：`total = 通知（不含私信） + 私信未读`。私信到达会额外写一条
+  `bizType=MESSAGE` 的通知行作为「有人找你」的入口，该行**必须从通知未读里排除** —— 否则一条消息会被
+  数两次（通知 + 私信），角标凭空翻倍。**注意** `biz_type <> 'MESSAGE'` 对 `biz_type IS NULL` 返回 NULL
+  （即不匹配），而**全站公告的 `biz_type` 恰好是 NULL**，故必须写 `biz_type IS NULL OR biz_type <> 'MESSAGE'`。
+- **同会话连发合并为一条未读**：窗口内同 `bizType + bizId` 的未读行**原地 update**（id 不变、不新增行）；
+  用户**读完后**对方再发会**新插一条**（保证永远有未读、能再次提醒）。合并的边界是「未读」而非「永久一条」。
+- **推送一律 best-effort**：trade / fulfilment 侧只 `log.warn`，**异常绝不外抛** —— 消息 / 订单此时已落库，
+  为附属通知把主流程判成失败，会让用户看到与事实相反的提示而去重发。
+- **`AFTER_COMMIT` 才推**：交易域四处通知都在事务提交后发布 —— 事务没提交完就推，用户点进订单页会**查不到订单**。
+- **签收只认「本次真写入」**：物流节点按**首次 insert 成功**才推，被唯一索引挡掉的重推**不重复推**。
+
+小程序侧：`utils/unread.js`（**角标唯一出口**，60s 轮询 + 并发单飞 + 失败返回 `-1` 不清角标 + `>99 → '99+'`）、
+`utils/notice.js`（跳转与弹窗冷却）、`components/notice-toast`（顶部滑入卡片，4s 自动收起）。
+`scripts/check-miniprogram.js` **第 8 条规则**（error 级）全仓禁止绕过 `utils/unread.js` 直接调 `setTabBarBadge`。
+自测：`scripts/r55-notice-smoke.py`（42 项）+ `scripts/r55-unread-badge-test.js`（59 项）。
 
 ---
 

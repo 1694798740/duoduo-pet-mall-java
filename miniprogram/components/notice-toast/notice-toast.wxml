@@ -1,0 +1,14 @@
+<!-- 顶部通知小卡片（第五十五轮）：顶部滑入、4 秒自动收起、点击进落地页 -->
+<view
+  wx:if="{{show}}"
+  class="notice-toast {{leaving ? 'toast-out' : ''}}"
+  style="top: {{statusBarHeight + 8}}px;"
+  bindtap="onTap"
+>
+  <view class="toast-icon">{{icon}}</view>
+  <view class="toast-main">
+    <view class="toast-title">{{title}}</view>
+    <view class="toast-content">{{content}}</view>
+  </view>
+  <view class="toast-time">{{timeText}}</view>
+</view>

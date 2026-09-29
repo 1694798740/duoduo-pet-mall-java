@@ -3,14 +3,16 @@
 // 图片说明（A14 修复轮）：后端 mainImage 是 `/img/products/1001.svg` 这类相对路径 SVG，
 // 小程序 <image> 既解析不了相对路径、也不支持 SVG，因此统一经 utils/images 映射为本地位图。
 const api = require('../../utils/api');
+const unread = require('../../utils/unread');
+const notice = require('../../utils/notice');
 const images = require('../../utils/images');
 const hl = require('../../utils/highlight');
 const bannerConfig = require('../../config/banners');
 
 const PAGE_SIZE = 10;
-// tabBar 页面必须用 switchTab 跳转，其余用 navigateTo
-// 第五十轮：分类移出 tabBar（首页已有分类入口），通知升为居中 tab
-const TAB_PAGES = ['/pages/index/index', '/pages/share-circle/share-circle', '/pages/notification/notification', '/pages/cart/cart', '/pages/profile/profile'];
+// tab 页成员清单统一在 utils/notice 维护（跳转口径与通知卡片的落地页共用同一份，
+// 第五十轮教训：两处清单不同步时，切 tab 会静默失败、表现为「点了没反应」）
+const TAB_PAGES = notice.TAB_PAGES;
 
 function decorate(list, keyword) {
   return (list || []).map((it) =>
@@ -53,6 +55,8 @@ Page({
     suggestion: '',
     // 下拉刷新中：自绘导航栏据此显示指示器（原生三点指示器会被自绘导航栏遮挡）
     refreshing: false,
+    // 顶部通知小卡片（第五十五轮）：有新的未读通知时才弹，4 秒自动收起
+    noticeToast: { show: false, icon: '', title: '', content: '', timeText: '' },
   },
 
   // 请求序号：关键词/刷新切换时丢弃过期响应，避免「列表短暂混排」
@@ -66,6 +70,55 @@ Page({
   // tab 页返回时只轻量刷新秒杀预告（商品流较稳定，全量重拉会造成闪动与多余请求）
   onShow() {
     this.fetchSeckill();
+    // 未读角标（第五十五轮）：tab 页每次露面都刷一次。
+    // 不能只靠 app.onShow —— 小程序可能一直停在前台（只是切了 tab），App.onShow 不会再触发。
+    unread.refresh();
+    // 顶部小卡片（第五十五轮）：有「还没弹过」的未读通知才弹（冷却见 utils/notice）
+    this.maybePopupNotice();
+  },
+
+  /**
+   * 顶部通知卡片（第五十五轮）。
+   *
+   * 为什么只在首页弹：首页是用户停留最久、也最可能对「有人联系我」做出反应的地方；
+   * 每个页面都弹会变成骚扰。其余页面靠 tabBar 角标提示（角标在任何页面都可见）。
+   */
+  maybePopupNotice() {
+    notice.pickForPopup().then((row) => {
+      if (!row) {
+        return;
+      }
+      // 存一份原始通知（带 id / jumpPage），点击时才用得上 ——
+      // 放进 data 会让 wxml 拿到用不到的字段，也让「页面状态」和「展示数据」混在一起
+      this._toastNotice = row;
+      this.setData({
+        noticeToast: {
+          show: true,
+          icon: notice.iconOf(row),
+          title: row.title,
+          content: row.content,
+          timeText: api.shortTime(row.createdAt),
+        },
+      });
+    });
+  },
+
+  /** 卡片自动收起 / 被关闭：只收起来，不改已读状态（用户没点就等于没看） */
+  closeNoticeToast() {
+    this.setData({ 'noticeToast.show': false });
+    this._toastNotice = null;
+  },
+
+  /** 点卡片：标已读 + 跳落地页（都走 utils/notice 的统一口径） */
+  tapNoticeToast() {
+    const row = this._toastNotice;
+    this._toastNotice = null;
+    this.setData({ 'noticeToast.show': false });
+    if (!row) {
+      return;
+    }
+    notice.markRead(row.id);
+    notice.openNotice(row);
   },
 
   onPullDownRefresh() {

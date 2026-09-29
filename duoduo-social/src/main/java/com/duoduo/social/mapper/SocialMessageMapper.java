@@ -53,6 +53,19 @@ public interface SocialMessageMapper extends BaseMapper<SocialMessageEntity> {
             """)
     List<UnreadRow> selectUnreadGrouped(@Param("userId") Long userId);
 
+    /**
+     * 我的私信未读总数（第五十五轮）：tabBar 角标口径的一半。
+     *
+     * <p>为什么必须落到 SQL：角标刷新会在「每次回到前台 / 每 60 秒 / 每个 tab 页 onShow」
+     * 反复触发，而此前前端只能拉一页会话（50 条）在内存里求和 —— 会话数超过一页时
+     * 角标会偏小，且每次刷新都要传一页数据。一个 COUNT 就够了。
+     */
+    @Select("""
+            SELECT COUNT(*) FROM t_social_message
+            WHERE receiver_id = #{userId} AND read_at IS NULL
+            """)
+    long countUnread(@Param("userId") Long userId);
+
     /** 某会话里指定发送方的消息数（非互关「每人一条」的判定依据） */
     @Select("""
             SELECT COUNT(*) FROM t_social_message

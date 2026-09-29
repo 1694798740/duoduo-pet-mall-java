@@ -3,6 +3,7 @@
 // A14 修复要点：把「未登录」与「接口失败」两类失败分开处理 ——
 // 此前共用一个 catch，券包接口抖动会把已登录用户显示成「点击登录」。
 const api = require('../../utils/api');
+const unread = require('../../utils/unread');
 
 Page({
   data: {
@@ -12,6 +13,8 @@ Page({
   },
 
   onShow() {
+    // 未读角标（第五十五轮）：tab 页每次露面都刷一次（原因见 utils/unread.js 头注释）
+    unread.refresh();
     api
       .ensureSession()
       .then((user) => {

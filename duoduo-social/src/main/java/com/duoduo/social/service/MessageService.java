@@ -71,6 +71,7 @@ public class MessageService {
     private final ProductClient productClient;
     private final ListingClient listingClient;
     private final SnowflakeIdGenerator idGenerator;
+    private final NoticeService noticeService;
     private final int maxLength;
     private final int rateWindowSeconds;
     private final int rateLimit;
@@ -81,6 +82,7 @@ public class MessageService {
                           ProductClient productClient,
                           ListingClient listingClient,
                           SnowflakeIdGenerator idGenerator,
+                          NoticeService noticeService,
                           @Value("${duoduo.social.message.max-length:1000}") int maxLength,
                           @Value("${duoduo.social.message.rate-window-seconds:60}") int rateWindowSeconds,
                           @Value("${duoduo.social.message.rate-limit:10}") int rateLimit) {
@@ -90,6 +92,7 @@ public class MessageService {
         this.productClient = productClient;
         this.listingClient = listingClient;
         this.idGenerator = idGenerator;
+        this.noticeService = noticeService;
         this.maxLength = maxLength;
         this.rateWindowSeconds = rateWindowSeconds;
         this.rateLimit = rateLimit;
@@ -209,7 +212,30 @@ public class MessageService {
             markWantQuietly(bizId, userId);
         }
 
+        // 私信到达通知（第五十五轮）：给收件人写一条 FRIEND / MERCHANT。
+        //  * 为什么压在最后：消息已落库，通知只是「提醒」——提醒写入失败必须吞掉
+        //    （见 notifyReceiverQuietly 注释），所以放在「发送已经成立」之后；
+        //  * 为什么在 social 内部而不是让前端再调一次：收件人的提醒不该依赖发送方的网络，
+        //    前端多调一次就多一个「消息发出去了、通知没写」的失败窗口。
+        notifyReceiverQuietly(entity);
+
         return toView(entity, userId, cardView(bizType, bizId, product, listing));
+    }
+
+    /**
+     * 私信到达通知（第五十五轮）：best-effort，失败只记日志。
+     *
+     * <p>与 {@link #markWantQuietly} 同一条纪律，但理由更硬：消息此时**已经落库**，
+     * 若因附属写入失败把整次发送判为失败，用户看到的「发送失败」与真实状态相反 ——
+     * 用户会重发，于是对方收到两条一样的消息。宁可少一条提醒，也不能多一条重复消息。
+     */
+    private void notifyReceiverQuietly(SocialMessageEntity entity) {
+        try {
+            noticeService.pushMessageNotice(entity);
+        } catch (Exception e) {
+            log.warn("私信通知写入失败 messageId={} receiverId={}（不影响消息发送）",
+                    entity.getId(), entity.getReceiverId(), e);
+        }
     }
 
     /**
@@ -355,6 +381,17 @@ public class MessageService {
                                 : listingId != null ? ConvContext.listing(listingId) : ConvContext.none()))
                 .eq(SocialMessageEntity::getReceiverId, userId)
                 .isNull(SocialMessageEntity::getReadAt));
+    }
+
+    /**
+     * 我的私信未读总数（第五十五轮）：tabBar 角标口径的一半（另一半是通知，见 {@link UnreadService}）。
+     *
+     * <p>此前小程序要拉 50 条会话在内存里求和：会话数超过一页时角标会偏小，
+     * 且这个数字在「回到前台 / 60 秒轮询 / 每个 tab 页 onShow」都会被重算一次 ——
+     * 一个 COUNT 既准确又便宜。
+     */
+    public long unreadCount(Long userId) {
+        return messageMapper.countUnread(userId);
     }
 
     // ---------------- 内部：校验与装配 ----------------

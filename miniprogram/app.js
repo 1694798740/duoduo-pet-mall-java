@@ -8,6 +8,7 @@
 //  * 登录页被用户返回、或打开登录页失败时，等待中的 Promise 必须**被拒绝**而不是永久悬挂，
 //    否则调用方（加购/领券/秒杀）会静默无响应。
 const api = require('./utils/api');
+const unread = require('./utils/unread');
 const { WECHAT_LOGIN_READY } = require('./config');
 
 App({
@@ -33,6 +34,24 @@ App({
       .catch(() => {
         // 静默失败：让「首页」先渲染
       });
+  },
+
+  /**
+   * 回到前台：刷新未读角标 + 启动兜底轮询（第五十五轮）。
+   *
+   * 为什么角标必须在这里刷新，而不是只在通知页刷：角标挂在 tabBar 上，
+   * 而 tabBar 在**任何**页面都可见。只在通知页刷新，等于「只有打开通知页才看得到未读数」
+   * —— 这是第五十四轮的真实表现（用户在首页永远看不到那个数字）。
+   * App.onShow 是「用户可能正看着角标」这件事的最小充分刷新点。
+   */
+  onShow() {
+    unread.refresh();
+    unread.startPolling();
+  },
+
+  /** 进入后台：停掉轮询。后台既拿不到最新数据，也白耗电与流量 */
+  onHide() {
+    unread.stopPolling();
   },
 
   /** 401 统一出口：能静默重登就静默，否则打开登录页 */
@@ -126,6 +145,9 @@ App({
   /** 登录页登录成功后调用 */
   finishLogin(user) {
     this.globalData.user = user;
+    // 登录成功立刻刷新角标（第五十五轮）：换账号后角标必须变成这个人的未读数，
+    // 否则会出现「A 登录后看到 B 的未读数字」——那是最容易被当成「串号」的缺陷。
+    unread.refresh();
     const resolve = this._loginResolve;
     this._loginResolve = null;
     this._loginReject = null;

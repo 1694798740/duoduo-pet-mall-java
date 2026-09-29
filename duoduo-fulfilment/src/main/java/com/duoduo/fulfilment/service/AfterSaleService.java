@@ -9,6 +9,7 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.FulfilmentNotifier;
 import com.duoduo.fulfilment.client.OrderClient;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.client.dto.RefundRequest;
@@ -89,6 +90,8 @@ public class AfterSaleService {
     private final OrderFacts orderFacts;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    /** 售后进度通知（第五十五轮）：best-effort，见 {@link FulfilmentNotifier} */
+    private final FulfilmentNotifier fulfilmentNotifier;
     private final int maxImages;
 
     public AfterSaleService(AfterSaleMapper afterSaleMapper,
@@ -96,12 +99,14 @@ public class AfterSaleService {
                             OrderFacts orderFacts,
                             SnowflakeIdGenerator idGenerator,
                             ObjectMapper objectMapper,
+                            FulfilmentNotifier fulfilmentNotifier,
                             @Value("${duoduo.aftersale.max-images:6}") int maxImages) {
         this.afterSaleMapper = afterSaleMapper;
         this.orderClient = orderClient;
         this.orderFacts = orderFacts;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.fulfilmentNotifier = fulfilmentNotifier;
         this.maxImages = maxImages;
     }
 
@@ -145,6 +150,12 @@ public class AfterSaleService {
             throw BizException.conflict("该订单的此类售后已立案，请勿重复提交");
         }
         log.info("用户 {} 对订单 {} 提起售后（类型 {}），售后单 {}", userId, fact.orderNo(), request.type(), entity.getId());
+
+        // 售后进度通知（第五十五轮）：立案成功后给买家一条回执。
+        //  为什么「自己做的动作也通知自己」：用户需要一条可回看的确认，
+        //  否则关掉页面后「到底提交成功了没有」只能靠记忆；这也是主流电商的通行做法。
+        fulfilmentNotifier.notifyAfterSaleCreated(entity.getBuyerId(), entity.getOrderNo());
+
         return toView(entity);
     }
 
@@ -181,6 +192,9 @@ public class AfterSaleService {
                 throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看");
             }
             log.info("售后单 {} 卖家 {} 同意退款，退款金额 {} 分", entity.getId(), userId, refund.refundAmount());
+            // 通知买家（第五十五轮）：CAS 已成功（rows>0），这条结论是确定的
+            fulfilmentNotifier.notifyAfterSaleRefunded(entity.getBuyerId(), entity.getOrderNo(),
+                    refund.refundAmount());
         } else {
             String reply = trimToNull(request.reply());
             if (reply == null) {
@@ -192,6 +206,8 @@ public class AfterSaleService {
                 throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看");
             }
             log.info("售后单 {} 被卖家 {} 拒绝：{}", entity.getId(), userId, reply);
+            // 通知买家（第五十五轮）：带上拒绝理由，否则用户只看到「被拒绝」而不知原因
+            fulfilmentNotifier.notifyAfterSaleRejected(entity.getBuyerId(), entity.getOrderNo(), reply);
         }
         return toView(loadAfterSale(id));
     }
@@ -217,6 +233,8 @@ public class AfterSaleService {
             throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看");
         }
         log.info("售后单 {} 由买家 {} 申请平台仲裁", entity.getId(), userId);
+        // 回执（第五十五轮）：让买家知道「申请已经进入平台流程」，而不是停在「点了没反应」
+        fulfilmentNotifier.notifyAfterSaleEscalated(entity.getBuyerId(), entity.getOrderNo());
         return toView(loadAfterSale(id));
     }
 
@@ -257,6 +275,9 @@ public class AfterSaleService {
             }
             log.info("售后单 {} 由运营 {} 裁定支持退款，退款金额 {} 分：{}",
                     entity.getId(), operator.userId(), refund.refundAmount(), note);
+            // 裁定结论通知买家（第五十五轮）：终态事件，用户最需要知道结果
+            fulfilmentNotifier.notifyAfterSaleArbitratedRefund(entity.getBuyerId(), entity.getOrderNo(),
+                    refund.refundAmount(), note);
         } else {
             int rows = afterSaleMapper.markClosedByArbitration(entity.getId(), result, note,
                     operator.userId(), now);
@@ -264,6 +285,7 @@ public class AfterSaleService {
                 throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看");
             }
             log.info("售后单 {} 由运营 {} 裁定驳回：{}", entity.getId(), operator.userId(), note);
+            fulfilmentNotifier.notifyAfterSaleArbitratedRejected(entity.getBuyerId(), entity.getOrderNo(), note);
         }
         return toView(loadAfterSale(id));
     }

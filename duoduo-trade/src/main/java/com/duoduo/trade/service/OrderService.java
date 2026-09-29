@@ -9,6 +9,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.trade.client.LogisticsNotifier;
 import com.duoduo.trade.client.MarketingGateway;
+import com.duoduo.trade.client.OrderNotifier;
 import com.duoduo.trade.client.ProductGateway;
 import com.duoduo.trade.client.UserAddressGateway;
 import com.duoduo.trade.client.dto.AddressCallDtos.ReceiverSnapshot;
@@ -136,6 +137,7 @@ public class OrderService {
     private final OrderNoGenerator orderNoGenerator;
     private final ApplicationEventPublisher eventPublisher;
     private final LogisticsNotifier logisticsNotifier;
+    private final OrderNotifier orderNotifier;
 
     @Value("${duoduo.trade.order-expire-minutes:30}")
     private int orderExpireMinutes;
@@ -176,6 +178,7 @@ public class OrderService {
                         OrderNoGenerator orderNoGenerator,
                         ApplicationEventPublisher eventPublisher,
                         LogisticsNotifier logisticsNotifier,
+                        OrderNotifier orderNotifier,
                         SeckillService seckillService) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
@@ -192,6 +195,7 @@ public class OrderService {
         this.orderNoGenerator = orderNoGenerator;
         this.eventPublisher = eventPublisher;
         this.logisticsNotifier = logisticsNotifier;
+        this.orderNotifier = orderNotifier;
         this.seckillService = seckillService;
     }
 
@@ -514,6 +518,12 @@ public class OrderService {
 
         List<OrderView> views = toViews(created);
         long totalPay = views.stream().mapToLong(OrderView::payAmount).sum();
+
+        // 下单成功通知（第五十五轮）：只在这里发布 —— 上面的两条 replay 路径是幂等重放，
+        // 重复推会让用户每点一次「再来一次」就多一条「订单已提交」。
+        eventPublisher.publishEvent(new OrderPlacedNoticeEvent(userId,
+                created.stream().map(OrderEntity::getOrderNo).toList(), totalPay));
+
         return new PlaceOrderResult(views, views.size(), totalPay, false);
     }
 
@@ -1177,6 +1187,11 @@ public class OrderService {
         eventPublisher.publishEvent(new OrderShippedEvent(
                 order.getOrderNo(), company, no, isoTs(now)));
 
+        // 发货通知（第五十五轮）：推给**买家**（不是操作发货的卖家）。
+        // 与上面的物流节点上报是两件事：一个让买家知道「货出来了」，一个让轨迹时间线有起点。
+        eventPublisher.publishEvent(new OrderShippedNoticeEvent(
+                order.getUserId(), order.getOrderNo(), company, no));
+
         // 资金仍在托管中：发货不等于钱该给卖家 —— 买家还没见到货。
         // 这一句日志是为了在排查「钱为什么还没到账」时能直接看到答案。
         SettlementEntity settlement = settlementService.findByOrderId(order.getId());
@@ -1387,6 +1402,9 @@ public class OrderService {
         // 4) 立刻响应里如实说明「货还没回库」（入库在事务提交后做，见 onOrderRefunded）
         boolean pending = !deducted.isEmpty();
         eventPublisher.publishEvent(new OrderRefundedEvent(order.getId()));
+        // 退款通知（第五十五轮）：与上面的「回补库存」事件分开 —— 一个对内（台账），一个对外（买家）
+        eventPublisher.publishEvent(new OrderRefundedNoticeEvent(
+                order.getUserId(), order.getOrderNo(), refundAmount));
 
         log.info("订单 {} 已退款 {} 分（操作方 {}，原因：{}），待回库 SKU {} 个",
                 order.getOrderNo(), refundAmount, operatorType, refundReason, deducted.size());
@@ -1469,6 +1487,59 @@ public class OrderService {
     public void onOrderShipped(OrderShippedEvent event) {
         logisticsNotifier.notifyPickedUp(event.orderNo(), event.logisticsCompany(),
                 event.logisticsNo(), event.shippedAtIso());
+    }
+
+    // ---------------- 订单通知（第五十五轮）：四个「买家关心的事」 ----------------
+    //
+    // 为什么四个事件分开写、而不是一个带 kind 的大事件：每个事件只携带它自己需要的事实，
+    // 发布点读起来就是一句话（「订单提交了」），监听器也不必 switch 一个字符串再拆参数。
+    // 四个 record 很廉价，省下的是后来者「这个字段什么时候有值」的推理成本。
+    //
+    // 为什么全部走 AFTER_COMMIT：通知里的落地页指向订单详情，事务没提交完就推出去，
+    // 用户点进去会查不到这笔订单 —— 对用户来说「通知是错的」比「通知晚一秒」严重得多。
+
+    /** 下单成功（一次结算可能拆成多单，故带上整批订单号与合计应付） */
+    public record OrderPlacedNoticeEvent(Long userId, List<String> orderNos, long totalPay) {
+    }
+
+    /** 支付成功 */
+    public record OrderPaidNoticeEvent(Long userId, String orderNo, long amount) {
+    }
+
+    /** 卖家发货 */
+    public record OrderShippedNoticeEvent(Long userId, String orderNo,
+                                          String logisticsCompany, String logisticsNo) {
+    }
+
+    /**
+     * 退款成功。
+     *
+     * <p>与 {@link OrderRefundedEvent} 的区别：那个事件负责**库存回补**（内部台账动作），
+     * 这个只负责**告诉买家**。两者分开是因为「货有没有回库」与「人知不知道」是两件事，
+     * 合并后一旦入库补偿变慢，通知就会被连带拖住。
+     */
+    public record OrderRefundedNoticeEvent(Long userId, String orderNo, long amount) {
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderPlacedNotice(OrderPlacedNoticeEvent event) {
+        orderNotifier.notifyPlaced(event.userId(), event.orderNos(), event.totalPay());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderPaidNotice(OrderPaidNoticeEvent event) {
+        orderNotifier.notifyPaid(event.userId(), event.orderNo(), event.amount());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderShippedNotice(OrderShippedNoticeEvent event) {
+        orderNotifier.notifyShipped(event.userId(), event.orderNo(),
+                event.logisticsCompany(), event.logisticsNo());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderRefundedNotice(OrderRefundedNoticeEvent event) {
+        orderNotifier.notifyRefunded(event.userId(), event.orderNo(), event.amount());
     }
 
     /** 把某订单仍处于 RESTOCK_PENDING 的台账逐条入库回补 */
@@ -1801,6 +1872,11 @@ public class OrderService {
         // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
         // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
         settlementService.openCustody(order.getId(), order.getSellerId(), nz(order.getPayAmount()), now);
+
+        // 支付成功通知（第五十五轮）：只有真正入账的那一次会走到这里 ——
+        // 并发回调在 CAS 落败时已提前返回，不会推出第二条。
+        eventPublisher.publishEvent(new OrderPaidNoticeEvent(
+                order.getUserId(), order.getOrderNo(), nz(order.getPayAmount())));
 
         return toPayResult(order, payment, replay);
     }

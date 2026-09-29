@@ -36,7 +36,8 @@
     "backgroundColor": "#f5f6fa"
   },
   "usingComponents": {
-    "nav-bar": "/components/nav-bar/nav-bar"
+    "nav-bar": "/components/nav-bar/nav-bar",
+    "notice-toast": "/components/notice-toast/notice-toast"
   },
   "tabBar": {
     "color": "#9ca3af",

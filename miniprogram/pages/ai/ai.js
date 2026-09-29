@@ -24,6 +24,9 @@ Page({
     sending: false,
     scrollInto: '',
     keyboardHeight: 0,
+    // 能力探测（第五十五轮）：服务端未配置大模型时 chatAvailable=false
+    aiReady: true,
+    aiNotice: '',
   },
 
   _keyboardHandler: null,
@@ -37,6 +40,45 @@ Page({
     }
     this.setData({ messages: initial });
     this.bindKeyboard();
+    this.checkCapability();
+  },
+
+  /**
+   * 能力探测（第五十五轮）。
+   *
+   * <p>此前 {@code api.ai.capabilities} 是**死代码** —— 接口封装好了，页面从来没调过。
+   * 后果：服务端没配大模型 Key 时，用户输入问题只会看到一句「多多走神了」，
+   * 于是他会反复重试、换问题、以为是自己的网络问题 —— 而真正的原因（AI 未开放）
+   * 只有服务端日志里才有。现在页面在进入时就问一次，不可用就直接说清楚并禁用输入。
+   *
+   * <p>探测失败**不当作不可用**：探测接口本身抖动不代表对话不可用，
+   * 因此失败时保持可用，让用户直接试 —— 真失败了发送时会给出明确提示。
+   */
+  checkCapability() {
+    return api.ai
+      .capabilities()
+      .then((cap) => {
+        const ready = !cap || cap.chatAvailable !== false;
+        this.setData({
+          aiReady: ready,
+          aiNotice: ready ? '' : 'AI 导购暂时不可用：服务端尚未配置大模型，请稍后再来～',
+        });
+        if (!ready) {
+          // 提示直接进消息流：用户一进页面就看见，且不会被后续滚动丢掉。
+          // 不做浮层条是因为消息区高度是按导航栏与输入条 calc 出来的，
+          // 插一个流内块会把底部输入条挤出屏幕。
+          this.push({
+            id: nextId(),
+            role: 'assistant',
+            content:
+              '😿 我现在连不上「大脑」（服务端还没配置大模型），暂时帮不了你。' +
+              '你可以先去逛逛商品，等配置好了再来找我～',
+          });
+        }
+      })
+      .catch(() => {
+        this.setData({ aiReady: true, aiNotice: '' });
+      });
   },
 
   /** 监听键盘高度：输入条跟着上移，避免被键盘遮挡（两端行为统一） */
@@ -68,6 +110,11 @@ Page({
   send() {
     const text = (this.data.input || '').trim();
     if (!text || this.data.sending) return;
+    if (!this.data.aiReady) {
+      // 已经知道不可用就先拦住：让用户看到明确原因，而不是发出去再等一句「走神了」
+      wx.showToast({ title: this.data.aiNotice || 'AI 导购暂不可用', icon: 'none' });
+      return;
+    }
 
     this.push({ id: nextId(), role: 'user', content: text });
     this.setData({ input: '', sending: true });

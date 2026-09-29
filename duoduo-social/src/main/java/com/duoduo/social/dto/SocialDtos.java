@@ -1,5 +1,6 @@
 package com.duoduo.social.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
@@ -24,6 +25,22 @@ public final class SocialDtos {
     public static final String BIZ_ASK = "ASK";
     /** 闲置咨询（第五十三轮）：C2C 详情页「问一问」，收件人=闲置归属卖家（服务端定人） */
     public static final String BIZ_LISTING = "LISTING";
+
+    // ---------------- 常量：通知分类（与 t_social_notice.category 表注释一致，第五十五轮） ----------------
+
+    /** 系统消息（运营向单人发的系统提示） */
+    public static final String NOTICE_SYSTEM = "SYSTEM";
+    /** 全站公告（收件人写 0：一行多读者，已读靠集合表） */
+    public static final String NOTICE_ANNOUNCEMENT = "ANNOUNCEMENT";
+    /** 好友消息（私信 senderRole = USER 时归属此类） */
+    public static final String NOTICE_FRIEND = "FRIEND";
+    /** 商家消息（私信 senderRole = SELLER / OPERATOR / ADMIN 时归属此类） */
+    public static final String NOTICE_MERCHANT = "MERCHANT";
+    /** 订单交易通知（交易域下单/付款/退款、履约域发货/物流/售后推送） */
+    public static final String NOTICE_ORDER = "ORDER";
+
+    /** 通知业务类型：私信到达（同会话未读合并为一条，避免连发多条把通知中心刷屏） */
+    public static final String NOTICE_BIZ_MESSAGE = "MESSAGE";
 
     // ---------------- 请求 ----------------
 
@@ -73,6 +90,61 @@ public final class SocialDtos {
             String category,
             java.util.List<Long> ids,
             boolean all
+    ) {
+    }
+
+    /**
+     * 内部推送：单条通知（第五十五轮）。
+     *
+     * <p>{@code userId = 0} 表示全站公告（公共行，一行多读者，已读记集合表）。
+     *
+     * <p>这是<b>服务间契约</b>而不是用户输入 —— 字段在这里严格校验（分类白名单、
+     * 长度上限、{@code jumpPage} 必须命中小程序真实页面），不合法直接 400。
+     * 与「对用户宽容、给友好提示」相反：调用方是我们自己的服务，拼错了应当立刻炸出来，
+     * 而不是宽容地写进库，让用户点到一个 404 页面。
+     */
+    public record NoticePushItem(
+            @NotNull(message = "缺少收件人 userId（全站公告传 0）")
+            Long userId,
+
+            @NotBlank(message = "缺少通知分类")
+            String category,
+
+            @NotBlank(message = "缺少通知标题")
+            String title,
+
+            @NotBlank(message = "缺少通知正文")
+            String content,
+
+            /** 业务类型（ORDER_PLACED / ORDER_PAID / MESSAGE / …），可空 */
+            String bizType,
+
+            /** 业务单号（订单号 / 售后单号 / 会话键；雪花 ID 按字符串，T-39），可空 */
+            String bizId,
+
+            /** 点击落地页（如 {@code /pages/order-detail/order-detail?id=123}），可空；非空必须真实存在 */
+            String jumpPage
+    ) {
+    }
+
+    /** 内部推送：批量通知（同一收件人可一次多条；单批条数有上限） */
+    public record NoticePushRequest(
+            @NotNull(message = "缺少通知列表")
+            java.util.List<NoticePushItem> items
+    ) {
+    }
+
+    /** 内部推送：发全站公告（运营用；收件人由服务端固定为 0，不给调用方瞎填） */
+    public record AnnounceRequest(
+            @NotBlank(message = "缺少公告标题")
+            String title,
+
+            @NotBlank(message = "缺少公告正文")
+            String content,
+
+            String bizType,
+            String bizId,
+            String jumpPage
     ) {
     }
 
@@ -250,6 +322,38 @@ public final class SocialDtos {
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(
                     using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long count
+    ) {
+    }
+
+    /** 内部推送结果：本次落库条数（同会话未读合并时，覆盖旧行也计 1） */
+    public record NoticePushResult(
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long accepted
+    ) {
+    }
+
+    /**
+     * 未读合并口径（tabBar 角标用，第五十五轮）：通知 + 私信一次算清。
+     *
+     * <p>为什么合并口径必须落在服务端：角标数字由「通知未读」与「私信未读」两个来源相加。
+     * 若让前端各算各的（前端算私信要拉一页会话自己求和，窗口外的会话就漏了），
+     * 两处口径稍有不一致就会出现「角标显示 5、点进去只有 3」—— 用户不会怀疑口径，
+     * 只会认为「未读数是错的」。服务端算一次，前端只负责显示。
+     *
+     * <p>{@code notice} / {@code message} 一并返回：前端做页内提示（如「消息 3 条」）时
+     * 不必再发第二次请求，也保证与 {@code total} 同源同刻。
+     */
+    public record UnreadSummary(
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long notice,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long message,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long total
     ) {
     }
 }

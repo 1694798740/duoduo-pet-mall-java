@@ -7,6 +7,7 @@ import com.duoduo.social.dto.SocialDtos.ConversationView;
 import com.duoduo.social.dto.SocialDtos.MessagePage;
 import com.duoduo.social.dto.SocialDtos.MessageView;
 import com.duoduo.social.dto.SocialDtos.SendMessageRequest;
+import com.duoduo.social.dto.SocialDtos.UnreadCount;
 import com.duoduo.social.service.MessageService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -73,5 +74,17 @@ public class MessageController {
             @RequestParam(required = false) Long listingId) {
         return ApiResponse.ok(
                 messageService.markRead(UserContext.requireUserId(), peerId, productId, listingId));
+    }
+
+    /**
+     * 我的私信未读总数（第五十五轮）：一个 COUNT，而不是让前端拉一页会话自己求和。
+     *
+     * <p>角标用不到这个端点（它走 {@code /api/socials/notices/unread-summary} 的合并口径）；
+     * 它在这里是为了「消息」入口能独立显示自己的未读数，也让排查时能一眼分清
+     * 「角标数字里有多少来自私信」。
+     */
+    @GetMapping("/api/socials/messages/unread-count")
+    public ApiResponse<UnreadCount> unreadCount() {
+        return ApiResponse.ok(new UnreadCount(messageService.unreadCount(UserContext.requireUserId())));
     }
 }

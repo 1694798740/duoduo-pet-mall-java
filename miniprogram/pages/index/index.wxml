@@ -1,5 +1,17 @@
 <nav-bar title="多多宠物商店" loading="{{refreshing}}" />
 
+<!-- 顶部通知小卡片（第五十五轮）：从状态栏下方滑入、4 秒自动收起、点击进落地页。
+     放在 nav-bar 之后、页面内容之前 —— 它是 fixed 定位，DOM 顺序只影响层级语义 -->
+<notice-toast
+  show="{{noticeToast.show}}"
+  icon="{{noticeToast.icon}}"
+  title="{{noticeToast.title}}"
+  content="{{noticeToast.content}}"
+  time-text="{{noticeToast.timeText}}"
+  bind:close="closeNoticeToast"
+  bind:tapnotice="tapNoticeToast"
+/>
+
 <view class="search-bar">
   <input
     class="search-input"

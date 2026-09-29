@@ -1,0 +1,77 @@
+/* 顶部通知小卡片（第五十五轮）
+ *
+ * 层级：z-index 900 > 自绘导航栏的 200 —— 卡片是「临时提醒」，出现时就该压在最上面，
+ * 否则会被导航栏切成半截。位置固定在状态栏下方（top 由 js 按实机状态栏高度给）。
+ */
+.notice-toast {
+  position: fixed;
+  left: 20rpx;
+  right: 20rpx;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  padding: 22rpx 24rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+  border-radius: 20rpx;
+  box-shadow: 0 10rpx 36rpx rgba(15, 23, 42, 0.18);
+  /* 出场动画：元素一出现就自动播放，不需要 JS 先渲染再切类（那样首帧会有跳变） */
+  animation: toast-slide-in 0.28s ease-out;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  font-size: 40rpx;
+  margin-right: 18rpx;
+}
+
+.toast-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #111827;
+  /* 长标题单行截断：卡片只有一行标题的位置，换行会把摘要挤没 */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.toast-content {
+  margin-top: 6rpx;
+  font-size: 25rpx;
+  color: #6b7280;
+  /* 摘要最多两行（-webkit-box 是小程序里唯一稳定的多行截断方式） */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.toast-time {
+  flex-shrink: 0;
+  margin-left: 12rpx;
+  font-size: 22rpx;
+  color: #9ca3af;
+}
+
+/* 收起：与 js 的 LEAVE_MS(260ms) 严格对齐 —— 动画没播完就移除元素会「闪一下」 */
+.toast-out {
+  transform: translateY(-140%);
+  opacity: 0;
+  transition: transform 0.26s ease-in, opacity 0.26s ease-in;
+}
+
+@keyframes toast-slide-in {
+  from {
+    transform: translateY(-140%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

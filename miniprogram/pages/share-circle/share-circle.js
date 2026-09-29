@@ -17,6 +17,7 @@
 //  * 「分享给好友」→ 走微信原生转发，落点 = 弹层里那条（转发过后它就是我的转发单，
 //    好友点开看到的是我的转发页）。
 const api = require('../../utils/api');
+const unread = require('../../utils/unread');
 const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
@@ -49,6 +50,17 @@ Page({
 
   onLoad() {
     this.fetch(true);
+  },
+
+  /**
+   * 角标刷新（第五十五轮）。
+   *
+   * 本页的 feed 仍只在 onLoad 与下拉时拉取（不在这里重复请求列表 ——
+   * 从详情页返回就重拉整页会让用户丢失滚动位置与正在编辑的转发内容）；
+   * onShow 只做与世界状态无关、成本极低的角标刷新。
+   */
+  onShow() {
+    unread.refresh();
   },
 
   onPullDownRefresh() {

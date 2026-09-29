@@ -25,6 +25,17 @@
     <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
   </view>
 
+  <!-- 分类筛选（第五十五轮）：服务端按 category 过滤，前端不本地筛（否则分页数字会骗人） -->
+  <scroll-view class="chips" scroll-x enable-flex>
+    <view
+      wx:for="{{categories}}"
+      wx:key="key"
+      class="chip {{activeCategory === item.key ? 'chip-on' : ''}}"
+      data-key="{{item.key}}"
+      bindtap="switchCategory"
+    >{{item.label}}</view>
+  </scroll-view>
+
   <!-- 全部已读：仅在有未读时出现 -->
   <view wx:if="{{hasUnread && items.length}}" class="readall-bar">
     <text class="readall-link" bindtap="readAll">全部标为已读</text>
@@ -55,6 +66,10 @@
 
   <view wx:elif="{{!loading && !error}}" class="empty">
     <view class="empty-icon">🔔</view>
-    <view>暂无通知</view>
+    <view>{{activeCategory ? '该分类下暂无通知' : '暂无通知'}}</view>
   </view>
+
+  <!-- 分页状态（第五十五轮）：触底自动加载，这里只负责告诉用户「还在来」还是「到底了」 -->
+  <view wx:if="{{loading && items.length}}" class="list-tip">加载中…</view>
+  <view wx:elif="{{noMore && items.length}}" class="list-tip">没有更多了</view>
 </block>

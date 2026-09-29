@@ -573,13 +573,26 @@ const social = {
   },
   /** 通知中心（第五十轮）：定向通知 + 全站公告合并视图，前端无感两种存储 */
   notice: {
-    list(page, pageSize) {
+    /** 通知列表；category 可选（SYSTEM / ANNOUNCEMENT / FRIEND / MERCHANT / ORDER，第五十五轮加） */
+    list(page, pageSize, category) {
       return req.get(
-        '/api/socials/notices?page=' + (page || 1) + '&pageSize=' + (pageSize || 50)
+        '/api/socials/notices?page=' +
+          (page || 1) +
+          '&pageSize=' +
+          (pageSize || 20) +
+          (category ? '&category=' + category : '')
       );
     },
     unreadCount() {
       return req.get('/api/socials/notices/unread-count');
+    },
+    /**
+     * 合并未读（第五十五轮）：{ notice, message, total } —— tabBar 角标的唯一数据源。
+     * 三个值同源同刻，前端不必先拉通知未读、再拉一页会话自己求和（那种算法在会话
+     * 超过一页时会偏小，也会因为两次请求的时序差出现「总数 ≠ 明细」）。
+     */
+    unreadSummary() {
+      return req.get('/api/socials/notices/unread-summary');
     },
     markRead(noticeId) {
       return req.post('/api/socials/notices/' + noticeId + '/read');

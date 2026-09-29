@@ -328,6 +328,25 @@ requireDecl(
   'scroll-view 子项默认按容器高拉伸，胶囊会被撑大且各排高度不一'
 );
 
+// ---------- 8. tabBar 角标必须走统一 utils（第五十五轮）----------
+// 背景：未读角标 = 通知未读 + 私信未读，合并口径落在服务端（/api/socials/notices/unread-summary），
+// 前端**只有** utils/unread.js 一个出口。若某个页面自己调 wx.setTabBarBadge：
+//   ① 两处口径必然漂移（第五十五轮实测过「角标 7 实际只有 5」这类自相矛盾）；
+//   ② 后来者不知道「谁在管角标」，新增刷新点时会漏掉 ——
+//      第五十四轮的真实缺陷就是「全仓只有通知页 onShow 会刷新角标」，
+//      于是用户在首页、分享圈、我的页面永远看不到未读数字。
+// 这两类问题都没有任何运行时报错，只能靠静态约定守住。
+for (const file of jsFiles) {
+  if (file.replace(/\\/g, '/').endsWith('utils/unread.js')) continue; // 唯一允许直接操作角标的地方
+  const clean = stripCommentsAndStrings(fs.readFileSync(file, 'utf8'));
+  if (clean.indexOf('setTabBarBadge') >= 0 || clean.indexOf('removeTabBarBadge') >= 0) {
+    errors.push(
+      `[角标口径] ${path.relative(ROOT, file)} 直接调用 setTabBarBadge/removeTabBarBadge —— ` +
+        `角标必须走 utils/unread.js（唯一出口），否则口径漂移且刷新点会漏`
+    );
+  }
+}
+
 // ---------- 输出 ----------
 const rel = (s) => s.replace(/\\/g, '/');
 console.log('=== 小程序静态自检 ===');

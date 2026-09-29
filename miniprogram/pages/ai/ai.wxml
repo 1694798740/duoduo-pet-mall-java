@@ -40,7 +40,7 @@
 <view class="chat-input-bar" style="bottom: {{keyboardHeight}}px">
   <input
     class="chat-input"
-    placeholder="想买什么？告诉多多（最多 500 字）"
+    placeholder="{{aiReady ? '想买什么？告诉多多（最多 500 字）' : 'AI 导购暂不可用'}}"
     value="{{input}}"
     maxlength="500"
     confirm-type="send"
@@ -48,8 +48,9 @@
     cursor-spacing="24"
     bindinput="onInput"
     bindconfirm="send"
+    disabled="{{!aiReady}}"
   />
-  <button class="btn btn-primary chat-send" size="mini" bindtap="send" disabled="{{sending}}">
+  <button class="btn btn-primary chat-send" size="mini" bindtap="send" disabled="{{sending || !aiReady}}">
     发送
   </button>
 </view>

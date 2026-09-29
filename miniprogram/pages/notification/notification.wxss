@@ -63,6 +63,45 @@
   color: #4f6ef7;
 }
 
+/* 分类筛选胶囊（第五十五轮）
+ *
+ * 四条齐备才不会被拉成椭圆：显式 height + line-height:1 的替代（line-height 等于 height）
+ * + border-radius = height/2 + 容器 align-items:center。
+ * 第五十四轮的教训：scroll-view 内 flex 子项默认 align-items:stretch，
+ * 只要容器没写 align-items，胶囊就会被撑成整个滚动区的高度。 */
+.chips {
+  display: flex;
+  align-items: center;
+  padding: 8rpx 24rpx 0;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.chip {
+  flex-shrink: 0;
+  height: 56rpx;
+  line-height: 56rpx;
+  padding: 0 28rpx;
+  margin-right: 16rpx;
+  border-radius: 28rpx;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 26rpx;
+}
+
+.chip-on {
+  background: #4f6ef7;
+  color: #fff;
+}
+
+/* 分页状态提示 */
+.list-tip {
+  padding: 24rpx 0 40rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #9ca3af;
+}
+
 .notice-list {
   margin: 8rpx 24rpx 24rpx;
 }
