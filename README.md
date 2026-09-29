@@ -4,6 +4,23 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R53 热修二（2026-09-29，用户真机验收发现）** — **按钮文字折行 / 浏览量恒为 0 / 一个闲置同时出现在两个状态标签下**。
+
+**① 按钮文字折行、尺寸忽大忽小（纯样式问题）**
+- **根因**：小程序 `button` 组件**自带 28rpx/侧内边距**，与 `flex:1` 一起工作时文字框被挤窄，「加入购物车」「立即购买」就折成两行；「我的闲置」页筛选条 6 个标签**没有 `flex:none`**，被容器压缩后「审核中 / 审核失败 / 已下架 / 已售出」全部折行 —— 行数不同即行高不同，用户视角就是「按钮忽大忽小、与文字不协调」。
+- **修改位置**：`miniprogram/app.wxss`（`.btn` / `.btn-mini` 加 `white-space: nowrap`，全局兜底）；`pages/product/product.wxss`（`.footer-share` 定宽 `120rpx`+`flex:none`、`.footer-btn` `flex:1`+`height:76rpx`+`nowrap`）；`pages/flea-detail/flea-detail.wxss`（`.fd-foot-buy` `flex:none`+`padding:0 28rpx`）；`pages/flea-mine/flea-mine.wxss`（筛选条改**不换行 + 横向滚动** `overflow-x:auto`，各成员 `flex:none`+`height:56rpx`+`nowrap`；徽章 / 操作按钮 / 时间同加 `flex:none`+`nowrap`，操作区 `flex-wrap:wrap`）。
+- **取舍**：长文案不再靠折行容纳，而是**挤不下就横向滚动**（不压缩、不折行），保证所有按钮同一高度。
+
+**② 浏览量恒为 0**
+- **根因（一句话：从来没有人给它加过 1）**：全仓搜索 `incrementView|view_count = view_count|viewCount + 1` 在 `duoduo-*/src/main/` **结果为空** —— `t_listing.view_count` 只有字段定义、DTO 出参与种子数据，**没有任何写入代码**，所以永远是初始值。
+- **修改位置**：`duoduo-product/.../mapper/ListingMapper.java` 新增原子自增 `@Update("UPDATE t_listing SET view_count = view_count + 1 WHERE id = #{id}")`（读-改-写会在并发下丢更新，计数必须走数据库侧原子自增）；`ListingService.detail(Long)` 在**可见性校验之后、装配返回之前**自增并把新值回填进本次响应（**首次查看即显示 1**，不必等第二次）。两处刻意取舍：只在公开详情端点 `GET /api/listings/{id}` 计数，`ownerDetail()` 不计（卖家自己看不该刷量）；自增异常只 `log.warn` 不阻断浏览（看商品不该因统计失败而失败）。前端 `pages/flea-market/flea-market.js` 的 `onTapItem` 置 `this._needRefresh = true`，返回列表时 `onShow` 重拉 —— 否则用户看完回来仍是旧计数，会以为统计没生效。
+
+**③ 一个闲置同时出现在「审核中」和「在售」**
+- **根因（前端拼参数漏了一个维度）**：服务端 `status`（在售/下架/已售）与 `auditStatus`（待审/通过/驳回）是**正交两维**（R53 原设计如此），新发布条目天然是 `ON_SALE + PENDING`；而小程序「在售」标签**只传了 `status=ON_SALE`、没带 `auditStatus=APPROVED`** → 待审条目被同时捞进「在售」。本轮按用户口径改为**互斥单状态**：一个商品只属于一个标签。
+- **修改位置**：`pages/flea-mine/flea-mine.js` 新增 `FILTER_PARAMS` 构成**不重不漏**的划分 —— 审核两标签**只带 `auditStatus`、不带 `status`**（否则会漏掉被驳回时服务端同步落的 `OFF_SHELF` 件）；交易三标签**必须同时带 `auditStatus=APPROVED`**（未过审不算真正上架，驳回件也不等于卖家主动下架）；`load()` 改为按标签拼参数。同文件 `statusOf()`/`decorate()` 把卡片徽章由「审核态 + 交易态两个」改为**单一状态**（审核态优先，未过审显示「审核中」而非「在售」），上架/下架/重提三个按钮权限全部从同一对字段推导，杜绝「徽章说在售、却给了上架按钮」的错配；`onToggleStatus` 的就地更新改为重走 `decorate`。`flea-mine.wxml` 徽章由两个 `<text>` 改成一个。**服务端无需改动**（`mine/list` 本就支持两维组合）—— 这是纯粹的前端缺陷，故新增单测直接断言前端拼出的 URL。
+
+**验证**：新增 `scripts/r53b-listing-view-status-smoke.py` **26 PASS / 0 FAIL**（V 浏览量 10 项：初始 0 / 404 不计数 / owner 不计数 / 逐次 1→2→3 / 我的闲置与公开列表同步；S 状态互斥 16 项：5 标签各命中恰好 1 个 + 反例固定「只传 `status=ON_SALE` 会同时命中待审条目」）；新增 `scripts/flea-mine-filter-test.js` **42 PASS / 0 FAIL**（真实加载 `flea-mine.js`、桩 `wx.request`，断言 5 个标签**实际拼出的查询串** + 6 组徽章单一性 + 5 组按钮权限 + 就地更新一致性）；`scripts/check-miniprogram.js` 新增**规则 7（error 级）**「按钮文字禁止换行」—— 按钮基类必须 `white-space:nowrap`、横向排布成员必须 `flex:none`，并用「故意改坏」反向验证（6 处全部命中，证明规则不空转）。回归：R53 探针 28/28、R52 探针 57/57、聊天热修探针 17/17、`api-id-payload-test.js` 19/19、`short-time-test.js` 12/12（Asia/Shanghai）、静态自检 0 错 0 警。
+
 **R53 热修（2026-09-29，用户真机验收发现）** — **聊天消息发不出去（404）+ 消息时间差 8 小时**。
 用户报障三条：① 给官方客服发消息提示「内容已删除」；② 给跳蚤市场卖家私信（已关注）任何消息都发不出去、控制台 `POST /api/socials/messages 404`；③ 北京时间 12:33 发出的消息显示 04:33。**排查后确认 ①② 是同一个根因，共两处缺陷**：
 
@@ -26,7 +43,7 @@
 
 **② 详情页「立即购买」过渡态**。完整 C2C 担保交易（下单/锁库存/资金托管/放款）属设计稿 Batch-3，且设计稿 §12-6 明确**上线前必须核实微信类目资质**——本轮不做假下单：按钮弹「担保交易即将上线」modal 并引导「问问卖家」，PLAN.md 已登记边界与前置条件。
 
-**③ 我的闲置审核态体系（正交双维度）**。`status`（在售/下架/已售）与 `auditStatus`（PENDING/APPROVED/REJECTED）**正交**，列表筛选从 4 项扩为 6 项：
+**③ 我的闲置审核态体系（正交双维度）**。`status`（在售/下架/已售）与 `auditStatus`（PENDING/APPROVED/REJECTED）**正交**，列表筛选从 4 项扩为 6 项：（※ 服务端这两维仍正交；**前端展示口径**已在 R53 热修二改为**互斥单状态**，见本文首段）
 - `GET /api/listings/mine/list` 新增 `auditStatus` 参数（白名单校验，非法 400），可与 `status` 组合过滤；**审核驳回时 `status` 同步落 `OFF_SHELF`**（`audit()` 修改）——驳回条目不再混入「在售」筛选。
 - 新增 `GET /api/listings/mine/{id}`（**卖家视角详情**，`ListingOwnerView` 全集字段含审核原因；归属校验 404/403 刻意区分，`requireOwned` 统一收口）与 `POST /api/listings/{id}/resubmit`（**重新提审**：仅 REJECTED 可调，PENDING=「正在审核中」、APPROVED=「已通过无需重提」均 422 拒绝；重提=内容更新 + `auditStatus→PENDING` + `auditReason→null` + `status→ON_SALE`，实名与违禁词全部复检——发布/重提共用 `normalizeForWrite()` 闸门）。
 - 小程序：`flea-mine` 筛选 6 项 + 「修改并重新提审」按钮（驳回条目直接点卡片进编辑页）；`flea-publish` 支持编辑模式（`?id=X&mode=edit` 拉取 owner 详情回填表单，提交走 `resubmit`，价格分↔元换算复用 `api.fen2yuan`）。
@@ -535,9 +552,9 @@ duoduo-pet-mall-java/
 | GET | `/api/products/{spuId}` | 商品详情：SKU、适用属性聚合、同类推荐 | 免 |
 | GET | `/api/products/skus/batch?ids=2001,2002` | **批量 SKU 采购视图**（供交易服务调用；一次取几十个，避免 N 次跨服务调用） | 免 |
 | POST | `/api/products/skus/stock/{freeze,release,deduct,restock}` | **库存写接口**（冻结 / 释放 / 扣减 / 退货入库），见下 | **内部凭据** |
-| GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐 | 免 |
+| GET | `/api/listings/search` · `/api/listings/{id}` | C2C 闲置**列表**（只返回 `ON_SALE` + `APPROVED`）/ **详情** + 同款全新推荐。**详情每次访问浏览量 +1**（数据库侧原子自增，响应即最新值；卖家看自己的走 `mine/{id}` 不计） | 免 |
 | POST | `/api/listings` | **发布闲置**（落 `PENDING` 待审；需实名；`sellerId`/`status`/`auditStatus` 概不接受客户端传值） | 需登录 |
-| GET | `/api/listings/mine/list` | **我的发布**（`status` 与 `auditStatus` **正交双维度**筛选：`ON_SALE`/`OFF_SHELF`/`SOLD` × `PENDING`/`APPROVED`/`REJECTED`，含驳回原因；`auditStatus` 非法值 400） | 需登录 |
+| GET | `/api/listings/mine/list` | **我的发布**（`status` 与 `auditStatus` 两维筛选：`ON_SALE`/`OFF_SHELF`/`SOLD` × `PENDING`/`APPROVED`/`REJECTED`，含驳回原因；`auditStatus` 非法值 400）。**服务端两维正交**，小程序 5 个标签按**互斥单状态**拼参（交易三标签必须同时带 `auditStatus=APPROVED`，否则待审件会同时出现在「审核中」与「在售」——见 R53 热修二） | 需登录 |
 | GET | `/api/listings/mine/{id}` | **卖家视角详情**（`ListingOwnerView` 全集字段含审核原因；未过审也可读自己条目；非本人 403） | 需登录 |
 | POST | `/api/listings/{id}/resubmit` | **重新提审**（仅 `REJECTED` 可调，PENDING/APPROVED 均 422；实名与违禁词复检；成功后回 `PENDING` + `ON_SALE`，清空驳回原因） | 需登录 |
 | POST | `/api/listings/{id}/status` | **上架 / 下架**（`action=ON_SALE`/`OFF_SHELF`；幂等开关；上架要求已过审；他人闲置 403、不存在 404） | 需登录 |

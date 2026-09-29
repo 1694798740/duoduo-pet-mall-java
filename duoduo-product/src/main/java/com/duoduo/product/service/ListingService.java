@@ -149,12 +149,30 @@ public class ListingService {
         return PageResult.of(toCards(page.getRecords()), page.getTotal(), pageNo, pageSize);
     }
 
+    /**
+     * 闲置公开详情（免登可读）。
+     *
+     * <p><b>浏览量在此自增</b>（第五十三轮热修）：这个方法是「对外可见详情」的唯一出口 ——
+     * 未过审 / 已下架 / 已售的条目在上面已 404 抛错，不会走到这里，因此计数天然不脏；
+     * 卖家视角详情走 {@link #ownerDetail(Long)}（另一个方法），自己的后台查看不计数。
+     * 详情接口被别处复用会虚增计数，故调用方只允许 {@code GET /api/listings/{id}}。
+     *
+     * <p>自增后把返回值同步为「新值」，让本次响应就是最新计数（前端不必再拉一次列表）。
+     */
     public ListingDetail detail(Long id) {
         ListingEntity listing = listingMapper.selectById(id);
         if (listing == null
                 || !STATUS_ON_SALE.equals(listing.getStatus())
                 || !AUDIT_APPROVED.equals(listing.getAuditStatus())) {
             throw BizException.notFound("闲置商品");
+        }
+
+        // 原子自增 + 回填本次响应值；DB 写失败不应阻断浏览（计数是附属信息），故只记日志
+        try {
+            listingMapper.incrementViewCount(id);
+            listing.setViewCount((listing.getViewCount() == null ? 0 : listing.getViewCount()) + 1);
+        } catch (Exception e) {
+            log.warn("浏览量自增失败 listingId={}", id, e);
         }
 
         List<String> images = new ArrayList<>(Csv.split(listing.getImages()));

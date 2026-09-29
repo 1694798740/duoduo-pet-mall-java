@@ -11,6 +11,9 @@
  *                                data 初始值或 setData 调用的顶层键里（避免误报，仅告警不失败）
  *   5. 引用的本地图片不存在   → 扫描 wxml/js/json 里的 images/xxx.(png|jpg|jpeg|webp)，
  *                                与磁盘比对（tabBar 图标在 app.json 里，同一条规则覆盖）
+ *   6. 雪花 id 被 Number() 强转 → 超出 JS 数字精度会丢位（第五十三轮热修，error 级）
+ *   7. 按钮文字会折行         → 按钮基类缺 white-space:nowrap，或横向排布的
+ *                                标签/按钮缺 flex:none（第五十三轮热修二，error 级）
  *
  * 用法：node scripts/check-miniprogram.js [miniprogramDir]
  * 退出码：有 error 级问题 → 1；仅 warning → 0（便于先接入 CI 再逐步收紧）
@@ -226,6 +229,66 @@ for (const file of jsFiles) {
     errors.push(
       `[ID 精度] ${path.relative(ROOT, file)}: Number(${name}) —— ` +
         `雪花 id 超出 JS 数字精度会丢位，必须按字符串原样上行或拼接`
+    );
+  }
+}
+
+// ---------- 7. 按钮文字禁止换行（第五十三轮热修二）----------
+// 背景：小程序 button 自带 28rpx/侧内边距，与 flex:1 一同作用时文字框被挤窄，
+// 「加入购物车」「立即购买」这类长文案就折成两行；筛选条 6 个标签挤在一行时
+// 「审核中/审核失败/已下架/已售出」全部折行 —— 用户视角就是「按钮忽大忽小、与文字不协调」。
+// 修法是两条硬约定：① 按钮基类一律 white-space:nowrap；② 横向排布的标签/按钮 flex:none（不被压缩）。
+// 这两条一旦被后续改动抹掉就会复发，且 JS 侧测不到，故单列 error 级硬检查。
+function cssBlock(src, selector) {
+  const m = new RegExp('\\.' + selector + '\\s*\\{([\\s\\S]*?)\\}').exec(src);
+  return m ? m[1] : null;
+}
+function readWxss(relPath) {
+  const abs = path.join(ROOT, relPath);
+  return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null;
+}
+
+const NOWRAP_TARGETS = [
+  { file: 'app.wxss', sel: 'btn', why: '按钮基类' },
+  { file: 'app.wxss', sel: 'btn-mini', why: '小按钮基类' },
+];
+for (const t of NOWRAP_TARGETS) {
+  const src = readWxss(t.file);
+  if (src === null) continue;
+  const block = cssBlock(src, t.sel);
+  if (block === null) {
+    warnings.push(`[按钮换行] ${t.file} 未找到 .${t.sel} 规则块，无法校验「禁止换行」约定`);
+    continue;
+  }
+  if (!/white-space\s*:\s*nowrap/.test(block)) {
+    errors.push(
+      `[按钮换行] ${t.file} 的 .${t.sel}（${t.why}）缺少 white-space:nowrap —— ` +
+        `长文案按钮会折成两行，按钮高度忽大忽小`
+    );
+  }
+}
+
+// 横向排布中必须「不被压缩」的成员：写死 flex:none，否则被容器挤窄后文字折行
+const NOFLEX_TARGETS = [
+  { file: 'pages/product/product.wxss', sel: 'footer-share', why: '详情页底部工具按钮' },
+  { file: 'pages/flea-detail/flea-detail.wxss', sel: 'fd-foot-buy', why: '闲置详情购买按钮' },
+  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-filter', why: '我的闲置筛选标签' },
+  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-add', why: '我的闲置发布按钮' },
+  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-btn', why: '我的闲置操作按钮' },
+  { file: 'pages/flea-mine/flea-mine.wxss', sel: 'fmine-badge', why: '状态徽章' },
+];
+for (const t of NOFLEX_TARGETS) {
+  const src = readWxss(t.file);
+  if (src === null) continue;
+  const block = cssBlock(src, t.sel);
+  if (block === null) {
+    warnings.push(`[按钮换行] ${t.file} 未找到 .${t.sel} 规则块，无法校验 flex:none 约定`);
+    continue;
+  }
+  if (!/flex\s*:\s*none/.test(block)) {
+    errors.push(
+      `[按钮换行] ${t.file} 的 .${t.sel}（${t.why}）缺少 flex:none —— ` +
+        `横向排布时会被挤窄导致文字折行`
     );
   }
 }

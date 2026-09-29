@@ -40,6 +40,11 @@ nav-bar { display: block; }
   font-size: 30rpx;
   font-weight: 600;
   border: none;
+  /* 第五十三轮热修二：按钮文字一律不换行。
+     小程序 button 自带 28rpx/侧 的内边距，多个按钮同排（如商品详情底部四个）时
+     文字框被 flex 挤窄，「加入购物车」「立即购买」会被压成两行 —— 表现为按钮忽大忽小。
+     配合各页面的显式 padding/font-size，做到「按内容自适应 + 高度一致」。 */
+  white-space: nowrap;
 }
 .btn::after { border: none; }
 .btn-primary { background: var(--brand); color: #fff; }
@@ -55,6 +60,7 @@ nav-bar { display: block; }
   border-radius: 28rpx;
   font-size: 24rpx;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 /* ── 文本 ── */

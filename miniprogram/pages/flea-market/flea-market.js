@@ -166,6 +166,9 @@ Page({
   },
 
   onTapItem(e) {
+    // 详情页每次访问都会累加浏览量（第五十三轮热修二）→ 标记返回后重拉，
+    // 否则用户看完回来看到的还是旧计数（0 人看过），会以为统计没生效
+    this._needRefresh = true;
     wx.navigateTo({ url: '/pages/flea-detail/flea-detail?id=' + e.currentTarget.dataset.id });
   },
 

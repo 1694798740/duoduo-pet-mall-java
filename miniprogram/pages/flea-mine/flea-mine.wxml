@@ -25,9 +25,10 @@
       <view class="fmine-info">
         <view class="fmine-title">{{item.title}}</view>
 
+        <!-- 单一状态徽章（第五十三轮热修二）：一件闲置只属于一个状态，
+             徽章与筛选标签同源，不再同时挂「审核中」+「在售」两个标签 -->
         <view class="fmine-badges">
-          <text class="fmine-badge {{item.auditClass}}">{{item.auditLabel}}</text>
-          <text class="fmine-badge fmine-badge-status">{{item.statusLabel}}</text>
+          <text class="fmine-badge {{item.statusCls}}">{{item.statusText}}</text>
         </view>
 
         <view class="fmine-price-row">

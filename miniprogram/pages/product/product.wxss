@@ -96,13 +96,23 @@
   background: #fff;
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
+/* 第五十三轮热修二：四个按钮同排时给足文字空间，否则「加入购物车」「立即购买」被压成两行。
+   显式声明 padding 与 font-size（不再吃小程序 button 默认内边距），四个按钮高度统一 76rpx。 */
 .footer-share {
   width: 120rpx;
   height: 76rpx;
   flex: none;
   margin: 0;
+  padding: 0;
+  font-size: 26rpx;
 }
-.footer-btn { flex: 1; height: 76rpx; }
+.footer-btn {
+  flex: 1;
+  height: 76rpx;
+  padding: 0 12rpx;
+  font-size: 28rpx;
+  white-space: nowrap;
+}
 /* 加入购物车用描边样式与「立即购买」实心主按钮区分层级 */
 .footer .btn-plain.footer-btn { border: 2rpx solid var(--brand); color: var(--brand); }
 

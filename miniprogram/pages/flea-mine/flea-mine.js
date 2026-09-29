@@ -1,6 +1,6 @@
 // 我的闲置（第五十二轮）
 //
-// 与公开列表的关键差别：**必须展示全部状态**（在售 / 已下架 / 已售出 + 待审 / 已通过 / 已驳回）。
+// 与公开列表的关键差别：**必须展示全部状态**（在售 / 已下架 / 已售出 + 审核中 / 审核失败）。
 // 卖家看不到自己没通过审核的条目，就只能「发布完查无此项、反复重发」——
 // 这也正是服务端专门有 GET /api/listings/mine/list、而不是复用公开列表的原因。
 const api = require('../../utils/api');
@@ -8,9 +8,13 @@ const images = require('../../utils/images');
 
 const PAGE_SIZE = 10;
 
-// 五十三轮起筛选分两个维度：交易维度（在售/下架/已售 → status 参数）与
-// 审核维度（审核中/审核失败 → auditStatus 参数）。被驳回的条目不是「在售」——
-// 服务端驳回时会把 status 同步落 OFF_SHELF，把驳回条目混进「在售」会让卖家误判。
+/**
+ * 筛选标签（第五十三轮热修二）：5 个状态构成**不重不漏**的划分 —— 一件闲置只出现在一个标签下。
+ *
+ * 服务端 `status`（在售/下架/已售）与 `auditStatus`（审核中/通过/驳回）是**正交**的两维，
+ * 新发布的条目天然是「ON_SALE + PENDING」。所以只按 status 筛「在售」会把还在审核的条目
+ * 一起捞出来 —— 同一件闲置同时出现在「审核中」和「在售」两个标签里，正是用户报的问题。
+ */
 const FILTERS = [
   { code: 'ALL', label: '全部' },
   { code: 'AUDIT_PENDING', label: '审核中' },
@@ -20,20 +24,45 @@ const FILTERS = [
   { code: 'SOLD', label: '已售出' },
 ];
 
-/** 审核态文案与色号（色号驱动样式：待审=提示、通过=正常、驳回=警示） */
-const AUDIT_LABEL = {
-  PENDING: '审核中',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
+/**
+ * 标签 code → 接口参数。
+ *
+ * ★ 交易维度的三个标签（在售 / 已下架 / 已售出）**必须**同时带 `auditStatus=APPROVED`：
+ * 未过审的条目还不算真正上架（公开列表里根本搜不到），不能算「在售」；
+ * 被驳回的条目服务端已同步落 OFF_SHELF，同样不能算「已下架」（那是卖家的主动行为）。
+ */
+const FILTER_PARAMS = {
+  AUDIT_PENDING: { auditStatus: 'PENDING' },
+  AUDIT_REJECTED: { auditStatus: 'REJECTED' },
+  ON_SALE: { status: 'ON_SALE', auditStatus: 'APPROVED' },
+  OFF_SHELF: { status: 'OFF_SHELF', auditStatus: 'APPROVED' },
+  SOLD: { status: 'SOLD', auditStatus: 'APPROVED' },
 };
+
+/**
+ * 单一显示状态（卡片徽章）：与上面的标签同源，保证「徽章说的状态」就是「它所在的标签」。
+ *
+ * 审核态优先于交易态：未过审的条目在卖，卖家看到「在售」会误以为已经挂出去了；
+ * 已售出 / 已下架的判定放在审核态之后，因为过审后这些交易态才真正成立。
+ */
+function statusOf(it) {
+  const audit = it.auditStatus || 'PENDING';
+  if (audit === 'PENDING') return { text: '审核中', cls: 'fm-badge-pending' };
+  if (audit === 'REJECTED') return { text: '审核失败', cls: 'fm-badge-rejected' };
+  if (it.status === 'SOLD') return { text: '已售出', cls: 'fm-badge-sold' };
+  if (it.status === 'OFF_SHELF') return { text: '已下架', cls: 'fm-badge-off' };
+  return { text: '在售', cls: 'fm-badge-onsale' };
+}
 
 function decorate(it) {
   const audit = it.auditStatus || 'PENDING';
+  const st = statusOf(it);
   return Object.assign({}, it, {
     image: images.listingImage(it.id, it.cover),
     priceText: api.fen2yuan(it.price),
-    auditLabel: AUDIT_LABEL[audit] || audit,
-    auditClass: 'fm-audit-' + audit.toLowerCase(),
+    // 单一状态徽章（第五十三轮热修二）：不再同时挂「审核中」+「在售」
+    statusText: st.text,
+    statusCls: st.cls,
     timeText: api.shortTime(it.createdAt),
     canShelve: it.status === 'OFF_SHELF' && audit === 'APPROVED',
     canUnshelve: it.status === 'ON_SALE' && audit === 'APPROVED',
@@ -94,12 +123,10 @@ Page({
     }
     const page = reset ? 1 : this.data.page + 1;
     this.setData({ loading: true, error: reset ? '' : this.data.error });
-    // 筛选 code → 接口参数：审核维度走 auditStatus，交易维度走 status（第五十三轮）
+    // 筛选 code → 接口参数（第五十三轮热修二）：每个标签都带上审核维度，
+    // 保证 5 个标签互斥（同一件闲置只命中一个，不会既在「审核中」又在「在售」）
     const filter = this.data.status;
-    const params = { page, pageSize: PAGE_SIZE };
-    if (filter === 'AUDIT_PENDING') params.auditStatus = 'PENDING';
-    else if (filter === 'AUDIT_REJECTED') params.auditStatus = 'REJECTED';
-    else if (filter !== 'ALL') params.status = filter;
+    const params = Object.assign({ page, pageSize: PAGE_SIZE }, FILTER_PARAMS[filter] || {});
     api.listing
       .mine(params)
       .then((res) => {
@@ -170,17 +197,11 @@ Page({
       .then(() => {
         this.setData({ acting: false });
         wx.showToast({ title: '已' + verb, icon: 'success' });
-        // 就地更新状态（比整页重拉更跟手，也避免列表滚动位置丢失）
+        // 就地更新状态（比整页重拉更跟手，也避免列表滚动位置丢失）：
+        // 重新走一遍 decorate —— 徽章与按钮权限都从 status/auditStatus 推导，
+        // 保证「单一状态」口径在就地更新后依然成立（否则会出现旧徽章 + 新按钮的错配）
         const items = this.data.items.map((x) =>
-          String(x.id) === String(id)
-            ? Object.assign({}, x, {
-                status: next,
-                statusLabel: next === 'ON_SALE' ? '在售' : '已下架',
-                // 上架按钮仍受审核态约束（未过审不能上架，服务端同款闸门）
-                canShelve: next === 'OFF_SHELF' && x.auditStatus === 'APPROVED',
-                canUnshelve: next === 'ON_SALE' && x.auditStatus === 'APPROVED',
-              })
-            : x
+          String(x.id) === String(id) ? decorate(Object.assign({}, x, { status: next })) : x
         );
         this.setData({ items });
         // 当前筛选项可能已不匹配（例如在「在售」页里下架了一条）→ 重拉保持一致

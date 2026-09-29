@@ -101,8 +101,10 @@
   align-items: center;
   gap: 18rpx;
 }
-.fd-foot-buy { flex-shrink: 0; }
-.fd-foot-want { flex: 1; }
+/* 底部按钮（第五十三轮热修二）：高度统一、文字不换行、宽度按内容自适应。
+   显式声明 padding/font-size，避免吃到小程序 button 默认内边距后把「立即购买」压成两行。 */
+.fd-foot-buy { flex: none; height: 76rpx; padding: 0 28rpx; font-size: 28rpx; }
+.fd-foot-want { flex: 1; height: 76rpx; padding: 0 28rpx; font-size: 28rpx; }
 .fd-owner-hint { flex: 1; }
 
 .fd-state {
