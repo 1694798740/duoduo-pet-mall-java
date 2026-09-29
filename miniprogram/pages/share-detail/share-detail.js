@@ -67,7 +67,8 @@ Page({
           loading: false,
           friendShare: true,
           view: decorate({
-            spuId: Number(spuId),
+            // 第五十三轮热修：id 保持字符串，Number() 会把 19 位雪花 id 精度打碎
+            spuId: String(spuId),
             productTitle: card.title || '商品',
             productImage: card.mainImage || '',
             minPrice: card.minPrice || 0,

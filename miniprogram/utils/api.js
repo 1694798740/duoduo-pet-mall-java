@@ -454,7 +454,7 @@ const seckill = {
 const share = {
   /** 发布分享：spuId + 用户自撰评价内容（必填，≤500 字） */
   publish(spuId, content) {
-    return req.post('/api/shares', { spuId: Number(spuId), content });
+    return req.post('/api/shares', { spuId: String(spuId), content });
   },
   /** 信息流（公开）：按发布时间倒序，{ items, total }；登录时带 liked/favorited 标记 */
   feed(page, pageSize) {
@@ -521,15 +521,23 @@ const social = {
      * 发消息。bizType 缺省 TEXT；bizType=ASK（商品咨询）时服务端把收件人改成
      * 商品归属卖家 —— 前端传的 receiverId 只是契约占位，真正收件人以后端事实为准。
      * bizType=LISTING（闲置咨询，第五十三轮）同款纪律：服务端按闲置归属定人。
+     *
+     * ★ 所有 id 一律**按字符串原样上行，禁止 Number() 强转**（第五十三轮热修）：
+     *   雪花 id 是 19 位，JS Number 只有 53 位有效精度 ——
+     *   `Number('710000000000000001') === 710000000000000000`，
+     *   服务端按这个值查库必然查无此人 → 404「用户不存在」→ 前端文案化成
+     *   「内容不存在或已删除」，表现为「消息怎么都发不出去」（官方客服 id 18 位、
+     *   闲置 id 18 位，全部踩中）。后端字段是 Long，Jackson 对数字串自动转换，无需前端转数值。
      */
     send(receiverId, content, bizType, bizId, contextProductId, contextListingId) {
-      const payload = { receiverId: Number(receiverId), content: content || '' };
+      const payload = { content: content || '' };
+      if (receiverId) payload.receiverId = String(receiverId);
       if (bizType) payload.bizType = bizType;
-      if (bizId) payload.bizId = Number(bizId);
+      if (bizId) payload.bizId = String(bizId);
       // 商品咨询会话上下文（第四十九轮）：TEXT 带 productId 落回该商品的独立会话
-      if (contextProductId) payload.productId = Number(contextProductId);
+      if (contextProductId) payload.productId = String(contextProductId);
       // 闲置咨询会话上下文（第五十三轮）：TEXT 带 listingId 落回该闲置的独立会话
-      if (contextListingId) payload.listingId = Number(contextListingId);
+      if (contextListingId) payload.listingId = String(contextListingId);
       return req.post('/api/socials/messages', payload);
     },
     /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
@@ -588,14 +596,49 @@ function fen2yuan(fen) {
   return (n / 100).toFixed(n % 100 === 0 ? 0 : 2);
 }
 
-// ── 时间工具（后端下发 ISO-8601 UTC 串，直接展示不友好） ─────────────────────
-/** ISO 串 → MM-DD HH:mm（本地时区）；无法解析时原样返回，绝不显示 undefined */
+// ── 时间工具 ────────────────────────────────────────────────────────────────
+/**
+ * ISO-8601 串 → MM-DD HH:mm（**设备本地时区**）。
+ *
+ * 第五十三轮热修：旧实现是 `replace('T',' ').replace('Z','')` 后裸切片 —— 把后端
+ * 明确声明的时区标记（`Z`）主动删掉再按字面展示，于是 UTC 挂钟时间被当成北京时间显示，
+ * **全站时间统一少 8 小时**（订单/优惠券/秒杀/分享圈/通知/聊天共 13 个页面同源）。
+ *
+ * 后端契约（服务端写入与下发一致，均为 UTC）：
+ *   LocalDateTime.now(ZoneOffset.UTC) → time.toInstant(ZoneOffset.UTC).toString() → 「…Z」
+ * 故本函数按「UTC 解析 → 转设备本地展示」处理；无时区标记的串按同一契约视为 UTC。
+ * 纯日期（yyyy-mm-dd）无时区语义，原样返回；解析失败也原样返回，绝不显示 undefined。
+ *
+ * 注：手写解析而非 `new Date(str)` —— iOS 的 JavaScriptCore 对超过 3 位小数秒的
+ * ISO 串（后端下发纳秒精度）会解析成 Invalid Date，逐段取值可绕开该兼容性差异。
+ */
 function shortTime(iso) {
   if (!iso) return '';
-  const text = String(iso).replace('T', ' ').replace('Z', '');
-  const m = text.match(/^(\d{4})-(\d{2})-(\d{2})[ ]?(\d{2}):(\d{2})/);
-  if (!m) return String(iso);
-  return m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+  const raw = String(iso).trim();
+  const m = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$/
+  );
+  if (!m) return raw; // 纯日期 / 非时间串：无时区语义，原样返回
+
+  const [y, mo, d, h, mi, s] = [+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0)];
+  const frac = m[7] ? +((m[7] + '000').slice(0, 3)) : 0; // 纳秒 → 毫秒
+  const zone = m[8];
+
+  let offsetMin = 0; // 串自带偏移（分钟，东八区为 +480）
+  if (zone && zone !== 'Z') {
+    const sign = zone[0] === '-' ? -1 : 1;
+    const z = zone.slice(1).replace(':', '');
+    offsetMin = sign * (+z.slice(0, 2) * 60 + +z.slice(2));
+  }
+
+  // 先按 UTC 造出绝对时刻，再减掉串自带偏移；无标记时 offsetMin=0（按合约即 UTC）
+  const epoch = Date.UTC(y, mo - 1, d, h, mi, s, frac) - offsetMin * 60000;
+  const dt = new Date(epoch);
+  if (isNaN(dt.getTime())) return raw;
+
+  const p2 = (n) => ('0' + n).slice(-2);
+  // getMonth/getDate/getHours 取的是设备本地时区 → 北京时间自动 +8
+  return p2(dt.getMonth() + 1) + '-' + p2(dt.getDate()) + ' ' + p2(dt.getHours()) + ':' + p2(dt.getMinutes());
 }
 
 module.exports = {

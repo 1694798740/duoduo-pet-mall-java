@@ -22,7 +22,7 @@
     <!-- 消息流：时间正序，新消息自动滚底 -->
     <scroll-view class="chat-body" scroll-y scroll-into-view="{{scrollInto}}" scroll-with-animation>
       <view wx:if="{{items.length === 0}}" class="empty">
-        {{ask ? '向卖家咨询这个商品吧' : '打个招呼吧'}}
+        {{ask ? (listingId ? '向卖家咨询这件闲置吧' : '向卖家咨询这个商品吧') : '打个招呼吧'}}
       </view>
       <view
         wx:for="{{items}}"

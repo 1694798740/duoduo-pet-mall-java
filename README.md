@@ -4,6 +4,16 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R53 热修（2026-09-29，用户真机验收发现）** — **聊天消息发不出去（404）+ 消息时间差 8 小时**。
+用户报障三条：① 给官方客服发消息提示「内容已删除」；② 给跳蚤市场卖家私信（已关注）任何消息都发不出去、控制台 `POST /api/socials/messages 404`；③ 北京时间 12:33 发出的消息显示 04:33。**排查后确认 ①② 是同一个根因，共两处缺陷**：
+
+- **① ② 根因：前端把雪花 id 强转成 JS 数字，精度丢失 → 服务端查无此人 404**。`miniprogram/utils/api.js` 的 `message.send` 里写着 `receiverId: Number(receiverId)`、`bizId: Number(bizId)`、`productId`、`listingId` 四处 `Number()` 强转 —— 而 id 是 18~19 位十进制，超出 JS Number 的 **53 位有效精度**：`Number('710000000000000001') === 710000000000000000`（末位被吞）。服务端按这个错值查库必然 `404 用户不存在`，前端再把 `NOT_FOUND` 文案化成「内容不存在或已删除」——用户视角就是「消息怎么都发不出去」。**为什么"之前能发、现在发不出"**：`ASK` / `LISTING` 的**首条**由服务端按商品/闲置归属定收件人（不信前端 receiverId），把缺陷掩盖了；一旦会话内落到 `TEXT`（沿用前端 receiverId）就必然 404。**修复**：四处 id 一律 `String(...)` 原样上行（后端字段是 `Long`，Jackson 对数字串自动转换），缺省字段不上行；`share.publish` 与 `share-detail` 的 `spuId` 同族隐患一并修掉。
+- **③ 根因：前端把后端声明的时区标记删掉再裸切片**。后端时间契约本来就是 **UTC + `Z`**（`LocalDateTime.now(ZoneOffset.UTC)` 落库 + `toInstant(ZoneOffset.UTC).toString()` 下发，探针实测 `createdAt=2026-09-29T04:38:19Z`），而 `api.js` 的 `shortTime` 是 `String(iso).replace('T',' ').replace('Z','')` 后正则裸切 —— 等于把 UTC 挂钟时间当北京时间展示，**全站统一少 8 小时**。且该函数被 **13 个页面**共用（聊天 / 会话列表 / 订单详情 / 优惠券 / 秒杀 / 分享圈 / 通知 / 关注列表 / 售后 / 我的闲置），故一次性全修。**修复**：重写为「按 UTC 解析 → 转**设备本地时区**展示」，手写逐段解析（而非 `new Date(str)`）以绕开 iOS JavaScriptCore 对后端纳秒精度 ISO 串的解析差异；纯日期与非法串原样返回。
+- **★ 防复发（本轮最有价值的产出）**：这类缺陷**接口探针永远测不到** —— Python 传的 id 天然是字符串。故新增三道防线：① `scripts/check-miniprogram.js` 规则 6（**error 级静态硬检查**）：禁止对 `xxxId` 做 `Number()` 强转；② `scripts/api-id-payload-test.js` **真实加载 `api.js`、桩掉 `wx.request` 断言出参**（19 项）；③ `scripts/short-time-test.js` 时间换算单测（12 项，含「非 UTC 时区下输出不得等于裸切片值」的反回归断言）。
+
+**验证**：新增 `scripts/r53-hotfix-chat-smoke.py` **17 PASS / 0 FAIL**（A 咨询会话收发 7 项 + B 闲置咨询收发 5 项 + C 时间契约 4 项，含失败模式固定「精度丢失 id 必 404」）+ `api-id-payload-test.js` **19/19** + `short-time-test.js` **12 PASS（Asia/Shanghai）/ 10 PASS（UTC）**；R53 探针 **28/28**、R52 探针 **57/57** 回归全绿；静态自检 0 错 0 警。
+**副产发现（已记录，非缺陷）**：雪花 id 有约 **1/64** 概率恰为 64 的倍数 —— 此时有效位数 ≤53，双精度可精确表示，`Number()` **不丢位**。故复现用例必须按前置条件分支，否则会写出「有时绿有时红」的假测试。
+
 **最近更新：2026-09-28（第五十三轮）** — **闲置详情卖家卡与问一问 + 详情购买按钮（过渡态）+ 我的闲置审核态体系**。
 本轮三项：详情页能看到卖家并一键咨询、购买按钮过渡态引导、驳回-修改-重提闭环。
 

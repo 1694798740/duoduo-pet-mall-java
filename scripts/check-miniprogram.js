@@ -208,6 +208,28 @@ for (const file of files) {
   }
 }
 
+// ---------- 6. ID 精度：雪花 id 禁止 Number() 强转 ----------
+// 背景（第五十三轮热修）：雪花 id 是 19 位十进制，超出 JS Number 的 53 位有效精度 ——
+//   Number('710000000000000001') === 710000000000000000（末位被吞成 0）
+// 后果极隐蔽：开发者工具不报任何错，只在联调时表现为「消息怎么都发不出去」——
+// 服务端拿错 id 查库 → 404「用户不存在」→ 前端文案化成「内容不存在或已删除」。
+// 故单列 error 级硬检查。只查「以 Id 结尾」的标识符（receiverId/spuId/bizId…）：
+// dataset.index / item.quantity 这类数值语义变量不在其列，且它们带点号本就不匹配。
+const ID_NUM_RE = /Number\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+for (const file of jsFiles) {
+  const clean = stripCommentsAndStrings(fs.readFileSync(file, 'utf8'));
+  let m;
+  while ((m = ID_NUM_RE.exec(clean))) {
+    const name = m[1];
+    const looksLikeId = name === 'id' || name === 'Id' || /[a-z0-9_$]Id$/.test(name);
+    if (!looksLikeId) continue;
+    errors.push(
+      `[ID 精度] ${path.relative(ROOT, file)}: Number(${name}) —— ` +
+        `雪花 id 超出 JS 数字精度会丢位，必须按字符串原样上行或拼接`
+    );
+  }
+}
+
 // ---------- 输出 ----------
 const rel = (s) => s.replace(/\\/g, '/');
 console.log('=== 小程序静态自检 ===');
