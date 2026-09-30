@@ -21,6 +21,12 @@ import java.time.LocalDateTime;
  * <p>状态机：{@code CUSTODY}（托管中）→ {@code RELEASED}（已放款给卖家）
  * 或 {@code REFUNDED}（已退回买家）。两条边都不可逆，也不可互换。
  *
+ * <p>{@code RELEASED} → {@code ADVANCED}（第五十八轮 · B-01）：**平台垫付**。
+ * 钱已经打给卖家是既成事实，此时买家仍该拿到退款，只能由平台先垫付，
+ * 于是在 {@code t_seller_debt} 形成一笔卖家欠款。它不是 RELEASED 的回退
+ * （那条边依然不可逆），而是在其之上新增的一条边 —— 资金轨迹可完整回溯：
+ * {@code CUSTODY → RELEASED → ADVANCED}。
+ *
  * <p>{@code platformFee} 单独成列而不是「结算时再算」：
  * 费率会随运营策略调整，而历史单据必须保留**结算当刻**的口径，
  * 否则对账时会出现「按今天的费率算昨天的单，怎么都对不平」。
@@ -33,6 +39,8 @@ public class SettlementEntity {
     public static final String STATUS_CUSTODY = "CUSTODY";
     public static final String STATUS_RELEASED = "RELEASED";
     public static final String STATUS_REFUNDED = "REFUNDED";
+    /** 平台垫付：钱已放款给卖家，平台先垫给买家，同时形成卖家欠款（B-01） */
+    public static final String STATUS_ADVANCED = "ADVANCED";
 
     @TableId
     private Long id;

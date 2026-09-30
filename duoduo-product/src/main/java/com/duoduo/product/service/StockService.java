@@ -42,10 +42,11 @@ import java.util.Set;
  * 这样调用方拿到失败时，远端状态一定是「什么都没改」，不需要再依赖跨服务补偿 ——
  * 补偿调用本身也可能失败，那才是真正难查的库存残留。
  *
- * <p><b>关于 restock 的重复调用</b>：它不像 freeze/release 那样自带「幂等护栏」
- * （冻结量足够才成功、冻结量不足即重复），重复入库会真的多加库存。
- * 因此调用方（交易服务）必须用台账把「入库」做成一次性的、可重试的状态迁移，
- * 而不是依赖本接口自身幂等。详见交易侧 {@code StockFreezeEntity} 的状态说明。
+ * <p><b>关于 restock 的重复调用</b>（第五十八轮已修，B-02 关闭）：它不像 freeze/release 那样自带
+ * 「幂等护栏」（冻结量足够才成功、不足即重复），重复入库会**真的多加库存且不报错**。
+ * 现在入库前先撞 {@code t_sku_restock_log} 的主键（{@code (ref_no, sku_id)}）：
+ * 只有首次插入成功才执行加库存；重复请求返回「成功」但**不再加库存**。
+ * 调用方仍需用台账做状态迁移（那样能少一次远程调用），但即使它重试，也不会再加一遍。
  */
 @Service
 public class StockService {
@@ -89,16 +90,34 @@ public class StockService {
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // 入库（B-02）：refNo 是幂等号，缺了就等于放弃了去重能力 —— 直接拒绝而不是「照样加库存」。
+        // 宁可让调用方补上参数报错，也不要留一个「看起来成功、实际会双加」的口子。
+        if (ACTION_RESTOCK.equals(action) && (request.refNo() == null || request.refNo().isBlank())) {
+            throw BizException.validation("入库（restock）必须带 refNo 幂等号");
+        }
         List<StockChangeResult> results = new ArrayList<>(request.items().size());
         boolean allSuccess = true;
         for (StockChangeItem item : request.items()) {
-            int affected = switch (action) {
-                case ACTION_FREEZE -> skuMapper.freezeStock(item.skuId(), item.quantity(), now);
-                case ACTION_RELEASE -> skuMapper.releaseStock(item.skuId(), item.quantity(), now);
-                case ACTION_DEDUCT -> skuMapper.deductStock(item.skuId(), item.quantity(), now);
-                case ACTION_RESTOCK -> skuMapper.restockStock(item.skuId(), item.quantity(), now);
-                default -> throw BizException.validation("不支持的库存操作：" + action);
-            };
+            int affected;
+            if (ACTION_RESTOCK.equals(action)) {
+                // 幂等闸：只有「首次插入」才真正加库存。重复提交（响应丢失后的重试）在这里返回 0，
+                // 于是本轮跳过更新、按**成功**返回（货确实已经回库了）——既不重复加，也不让调用方重试到死。
+                int claimed = skuMapper.insertRestockLogIgnore(request.refNo(), item.skuId(), item.quantity());
+                if (claimed == 0) {
+                    // 回执必须如实：本轮**实际加回 0 件**（此前已入过库），不能报成加了 quantity 件 ——
+                    // 否则调用方与审计都会以为这批货回了两次。
+                    results.add(new StockChangeResult(item.skuId(), 0, true, null));
+                    continue;
+                }
+                affected = skuMapper.restockStock(item.skuId(), item.quantity(), now);
+            } else {
+                affected = switch (action) {
+                    case ACTION_FREEZE -> skuMapper.freezeStock(item.skuId(), item.quantity(), now);
+                    case ACTION_RELEASE -> skuMapper.releaseStock(item.skuId(), item.quantity(), now);
+                    case ACTION_DEDUCT -> skuMapper.deductStock(item.skuId(), item.quantity(), now);
+                    default -> throw BizException.validation("不支持的库存操作：" + action);
+                };
+            }
             if (affected == 1) {
                 results.add(new StockChangeResult(item.skuId(), item.quantity(), true, null));
             } else {

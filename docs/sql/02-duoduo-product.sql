@@ -113,6 +113,20 @@ CREATE TABLE t_sku (
 );
 CREATE INDEX idx_sku_spu ON t_sku (spu_id);
 
+-- ---------- 退货入库幂等去重表（第五十八轮 · B-02） ----------
+-- restock 没有像 freeze/release 那样的天然幂等护栏：重复调用会真的多加库存且不报错。
+-- 现实中最易撞上「调用已生效、响应丢失」→ 交易侧判失败 → 补偿调度再调一次 → 库存凭空多一份。
+-- 去重键即主键 (ref_no, sku_id)，判据是 INSERT IGNORE 是否真的插入（affected=1），
+-- 幂等性落在数据库唯一键上，不依赖应用层「先查有没有」（并发下会双写）。
+CREATE TABLE t_sku_restock_log (
+    ref_no      VARCHAR(64) NOT NULL                COMMENT '入库请求幂等号（交易侧给出，如 restock:{orderId}）',
+    sku_id      BIGINT      NOT NULL                COMMENT 'SKU id',
+    quantity    INT         NOT NULL DEFAULT 0      COMMENT '本次实际加回的数量（审计用）',
+    created_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC）',
+    PRIMARY KEY (ref_no, sku_id)
+);
+CREATE INDEX idx_restock_log_sku ON t_sku_restock_log (sku_id);
+
 -- ---------- C2C 闲置 ----------
 CREATE TABLE t_listing (
     id               BIGINT       NOT NULL,
@@ -135,6 +149,10 @@ CREATE TABLE t_listing (
     audit_reason     VARCHAR(200),
     audit_at         TIMESTAMP,
     -- 浏览次数：页面每被打开或刷新一次 +1（同一人可累加）
+    -- 软删时间（第五十八轮 · B-14）：非 NULL 即已删除。**必须软删不能物理删** ——
+    -- 闲置成交后会与订单、会话、举报产生引用，物理删会让别人的页面出现「查无此物」；
+    -- 审核与举报留痕也需要「这条内容曾经存在」。所有读路径一律带 deleted_at IS NULL。
+    deleted_at       TIMESTAMP    NULL,
     view_count       INT          NOT NULL DEFAULT 0,
     -- 想要人数：按咨询行为去重统计（同一买家对同一闲置只计 1 次）；与 view_count 是两个口径
     want_count       INT          NOT NULL DEFAULT 0,

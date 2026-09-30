@@ -72,21 +72,21 @@ public class ProductGateway {
     /** 冻结库存；返回逐项结果，调用方按 {@code allSuccess} 决定是否补偿 */
     public StockChangeOutcome freeze(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.freezeStock(new StockChangePayload(items)),
+                () -> productClient.freezeStock(new StockChangePayload(items, null)),
                 "冻结库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
 
     public StockChangeOutcome release(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.releaseStock(new StockChangePayload(items)),
+                () -> productClient.releaseStock(new StockChangePayload(items, null)),
                 "释放库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
 
     public StockChangeOutcome deduct(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.deductStock(new StockChangePayload(items)),
+                () -> productClient.deductStock(new StockChangePayload(items, null)),
                 "扣减库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
@@ -94,13 +94,17 @@ public class ProductGateway {
     /**
      * 退货入库（退款后把货补回库存）。
      *
-     * <p>注意：入库接口<b>不像 freeze/release 那样自带幂等护栏</b>，
-     * 重复调用会真的把库存加多。调用方必须把「只调一次」交给台账状态迁移来保证
-     * （见 {@code StockFreezeEntity} 的 RESTOCK_PENDING → RESTOCKED）。
+     * <p><b>幂等号（第五十八轮 · B-02）</b：这里额外带上 {@code refNo = restock:{orderId}}。
+     * 商品侧的入库没有天然幂等护栏，光靠本侧台账（RESTOCK_PENDING → RESTOCKED）挡不住
+     * 「调用已生效、响应丢失」——那种情况下本侧判失败、台账留在 PENDING，下一轮补偿会再调一次，
+     * 库存就凭空多一份。带上幂等号后，即使重试，商品侧也会撞主键跳过加库存。
+     *
+     * <p>幂等号按订单而不按台账行：一次退款的入库就是「这个订单的货回库」这件事，
+     * 同一订单重复请求应当被去重；若同一订单发生第二次独立退款，则本就不该再回一次库。
      */
     public StockChangeOutcome restock(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.restockStock(new StockChangePayload(items)),
+                () -> productClient.restockStock(new StockChangePayload(items, "restock:" + orderId)),
                 "退货入库(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }

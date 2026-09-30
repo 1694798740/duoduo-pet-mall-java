@@ -51,6 +51,39 @@ public final class AdminDtos {
     }
 
     /**
+     * 平台垫付请求（第五十八轮 · B-01）。
+     *
+     * <p>{@code reason} <b>必填</b>：这笔钱由平台出、且要记到卖家头上，
+     * 「为什么出这笔钱」必须留在账上可查 —— 没有原因的垫付在对账时无法解释。
+     */
+    public record CompensateRequest(
+            @jakarta.validation.constraints.NotBlank(message = "订单号不能为空")
+            @jakarta.validation.constraints.Size(max = 32) String orderNo,
+            @jakarta.validation.constraints.NotBlank(message = "垫付原因必填")
+            @jakarta.validation.constraints.Size(max = 200, message = "垫付原因过长") String reason
+    ) {
+    }
+
+    /**
+     * 卖家欠款视图（第五十八轮 · B-01）。
+     *
+     * <p>id / sellerId / orderId 一律<b>字符串</b>：18~19 位雪花 id 超出 JS 安全整数上限，
+     * 数字传输会被 JSON 解析静默改写（R53 的血泪，全站统一口径）。
+     */
+    public record SellerDebtView(
+            String id,
+            String sellerId,
+            String orderId,
+            String orderNo,
+            long amount,
+            String status,
+            String statusLabel,
+            String reason,
+            java.time.LocalDateTime createdAt
+    ) {
+    }
+
+    /**
      * 托管单回补计划/结果中的一条：某订单将被（已）补成什么资金状态。
      *
      * <p>回补的请求参数刻意<b>不走请求体</b>，用查询串 {@code ?dryRun=true}（见

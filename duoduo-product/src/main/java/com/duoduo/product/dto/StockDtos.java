@@ -14,8 +14,14 @@ public final class StockDtos {
     public record StockChangeItem(Long skuId, Integer quantity) {
     }
 
-    /** 批量库存变更请求（一个订单的多个 SKU 一次提交） */
-    public record StockChangeRequest(List<StockChangeItem> items) {
+    /**
+     * 批量库存变更请求（一个订单的多个 SKU 一次提交）。
+     *
+     * @param refNo **入库幂等号**（第五十八轮 · B-02）：仅 {@code restock} 必需。
+     *              同一 refNo 的同一 SKU 只会真正加回一次库存；重复提交（响应丢失后的重试）
+     *              原样返回成功但**不再加库存**。其他动作可传 null。
+     */
+    public record StockChangeRequest(List<StockChangeItem> items, String refNo) {
     }
 
     /**

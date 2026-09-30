@@ -47,6 +47,10 @@ import org.springframework.web.bind.annotation.RestController;
  *       <td><b>强制登录</b>。上下架。同样三段，{@code *} 不跨 {@code /} 故落白名单外。</td></tr>
  *   <tr><td>{@code /api/listings/{id}/resubmit}</td><td>POST</td>
  *       <td><b>强制登录 + 实名</b>。被驳回后修改内容重新提审（第五十三轮）。三段，白名单外。</td></tr>
+ *   <tr><td>{@code /api/listings/{id}/edit}</td><td>POST</td>
+ *       <td><b>强制登录 + 实名</b>。编辑内容，改完回到待审核（第五十八轮）。三段，白名单外。</td></tr>
+ *   <tr><td>{@code /api/listings/{id}/delete}</td><td>POST</td>
+ *       <td><b>强制登录</b>。删除（软删）。三段，白名单外。</td></tr>
  * </table>
  *
  * <p>运营审核仍在 {@code /api/admin/listings/**}（见 {@link AdminListingController}）；
@@ -156,5 +160,37 @@ public class ListingController {
     public ApiResponse<ListingMineView> resubmit(@PathVariable Long id,
                                                  @RequestBody ListingPublishRequest request) {
         return ApiResponse.ok(listingService.resubmit(id, request));
+    }
+
+    /**
+     * 编辑自己的闲置（需登录 + 需实名 + 需归属）。
+     *
+     * <p>路径必须是<b>三段</b>（{@code /{id}/edit}）：白名单的 {@code /api/listings/*}
+     * 不区分 HTTP 方法，写成两段（哪怕是 {@code PUT}）就把 UGC 写端点放成匿名可调。
+     * 与 {@code /{id}/status}、{@code /{id}/resubmit} 同一套形状。
+     *
+     * <p>编辑后 {@code auditStatus} 回到 {@code PENDING}：审核结论是针对「当时那一段内容」
+     * 作出的，内容变了结论就失效。放它继续挂着 APPROVED，等于让卖家「先过审、再改成违规内容」。
+     */
+    @PostMapping("/{id}/edit")
+    public ApiResponse<ListingMineView> edit(@PathVariable Long id,
+                                             @RequestBody ListingPublishRequest request) {
+        return ApiResponse.ok(listingService.edit(id, request));
+    }
+
+    /**
+     * 删除自己的闲置（需登录 + 需归属，<b>软删</b>）。
+     *
+     * <p>同样三段路径，理由同 {@link #edit}。用 {@code POST} 而非 {@code DELETE}：
+     * 与 {@code /{id}/status}、{@code /{id}/resubmit} 保持同一动作式风格
+     * （本项目写端点一律 POST + 动作名后缀）。
+     *
+     * <p>软删：行留在库里，只写 {@code deleted_at}。闲置成交后与订单、会话、举报形成引用，
+     * 物理删会让别人的订单页与聊天记录变成「查无此物」。
+     */
+    @PostMapping("/{id}/delete")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        listingService.remove(id);
+        return ApiResponse.ok(null);
     }
 }

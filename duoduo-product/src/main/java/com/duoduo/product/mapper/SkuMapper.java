@@ -2,6 +2,7 @@ package com.duoduo.product.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.duoduo.product.entity.SkuEntity;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
@@ -66,7 +67,27 @@ public interface SkuMapper extends BaseMapper<SkuEntity> {
                     @Param("updatedAt") LocalDateTime updatedAt);
 
     /**
+     * 登记一条入库幂等记录（第五十八轮 · B-02）。
+     *
+     * <p>用 {@code INSERT IGNORE} 撞主键：主键即去重键 {@code (ref_no, sku_id)}，
+     * 首次调用插入成功（返回 1），**重复调用返回 0 且不报错**。
+     * 幂等性完全交给数据库唯一键，而不是「先 SELECT 有没有、没有再 INSERT」——
+     * 后者在并发重试下两个请求都会查到「没有」，于是都插入、都加库存（双写）。
+     *
+     * @return 1 = 本次是首次入库（可以加库存）；0 = 该 (ref_no, sku_id) 已入过库（必须跳过加库存）
+     */
+    @Insert("INSERT IGNORE INTO t_sku_restock_log (ref_no, sku_id, quantity) "
+            + "VALUES (#{refNo}, #{skuId}, #{quantity})")
+    int insertRestockLogIgnore(@Param("refNo") String refNo,
+                               @Param("skuId") Long skuId,
+                               @Param("quantity") int quantity);
+
+    /**
      * 退货入库（退款成功后调用）：真实库存回补。
+     *
+     * <p><b>调用方必须先过 {@link #insertRestockLogIgnore} 这道闸</b>（见 {@code StockService}）：
+     * 只有「首次插入」才允许执行本更新。本更新本身没有幂等护栏 ——
+     * 重复执行会真的多加库存且不报任何错。
      *
      * <p>与前三个操作不同，这里<b>刻意不加 {@code status = 'ACTIVE'} 条件</b>：
      * 库存是**物理事实**。商品在下架期间发生退货，货照样要回到仓库，

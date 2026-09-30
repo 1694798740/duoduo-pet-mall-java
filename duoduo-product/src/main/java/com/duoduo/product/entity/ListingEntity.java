@@ -46,6 +46,14 @@ public class ListingEntity {
     private Integer wantCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    /**
+     * 软删时间（第五十八轮 · B-14）：非 NULL = 已删除。
+     *
+     * <p>为什么不用物理删：闲置成交后会与订单、会话、举报产生引用关系，
+     * 物理删会让别人的页面出现「查无此物」；审核与举报留痕也需要「这条内容曾经存在」。
+     * 删除只写时间不删行，所有读路径一律带 {@code deleted_at IS NULL}。
+     */
+    private LocalDateTime deletedAt;
 
     public Long getId() {
         return id;
@@ -205,5 +213,13 @@ public class ListingEntity {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
     }
 }

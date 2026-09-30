@@ -17,7 +17,14 @@ public enum SettlementStatus {
     /** 已放款：确认收货后已打给卖家 */
     RELEASED("已放款"),
     /** 已退回买家 */
-    REFUNDED("已退回买家");
+    REFUNDED("已退回买家"),
+    /**
+     * 平台垫付（第五十八轮 · B-01）：钱已放款给卖家后，平台先垫付给买家。
+     *
+     * <p>它是 {@code RELEASED} 之后的一条**新边**，不是回退 —— 放款不可逆，
+     * 垫付动的是平台自己的钱，并在 {@code t_seller_debt} 形成一笔卖家欠款。
+     */
+    ADVANCED("平台垫付");
 
     private final String label;
 

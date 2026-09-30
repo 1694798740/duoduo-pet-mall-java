@@ -108,6 +108,56 @@ public class ChatService {
                     "支付相关的问题请到结算页重试；如果一直失败，把订单号发给我，我帮你转人工客服。")
     );
 
+    /**
+     * 问候 / 身份识别（第五十八轮 · 用户实测报障）。
+     *
+     * <p><b>报障现场</b>：发「你好，你是谁」，得到的是「暂时没找到匹配的商品」。
+     * 这句话在技术上「没说错」（商品库里确实没有叫「你好你是谁」的东西），
+     * 但它答非所问 —— 用户问的是「你是谁」，系统按「你想买什么」处理了。
+     * 链路是：没有问候/身份分支 → 约束解析为空 → 用整句话当关键词召回 → 空候选 →
+     * mock 分支把空候选拼成「没找到」。
+     * 这类缺陷的可恨之处在于它<b>没有任何报错</b>，只有真人翻开来看才知道不对。
+     *
+     * <p><b>为什么做成规则而不是交给模型</b>：这两类问题有<b>唯一正确答案且不需要任何外部数据</b>
+     * （我是谁、我能做什么），交给模型一是花配额，二是模型可能顺手编一段功能介绍
+     * （比如声称能查物流）—— 那正好踩在「不得编造」的底线反面。
+     *
+     * <p><b>为什么先判「去掉问候词之后还剩什么」</b>：直接拿「你好」做关键词会把
+     * 「你好，我想买猫粮」也拦下来 —— 那就是用一条问候规则掐掉了真实购物意图。
+     * 剥掉问候词与语气词后：剩下为空 = 纯问候；剩下命中身份问法 = 身份问题；
+     * 剩下还有别的内容（「我想买猫粮」）则<b>一律放行</b>给正常导购链路。
+     */
+    private static final List<String> GREETING_TOKENS = List.of(
+            "你好", "您好", "你们好", "hello", "hi", "嗨", "哈喽", "哈啰",
+            "在吗", "在么", "在不在", "早上好", "中午好", "晚上好", "早");
+
+    /** 语气词：剥完问候词后只剩这些，仍然算纯问候（「你好呀」） */
+    private static final List<String> FILLER_TOKENS = List.of("啊", "呀", "哦", "噢", "呢", "吧", "哈");
+
+    /**
+     * 身份 / 能力问法。
+     *
+     * <p>刻意<b>不含</b>「怎么用」「帮助」「有什么功能」这类词：「优惠券怎么用」里的「怎么用」
+     * 属于优惠券出口而不是自我介绍；「这个猫爬架有什么功能」问的是商品不是助手 ——
+     * 带上「你」字（你能做什么 / 你是谁）才是问助手，这条区分靠的就是那个「你」。
+     * 顺序上也让「答不了」出口（物流/退款/优惠/支付）先跑，避免抢答 ——
+     * 那几条才是用户真正要的答案。漏判一句奇怪的问候只让用户多问一次，
+     * 误判一句真实购物意图则会让用户觉得这助手听不懂人话，两者代价不对等。
+     */
+    private static final List<String> IDENTITY_PATTERNS = List.of(
+            "你是谁", "你叫啥", "你叫什么", "你的名字", "你是什么", "你是做什么的",
+            "介绍一下你", "自我介绍", "你能做什么", "你能干什么", "你会什么",
+            "你是机器人", "你是人工", "你是ai");
+
+    private static final String GREETING_REPLY =
+            "你好，我是多多宠物商店的 AI 导购「多多」。想买什么直接说就行，"
+                    + "比如「幼猫粮 200 元以内」「适合柯基的耐咬玩具」。";
+
+    private static final String IDENTITY_REPLY =
+            "我是多多宠物商店的 AI 导购「多多」，负责帮你挑商品：按预算、品类、宠物年龄去库里找"
+                    + "符合条件的，再说明为什么合适。物流进度、退款售后、优惠券这些我查不到，"
+                    + "要去「我的订单」或首页「领券中心」看。想买什么直接告诉我就好。";
+
     private final ProductSearchClient productSearchClient;
     private final DashScopeClient dashScopeClient;
     private final ConstraintParser constraintParser;
@@ -140,6 +190,14 @@ public class ChatService {
         if (offTopic != null) {
             log.info("命中「答不了」出口，未调用模型");
             return new ChatResponse(offTopic, List.of(), mockEnabled ? "mock" : "llm", null);
+        }
+
+        // ①b 问候 / 身份：有唯一正确答案、不需要外部数据，规则直答
+        //    （放在「答不了」之后：优惠券怎么用归优惠券出口，不归自我介绍）
+        String social = greetingOrIdentityReply(message);
+        if (social != null) {
+            log.info("命中「问候/身份」出口，未调用模型");
+            return new ChatResponse(social, List.of(), mockEnabled ? "mock" : "llm", null);
         }
 
         // ② 约束解析：预算 + 品类（规则解析，确定性优先）
@@ -191,6 +249,70 @@ public class ChatService {
             }
         }
         return null;
+    }
+
+    /**
+     * 问候 / 身份识别：命中则返回直答话术，否则 {@code null}（放行给正常导购链路）。
+     *
+     * <p>「剥掉问候词看还剩什么」是关键一步 —— 见 {@link #GREETING_TOKENS} 的注释。
+     * 宁可漏判（一句奇怪的问候被当成购物意图，用户再问一次）也不要误判
+     * （一句真实购物意图被当成问候，用户会觉得这助手听不懂人话）。
+     */
+    private static String greetingOrIdentityReply(String message) {
+        String rest = stripTokens(normalize(message), GREETING_TOKENS);
+        if (rest.isEmpty()) {
+            return GREETING_REPLY;
+        }
+        rest = stripTokens(rest, FILLER_TOKENS);
+        if (rest.isEmpty()) {
+            return GREETING_REPLY;
+        }
+        for (String pattern : IDENTITY_PATTERNS) {
+            if (rest.contains(pattern)) {
+                return IDENTITY_REPLY;
+            }
+        }
+        return null;
+    }
+
+    /** 归一化：小写 + 去空白 + 去标点（标点不该影响「这是一句问候」的判断） */
+    private static String normalize(String message) {
+        if (message == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < message.length(); i++) {
+            char c = message.charAt(i);
+            if (Character.isWhitespace(c) || PUNCTUATION.indexOf(c) >= 0) {
+                continue;
+            }
+            sb.append(Character.toLowerCase(c));
+        }
+        return sb.toString();
+    }
+
+    private static final String PUNCTUATION = ",.!?;:，。！？、；：~～\"'「」『』…—-";
+
+    /**
+     * 反复剥离词表中的词，直到没有变化。
+     *
+     * <p>为什么要循环：用户会叠加（「你好你好」「嗨呀」），一次替换剥不干净，
+     * 剩下的「你好」会让纯问候判不出来。
+     */
+    private static String stripTokens(String text, List<String> tokens) {
+        String cur = text;
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (String t : tokens) {
+                int at = cur.indexOf(t);
+                if (at >= 0) {
+                    cur = cur.substring(0, at) + cur.substring(at + t.length());
+                    changed = true;
+                }
+            }
+        }
+        return cur;
     }
 
     // ---------------- ④ 澄清判断 ----------------

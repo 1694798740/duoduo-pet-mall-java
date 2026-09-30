@@ -422,7 +422,10 @@ $rangeSettles = [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement s JO
 Check "本次测试产生 ≥ 4 张已支付订单（脚本场景数下限）" ($rangeOrders -ge 4) $rangeOrders
 Check "订单数与托管单数一一对应（$rangeOrders 单 / $rangeSettles 条）" ($rangeOrders -eq $rangeSettles) "$rangeOrders vs $rangeSettles"
 Check "不存在「订单已终结但资金仍托管中」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE s.status='CUSTODY' AND o.status IN ('COMPLETED','REFUNDED','CLOSED');") -eq '0')
-Check "不存在「已退款但托管仍 RELEASED」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE o.status='REFUNDED' AND s.status<>'REFUNDED';") -eq '0')
+# ★ ADVANCED（第五十八轮新增）必须算**合法终态**：已放款订单退款时钱由平台垫付给买家，
+#   托管单走 RELEASED → ADVANCED，卖家转为欠平台钱（t_seller_debt）。
+#   把它当成异常会误报 —— 真正要抓的是「已退款但托管单还停在 RELEASED/CUSTODY」。
+Check "不存在「已退款但托管单未同步终结」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE o.status='REFUNDED' AND s.status NOT IN ('REFUNDED','ADVANCED');") -eq '0')
 Check "已关闭订单无残留 FROZEN 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='FROZEN' AND o.status='CLOSED';") -eq '0')
 Check "已退款订单无残留 RESTOCK_PENDING 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='RESTOCK_PENDING' AND o.status='REFUNDED';") -eq '0')
 

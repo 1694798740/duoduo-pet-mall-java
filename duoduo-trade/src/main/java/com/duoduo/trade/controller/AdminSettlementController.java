@@ -3,11 +3,17 @@ package com.duoduo.trade.controller;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.trade.dto.AdminDtos.AbnormalSettlement;
 import com.duoduo.trade.dto.AdminDtos.BackfillResult;
+import com.duoduo.trade.dto.AdminDtos.CompensateRequest;
+import com.duoduo.trade.dto.AdminDtos.SellerDebtView;
 import com.duoduo.trade.dto.AdminDtos.SettlementSummary;
 import com.duoduo.trade.service.AdminOpsService;
+import com.duoduo.trade.service.SellerDebtService;
 import com.duoduo.trade.service.SettlementBackfillService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,11 +33,14 @@ public class AdminSettlementController {
 
     private final AdminOpsService adminOpsService;
     private final SettlementBackfillService settlementBackfillService;
+    private final SellerDebtService sellerDebtService;
 
     public AdminSettlementController(AdminOpsService adminOpsService,
-                                     SettlementBackfillService settlementBackfillService) {
+                                     SettlementBackfillService settlementBackfillService,
+                                     SellerDebtService sellerDebtService) {
         this.adminOpsService = adminOpsService;
         this.settlementBackfillService = settlementBackfillService;
+        this.sellerDebtService = sellerDebtService;
     }
 
     /** 全平台托管资金汇总（托管中 / 已放款 / 已退回） */
@@ -58,5 +67,39 @@ public class AdminSettlementController {
     @PostMapping("/backfill")
     public ApiResponse<BackfillResult> backfill(@RequestParam(required = false) Boolean dryRun) {
         return ApiResponse.ok(settlementBackfillService.backfill(Boolean.TRUE.equals(dryRun)));
+    }
+
+    // ---------- 平台垫付与卖家追偿（第五十八轮 · B-01） ----------
+
+    /**
+     * 平台垫付退款：订单已完成（钱已放款给卖家）但仍需退给买家时，由平台先垫付，
+     * 并在 {@code t_seller_debt} 记一笔卖家欠款。
+     *
+     * <p>为什么单开一个端点而不是放宽 {@code refundByOperator} 的状态限制：
+     * 垫付与退款是**两笔不同的钱** —— 退款动的是「还在平台上的买家的钱」，
+     * 垫付动的是「平台的钱」并额外产生一笔债。混在一个动作里，资金轨迹就说不清了。
+     */
+    @PostMapping("/compensate")
+    public ApiResponse<SellerDebtView> compensate(@Valid @RequestBody CompensateRequest request) {
+        return ApiResponse.ok(sellerDebtService.compensate(request.orderNo(), request.reason()));
+    }
+
+    /** 欠款列表（可按 sellerId / status 过滤） */
+    @GetMapping("/debts")
+    public ApiResponse<List<SellerDebtView>> debts(@RequestParam(required = false) Long sellerId,
+                                                   @RequestParam(required = false) String status) {
+        return ApiResponse.ok(sellerDebtService.list(sellerId, status));
+    }
+
+    /** 收回欠款（卖家已还） */
+    @PostMapping("/debts/{id}/settle")
+    public ApiResponse<SellerDebtView> settleDebt(@PathVariable Long id) {
+        return ApiResponse.ok(sellerDebtService.settle(id));
+    }
+
+    /** 核销欠款（确认收不回，走坏账） */
+    @PostMapping("/debts/{id}/write-off")
+    public ApiResponse<SellerDebtView> writeOffDebt(@PathVariable Long id) {
+        return ApiResponse.ok(sellerDebtService.writeOff(id));
     }
 }

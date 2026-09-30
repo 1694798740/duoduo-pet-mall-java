@@ -206,6 +206,27 @@ CREATE TABLE t_settlement (
 CREATE UNIQUE INDEX uk_settle_order ON t_settlement (order_id);
 CREATE INDEX idx_settle_seller ON t_settlement (seller_id, status);
 
+-- ---------- 卖家欠款（第五十八轮 · B-01：平台垫付后的追偿账） ----------
+-- 钱一旦放款给卖家，托管单就是 RELEASED 终态，「买家的钱」在账上已经不存在了。
+-- 此时要退款给买家，只能是**平台先垫付** —— 于是这笔钱从「买家 ↔ 卖家」变成「平台 ↔ 卖家」的债。
+-- 没有这张表，这笔债只存在于口头记录里：结算时无从抵扣、对账时对不上、也没法追责。
+-- 唯一键 uk_seller_debt_order(order_id) 保证一单最多垫付一次（幂等落在数据库，不靠应用层先查）。
+CREATE TABLE t_seller_debt (
+    id          BIGINT      NOT NULL COMMENT '雪花 id',
+    seller_id   BIGINT      NOT NULL COMMENT '欠款卖家',
+    order_id    BIGINT      NOT NULL COMMENT '关联订单 id',
+    order_no    VARCHAR(32) NOT NULL COMMENT '订单号（冗余，便于对账与人工查询）',
+    amount      BIGINT      NOT NULL COMMENT '欠款金额（分）= 平台垫付给买家的金额',
+    status      VARCHAR(20) NOT NULL DEFAULT 'OUTSTANDING' COMMENT 'OUTSTANDING 未收回 / SETTLED 已收回 / WRITTEN_OFF 已核销',
+    reason      VARCHAR(200) COMMENT '垫付原因（运营填写，进对账口径）',
+    created_by  BIGINT      COMMENT '操作人（运营 userId）',
+    created_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC）',
+    updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间（UTC）',
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_seller_debt_order ON t_seller_debt (order_id);
+CREATE INDEX idx_seller_debt_seller ON t_seller_debt (seller_id, status);
+
 -- ---------- 削峰下单任务台账（A11） ----------
 -- 异步下单的中间态落点：受理 PENDING / 成功 PLACED / 业务失败 FAILED（带原因）。
 -- 幂等靠唯一键（与订单表幂等键同构）：双击/重试重复入队撞索引，返回已有任务。

@@ -141,6 +141,21 @@ public class SettlementService {
         return settlementMapper.markRefunded(orderId, now) == 1;
     }
 
+    /**
+     * 平台垫付（第五十八轮 · B-01）：把托管单从「已放款给卖家」置为「平台垫付」。
+     *
+     * <p>语义：钱已打给卖家是既成事实，平台另出一笔钱退给买家，
+     * 因此托管单记 {@code ADVANCED}（不是把 RELEASED 撤回），同时在 {@code t_seller_debt}
+     * 记一笔卖家欠款。资金轨迹可完整回溯：{@code CUSTODY → RELEASED → ADVANCED}。
+     *
+     * <p>CAS 保证「同一笔钱只垫付一次」：重复调用影响 0 行，返回 false。
+     *
+     * @return true = 本次真的垫付了；false = 不是「已放款」状态（未放款 / 已退款 / 已垫付）
+     */
+    public boolean advance(Long orderId, LocalDateTime now) {
+        return settlementMapper.markAdvanced(orderId, now) == 1;
+    }
+
     public SettlementEntity findByOrderId(Long orderId) {
         return settlementMapper.selectOne(new LambdaQueryWrapper<SettlementEntity>()
                 .eq(SettlementEntity::getOrderId, orderId));

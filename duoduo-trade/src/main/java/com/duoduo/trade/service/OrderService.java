@@ -1304,7 +1304,11 @@ public class OrderService {
         if (current != OrderStatus.PAID && current != OrderStatus.SHIPPED) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
                     current == OrderStatus.COMPLETED
-                            ? "订单已完成、款项已放款给卖家，无法直接退款；需走追责或平台垫付（售后追偿尚未实现）"
+                            // 第五十八轮：垫付通道已实现，提示必须指向**可执行的下一步**，
+                            // 而不是「尚未实现」—— 运营看到这句才知道该去哪里操作。
+                            ? "订单已完成、款项已放款给卖家，不能直接退款；若判定需退款给买家，"
+                                    + "请由运营走「平台垫付」（POST /api/admin/settlements/compensate），"
+                                    + "平台先垫付给买家并向卖家记一笔欠款"
                             : "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许退款");
         }
         return doRefund(order, reason, OPERATOR_SELLER, order.getSellerId(), defaultReason, nowUtc());

@@ -173,6 +173,31 @@
 
 **验证**：新增 `scripts/r53-listing-detail-mine-smoke.py` **28/28 PASS**（A 审核维度过滤 5 项 + M LISTING 问一问 8 项 + R 驳回→修改→重提闭环 15 项，含运营账号真实审核）；R52 回归 **57/57**；product/social 编译 0 错；小程序静态自检 0 错 0 警；双容器 healthy。**状态码口径已固定**：参数校验错 400，业务规则违例 422（探针 M6/R7/R12 首轮预期写错已修正——服务端行为一直正确）。
 
+**最近更新：2026-09-30（第五十八轮）** — **资金闭环 + 测试底盘 + 闲置编辑删除 + AI 问候身份出口**。
+本轮源自全项目未完成项盘点（22 项），按 A→B→C→D 顺序推进；AI 相关仅在盘点阶段记录、其后按用户指令实现 D 项。
+
+**① 平台垫付与卖家追偿（补齐 B-01）**。已放款订单退款此前只有一句文案「需走追责或平台垫付（尚未实现）」，买家拿不到钱、运营无动作、系统不留痕。已补成闭环：
+- 新增 `t_seller_debt`（**`uk_seller_debt_order` 唯一键即幂等键**，`INSERT IGNORE` 撞键即判重）与 `SellerDebtService.compensate()`；托管单新增 `RELEASED → ADVANCED`（`CUSTODY → RELEASED → ADVANCED` 是**新增边不是回退**，资金状态机不可逆）。
+- **幂等判定必须前置**于状态校验：否则重复垫付会撞上「只有已完成订单可垫付」而报 422，提示指向的原因与实际不符。
+- **垫付不回补库存**：垫付是资金动作，不是退货 —— 钱退了、货没退、库存还加回去，是三重错账。
+- 运营端点：`POST /api/admin/settlements/compensate`（orderNo + reason，均必填）、`GET /api/admin/settlements/debts`、`POST /debts/{id}/settle`（收回）、`POST /debts/{id}/write-off`（核销），收回/核销二次调用 409。
+
+**② 退货入库幂等（补齐 B-02）**。新增 `t_sku_restock_log(ref_no, sku_id)`（**主键即去重键**），`StockChangeRequest` 增 `refNo`，交易域退货传 `restock:{orderId}`。重复提交时**如实返回「本轮加回 0 件」** —— 原实现会把上次的数量再说一遍，等于谎报回补。
+
+**③ 闲置编辑与删除（补齐 B-14）**。新增 `POST /api/listings/{id}/edit` 与 `POST /api/listings/{id}/delete`：
+- **路径必须三段**。网关白名单是 `/api/listings/*`（两段、**不区分 HTTP 方法**），写成两段（哪怕是 `PUT` / `DELETE`）就把写端点放成匿名可调 —— 探针用「匿名读详情放行」作对照组，证明三段被挡不是空转断言。
+- **删除是软删**（`t_listing.deleted_at`，行留库供订单 / 会话 / 举报追溯）：`visibleWrapper()`、`detail()`、`requireOwned()`、`listMine()`、`markWant()`、`internalCards()`、运营审核队列七处全部排除软删，ES 侧 `SearchIndexer.indexListing` 对软删直接摘文档。
+- 编辑回到 `PENDING`（审核结论针对旧内容）；**驳回件编辑后恢复 `ON_SALE`** —— 驳回时 `status` 已被压成 `OFF_SHELF`，而「先驳回再自己上架」被「上架需已过审」堵死，不在编辑里恢复就会出现「通过审核仍不可见且无入口放出来」。
+
+**④ AI 问候 / 身份出口**。用户实测「你好，你是谁」返回「暂时没找到匹配的商品」——技术上没错（库里确实没有叫这名字的商品），但答非所问。已在 `ChatService` 补 ①b 出口（在「答不了」之后、召回之前）：
+- 判据是「**剥掉问候词与语气词后还剩什么**」：剩空 = 问候；剩句命中**带「你」字**的身份问法 = 身份。只用「包含『你好』」当判据会把「你好，我想买猫粮」一起掐掉。
+- 词表**刻意不含**「有什么功能 / 怎么用」：「这个猫爬架有什么功能」问的是商品不是助手；漏判只让用户多问一次，误判会让用户觉得助手听不懂人话，两者代价不对等。
+
+**⑤ 测试与文档底盘**。交易域 +16、营销域 +9、AI 域 +11 项 JUnit；新增 `scripts/extract-api-contract.py` 从源码机械抽取端点写回 `docs/agent/04`（**241 个端点**，支持 `--check` 门禁，文档落后即退出码 1），接口契约不再手工维护。
+
+**验证**：`r58-restock-idempotent-smoke.py` **10/0**、`r58-compensate-smoke.py` **22/0**、`r58-listing-edit-delete-smoke.py` **33/0**；AI 域单测 **40/0**（含反向验证：改坏词表后 4 项转红）；回归 `r54` 26、`r52` 57、`r53` 28、`r53b` 26、`settlement` 125 全绿；DDL 已落库校验；product / ai 双容器重建至 healthy。
+三套新探针**均自带数据还原**：退货入库还原写的是**原始 `stock`** 而不是读到的「可售库存」（否则按 `frozen_stock` 每次把种子库存磨小 1）；垫付探针还原样本订单的 `COMPLETED|RELEASED` 并清欠款行（否则 `settlement-smoke` 的「已退款但托管单未终结」不变式会报出一笔来路不明的账）。相应地把该不变式改为允许 **`ADVANCED`**（平台垫付后的合法终态）。
+
 **最近更新：2026-09-28（第五十二轮）** — **跳蚤市场发布链路补全 + 结算预览端点 + 405 修复**。
 本轮源自第五十一轮小程序全流程验收报告的两条待修问题与一条验收建议（用户已采纳）。
 
@@ -528,12 +553,14 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十二套 1513 项接口断言 + 七套真实浏览器 UI 断言 268 项）
+### 端到端冒烟（二十五套 1578 项接口断言 + 七套真实浏览器 UI 断言 268 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
 > CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
+> `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**（当前 **241 个端点**），
+> 加 `--check` 即变门禁（文档落后于源码时退出码 1）—— 端点清单不再靠手工维护。
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
 ```bash
@@ -559,6 +586,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 26 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\upload-smoke.ps1      # 8 项：图片上传（白名单只放 GET/匿名上传 401/上传→回读 roundtrip/扩展名白名单）
+python scripts/r58-restock-idempotent-smoke.py     # 10 项：退货入库幂等（同 refNo 三次只加一次 / 换 refNo 正常加 / 缺 refNo 400）
+python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖家追偿（闭环 / 重复 409 / 未放款拒 / 垫付**不回补库存** / 收回核销二次 409 / 非运营 401）
+python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 
 # 六套 UI 自测都需先起前端 dev server。
 # 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
@@ -682,6 +712,8 @@ duoduo-pet-mall-java/
 | GET | `/api/listings/mine/{id}` | **卖家视角详情**（`ListingOwnerView` 全集字段含审核原因；未过审也可读自己条目；非本人 403） | 需登录 |
 | POST | `/api/listings/{id}/resubmit` | **重新提审**（仅 `REJECTED` 可调，PENDING/APPROVED 均 422；实名与违禁词复检；成功后回 `PENDING` + `ON_SALE`，清空驳回原因） | 需登录 |
 | POST | `/api/listings/{id}/status` | **上架 / 下架**（`action=ON_SALE`/`OFF_SHELF`；幂等开关；上架要求已过审；他人闲置 403、不存在 404） | 需登录 |
+| POST | `/api/listings/{id}/edit` | **编辑闲置**（需实名；内容变更即回 `PENDING` 重新送审——审核结论针对旧内容；驳回件编辑后 `status` 恢复 `ON_SALE`；已售出 422；非本人 403）。**三段路径**：白名单 `/api/listings/*` 不区分方法，两段会把写端点放成匿名可调 | 需登录 |
+| POST | `/api/listings/{id}/delete` | **删除闲置（软删）**（写 `deleted_at` + 落 `OFF_SHELF`，行留库供订单 / 会话 / 举报追溯；七处读路径与 ES 索引全部排除软删；已售出 422；非本人 403） | 需登录 |
 | GET | `/api/listings/internal/cards` | **闲置卡批量视图**（供社交域取 `sellerId` 等事实；`X-Internal-Token` 保护） | 内部凭据 |
 | POST | `/api/listings/internal/{id}/want?buyerId=` | **「想要」上报**（供社交域在买家**首次**发咨询消息时调用；`INSERT IGNORE` 去重表，**重复上报返回 `counted=false` 且不重复计数**；闲置不存在 404。**刻意用 POST**：这是写操作，GET 会被预取/重试刷歪计数） | 内部凭据 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
@@ -765,6 +797,9 @@ duoduo-pet-mall-java/
 |---|---|---|---|
 | GET | `/api/admin/reports/overview` | 运营报表：GMV / 总订单 / 已付款 / 退款率 / 转化率（全平台口径，SQL 聚合） | 运营 |
 | GET | `/api/admin/settlements/summary` | 资金对账：托管中 / 已放款 / 已退回三组金额与笔数、佣金 | 运营 |
+| POST | `/api/admin/settlements/compensate` | **平台垫付退款**（已完成订单退款：金额按买家实付记卖家欠款，托管单 `RELEASED→ADVANCED`，订单进 `REFUNDED`；**不回补库存**；`uk_seller_debt_order` 保证一笔订单只垫付一次，重复调用 409） | 运营 |
+| GET | `/api/admin/settlements/debts` | 卖家欠款列表（可按 `status=OUTSTANDING/SETTLED/WRITTEN_OFF` 过滤） | 运营 |
+| POST | `/api/admin/settlements/debts/{id}/settle` · `/write-off` | 欠款收回 / 核销（CAS 条件更新，二次调用 409） | 运营 |
 | GET | `/api/admin/settlements/abnormal` | 异常挂账：已付款却缺托管单的订单（`LEFT JOIN` 排查） | 运营 |
 | POST | `/api/admin/settlements/backfill?dryRun=` | **历史订单托管单回补**（A1 / I-14）：按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`），金额取 `pay_amount`、佣金按当前 `PLATFORM_FEE_BPS` 重算并回传口径说明；`?dryRun=true` **只出计划、一行都不写库**；不带参数即执行；幂等靠 `uk_settle_order`（重复执行不产生重复单）；**不触碰已有托管单的订单**，也不给 `PENDING_PAYMENT`/`CLOSED` 补账（钱从未收过） | 运营 |
 | GET/POST/PUT/DELETE | `/api/admin/categories`、`/{id}`、`/{id}/status` | 类目增改删 + 启停用；**后台列表含停用项**（可重新启用），公开接口仍只暴露 ACTIVE | 运营 |

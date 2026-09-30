@@ -207,7 +207,10 @@ public class SearchIndexer {
     /** 索引单个闲置 */
     public boolean indexListing(Long id) {
         ListingEntity l = listingMapper.selectById(id);
-        if (l == null) {
+        // 软删 = 从检索里摘掉：删除后 status 被压成 OFF_SHELF，靠「status=ON_SALE」过滤
+        // 其实已经查不到，但仍显式删文档 —— 否则索引里长期留着一条永远不会命中的脏数据，
+        // 对账接口（missingInIndex / 文档计数）会把它算进总数，运营据此判断索引状态会失真。
+        if (l == null || l.getDeletedAt() != null) {
             return deleteDoc(TYPE_LISTING, id);
         }
         Map<String, Object> doc = baseDoc(TYPE_LISTING, l.getId(), l.getUpdatedAt());

@@ -17,8 +17,13 @@ public final class StockChangeDtos {
     public record StockChangeItem(Long skuId, Integer quantity) {
     }
 
-    /** 请求体：{@code {"items":[{"skuId":2001,"quantity":2}]}} */
-    public record StockChangePayload(List<StockChangeItem> items) {
+    /**
+     * 请求体：{@code {"items":[{"skuId":2001,"quantity":2}],"refNo":"restock:123"}}
+     *
+     * <p>{@code refNo} 是<b>入库幂等号</b>（第五十八轮 · B-02）：仅 restock 使用，
+     * 商品侧按 {@code (ref_no, sku_id)} 去重，重复提交不再加库存。其他动作传 null。
+     */
+    public record StockChangePayload(List<StockChangeItem> items, String refNo) {
     }
 
     public record StockChangeResult(Long skuId, int quantity, boolean success, String reason) {

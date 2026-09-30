@@ -167,7 +167,10 @@ public class ListingService {
         ListingEntity listing = listingMapper.selectById(id);
         if (listing == null
                 || !STATUS_ON_SALE.equals(listing.getStatus())
-                || !AUDIT_APPROVED.equals(listing.getAuditStatus())) {
+                || !AUDIT_APPROVED.equals(listing.getAuditStatus())
+                || listing.getDeletedAt() != null) {
+            // 已删除按「不存在」处理：删掉的东西就该查不到，
+            // 返回「已删除」反而会把「曾经有过什么」泄露给无关的人。
             throw BizException.notFound("闲置商品");
         }
 
@@ -220,7 +223,11 @@ public class ListingService {
             throw BizException.validation("listingId 与 buyerId 均不能为空");
         }
         Long exists = listingMapper.selectCount(
-                new LambdaQueryWrapper<ListingEntity>().eq(ListingEntity::getId, listingId));
+                new LambdaQueryWrapper<ListingEntity>()
+                        .eq(ListingEntity::getId, listingId)
+                        // 已软删的闲置不该再攒「想要」：条目对买家已不可见，计数却还在涨，
+                        // 卖家会在「我的发布」里看到一个与实际供给不符的意向数。
+                        .isNull(ListingEntity::getDeletedAt));
         if (exists == null || exists == 0) {
             throw BizException.notFound("闲置商品");
         }
@@ -243,10 +250,18 @@ public class ListingService {
         return toCards(listingMapper.selectPage(page, wrapper).getRecords());
     }
 
+    /**
+     * 公开可见的闲置（第五十八轮补软删条件）。
+     *
+     * <p>{@code deleted_at IS NULL} 必须写在这里 —— 它是「唯一一处定义公开可见性」的地方。
+     * 若分散到各调用处，迟早会漏掉一条路径，于是用户能在某个列表里点开一条已删除的闲置，
+     * 看到的却是空内容（这类缺陷没有任何报错，只能靠用户投诉发现）。
+     */
     private LambdaQueryWrapper<ListingEntity> visibleWrapper() {
         return new LambdaQueryWrapper<ListingEntity>()
                 .eq(ListingEntity::getStatus, STATUS_ON_SALE)
-                .eq(ListingEntity::getAuditStatus, AUDIT_APPROVED);
+                .eq(ListingEntity::getAuditStatus, AUDIT_APPROVED)
+                .isNull(ListingEntity::getDeletedAt);
     }
 
     // ---------------- 写：发布 / 上下架 / 我的发布（卖家侧） ----------------
@@ -339,6 +354,81 @@ public class ListingService {
         return toMineView(listing);
     }
 
+    // ---------------- 写：编辑 / 删除（第五十八轮 · B-14） ----------------
+
+    /**
+     * 编辑自己的闲置（内容变更 → 重新送审）。
+     *
+     * <h2>规则（v1 口径，写在代码里以免各端各理解一套）
+     * <ol>
+     *   <li><b>只能改内容</b>：标题 / 描述 / 价格 / 成色 / 图片 / 城市 / 品类，
+     *       卖家身份、审核结论、计数一律服务端说了算；</li>
+     *   <li><b>改完必须重新审核</b>（{@code auditStatus → PENDING}）：审核结论是针对
+     *       「当时那一段内容」作出的，内容变了结论就失效。放它继续挂着 APPROVED，
+     *       等于让卖家可以「先过审、再改成违规内容」；</li>
+     *   <li><b>重新审核期间不对外可见</b>：公开列表与详情都要求 APPROVED，
+     *       所以回到 PENDING 后自然消失，不需要额外下线动作；</li>
+     *   <li><b>已售出的不能编辑</b>：交易已完成，改描述会动摇交易凭证；</li>
+     *   <li><b>驳回态请走 {@link #resubmit}</b>：那条路径语义更清楚（重提 = 修改 + 再送审），
+     *       这里也放行但同样落 PENDING，两条路的终点一致。</li>
+     * </ol>
+     */
+    public ListingMineView edit(Long id, ListingPublishRequest request) {
+        LoginUser user = UserContext.require();
+        requireRealName(user);
+        NormalizedListing normalized = normalizeForWrite(request);
+
+        ListingEntity listing = requireOwned(id, user);
+        if (STATUS_SOLD.equals(listing.getStatus())) {
+            throw BizException.businessRule("该闲置已售出，无法再编辑");
+        }
+
+        applyNormalized(listing, normalized);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // 注意顺序：先取旧审核态再重置 —— 写成 setAuditStatus(PENDING) 之后再判 REJECTED，
+        // 判断永远为假，恢复在售就成了永不执行的死代码（第五十八轮自查抓到）。
+        boolean wasRejected = AUDIT_REJECTED.equals(listing.getAuditStatus());
+        listing.setAuditStatus(AUDIT_PENDING);
+        listing.setAuditReason(null);
+        // 驳回件编辑后要跟着恢复在售：驳回时 status 已被压成 OFF_SHELF（见 audit），
+        // 而「先驳回、再自己上架」这条路被 changeStatus 的「上架需已过审」堵死 ——
+        // 也就是说 REJECTED 件不可能停在 ON_SALE。若不在这里恢复，卖家改完通过审核
+        // 仍是不可见状态，且没有任何入口能把它放出来。
+        if (wasRejected) {
+            listing.setStatus(STATUS_ON_SALE);
+        }
+        listing.setUpdatedAt(now);
+        listingMapper.updateById(listing);
+
+        log.info("用户 {} 编辑闲置 {}「{}」，内容变更 → 回到待审核", user.userId(), id, normalized.title());
+        return toMineView(listing);
+    }
+
+    /**
+     * 删除自己的闲置（**软删**）。
+     *
+     * <p>为什么软删而不是物理删：闲置成交后会与订单、会话、举报形成引用关系，
+     * 物理删会让别人的订单页与聊天记录出现「查无此物」；审核与举报留痕也需要
+     * 「这条内容曾经存在」。删除只写 {@code deleted_at}，行留在库里。
+     *
+     * <p>已售出的一律不允许删（交易凭证不能抹）。这是 v1 的唯一限制，
+     * 将来若要做「删除后仍可审计的回收站」，应当在这个方法里扩展而不是放宽条件。
+     */
+    public void remove(Long id) {
+        LoginUser user = UserContext.require();
+        ListingEntity listing = requireOwned(id, user);
+        if (STATUS_SOLD.equals(listing.getStatus())) {
+            throw BizException.businessRule("该闲置已售出，不能删除（交易凭证需要留存）");
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        listing.setDeletedAt(now);
+        listing.setUpdatedAt(now);
+        // 删除即下线：不从公开列表以外的地方再冒出来（status 保持原值，审计可追溯原状态）
+        listing.setStatus(STATUS_OFF_SHELF);
+        listingMapper.updateById(listing);
+        log.info("用户 {} 删除（软删）闲置 {}", user.userId(), id);
+    }
+
     /**
      * 我的发布列表。
      *
@@ -358,7 +448,10 @@ public class ListingService {
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
 
         LambdaQueryWrapper<ListingEntity> wrapper = new LambdaQueryWrapper<ListingEntity>()
-                .eq(ListingEntity::getSellerId, user.userId());
+                .eq(ListingEntity::getSellerId, user.userId())
+                // 已删除的不出现在「我的发布」：v1 不提供恢复入口，让它继续可编辑会造成
+                // 「改了也看不见」的困惑。软删行仍留在库里供审计与举报追溯。
+                .isNull(ListingEntity::getDeletedAt);
         String filter = trimToNull(status);
         if (filter != null) {
             String normalized = filter.toUpperCase();
@@ -394,10 +487,16 @@ public class ListingService {
         return toOwnerView(requireOwned(id, user));
     }
 
-    /** 归属校验统一收口：404（不存在）与 403（不是你的）刻意分开，是两种不同的用户处境 */
+    /**
+     * 归属校验统一收口（第五十八轮补软删判断）。
+     *
+     * <p>404（不存在 / 已删除）与 403（不是你的）刻意分开，是两种不同的用户处境。
+     * 已删除的条目对卖家也按「不存在」处理 —— 删除是不可逆动作（v1 不提供恢复入口），
+     * 让它在「我的发布」里继续可编辑会造成「改了也看不见」的困惑。
+     */
     private ListingEntity requireOwned(Long id, LoginUser user) {
         ListingEntity listing = listingMapper.selectById(id);
-        if (listing == null) {
+        if (listing == null || listing.getDeletedAt() != null) {
             throw BizException.notFound("闲置商品");
         }
         if (!user.userId().equals(listing.getSellerId())) {
@@ -736,6 +835,9 @@ public class ListingService {
             return List.of();
         }
         return listingMapper.selectBatchIds(ids).stream()
+                // 已删除的闲置不给卡片：聊天里的引用卡片会指向一条打不开的详情。
+                // 静默跳过（不报错）—— 调用方对缺失卡片有降级处理。
+                .filter(l -> l.getDeletedAt() == null)
                 .map(l -> new InternalListingView(
                         l.getId(),
                         l.getTitle(),
@@ -755,7 +857,10 @@ public class ListingService {
         OperatorGuard.requireOperator();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
-        LambdaQueryWrapper<ListingEntity> wrapper = new LambdaQueryWrapper<ListingEntity>();
+        // 已软删的不进审核队列：通过它也不可见（读路径一律排除 deleted_at），
+        // 让运营白审一遍是纯粹的无效动作。
+        LambdaQueryWrapper<ListingEntity> wrapper = new LambdaQueryWrapper<ListingEntity>()
+                .isNull(ListingEntity::getDeletedAt);
         if (auditStatus != null && !auditStatus.isBlank()) {
             wrapper.eq(ListingEntity::getAuditStatus, auditStatus.trim().toUpperCase());
         }
@@ -783,7 +888,7 @@ public class ListingService {
             default -> throw BizException.validation("action 仅支持 APPROVE / REJECT");
         };
         ListingEntity listing = listingMapper.selectById(id);
-        if (listing == null) {
+        if (listing == null || listing.getDeletedAt() != null) {
             throw BizException.notFound("闲置商品");
         }
         if (AUDIT_REJECTED.equals(target) && trimToNull(reason) == null) {

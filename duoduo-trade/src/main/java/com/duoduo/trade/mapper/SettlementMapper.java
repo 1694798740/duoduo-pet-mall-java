@@ -43,6 +43,20 @@ public interface SettlementMapper extends BaseMapper<SettlementEntity> {
     int markReleased(@Param("orderId") Long orderId, @Param("at") LocalDateTime at);
 
     /**
+     * 平台垫付（第五十八轮 · B-01）：仅「已放款给卖家」的托管单可垫付。
+     *
+     * <p>为什么前置状态是 RELEASED 而不是 CUSTODY：钱已经打给卖家是<b>既成事实</b>，
+     * 改不回去。垫付是平台另出一笔钱给买家，不是把原来那笔钱撤回。
+     * 若这里放宽到 CUSTODY，就会出现「钱还在平台上、却记了一笔卖家欠款」的错账 ——
+     * 卖家被凭空记了一笔他没拿到的钱。
+     *
+     * @return 1 = 本次垫付成功，0 = 不是已放款状态（未放款 / 已退款 / 已垫付）
+     */
+    @Update("UPDATE t_settlement SET status = 'ADVANCED', updated_at = #{at} "
+            + "WHERE order_id = #{orderId} AND status = 'RELEASED'")
+    int markAdvanced(@Param("orderId") Long orderId, @Param("at") LocalDateTime at);
+
+    /**
      * 退回买家：仅「托管中」可退。
      *
      * <p>已放款的钱不能靠这一行代码退回 —— 钱已经打给卖家了，

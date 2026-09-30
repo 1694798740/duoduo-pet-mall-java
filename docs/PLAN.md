@@ -284,6 +284,37 @@ clarify 的旧代码）。修法：`mvn package` 重打三模块 + 解包 `unzip
 `line-height` 的洞）+ `ai-smoke` **37/0**（11 项新增）+ 回归 **346/0**（order 77 / address 82 / payment 71 /
 share-circle 74 / notice 42）+ 静态自检 **0 错 0 警** + 三容器重建 healthy。
 
+### 2026-09-30（R58 · 资金闭环 / 测试底盘 / 闲置编辑删除 / AI 问候身份出口）
+
+> 用户指令：先做全项目未完成项盘点（AI 相关仅记录、不改），再按 A→B→C→D 顺序无中断推进。
+
+- **A1 退货入库幂等**：新增 `t_sku_restock_log(ref_no, sku_id)`（**主键即去重键**）+ `INSERT IGNORE`；
+  `StockChangeRequest` 增 `refNo`，`ProductGateway.restock` 传 `restock:{orderId}`。重复提交回执**如实返回 0 件**
+  （原实现会把上次的数量再说一遍，等于谎报回补）。探针 `r58-restock-idempotent-smoke.py` **10/0**。
+- **A2 平台垫付与卖家追偿**：新增 `t_seller_debt`（`uk_seller_debt_order` 唯一键）、`SellerDebtService`
+  （**幂等判定前置**于状态校验，否则重复垫付会报「当前状态 REFUNDED」这种误导提示）、托管单新增
+  `RELEASED → ADVANCED`（`CUSTODY → RELEASED → ADVANCED` 是**新增边不是回退**）。垫付**不回补库存**（资金动作 ≠ 退货）。
+  运营端点 `POST /api/admin/settlements/compensate`、`GET /debts`、`POST /debts/{id}/settle|write-off`。探针 **20/0**。
+- **B 测试底盘**：交易域 +16（OrderStatus / SettlementStatus / SellerDebtService）、营销域 +9（CouponStatus /
+  CouponCodeGenerator）、AI 域 +11（GreetingIdentityExit）；新增 `scripts/extract-api-contract.py`
+  （从源码机械抽取端点写回 `docs/agent/04`，**241 个端点**，支持 `--check` 门禁，落后即退出码 1）。
+- **C 闲置编辑与删除（B-14）**：`POST /api/listings/{id}/edit`、`POST /api/listings/{id}/delete`。
+  **路径必须三段** —— 白名单是 `/api/listings/*`（两段、不区分方法），两段会把写端点放成匿名可调。
+  删除为**软删**（`t_listing.deleted_at`，行留库供订单/会话/举报追溯），`visibleWrapper()` /
+  `detail()` / `requireOwned()` / `listMine()` / `markWant()` / `internalCards()` / 运营审核队列全部排除软删，
+  ES 侧 `SearchIndexer.indexListing` 对软删直接摘文档。编辑回到 `PENDING`；**驳回件编辑后恢复 `ON_SALE`**
+  （否则通过审核仍不可见且无入口放出来）。探针 `r58-listing-edit-delete-smoke.py` **33/0**（含反向用例：
+  匿名读详情对照组证明白名单确实放行两段，从而三段被挡不是空转断言）。
+- **D AI 问候 / 身份出口**：`ChatService` 新增 ①b 出口（在「答不了」之后、召回之前）。
+  判据是「**剥掉问候词与语气词后还剩什么**」：剩空 = 问候；剩句命中带「你」字的身份问法 = 身份。
+  身份词表**刻意不含**「有什么功能 / 怎么用」—— 「这个猫爬架有什么功能」问的是商品不是助手，
+  而漏判只让用户多问一次、误判会让用户觉得助手听不懂人话，两者代价不对等。
+  单测 11 项（4 条反向）+ 端到端 7 句冒烟全对；**反向验证**：改坏词表后 4 项转红。
+
+**★ 本轮教训**：① 方法引用写成 `ListingEntity::getDeletedAt()`（多带括号）是**语法错误**，
+javac 报「需要')'或','」—— 位置指向 `getDeletedAt` 的右括号，容易误判成类型问题；
+② 探针里 `SELECT (deleted_at IS NOT NULL) AND status` 会把 status 字符串转数字**恒为 0**，断言假失败。
+
 ### 2026-09-29（R56 · 分享圈补全：评论 / 关注流 / 删除编辑 / 举报与运营处理台 / 话题标签）
 
 > 用户要求（第三段）：「优先完善分享圈功能」，四项全做 —— ① 评论 + 回复 + 评论点赞；② 关注流（推荐 / 关注双 tab）；③ 删除 / 编辑自己的分享 + 举报；④ 话题标签 `#`。
