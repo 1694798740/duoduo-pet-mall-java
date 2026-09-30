@@ -62,6 +62,10 @@ duoduo:
   internal:
     # 服务间调用共享密钥（调交易域的内部订单查询接口）
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+    # 服务间调用凭据（第五十八轮 P0-3）：签名有效期（秒）与「每个调用方一把显式密钥」。
+    # 两者都可不配：默认 300 秒，且密钥按调用方身份从根密钥派生（见 InternalCallAuth）。
+    signature-skew-seconds: ${INTERNAL_SKEW_SECONDS:300}
+    caller-secrets: ${INTERNAL_CALLER_SECRETS:}
   uploads:
     # 图片落盘目录（A15）。容器里通过卷挂载持久化，见 docker-compose.yml
     dir: ${UPLOADS_DIR:./data/uploads}

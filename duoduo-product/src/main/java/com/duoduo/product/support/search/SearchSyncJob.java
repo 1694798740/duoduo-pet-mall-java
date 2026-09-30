@@ -1,6 +1,7 @@
 package com.duoduo.product.support.search;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.duoduo.common.web.sched.SchedLeaderLock;
 import com.duoduo.product.entity.ListingEntity;
 import com.duoduo.product.entity.SkuEntity;
 import com.duoduo.product.entity.SpuEntity;
@@ -46,10 +47,14 @@ public class SearchSyncJob {
 
     private static final Logger log = LoggerFactory.getLogger(SearchSyncJob.class);
 
+    /** 选主用的任务名（一个任务一个名字，跨实例必须一致） */
+    private static final String TASK_NAME = "search-sync";
+
     private final SearchIndexer indexer;
     private final SpuMapper spuMapper;
     private final SkuMapper skuMapper;
     private final ListingMapper listingMapper;
+    private final SchedLeaderLock leaderLock;
     private final long sweepIntervalMs;
     private final AtomicReference<LocalDateTime> lastSweepAt = new AtomicReference<>(null);
     private final AtomicBoolean bootstrapped = new AtomicBoolean(false);
@@ -58,11 +63,13 @@ public class SearchSyncJob {
                          SpuMapper spuMapper,
                          SkuMapper skuMapper,
                          ListingMapper listingMapper,
+                         SchedLeaderLock leaderLock,
                          @Value("${duoduo.search.sweep-interval-ms}") long sweepIntervalMs) {
         this.indexer = indexer;
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.listingMapper = listingMapper;
+        this.leaderLock = leaderLock;
         this.sweepIntervalMs = sweepIntervalMs;
     }
 
@@ -78,6 +85,12 @@ public class SearchSyncJob {
     @Scheduled(fixedDelayString = "${duoduo.search.sweep-interval-ms:15000}",
                initialDelayString = "${duoduo.search.sweep-interval-ms:15000}")
     public void sweep() {
+        // 选主（第五十八轮 · P0-2）：本任务 15 秒一轮、最频繁，
+        // 多实例并发扫描会互相覆盖 updated_at 窗口，最该先加选主的就是它。
+        // TTL 取间隔的 8 倍：全量对齐（bootstrap）一轮可能跑很久，必须留足余量。
+        if (!leaderLock.tryAcquire(TASK_NAME, Math.max(120_000L, sweepIntervalMs * 8))) {
+            return;
+        }
         try {
             LocalDateTime since = lastSweepAt.get();
             LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);

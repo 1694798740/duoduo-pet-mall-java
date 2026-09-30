@@ -13,6 +13,7 @@ import com.duoduo.user.dto.UserDtos.RoleChangeResult;
 import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.UserEntity;
 import com.duoduo.user.mapper.AuditLogMapper;
+import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,13 +66,16 @@ public class AdminUserService {
 
     private final UserMapper userMapper;
     private final AuditLogMapper auditLogMapper;
+    private final RefreshTokenMapper refreshTokenMapper;
     private final SnowflakeIdGenerator idGenerator;
 
     public AdminUserService(UserMapper userMapper,
                             AuditLogMapper auditLogMapper,
+                            RefreshTokenMapper refreshTokenMapper,
                             SnowflakeIdGenerator idGenerator) {
         this.userMapper = userMapper;
         this.auditLogMapper = auditLogMapper;
+        this.refreshTokenMapper = refreshTokenMapper;
         this.idGenerator = idGenerator;
     }
 
@@ -149,11 +153,19 @@ public class AdminUserService {
         target.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
         userMapper.updateById(target);
 
+        // 吊销目标用户**所有**刷新令牌（第五十八轮 P1-6）：
+        //   访问令牌里带角色快照，改完库里的角色，对方手上的旧令牌仍是旧角色 ——
+        //   降级场景下这意味着「已经被收回的权限还能继续用」，比升级不生效危险得多。
+        //   吊销刷新令牌后旧访问令牌最多活到自然过期，且无法静默续期，等于强制重登。
+        int revoked = refreshTokenMapper.revokeAllByUser(targetUserId);
+
         writeAudit(actor, target, oldRole, newRole);
 
-        log.info("角色变更 actorId={} targetId={} {} -> {}", actor.userId(), targetUserId, oldRole, newRole);
+        log.info("角色变更 actorId={} targetId={} {} -> {}，吊销刷新令牌 {} 条",
+                actor.userId(), targetUserId, oldRole, newRole, revoked);
         return new RoleChangeResult(toAdminView(target),
-                "角色已更新为 " + newRole + "，目标用户需重新登录后新角色才生效");
+                "角色已更新为 " + newRole + "；已吊销该用户的刷新令牌（" + revoked
+                        + " 条），其在线会话将重新登录后生效");
     }
 
     private void writeAudit(LoginUser actor, UserEntity target, String oldRole, String newRole) {

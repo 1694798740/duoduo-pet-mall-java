@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  *       商品不存在返回 404、存在但不是你的返回 403 —— 刻意区分，不让越权探测伪装成「查无此单」。</li>
  *   <li><b>可见范围由登录态推导</b>：接口不接受调用方随意指定的 sellerId（运营侧的 sellerId
  *       是平台后台将来用的显式筛选参数，普通卖家传了也会被忽略并强制为自己的）。</li>
- *   <li><b>只做上下架，不做新建</b>：新建商品涉及类目 / 品牌 / SKU / 价格 / 库存的完整表单与审核，
+ *   <li><b>只做上下架与编辑，不做新建</b>：新建商品涉及类目 / 品牌 / SKU / 价格 / 库存的完整表单与审核，
  *       属于商家入驻运营流程，另行排期；本期能力是「管理已有的商品」。</li>
  * </ol>
  */
@@ -47,6 +47,8 @@ public class SellerProductService {
     private static final String STATUS_OFF_SHELF = "OFF_SHELF";
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int TITLE_MAX = 60;
+    private static final int IMAGE_MAX = 500;
 
     private final SpuMapper spuMapper;
     private final SkuMapper skuMapper;
@@ -121,6 +123,83 @@ public class SellerProductService {
         }
         String target = normalizeAction(action);
 
+        SpuEntity spu = requireOwned(spuId, user);
+        if (!target.equals(spu.getStatus())) {
+            String from = spu.getStatus();
+            spu.setStatus(target);
+            spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+            spuMapper.updateById(spu);
+            log.info("商品 {} 由卖家 {} 上下架：{} -> {}", spuId, user.userId(), from, target);
+        }
+        return viewOf(spu);
+    }
+
+    /**
+     * 编辑自己的商品（标题 / 主图）。
+     *
+     * <p><b>字段三态</b>：{@code null} = 不改，{@code ""} = 清空，有值 = 替换。
+     * 三种状态必须区分开 —— 把「不改」当成「清空」会让用户永远删不掉主图，
+     * 把「清空」当成「不改」则相反：改了没反应。主图允许清空（回到占位图标），
+     * 标题不允许（空标题在列表与搜索结果里是一片空白，无法运营）。
+     *
+     * <p><b>只开放标题与主图</b>：价格 / 库存 / 类目牵动 SKU、ES 索引与在途订单的金额口径，
+     * 属于「改价即改合约」的范畴，不做成卖家随手可改的字段；
+     * 标题变更后由检索同步任务（SearchSyncJob）收敛到 ES，这里不直接写索引 ——
+     * 同步任务是幂等的对账型刷新，直接写索引反而会绕过它。
+     */
+    public SellerProductView update(Long spuId, String title, String mainImage) {
+        LoginUser user = UserContext.require();
+        if (!user.canAccessSellerConsole()) {
+            throw BizException.forbidden("该账号不是卖家，无法使用商家端");
+        }
+        if (title == null && mainImage == null) {
+            throw BizException.validation("没有需要修改的字段（title / mainImage）");
+        }
+        SpuEntity spu = requireOwned(spuId, user);
+
+        boolean changed = false;
+        if (title != null) {
+            String normalized = title.trim();
+            if (normalized.isEmpty()) {
+                throw BizException.validation("商品标题不能为空");
+            }
+            if (normalized.length() > TITLE_MAX) {
+                throw BizException.validation("商品标题不能超过 " + TITLE_MAX + " 个字");
+            }
+            if (!normalized.equals(spu.getTitle())) {
+                spu.setTitle(normalized);
+                changed = true;
+            }
+        }
+        if (mainImage != null) {
+            String normalized = mainImage.trim();
+            if (normalized.length() > IMAGE_MAX) {
+                throw BizException.validation("主图地址不能超过 " + IMAGE_MAX + " 个字符");
+            }
+            String current = spu.getMainImage() == null ? "" : spu.getMainImage();
+            if (!normalized.equals(current)) {
+                spu.setMainImage(normalized.isEmpty() ? null : normalized);
+                changed = true;
+            }
+        }
+        if (changed) {
+            spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+            spuMapper.updateById(spu);
+            log.info("商品 {} 由卖家 {} 编辑：title={} mainImage={}",
+                    spuId, user.userId(), title != null, mainImage != null);
+        }
+        return viewOf(spu);
+    }
+
+    // ---------------- 内部实现 ----------------
+
+    /**
+     * 取出商品并校验归属（准入在调用处已做）。
+     *
+     * <p>抽成一处是因为上下架与编辑都要走同一条判定：少一处就会变成「上下架挡住了、
+     * 编辑没挡住」这类只在越权时才暴露的漏洞，而代码上看两处几乎一样。
+     */
+    private SpuEntity requireOwned(Long spuId, LoginUser user) {
         SpuEntity spu = spuMapper.selectById(spuId);
         if (spu == null) {
             throw BizException.notFound("商品");
@@ -130,15 +209,11 @@ public class SellerProductService {
             // 存在但不是你的：明确 403。商品 ID 是雪花 ID 不可枚举，统一 404 只会帮攻击者消除信号
             throw BizException.forbidden("该商品不属于当前账号");
         }
+        return spu;
+    }
 
-        if (!target.equals(spu.getStatus())) {
-            String from = spu.getStatus();
-            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-            spu.setStatus(target);
-            spu.setUpdatedAt(now);
-            spuMapper.updateById(spu);
-            log.info("商品 {} 由卖家 {} 上下架：{} -> {}", spuId, user.userId(), from, target);
-        }
+    /** 单件商品视图：SKU 数量与库存留给列表接口一次算清，这里不重复查（都是 0） */
+    private SellerProductView viewOf(SpuEntity spu) {
         return new SellerProductView(
                 spu.getId(),
                 spu.getTitle(),
@@ -152,8 +227,6 @@ public class SellerProductService {
                 0,
                 0);
     }
-
-    // ---------------- 内部实现 ----------------
 
     /** 目标状态白名单：不认识的动作直接 400，绝不静默当成下架 */
     private String normalizeAction(String action) {

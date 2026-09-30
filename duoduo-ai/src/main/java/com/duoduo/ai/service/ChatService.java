@@ -1,6 +1,8 @@
 package com.duoduo.ai.service;
 
 import com.duoduo.ai.client.ProductSearchClient;
+import com.duoduo.ai.client.UserProfileClient;
+import com.duoduo.ai.client.dto.PetBrief;
 import com.duoduo.ai.client.dto.ProductCandidate;
 import com.duoduo.ai.dto.AiDtos.ChatResponse;
 import com.duoduo.ai.dto.AiDtos.ChatTurn;
@@ -9,6 +11,11 @@ import com.duoduo.ai.dto.AiDtos.ClarifyView;
 import com.duoduo.ai.dto.AiDtos.ProductRecommendation;
 import com.duoduo.ai.support.CategoryCatalog;
 import com.duoduo.ai.support.ConstraintParser;
+import com.duoduo.ai.support.MockReply;
+import com.duoduo.ai.support.PetContext;
+import com.duoduo.ai.support.PolicyKnowledge;
+import com.duoduo.ai.support.Suggestions;
+import com.duoduo.ai.support.RecallDiversifier;
 import com.duoduo.ai.support.DashScopeClient;
 import com.duoduo.ai.support.ReplyGuard;
 import com.duoduo.common.enums.ErrorCode;
@@ -49,6 +56,16 @@ import java.util.Map;
 public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+
+    /**
+     * 召回条数：向商品域<b>多要一些</b>再在本地去重（第五十八轮）。
+     *
+     * <p>为什么要多要：同款不同规格会各占一行，去重之后剩下的才是真正不同的商品。
+     * 按「去重后仍够用」反推，原始取 12、去重后留 8 —— 与去重前的候选位一致，
+     * 用户看到的推荐数量不变，但**款数变多了**。
+     */
+    private static final int RECALL_RAW_LIMIT = 12;
+    private static final int RECALL_KEEP_LIMIT = 8;
 
     /**
      * 系统提示：把「不得编造」写成硬约束，并给出价格口径（分）与引导话术要求（验收②）。
@@ -163,6 +180,7 @@ public class ChatService {
     private final ConstraintParser constraintParser;
     private final CategoryCatalog categoryCatalog;
     private final ReplyGuard replyGuard;
+    private final UserProfileClient userProfileClient;
     private final boolean mockEnabled;
 
     public ChatService(ProductSearchClient productSearchClient,
@@ -170,12 +188,14 @@ public class ChatService {
                        ConstraintParser constraintParser,
                        CategoryCatalog categoryCatalog,
                        ReplyGuard replyGuard,
+                       UserProfileClient userProfileClient,
                        @Value("${duoduo.ai.mock-enabled:true}") boolean mockEnabled) {
         this.productSearchClient = productSearchClient;
         this.dashScopeClient = dashScopeClient;
         this.constraintParser = constraintParser;
         this.categoryCatalog = categoryCatalog;
         this.replyGuard = replyGuard;
+        this.userProfileClient = userProfileClient;
         this.mockEnabled = mockEnabled;
     }
 
@@ -183,28 +203,44 @@ public class ChatService {
      * 一轮对话。
      *
      * @param clarifiedOnce 前端告知「之前已经澄清过一轮」→ 本轮不再反问（最多澄清 1 次）
+     * @param userId        当前登录用户（**可为 null**：AI 允许匿名问答）；
+     *                      有值时按宠物档案做个性化（第五十八轮 S1），详见 {@link PetContext}
      */
-    public ChatResponse chat(String message, List<ChatTurn> history, boolean clarifiedOnce) {
-        // ① 出口预判：答不了的问题不调模型（诚实 + 省配额，且避免编造售后政策）
+    public ChatResponse chat(String message, List<ChatTurn> history, boolean clarifiedOnce, Long userId) {
+        // ⓪ 宠物档案（可选增强）：取不到就当没有，绝不影响能不能答
+        List<PetBrief> pets = loadPets(userId);
+        // ①a 政策知识库（第五十八轮 S2）：退货 / 物流 / 仲裁这类问题**有确定答案**，
+        //     答案就在系统流程里 —— 先于「答不了」出口命中，别把知道的说成不知道
+        String policy = PolicyKnowledge.answerFor(message);
+        if (policy != null) {
+            log.info("命中政策知识库，未调用模型");
+            return new ChatResponse(policy, List.of(), mockEnabled ? "mock" : "llm", null, List.of());
+        }
+
+        // ①b 出口预判：真的答不了的问题不调模型（诚实 + 省配额，且避免编造售后政策）
         String offTopic = offTopicReply(message);
         if (offTopic != null) {
             log.info("命中「答不了」出口，未调用模型");
-            return new ChatResponse(offTopic, List.of(), mockEnabled ? "mock" : "llm", null);
+            return new ChatResponse(offTopic, List.of(), mockEnabled ? "mock" : "llm", null, List.of());
         }
 
-        // ①b 问候 / 身份：有唯一正确答案、不需要外部数据，规则直答
+        // ①c 问候 / 身份：有唯一正确答案、不需要外部数据，规则直答
         //    （放在「答不了」之后：优惠券怎么用归优惠券出口，不归自我介绍）
         String social = greetingOrIdentityReply(message);
         if (social != null) {
             log.info("命中「问候/身份」出口，未调用模型");
-            return new ChatResponse(social, List.of(), mockEnabled ? "mock" : "llm", null);
+            return new ChatResponse(social, List.of(), mockEnabled ? "mock" : "llm", null, List.of());
         }
 
         // ② 约束解析：预算 + 品类（规则解析，确定性优先）
         ConstraintParser.Constraints constraints = constraintParser.parse(message);
 
         // ③ 召回（带约束；约束在商品域 SQL 里生效）
-        List<ProductCandidate> candidates = recall(message, history, constraints);
+        //    宠物档案只在「用户没指定品类」时补进关键词 —— 见 PetContext 类注释第 1 条
+        List<ProductCandidate> candidates = recall(message, history, constraints,
+                constraints.categoryIds().isEmpty() ? PetContext.recallBoost(pets) : "");
+        boolean personalized = !pets.isEmpty() && constraints.categoryIds().isEmpty()
+                && !PetContext.recallBoost(pets).isEmpty();
 
         // ④ 澄清判断：关键信息全缺 + 没澄清过 + 有可选选项 → 反问 1 次
         if (needsClarify(message, constraints, candidates, clarifiedOnce)) {
@@ -215,25 +251,43 @@ public class ChatService {
                         "我先确认一下再帮你挑：你想买哪一类？",
                         List.of(),
                         mockEnabled ? "mock" : "llm",
-                        new ClarifyView("你想买哪一类？", options));
+                        new ClarifyView("你想买哪一类？", options),
+                        List.of());
             }
             // 类目取不到 → 不问一个没有选项的问题（那等于把难题丢回给用户）
         }
 
         // ⑤ 组织回复（mock / LLM）
-        ChatResponse draft = mockEnabled
-                ? mockReply(candidates)
-                : llmReply(message, history, candidates, constraints);
+        //    对比意图**不进模型**：对比结论最容易编出「这款更适合你家猫」这类无据判断，
+        //    而它直接影响购买决定 —— 一律用候选里的客观字段并列（见 Suggestions.compareReply）
+        ChatResponse draft;
+        String compare = Suggestions.isCompare(message)
+                ? Suggestions.compareReply(candidates, 3) : null;
+        if (compare != null) {
+            draft = new ChatResponse(compare, toRecommendations(topN(candidates, 3)),
+                    mockEnabled ? "mock" : "llm", null, List.of());
+        } else {
+            draft = mockEnabled
+                    ? mockReply(candidates, personalized)
+                    : llmReply(message, history, candidates, constraints, pets);
+        }
 
-        // ⑥ 护栏：合规词与价格一致性（命中即换成事实版回复）
+        // ⑥ 护栏：合规词与价格一致性过一遍出口（命中即换成事实版回复）
+        //
+        // 一律以护栏返回的 reply 为准：未拦截时它就是原文，拦截时是事实版。
+        // 写成「blocked ? verdict.reply() : draft.reply()」也能跑，但那是把同一句话的
+        // 出处分成两处 —— 将来有人给护栏加第三种处理（比如脱敏）时，
+        // 只要漏改这一行，护栏的新行为就只在「拦截」时生效，属于静默失效。
         ReplyGuard.Verdict verdict = replyGuard.inspect(draft.reply(), candidates);
-        String reply = verdict.blocked() ? verdict.reply() : draft.reply();
+        String reply = verdict.reply();
 
         // ⑦ 预算没听懂 → 必须如实告知（绝不能当成「用户没提预算」静默放过）
         if (constraints.budgetUnparsed()) {
             reply = "（我没听清你的预算数字，这次没按预算筛）" + reply;
         }
-        return new ChatResponse(reply, draft.recommendations(), draft.mode(), null);
+        // ⑧ 相关追问：由当前候选推导（候选为空时一条都不给 —— 见 Suggestions 类注释）
+        List<String> followUps = Suggestions.followUps(candidates, constraints.hasBudget(), 3);
+        return new ChatResponse(reply, draft.recommendations(), draft.mode(), null, followUps);
     }
 
     // ---------------- ① 出口预判 ----------------
@@ -315,6 +369,26 @@ public class ChatService {
         return cur;
     }
 
+    /**
+     * 取宠物档案（best-effort）。
+     *
+     * <p>失败只记 WARN 并当「没有档案」继续：个性化是可选增强，
+     * 不能因为用户域抖动就让「推荐个猫粮」都答不出来。
+     */
+    private List<PetBrief> loadPets(Long userId) {
+        if (userId == null || userProfileClient == null) {
+            return List.of();
+        }
+        try {
+            var resp = userProfileClient.petProfiles(userId);
+            List<PetBrief> list = resp == null ? null : resp.data();
+            return list == null ? List.of() : list;
+        } catch (Exception ex) {
+            log.warn("宠物档案取不到，按无档案继续（个性化为可选增强）: {}", ex.getMessage());
+            return List.of();
+        }
+    }
+
     // ---------------- ④ 澄清判断 ----------------
 
     /**
@@ -350,16 +424,21 @@ public class ChatService {
     // ---------------- ③ 召回 ----------------
 
     private List<ProductCandidate> recall(String message, List<ChatTurn> history,
-                                          ConstraintParser.Constraints constraints) {
+                                          ConstraintParser.Constraints constraints, String petBoost) {
         String categoryIds = constraints.categoryIds().isEmpty() ? null
                 : constraints.categoryIds().stream().map(String::valueOf)
                         .collect(java.util.stream.Collectors.joining(","));
         try {
+            // 多取一些再去重：同款不同规格会各占一行，召回位被同款吃掉一半
+            // （第五十八轮 AI 加强项：去重与多样性，见 RecallDiversifier 类注释）
             var resp = productSearchClient.candidates(
-                    recallKeyword(message, history), 8,
+                    recallKeyword(message, history, petBoost), RECALL_RAW_LIMIT,
                     constraints.budgetMin(), constraints.budgetMax(), categoryIds);
             List<ProductCandidate> list = resp == null ? null : resp.data();
-            return list == null ? List.of() : list;
+            if (list == null || list.isEmpty()) {
+                return List.of();
+            }
+            return RecallDiversifier.diversify(list, RECALL_KEEP_LIMIT);
         } catch (Exception ex) {
             // 商品域取不到 → 503，绝不用空候选硬答（空候选喂给模型更容易诱导它编）
             log.error("候选召回失败: {}", ex.getMessage());
@@ -383,7 +462,15 @@ public class ChatService {
      * 带偏到「标题里恰好有这几个字」的商品上，反而不如用户原话准。
      */
     private static String recallKeyword(String message, List<ChatTurn> history) {
+        return recallKeyword(message, history, "");
+    }
+
+    /** {@code petBoost}：宠物档案补充的检索词（没有时传空串），只在未指定品类时由调用方传入 */
+    private static String recallKeyword(String message, List<ChatTurn> history, String petBoost) {
         StringBuilder sb = new StringBuilder(message);
+        if (petBoost != null && !petBoost.isBlank() && sb.indexOf(petBoost) < 0) {
+            sb.append(' ').append(petBoost);
+        }
         if (history != null) {
             for (int i = history.size() - 1; i >= 0; i--) {
                 ChatTurn t = history.get(i);
@@ -408,10 +495,22 @@ public class ChatService {
 
     // ---------------- ⑤ 组织 ----------------
 
-    /** mock 回复：复用护栏里的事实版生成器（两条路径共用一处，价格口径就不会不一致） */
-    private static ChatResponse mockReply(List<ProductCandidate> candidates) {
-        return new ChatResponse(ReplyGuard.factsReply(candidates),
-                toRecommendations(topN(candidates, 3)), "mock", null);
+    /**
+     * mock 回复（第五十八轮：改走 {@link MockReply} 自己的话术）。
+     *
+     * <p><b>刻意不再复用 {@link ReplyGuard#factsReply}</b>：那是护栏命中后的替换话术，
+     * 拿它当 mock 的回复等于让护栏检查自己的输出 —— 结构上永远合规，
+     * 于是「mock 形态下护栏到底拦不拦得住」这件事<b>从来没被验证过</b>。
+     * 现在 mock 有自己的措辞（也自己带价格），护栏的两条判定在 mock 下真正可达，
+     * 命中时同样回退到事实版（见 {@link #chat} 第 ⑥ 步）。
+     */
+    private static ChatResponse mockReply(List<ProductCandidate> candidates, boolean personalized) {
+        String reply = MockReply.compose(candidates);
+        // 只有真的用了档案才说用了 —— 夸口「按你家宠物挑的」而实际没用，是另一种编造
+        if (personalized && !candidates.isEmpty()) {
+            reply = "（已结合你档案里的宠物一起筛）" + reply;
+        }
+        return new ChatResponse(reply, toRecommendations(topN(candidates, 3)), "mock", null, List.of());
     }
 
     /**
@@ -424,14 +523,16 @@ public class ChatService {
      */
     private ChatResponse llmReply(String message, List<ChatTurn> history,
                                   List<ProductCandidate> candidates,
-                                  ConstraintParser.Constraints constraints) {
+                                  ConstraintParser.Constraints constraints,
+                                  List<PetBrief> pets) {
         if (candidates.isEmpty()) {
             // 无候选时也如实说没有 —— 空候选喂给模型反而容易诱导它编
             return new ChatResponse(
                     "暂时没找到匹配的商品，麻烦换个描述试试，比如「幼犬狗粮」或「猫玩具」。",
-                    List.of(), "llm", null);
+                    List.of(), "llm", null, List.of());
         }
-        String prompt = SYSTEM_PROMPT + candidatesJson(candidates) + constraintBlock(constraints) + """
+        String prompt = SYSTEM_PROMPT + candidatesJson(candidates) + constraintBlock(constraints)
+                + PetContext.promptBlock(pets) + """
 
                 【输出格式】
                 先输出给用户看的回复正文；正文结束后另起一行，输出一行严格 JSON：{"ids":[选中的商品id...]}
@@ -445,9 +546,9 @@ public class ChatService {
             String reply = parsed.reply().isBlank()
                     ? "这几款里暂时没有特别符合你要求的，换个描述试试？比如「幼猫粮 200 元内」。"
                     : parsed.reply();
-            return new ChatResponse(reply, List.of(), "llm", null);
+            return new ChatResponse(reply, List.of(), "llm", null, List.of());
         }
-        return new ChatResponse(parsed.reply(), toRecommendations(parsed.selected()), "llm", null);
+        return new ChatResponse(parsed.reply(), toRecommendations(parsed.selected()), "llm", null, List.of());
     }
 
     /**

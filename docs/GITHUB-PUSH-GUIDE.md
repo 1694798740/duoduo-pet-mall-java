@@ -189,7 +189,7 @@ Set-Content -Path "$env:USERPROFILE\.workbuddy\gh-token.txt" -Value "ghp_xxx" -N
 | 文件 | 说明 |
 |---|---|
 | `D:\智能体项目\duoduo-pet-mall-java\scripts\push-to-github.ps1` | 新增，一键推送 + 校验（本次已修复 1 个真缺陷，见第 8 章） |
-| `D:\智能体项目\duoduo-pet-mall-java\docs\PROJECT-STATUS.md` | 交付现状文档（v1.7），5.2 ④ 与第 6 章第 3 项已按本结论改写 |
+| `D:\智能体项目\duoduo-pet-mall-java\docs\archive\PROJECT-STATUS.md` | 交付现状文档（v1.7）**已废弃并归档**（2026-09-30 第五十八轮）；权威来源为 `docs/PLAN.md` |
 | 《多多宠物商店 · 项目交付现状与后续方案》 | 同上内容的对外版本 |
 
 ---

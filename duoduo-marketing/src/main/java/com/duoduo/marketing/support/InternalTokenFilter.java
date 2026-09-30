@@ -1,12 +1,12 @@
 package com.duoduo.marketing.support;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.web.internal.InternalCallAuth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -33,14 +33,13 @@ public class InternalTokenFilter extends OncePerRequestFilter {
 
     /** 受保护的前缀：券的所有内部写接口 */
     private static final String PROTECTED_PREFIX = "/api/coupons/internal/";
-    private static final String HEADER = "X-Internal-Token";
 
-    private final String expectedToken;
+    private final InternalCallAuth internalCallAuth;
     private final ObjectMapper objectMapper;
 
-    public InternalTokenFilter(@Value("${duoduo.internal.token}") String expectedToken,
+    public InternalTokenFilter(InternalCallAuth internalCallAuth,
                                ObjectMapper objectMapper) {
-        this.expectedToken = expectedToken;
+        this.internalCallAuth = internalCallAuth;
         this.objectMapper = objectMapper;
     }
 
@@ -53,8 +52,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-        String token = request.getHeader(HEADER);
-        if (token != null && !expectedToken.isEmpty() && token.equals(expectedToken)) {
+        String token = request.getHeader(InternalCallAuth.HEADER);
+        if (internalCallAuth.verify(token, request.getMethod(), request.getRequestURI()).ok()) {
             filterChain.doFilter(request, response);
             return;
         }

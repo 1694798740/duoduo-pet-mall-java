@@ -305,6 +305,16 @@ export const sellerApi = {
   /** 上下架（幂等开关）：action = ON_SALE | OFF_SHELF；越权操作别人的商品返回 403 */
   changeProductStatus: (spuId: string, action: 'ON_SALE' | 'OFF_SHELF') =>
     api.post<SellerProductView>(`/api/seller/products/${spuId}/status`, { action }),
+
+  /**
+   * 编辑自己的商品（标题 / 主图）。
+   *
+   * 字段三态：不传 = 不改；空串 = 清空（只有 mainImage 允许）；有值 = 替换。
+   * 这里**必须把「用户没填」显式转成 undefined**，让 JSON 里根本不出现该字段 ——
+   * 直接传 '' 会把卖家的主图清掉（服务端按三态语义处理，不是容错）。
+   */
+  updateProduct: (spuId: string, body: { title?: string; mainImage?: string }) =>
+    api.put<SellerProductView>(`/api/seller/products/${spuId}`, body),
 };
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------
@@ -475,6 +485,16 @@ export const afterSaleApi = {
 
   /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 时可进入） */
   escalate: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/escalate`),
+
+  /**
+   * 买家填写寄回物流（第五十八轮 P1-5）：只有「待买家寄回」的退货退款能提交。
+   * 重复提交服务端返回 409 —— 前端按失败提示，不要当成成功（单号并没有被覆盖）。
+   */
+  shipReturn: (id: string, body: { courierCompany: string; trackingNo: string }) =>
+    api.post<AfterSaleView>(`/api/aftersales/${id}/return-shipment`, body),
+
+  /** 卖家确认收货并退款：退货退款的钱在这一刻才动，此前一直没动 */
+  receiveReturn: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/return-receipt`),
 };
 
 // ---------- 物流轨迹（/api/logistics，履约域 A2） ----------

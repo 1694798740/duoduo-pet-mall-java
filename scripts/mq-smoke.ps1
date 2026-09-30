@@ -31,9 +31,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
@@ -185,7 +193,7 @@ Check "运营账号重新登录成功" ($loginOp.status -eq 200) $loginOp.status
 # ---------- 4. 削峰主链路：入队 PENDING → PLACED ----------
 Write-Host ""
 Write-Host "> 削峰主链路"
-$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }
 $P1 = [long](@($batch.body.data)[0].price)
 $S1 = [int](@($batch.body.data)[0].availableStock)
 # 自证基线取**库内原值**而非接口可售量：可售 = stock - frozen，

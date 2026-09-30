@@ -1,12 +1,12 @@
 package com.duoduo.fulfilment.support;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.web.internal.InternalCallAuth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * 内部接口访问控制：校验服务间调用的共享密钥。
+ * 内部接口访问控制：校验服务间调用的凭据。
  *
  * <p>本服务此前**没有**内部接口（只调别人，不被别人调），A2 起有了第一个：
  * 物流轨迹摄入 {@code /api/logistics/internal/**}；A4 起多了信用分回写刷新的
@@ -28,9 +28,13 @@ import java.util.List;
  * {@code /xxx/tracks} 都会被莫名其妙地拦掉，且错误表现是 403 而非编译失败。
  * 新增内部接口时，把它的前缀加进下面的列表即可。
  *
- * <p><b>默认开启、失败关闭</b>：配置项带开发默认值以便本地容器直接跑通，
- * 生产必须用环境变量 {@code INTERNAL_TOKEN} 覆盖。这里刻意不写「没配就放行」——
- * 那会把一次配置遗漏直接变成线上越权（INV-11）。
+ * <p><b>默认开启、失败关闭</b>：校验逻辑在 {@link InternalCallAuth}，
+ * 格式 / 时效 / 身份 / 签名 / nonce 任何一步对不上都是 403。
+ * 这里刻意不写「没配就放行」—— 那会把一次配置遗漏直接变成线上越权（INV-11）。
+ *
+ * <p>第五十八轮（P0-3）：凭据从「明文共享密钥」换成「签名」——
+ * 链路上不再出现密钥本身，且签名只在时间窗内有效、绑定调用方身份与方法 + 路径。
+ * 校验口径由公共模块的 {@link InternalCallAuth} 统一提供，本类只负责「哪些路径要保护」。
  */
 @Component
 public class InternalTokenFilter extends OncePerRequestFilter {
@@ -39,14 +43,12 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     private static final List<String> INTERNAL_PREFIXES = List.of(
             "/api/logistics/internal/",
             "/api/reviews/internal/");
-    private static final String HEADER = "X-Internal-Token";
 
-    private final String expectedToken;
+    private final InternalCallAuth internalCallAuth;
     private final ObjectMapper objectMapper;
 
-    public InternalTokenFilter(@Value("${duoduo.internal.token}") String expectedToken,
-                               ObjectMapper objectMapper) {
-        this.expectedToken = expectedToken;
+    public InternalTokenFilter(InternalCallAuth internalCallAuth, ObjectMapper objectMapper) {
+        this.internalCallAuth = internalCallAuth;
         this.objectMapper = objectMapper;
     }
 
@@ -60,10 +62,9 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-        String token = request.getHeader(HEADER);
-        // 两端都要判：expectedToken 为空时不得因为「token 也恰好为空」而放行
-        if (expectedToken != null && !expectedToken.isEmpty()
-                && token != null && token.equals(expectedToken)) {
+        // 路径不含查询串：签名时两侧都用「方法 + 路径」，口径必须一致
+        String token = request.getHeader(InternalCallAuth.HEADER);
+        if (internalCallAuth.verify(token, request.getMethod(), uri).ok()) {
             filterChain.doFilter(request, response);
             return;
         }

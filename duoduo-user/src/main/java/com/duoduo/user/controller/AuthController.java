@@ -9,7 +9,7 @@ import com.duoduo.user.dto.UserDtos.RegisterRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
 import com.duoduo.user.dto.UserDtos.WechatLoginRequest;
 import com.duoduo.user.service.AuthService;
-import jakarta.servlet.http.Cookie;
+import com.duoduo.user.support.AuthCookieWriter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -46,8 +46,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private static final String COOKIE_ACCESS = "dd_at";
-    private static final String COOKIE_REFRESH = "dd_rt";
+    // Cookie 名与属性统一在 AuthCookieWriter：角色升级后重签令牌也要用同一份口径
+    private static final String COOKIE_ACCESS = AuthCookieWriter.COOKIE_ACCESS;
+    private static final String COOKIE_REFRESH = AuthCookieWriter.COOKIE_REFRESH;
 
     private final AuthService authService;
 
@@ -175,40 +176,14 @@ public class AuthController {
     // ---------- 内部方法 ----------
 
     private void writeCookies(HttpServletResponse response, LoginResponse result) {
-        Cookie access = new Cookie(COOKIE_ACCESS, result.accessToken());
-        access.setHttpOnly(true);
-        access.setPath("/");
-        access.setMaxAge((int) result.expiresInSeconds());
-        response.addCookie(access);
-
-        Cookie refresh = new Cookie(COOKIE_REFRESH, result.refreshToken());
-        refresh.setHttpOnly(true);
-        refresh.setPath("/");
-        refresh.setMaxAge((int) java.time.Duration.ofDays(7).toSeconds());
-        response.addCookie(refresh);
+        AuthCookieWriter.write(response, result);
     }
 
     private void clearCookies(HttpServletResponse response) {
-        Cookie access = new Cookie(COOKIE_ACCESS, "");
-        access.setPath("/");
-        access.setMaxAge(0);
-        response.addCookie(access);
-
-        Cookie refresh = new Cookie(COOKIE_REFRESH, "");
-        refresh.setPath("/");
-        refresh.setMaxAge(0);
-        response.addCookie(refresh);
+        AuthCookieWriter.clear(response);
     }
 
     private String readCookie(HttpServletRequest request, String name) {
-        if (request.getCookies() == null) {
-            return null;
-        }
-        for (Cookie cookie : request.getCookies()) {
-            if (name.equals(cookie.getName())) {
-                return cookie.getValue();
-            }
-        }
-        return null;
+        return AuthCookieWriter.read(request, name);
     }
 }

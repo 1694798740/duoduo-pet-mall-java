@@ -56,9 +56,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 8)
@@ -165,7 +173,7 @@ Write-Host "> 商品域：SKU 详情（id 必须字符串，price 必须数字�
 $dbSkuId = "$(Sql 'duoduo_product' "SELECT id FROM t_sku WHERE id = $SKU;")"
 Check "（前置）库内 SKU $SKU 存在" ($dbSkuId -eq "$SKU") $dbSkuId
 
-$skuRaw = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$SKU" $null $null @{ 'X-Internal-Token' = $InternalToken }
+$skuRaw = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$SKU" $null $null @{ 'X-Internal-Token' = 'internal' }
 Check "内部批量 SKU 接口返回 200" ($skuRaw.status -eq 200) $skuRaw.status
 CheckNumericField "SKU 详情" $skuRaw.raw 'price'
 CheckNumericField "SKU 详情" $skuRaw.raw 'availableStock'
@@ -177,7 +185,7 @@ $sellerF = FieldText $skuRaw.raw 'sellerId'
 Check "SKU 详情 · sellerId 是 JSON 字符串" ($sellerF -and $sellerF.quoted) $(if ($sellerF) { $sellerF.raw } else { '缺失' })
 # ★ 端到端：用原始文本里抠出来的 skuId 再请求一次，证明它是"可用的"
 if ($skuIdVal) {
-    $again = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$skuIdVal" $null $null @{ 'X-Internal-Token' = $InternalToken }
+    $again = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$skuIdVal" $null $null @{ 'X-Internal-Token' = 'internal' }
     $back = if ($again.raw) { FieldText $again.raw 'skuId' } else { $null }
     Check "★ 用响应里抠出的 skuId 反查，仍能命中同一条（id 是可用的，不只是长得像字符串）" (($again.status -eq 200) -and $back -and ($back.value -eq $skuIdVal)) "status=$($again.status) back=$(if ($back) { $back.value } else { 'null' })"
 }
@@ -266,7 +274,7 @@ if ($orderNo) {
     $back2 = $null
     $b2 = $null
     if ($itemSkuF) {
-        $back2 = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$($itemSkuF.value)" $null $null @{ 'X-Internal-Token' = $InternalToken }
+        $back2 = Call 'Get' "$Product/api/products/internal/skus/batch?ids=$($itemSkuF.value)" $null $null @{ 'X-Internal-Token' = 'internal' }
         $b2 = if ($back2.raw) { FieldText $back2.raw 'skuId' } else { $null }
     }
     Check "★ 用订单里抠出的 items[].skuId 反查商品，能命中同一条" `

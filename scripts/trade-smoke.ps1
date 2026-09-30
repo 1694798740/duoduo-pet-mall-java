@@ -33,6 +33,8 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 # 统一请求：返回 @{ status=..; body=.. }，非 2xx 不抛异常
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{
         Uri             = $uri
@@ -41,6 +43,12 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
         TimeoutSec      = 20
     }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress)
@@ -125,7 +133,7 @@ if (-not $ready) { Write-Host "网关未就绪，终止"; exit 1 }
 # ---------- 0b. 批量 SKU 接口（交易服务加购校验所依赖的内部接口） ----------
 Write-Host ""
 Write-Host "> 批量 SKU 接口（夹具来源）"
-$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT,$SKU_SOLD_OUT,$SKU_OFF_SHELF" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT,$SKU_SOLD_OUT,$SKU_OFF_SHELF" $null $null @{ 'X-Internal-Token' = 'internal' }
 Check "批量 SKU 接口返回 200" ($batch.status -eq 200) $batch.status
 # 注意：PowerShell 哈希表按键的**类型相等**匹配，[long]2001 与 [int]2001 不相等，
 # 用数值键会静默查不到（返回 $null，进而把价格库存都当 0）—— 所以统一用字符串键。

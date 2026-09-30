@@ -5,6 +5,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleCreateRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReplyRequest;
+import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReturnShipRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleView;
 import com.duoduo.fulfilment.service.AfterSaleService;
 import jakarta.validation.Valid;
@@ -72,7 +73,29 @@ public class AfterSaleController {
         return ApiResponse.ok(afterSaleService.reply(UserContext.requireUserId(), id, request));
     }
 
-    /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 时可进入） */
+    /**
+     * 买家填写寄回物流（第五十八轮 P1-5）：仅「待买家寄回」的退货退款可提交。
+     *
+     * <p>路径是<b>三段</b>（{@code /{id}/return-shipment}）：网关白名单按路径匹配且不区分方法，
+     * 而 {@code /api/aftersales/**} 整段都不在白名单里（售后含买家诉求与证据，必须登录），
+     * 所以这里不存在「匿名可调」的风险；保持三段与既有 {@code /{id}/reply} 同形即可。
+     */
+    @PostMapping("/{id}/return-shipment")
+    public ApiResponse<AfterSaleView> shipReturn(@PathVariable Long id,
+                                                 @Valid @RequestBody AfterSaleReturnShipRequest request) {
+        return ApiResponse.ok(afterSaleService.shipReturn(UserContext.requireUserId(), id, request));
+    }
+
+    /**
+     * 卖家确认收货并退款（第五十八轮 P1-5）：仅「买家已寄回」的退货退款可提交，
+     * 退款在这一刻才发生 —— 在此之前钱一直没动。
+     */
+    @PostMapping("/{id}/return-receipt")
+    public ApiResponse<AfterSaleView> receiveReturn(@PathVariable Long id) {
+        return ApiResponse.ok(afterSaleService.receiveReturn(UserContext.requireUserId(), id));
+    }
+
+    /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 / 待寄回 / 待收货 时可进入） */
     @PostMapping("/{id}/escalate")
     public ApiResponse<AfterSaleView> escalate(@PathVariable Long id) {
         return ApiResponse.ok(afterSaleService.escalate(UserContext.requireUserId(), id));

@@ -52,7 +52,7 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
     @Update("UPDATE t_after_sale SET status = 'REFUNDED', arbitrate_result = #{result}, "
             + "arbitrate_note = #{note}, arbitrated_by = #{operatorId}, "
             + "refund_amount = #{refundAmount}, updated_at = #{at} "
-            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED','ARBITRATING')")
+            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED','ARBITRATING','WAITING_RETURN','RETURNING')")
     int markRefundedByArbitration(@Param("id") Long id,
                                   @Param("result") String result,
                                   @Param("note") String note,
@@ -79,7 +79,7 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
      * @return 1 = 成功；0 = 已是终态或已在仲裁中
      */
     @Update("UPDATE t_after_sale SET status = 'ARBITRATING', updated_at = #{at} "
-            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED')")
+            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED','WAITING_RETURN','RETURNING')")
     int markArbitrating(@Param("id") Long id, @Param("at") LocalDateTime at);
 
     /**
@@ -89,12 +89,54 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
      */
     @Update("UPDATE t_after_sale SET status = 'CLOSED', arbitrate_result = #{result}, "
             + "arbitrate_note = #{note}, arbitrated_by = #{operatorId}, updated_at = #{at} "
-            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED','ARBITRATING')")
+            + "WHERE id = #{id} AND status IN ('PENDING','SELLER_REJECTED','ARBITRATING','WAITING_RETURN','RETURNING')")
     int markClosedByArbitration(@Param("id") Long id,
                                 @Param("result") String result,
                                 @Param("note") String note,
                                 @Param("operatorId") Long operatorId,
                                 @Param("at") LocalDateTime at);
+
+    // ---------------- 退货物流（第五十八轮 P1-5） ----------------
+
+    /**
+     * 卖家同意退货（仅退货退款）→ 等待买家寄回。
+     *
+     * <p>刻意与「同意即退款」分开成两条 SQL：同意退款与同意退货是两个不同的结论，
+     * 混用同一条 UPDATE 就等于把「钱先退了货还没回」这种事故写进代码里。
+     *
+     * @return 1 = 成功；0 = 已经不是待卖家处理
+     */
+    @Update("UPDATE t_after_sale SET status = 'WAITING_RETURN', seller_reply = #{reply}, "
+            + "updated_at = #{at} WHERE id = #{id} AND status = 'PENDING'")
+    int markWaitingReturn(@Param("id") Long id,
+                          @Param("reply") String reply,
+                          @Param("at") LocalDateTime at);
+
+    /**
+     * 买家填写寄回运单 → 已寄回（待卖家签收）。
+     *
+     * <p>WHERE 里带 {@code status = 'WAITING_RETURN'} 是必要的：重复提交（手抖点两次、
+     * 页面重试）只会返回 0 行，由服务层转成「已寄回，无需重复提交」，而不是把时间刷成第二次。
+     */
+    @Update("UPDATE t_after_sale SET status = 'RETURNING', return_courier = #{courier}, "
+            + "return_tracking_no = #{trackingNo}, return_shipped_at = #{at}, updated_at = #{at} "
+            + "WHERE id = #{id} AND status = 'WAITING_RETURN'")
+    int markReturning(@Param("id") Long id,
+                      @Param("courier") String courier,
+                      @Param("trackingNo") String trackingNo,
+                      @Param("at") LocalDateTime at);
+
+    /**
+     * 卖家确认收货 → 已签收并退款（钱由交易域执行，本方法只记结论）。
+     *
+     * @return 1 = 成功；0 = 已经不是「待收货」（并发下被别人签收 / 已走仲裁）
+     */
+    @Update("UPDATE t_after_sale SET status = 'REFUNDED', return_received_at = #{at}, "
+            + "refund_amount = #{refundAmount}, updated_at = #{at} "
+            + "WHERE id = #{id} AND status = 'RETURNING'")
+    int markReceivedRefunded(@Param("id") Long id,
+                             @Param("refundAmount") Long refundAmount,
+                             @Param("at") LocalDateTime at);
 
     // ---------------- 信用分（A4） ----------------
 

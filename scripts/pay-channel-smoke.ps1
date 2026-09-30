@@ -36,9 +36,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
@@ -85,7 +93,7 @@ function Sql([string]$db, [string]$sql) {
 }
 
 function NewKey { return [guid]::NewGuid().ToString() }
-$H_INTERNAL = @{ 'X-Internal-Token' = $InternalToken }
+$H_INTERNAL = @{ 'X-Internal-Token' = 'internal' }
 
 # 与 SandboxPaymentChannel 完全相同的签名规则：
 #   canonical = payNo + "|" + channelTradeNo + "|" + amount + "|" + status + "|" + timestamp
@@ -156,7 +164,7 @@ Check "用户 B 注册/登录" ($uB.result.status -eq 200) $uB.result.status
 $sessA = $uA.session
 $sessB = $uB.session
 
-$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }
 $sku = @($batch.body.data)[0]
 $P1 = [long]$sku.price
 $S1 = [int]$sku.availableStock

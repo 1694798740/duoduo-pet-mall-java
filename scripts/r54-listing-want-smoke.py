@@ -19,15 +19,40 @@ R54 冒烟：闲置「想要人数」（按咨询去重）与「浏览次数」�
 前置：14 容器健康；product / social 镜像已重建；已执行 docs/sql/incremental/18-r54-listing-want.sql。
 用法：python scripts/r54-listing-want-smoke.py
 """
+import base64
+import hashlib
+import hmac
 import json
 import os
 import random
+import time
+import uuid
 import urllib.error
 import urllib.request
 
 GW = "http://127.0.0.1:8080"
 PRODUCT_DIRECT = "http://127.0.0.1:8082"  # 内部端点直连：验证它不在网关暴露，且过滤器生效
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "duoduo-local-dev-internal-token")
+
+
+def _hmac_b64url(key, data):
+    """服务间凭据签名用：与 Java 侧 Base64.getUrlEncoder().withoutPadding() 同口径"""
+    raw = hmac.new(key.encode("utf-8"), data.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def sign_internal(method, path, caller="duoduo-smoke"):
+    """服务间调用凭据（第五十八轮 P0-3）：用签名替代明文共享密钥。
+
+    请求头里带的是 HMAC 签名而不是密钥本身：dd1.<caller>.<ts>.<nonce>.<签名>。
+    **每次调用都要重新签** —— 签名里带一次性 nonce，复用同一条头会被判重放。
+    path 只取路径、不含查询串，与服务端 request.getRequestURI() 口径一致。
+    """
+    key = _hmac_b64url(INTERNAL_TOKEN, "dd1|key|%s" % caller.lower())
+    ts = int(time.time())
+    nonce = uuid.uuid4().hex
+    sig = _hmac_b64url(key, "\n".join(["dd1", caller, str(ts), nonce, method.upper(), path]))
+    return "dd1.%s.%d.%s.%s" % (caller, ts, nonce, sig)
 PWD = "duoduo12345"
 OPERATOR_PHONE = "13688774031"
 
@@ -148,8 +173,9 @@ def text_in_listing_conv(buyer_tok, seller_id, lid, content="再聊两句"):
 
 def want_direct(lid, buyer_id, with_token=True):
     """内部端点直连（不经网关）：验证幂等返回值与凭据保护"""
-    headers = {"X-Internal-Token": INTERNAL_TOKEN} if with_token else {}
-    return call("POST", f"/api/listings/internal/{lid}/want?buyerId={buyer_id}",
+    path = f"/api/listings/internal/{lid}/want"
+    headers = {"X-Internal-Token": sign_internal("POST", path)} if with_token else {}
+    return call("POST", path + f"?buyerId={buyer_id}",
                 base=PRODUCT_DIRECT, headers=headers)
 
 

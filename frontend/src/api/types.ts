@@ -658,6 +658,10 @@ export interface ReviewedOrders {
 export type AfterSaleStatus =
   | 'PENDING'
   | 'SELLER_REJECTED'
+  /** 卖家已同意退货，等待买家寄回（第五十八轮 P1-5） */
+  | 'WAITING_RETURN'
+  /** 买家已寄回，等待卖家签收 —— 退款在卖家签收那一刻才发生 */
+  | 'RETURNING'
   | 'ARBITRATING'
   | 'REFUNDED'
   | 'CLOSED';
@@ -694,6 +698,14 @@ export interface AfterSaleView {
   arbitrateNote: string | null;
   /** 实际退款金额（分），由交易域退款结果回填；未退款时为 null */
   refundAmount: number | null;
+  /** 买家寄回的快递公司（仅退货退款，未寄回时 null） */
+  returnCourier: string | null;
+  /** 买家寄回的运单号 */
+  returnTrackingNo: string | null;
+  /** 已寄回时间（ISO-8601 UTC） */
+  returnShippedAt: string | null;
+  /** 卖家确认收货时间（退款在这一刻发生） */
+  returnReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

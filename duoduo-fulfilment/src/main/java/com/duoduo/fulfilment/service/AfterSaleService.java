@@ -17,6 +17,7 @@ import com.duoduo.fulfilment.client.dto.RefundResult;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleArbitrateRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleCreateRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReplyRequest;
+import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReturnShipRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleView;
 import com.duoduo.fulfilment.entity.AfterSaleEntity;
 import com.duoduo.fulfilment.mapper.AfterSaleMapper;
@@ -77,9 +78,17 @@ public class AfterSaleService {
      */
     private static final Set<String> ALLOWED_ORDER_STATUS = Set.of("SHIPPED", "COMPLETED");
 
-    /** 可裁定的售后单状态（终态不可再改判，要改判只能新立案） */
+    /**
+     * 可裁定的售后单状态（终态不可再改判，要改判只能新立案）。
+     *
+     * <p>两个退货中间态（{@code WAITING_RETURN / RETURNING}）必须包含进来：
+     * 货寄出后卖家一直不确认收货时，买家同样需要求助平台的路 ——
+     * 否则「退货中」就成了流程的黑洞。集合与 {@code AfterSaleMapper} 里
+     * 仲裁相关 SQL 的 {@code status IN (...)} 是同一套口径，改一处就要改另一处。
+     */
     private static final Set<String> ARBITRABLE = Set.of(
-            AfterSaleStatus.PENDING, AfterSaleStatus.SELLER_REJECTED, AfterSaleStatus.ARBITRATING);
+            AfterSaleStatus.PENDING, AfterSaleStatus.SELLER_REJECTED, AfterSaleStatus.ARBITRATING,
+            AfterSaleStatus.WAITING_RETURN, AfterSaleStatus.RETURNING);
 
     private static final int MAX_PAGE_SIZE = 50;
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -183,7 +192,21 @@ public class AfterSaleService {
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (AfterSaleStatus.ACTION_AGREE.equals(action)) {
-            // 先让钱动，再记结论
+            // 退货退款：同意的是「退货」，钱要等货回到卖家手上才动（第五十八轮 P1-5）。
+            //   这里刻意不复用下面 REFUND_ONLY 的分支 —— 两条 UPDATE 是两种不同的结论，
+            //   合成一条就等于把「钱先退、货没回」写进流程里。
+            if (AfterSaleStatus.TYPE_RETURN_REFUND.equals(entity.getType())) {
+                int rows = afterSaleMapper.markWaitingReturn(entity.getId(), "AGREE", now);
+                if (rows == 0) {
+                    throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看");
+                }
+                log.info("售后单 {} 卖家 {} 同意退货，等待买家寄回（退款在签收后执行）",
+                        entity.getId(), userId);
+                // 通知买家：此刻买家必须知道「接下来该我寄回了」，否则会一直等退款
+                fulfilmentNotifier.notifyReturnAgreed(entity.getBuyerId(), entity.getOrderNo());
+                return toView(loadAfterSale(id));
+            }
+            // 仅退款：钱现在就动
             RefundResult refund = callTradeRefund(entity.getOrderNo(),
                     "卖家同意售后退款（售后单 " + entity.getId() + "）");
             int rows = afterSaleMapper.markRefundedBySeller(entity.getId(), "AGREE",
@@ -212,6 +235,78 @@ public class AfterSaleService {
         return toView(loadAfterSale(id));
     }
 
+    // ---------------- 退货物流：买家寄回 / 卖家签收（第五十八轮 P1-5） ----------------
+
+    /**
+     * 买家填写寄回物流 → 已寄回，等待卖家签收。
+     *
+     * <p><b>为什么重复提交转 409 而不是幂等返回成功</b>：运单号已经写入，
+     * 第二次提交意味着用户看到了「没成功」的假象而重试，此时应当明确告诉他
+     * 「已经登记过了」，而不是静默返回成功 —— 静默成功会让人以为这次填的覆盖生效了，
+     * 实际上库里还是第一次那个单号（这是「看起来成功、实际没生效」的典型形态）。
+     */
+    public AfterSaleView shipReturn(Long userId, Long id, AfterSaleReturnShipRequest request) {
+        requireLogin(userId);
+        String courier = trimToNull(request.courierCompany());
+        String trackingNo = trimToNull(request.trackingNo());
+        if (courier == null || trackingNo == null) {
+            throw BizException.validation("请填写快递公司与运单号");
+        }
+        AfterSaleEntity entity = loadAfterSale(id);
+        if (!userId.equals(entity.getBuyerId())) {
+            throw BizException.forbidden("只能对自己的售后单填写寄回物流");
+        }
+        requireStatus(entity, Set.of(AfterSaleStatus.WAITING_RETURN),
+                "只有「待买家寄回」的售后单可以填写寄回物流");
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int rows = afterSaleMapper.markReturning(entity.getId(), courier, trackingNo, now);
+        if (rows == 0) {
+            throw BizException.conflict("该售后单刚刚已登记过寄回信息，请刷新后查看");
+        }
+        log.info("售后单 {} 买家 {} 已寄回：{} {}", entity.getId(), userId, courier, trackingNo);
+        // 通知卖家：货在路上，卖家才知道要去收货（否则这条单子会一直停在待收货）
+        fulfilmentNotifier.notifyReturnShipped(entity.getSellerId(), entity.getOrderNo(), trackingNo);
+        return toView(loadAfterSale(id));
+    }
+
+    /**
+     * 卖家确认收货 → 签收并退款（退货退款的钱在这一刻才动）。
+     *
+     * <p><b>先让钱动、再记结论</b>：与仅退款分支同一次序。
+     * 反过来（先记 REFUNDED 再调退款）会在退款失败时留下「已退款」的结论而没有钱，
+     * 那是比「钱退了、状态还没改」更难收拾的错账 —— 后者最多是状态落后，前者是账实不符。
+     *
+     * <p><b>签收后不再允许仲裁驳回</b>：签收即终态 REFUNDED，
+     * 与既有设计一致（退款是终态），不留「退了又撤回」的边。
+     */
+    public AfterSaleView receiveReturn(Long userId, Long id) {
+        requireLogin(userId);
+        AfterSaleEntity entity = loadAfterSale(id);
+        if (!userId.equals(entity.getSellerId())) {
+            throw BizException.forbidden("只能处理自己店铺的售后单");
+        }
+        requireStatus(entity, Set.of(AfterSaleStatus.RETURNING),
+                "只有「买家已寄回」的售后单可以确认收货");
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        RefundResult refund = callTradeRefund(entity.getOrderNo(),
+                "卖家确认收货后退款（售后单 " + entity.getId() + "）");
+        int rows = afterSaleMapper.markReceivedRefunded(entity.getId(), refund.refundAmount(), now);
+        if (rows == 0) {
+            // 钱已经退了但结论没写进去：必须响亮失败（这是账实不符，需要人工介入），
+            // 绝不能当成「已处理过」静默返回 —— 与垫付那条的教训同源。
+            log.error("售后单 {} 退款已执行（{} 分）但状态写入失败，请人工核对",
+                    entity.getId(), refund.refundAmount());
+            throw BizException.conflict("该售后单刚刚已被处理，请刷新后查看（如已退款请联系平台核对）");
+        }
+        log.info("售后单 {} 卖家 {} 确认收货并退款，退款金额 {} 分",
+                entity.getId(), userId, refund.refundAmount());
+        fulfilmentNotifier.notifyAfterSaleRefunded(entity.getBuyerId(), entity.getOrderNo(),
+                refund.refundAmount());
+        return toView(loadAfterSale(id));
+    }
+
     // ---------------- 买家：申请平台仲裁 ----------------
 
     /**
@@ -226,7 +321,10 @@ public class AfterSaleService {
         if (!userId.equals(entity.getBuyerId())) {
             throw BizException.forbidden("只能对自己的售后单申请仲裁");
         }
-        requireStatus(entity, Set.of(AfterSaleStatus.PENDING, AfterSaleStatus.SELLER_REJECTED),
+        // 退货的两个中间态同样可进仲裁：货寄出去之后卖家迟迟不确认收货时，
+        // 「退货中」不能变成没有出路的黑洞（与 ARBITRABLE 同一套口径）
+        requireStatus(entity, Set.of(AfterSaleStatus.PENDING, AfterSaleStatus.SELLER_REJECTED,
+                        AfterSaleStatus.WAITING_RETURN, AfterSaleStatus.RETURNING),
                 "该售后单当前状态不允许申请仲裁");
         int rows = afterSaleMapper.markArbitrating(entity.getId(), LocalDateTime.now(ZoneOffset.UTC));
         if (rows == 0) {
@@ -467,6 +565,10 @@ public class AfterSaleService {
                 entity.getArbitrateResult(),
                 entity.getArbitrateNote(),
                 entity.getRefundAmount(),
+                entity.getReturnCourier(),
+                entity.getReturnTrackingNo(),
+                iso(entity.getReturnShippedAt()),
+                iso(entity.getReturnReceivedAt()),
                 iso(entity.getCreatedAt()),
                 iso(entity.getUpdatedAt()));
     }

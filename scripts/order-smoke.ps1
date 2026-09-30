@@ -28,9 +28,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
@@ -113,7 +121,7 @@ Check "错误凭据同样被拒绝（403）" ($badToken.status -eq 403) $badToke
 # ---------- 2. 夹具 ----------
 Write-Host ""
 Write-Host "> 夹具"
-$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A,$SKU_B,$SKU_TIGHT" $null $null @{ 'X-Internal-Token' = 'internal' }
 $skus = @{}
 foreach ($x in @($batch.body.data)) { $skus["$($x.skuId)"] = $x }
 $P1 = [long]$skus["$SKU_A"].price
@@ -205,7 +213,7 @@ if (-not $SkipDbCheck) {
     Check "冻结台账 2 行且状态为 FROZEN" ($freezeRows -eq '2') $freezeRows
     $logRows = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)');"
     Check "状态流转日志 1 行（创建）" ($logRows -eq '1') $logRows
-    $availAfter = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }).body.data)[0].availableStock))
+    $availAfter = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }).body.data)[0].availableStock))
     Check "接口可售余量下降为 $S1 - 2" ($availAfter -eq ($S1 - 2)) $availAfter
 }
 
@@ -268,7 +276,7 @@ if (-not $SkipDbCheck) {
     Check "取消后商品库冻结量回到 0（已释放）" ($frozenAfter -eq '0') $frozenAfter
     $released = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)') AND status = 'RELEASED';"
     Check "冻结台账 2 行均标记为 RELEASED" ($released -eq '2') $released
-    $availBack = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }).body.data)[0].availableStock))
+    $availBack = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }).body.data)[0].availableStock))
     Check "接口可售余量恢复到 $S1" ($availBack -eq $S1) $availBack
     $cancelLog = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)');"
     Check "状态流转日志 2 行（创建 + 关闭）" ($cancelLog -eq '2') $cancelLog

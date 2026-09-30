@@ -41,6 +41,33 @@
         bindtap="tapOption"
       >{{opt.label}}</view>
     </view>
+
+    <!-- 相关追问（第五十八轮 S3）：由本轮候选推导，不是固定文案。
+         样式与澄清选项同形（胶囊），颜色更淡 —— 澄清是「AI 在问你」，追问是「你还可以问」。 -->
+    <view wx:if="{{msg.followUps && msg.followUps.length > 0}}" class="clarify-list">
+      <view
+        wx:for="{{msg.followUps}}"
+        wx:key="*this"
+        class="clarify-chip chip-muted"
+        data-send="{{item}}"
+        bindtap="tapOption"
+      >{{item}}</view>
+    </view>
+  </view>
+
+  <!-- 快捷问题（第五十八轮 S3）：只在「还没聊起来」时出现（首屏只有问候语）。
+       聊过之后再显示这些类目级问题会打断话题，而用户此刻问的通常更具体。 -->
+  <view wx:if="{{messages.length <= 1 && quickQuestions.length > 0}}" class="ai-quick">
+    <view class="ai-quick-title">大家都在问</view>
+    <view class="ai-quick-list">
+      <view
+        wx:for="{{quickQuestions}}"
+        wx:key="*this"
+        class="clarify-chip"
+        data-send="{{item}}"
+        bindtap="tapOption"
+      >{{item}}</view>
+    </view>
   </view>
   <view wx:if="{{sending}}" class="bubble-row">
     <view class="chat-avatar">🐱</view>

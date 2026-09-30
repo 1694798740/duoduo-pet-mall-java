@@ -28,6 +28,15 @@
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
     <!--
+      定时任务选主锁（第五十八轮 · P0-2）用 JdbcTemplate 实现，故这里需要 JDBC 支持。
+      业务服务都连库，因此是**已有能力的复用**而不是新增中间件：
+      AI 服务虽依赖本模块但不配数据源，由 @ConditionalOnBean(DataSource.class) 兜住。
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <!--
       OpenAPI 契约（A6）：随 common-web 自动装配到全部业务服务，网关（WebFlux）不依赖本模块故不受影响。
       只为导出 /v3/api-docs 供契约比对与前端联调；网关路由是显式白名单，不会把 doc.html / v3/api-docs 暴露到公网入口。
       服务内直接端口（8081~8085）仅本机可达，UI（/doc.html）只在开发环境可用。

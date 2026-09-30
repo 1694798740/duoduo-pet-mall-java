@@ -455,6 +455,41 @@ public class AuthService {
         return toView(entity);
     }
 
+    // ---------------- 角色变更后的令牌处理（第五十八轮 P1-6） ----------------
+
+    /**
+     * 重新签发一枚访问令牌（角色变更后让新角色<b>立刻生效</b>用）。
+     *
+     * <p>为什么需要它：访问令牌里带 role 快照，改完库里的角色之后，
+     * 用户手上的旧令牌仍然写着旧角色 —— 表现是「入驻成功了，商家端还进不去，要等 15 分钟或重新登录」。
+     *
+     * <p>为什么只签访问令牌、不动刷新令牌：轮换刷新令牌会吊销旧的那一批，
+     * 等于把用户其它端一起踢下线；而访问令牌本来就短时效，覆盖它没有副作用。
+     * 角色是「从库里现读」的（{@code selectById}），所以新令牌必然带新角色 ——
+     * 这也是本方法<b>不接角色参数</b>的原因：不接受调用方传入的角色，避免第二份口径。
+     */
+    public String renewAccessToken(Long userId) {
+        if (userId == null) {
+            throw BizException.unauthorized("请先登录");
+        }
+        UserEntity entity = userMapper.selectById(userId);
+        if (entity == null) {
+            throw BizException.notFound("用户");
+        }
+        if ("BANNED".equals(entity.getStatus())) {
+            throw BizException.forbidden("账号已被封禁");
+        }
+        LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
+                entity.isRealNameVerified());
+        log.info("用户 {} 角色变更为 {}，重签访问令牌使新角色即时生效", userId, entity.getRole());
+        return jwtTokenService.createAccessToken(loginUser);
+    }
+
+    /** 访问令牌有效期（秒）：供控制器写 Cookie 的 max-age */
+    public long accessTtlSeconds() {
+        return jwtTokenService.accessTtl().toSeconds();
+    }
+
     /**
      * 服务间写：回写信用分（A4）。
      *

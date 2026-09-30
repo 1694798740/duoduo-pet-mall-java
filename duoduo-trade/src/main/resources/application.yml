@@ -67,6 +67,10 @@ duoduo:
     # 服务间调用共享密钥，与商品服务共用同一个值（容器里由 INTERNAL_TOKEN 注入）。
     # 用于调用商品服务的库存写接口（冻结 / 释放 / 扣减）。
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+    # 服务间调用凭据（第五十八轮 P0-3）：签名有效期（秒）与「每个调用方一把显式密钥」。
+    # 两者都可不配：默认 300 秒，且密钥按调用方身份从根密钥派生（见 InternalCallAuth）。
+    signature-skew-seconds: ${INTERNAL_SKEW_SECONDS:300}
+    caller-secrets: ${INTERNAL_CALLER_SECRETS:}
   trade:
     # 待付款订单多久自动关单（分钟）。生产按业务口径核定，这里取 30 分钟。
     order-expire-minutes: ${ORDER_EXPIRE_MINUTES:30}

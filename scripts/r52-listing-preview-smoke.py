@@ -380,15 +380,15 @@ def sec_m():
     check("M5 回归：POST /api/listings/search 不再是 500", st != 500, f"{st}")
     check("M5b 且明确为 405", st == 405, f"{st}")
 
-    # —— M3 说明：/api/orders/preview 与 @GetMapping("/{orderNo}") 的路径竞争 ——
-    # 对 /preview 发 GET 会被 /{orderNo} 当成订单号 "preview" 捕获，得到 404「订单不存在」
-    # 而不是 405。这不是 405 修复的遗漏，而是「同一路径段上同时存在精确匹配与变量匹配」的
-    # 固有语义：Spring 只在**方法相同**时才让精确路径优先。POST /preview 是独立映射，
-    # 不受影响（P2 已通过）。这里固定该契约，避免日后误判为回归。
+    # —— M3 说明：/api/orders/preview 与订单详情 @GetMapping("/{orderNo}") 的路径竞争（第五十八轮已消歧）——
+    # 原先 GET /preview 会被 /{orderNo} 当成订单号 "preview" 捕获，回 404「订单不存在」——
+    # 与「订单号写错了」同码，排查时极易被误读成数据问题。
+    # 现已给详情端点的路径变量加上形状约束（订单号固定 21 位纯数字，见 OrderNoGenerator），
+    # 于是 GET /preview 命中「只支持 POST 的 /preview」→ 405，与「订单不存在」彻底分开。
     tok, _, _ = signup("路径竞争验证")
     st, r = call("GET", "/api/orders/preview", token=tok)
-    check("M3 GET /api/orders/preview 被 /{orderNo} 捕获为 404（已知语义，非缺陷）",
-          st in (404, 405), f"{st}")
+    check("M3 GET /api/orders/preview 明确为 405（不再被 /{orderNo} 误捕）",
+          st == 405, f"{st}")
     check("M3b 且绝非 500", st != 500, f"{st}")
 
 

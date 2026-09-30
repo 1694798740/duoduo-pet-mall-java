@@ -131,8 +131,18 @@ public class OrderController {
         return ApiResponse.ok(orderService.listMine(status, page, pageSize));
     }
 
-    /** 订单详情（含明细快照） */
-    @GetMapping("/{orderNo}")
+    /**
+     * 订单详情（含明细快照）。
+     *
+     * <p><b>路径变量刻意加了 {@code \d{21}} 约束</b>（第五十八轮 P1-8）：
+     * 订单号固定是「14 位时间戳 + 6 位随机 + 1 位校验位」共 21 位纯数字
+     * （见 {@code OrderNoGenerator}）。不加约束时，{@code GET /api/orders/preview}
+     * 会被这里的 {@code /{orderNo}} 当成订单号 "preview" 捕获，回 404「订单不存在」——
+     * 状态码与真正的「订单号写错了」完全相同，排查时极易被误读成数据问题。
+     * 加上形状约束后，拼错的 GET 落到 405（路径命中了只支持 POST 的 /preview），
+     * 语义上「这个路径存在、但方法不对」，与「订单不存在」彻底分开。
+     */
+    @GetMapping("/{orderNo:\\d{21}}")
     public ApiResponse<OrderView> detail(@PathVariable String orderNo) {
         return ApiResponse.ok(orderService.detail(orderNo));
     }

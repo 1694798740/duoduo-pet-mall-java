@@ -284,6 +284,106 @@ clarify 的旧代码）。修法：`mvn package` 重打三模块 + 解包 `unzip
 `line-height` 的洞）+ `ai-smoke` **37/0**（11 项新增）+ 回归 **346/0**（order 77 / address 82 / payment 71 /
 share-circle 74 / notice 42）+ 静态自检 **0 错 0 警** + 三容器重建 healthy。
 
+### 2026-09-30（R59 · 未完成项清单收口：券口径 / 选主 / 内部凭据 / 商家商品与退货物流 / 角色即时生效 / 发布限流 / 路径消歧 / 零单测模块 / 文档同步 / AI 加强 6 项）
+
+> 用户指令：先输出「未完成项清单」（任务名 / 涉及文件 / 完成状态 / 未完成原因），确认后**按优先级全量开工**，
+> 保持既有代码风格，完成后**逐项汇总改动 + 指出仍需人工确认的地方**。清单见工作区
+> 《未完成项清单（2026-09-30 复核版）.md》（22 项 + 暂缓项）。
+
+#### P0（安全与正确性底线）
+
+- **#1 券 v1 口径**：维持「不支持的组合**明确 422 拒绝**」这一既有行为（不擅自放宽成静默降级 ——
+  静默降级会让用户以为券生效了、结算时才发现没减），改用**有断言的单测**把它固化下来：
+  `CouponV1BoundaryTest`（13 项）—— 叠加/跨品类/过期/非本店等边界逐条断言拒绝码与提示，
+  避免以后有人「顺手改成放行」而无人察觉。**口径本身仍需产品确认**（见文末人工确认项）。
+- **#2 调度选主（多实例重复跑）**：新增 `common-web` 的 `SchedLeaderLock` + 表
+  `docs/sql/incremental/23-r58-sched-leader.sql`（主键即锁名，`expire_at` 自动过期）。
+  抢占语义**两步且顺序不能反**：先 UPDATE（续约 / 接管过期锁）→ 影响 0 行再 INSERT（首次运行），
+  撞唯一键即表示别人持有、本轮放弃。**先 SELECT 再写**在并发下会让两个实例都看到「没这行」而双双写入。
+  锁事务 `REQUIRES_NEW` **独立提交**（不能挂在业务事务里 —— 业务回滚会把锁一起回滚，等于没上锁）。
+  4 个既有定时任务接入，`duoduo.sched.leader-enabled=false` 可整体退回外部调度（零新增中间件）。
+- **#3 内部凭据升级**：服务间调用从「明文共享密钥相等即放行」改为 **HMAC 签名**
+  `dd1.<caller>.<tsSeconds>.<nonce>.<签名>`（签名覆盖调用方 + 时间戳 + nonce），5 个域的
+  `InternalTokenFilter` 统一换成 `common-web` 的 `InternalCallAuth`；带时间窗与 nonce，
+  **失败关闭**（解析/验签异常一律拒绝，不放行兜底）。冒烟脚本共用 `scripts/lib/internal-token.ps1` 生成。
+
+#### P1
+
+- **#4 商家自助管理自己的商品**：`SellerProductService` 抽出 `requireOwned()`（**上下架与编辑共用同一条归属判定** ——
+  少一处就变成「上下架挡住、编辑没挡住」这类只在越权时才暴露的漏洞，而两处代码看起来几乎一样）；
+  新增 `PUT /api/seller/products/{spuId}` 编辑**标题与主图**。字段**三态**：`null` = 不改 / `""` = 清空 /
+  有值 = 替换（把「不改」传成空串，用户原有主图会被清掉）。**价格 / 库存 / 类目刻意不开**：
+  那牵动 SKU、ES 索引与在途订单金额口径，属「改价即改合约」。标题变更后**不直接写 ES**，
+  交给幂等的对账型同步任务收敛（直接写索引反而绕过它）。单测 `SellerProductServiceTest`（8）。
+- **#5 退货物流**：`t_after_sale` 增寄回运单 / 签收四列（`docs/sql/incremental/24-r58-return-logistics.sql`），
+  状态机新增 `WAITING_RETURN`（买家填寄回）→ `RETURNING`（卖家签收，**退款在这一刻才发生**）。
+  **退款时点从「卖家同意」挪到「卖家确认收货」** —— 同意即退款意味着货没回来钱先走；而「等收货再退」
+  若没有系统入口，就只是一句靠线下执行的空话。**刻意不建退货轨迹表**：正向轨迹的「签收」是订单交付终态，
+  混进退货节点会让「已签收」在一张订单里有两种含义，是对账与前端展示的长期隐患；退货流程真正需要的
+  只有「寄回 / 收到」两个事实。新增 `POST /{id}/return-shipment`、`POST /{id}/return-receipt`，
+  两态**同样可进仲裁**（货寄出后卖家一直不确认收货时买家不能没有出路）。
+- **#6 角色升级即时生效**：新增 `AuthCookieWriter`（`dd_at` / `dd_rt`），`renewAccessToken`
+  **从库现读角色**（拒绝调用方传角色 —— 传参等于允许伪造）、BANNED 抛 403；商家申请通过后
+  **只覆盖访问令牌 Cookie，不动刷新令牌**（升级场景无需逼用户重登）。
+  **降级 / 运营改角色必须吊销全部刷新令牌**（`revokeAllByUser`）—— 权限变小却留着旧刷新令牌，
+  等于降级可被打回。新增 `POST /api/users/me/merchant/token` 供前端静默换取。
+  单测 `RoleTokenEffectiveTest`（6）+ `AdminUserServiceRoleChangeTest`（6）。
+- **#7 闲置发布频率限流**：`BizException.rateLimited()`（**429**）与 `businessRule`（**422**）语义分开 ——
+  429 是「内容没问题但发太快」、422 是「改一改就能成功」，混用会让前端把「等一分钟」提示成「填写有误」。
+  `ListingService.checkPublishQuota()`：滑动 24h 计数（**含软删**，否则删了重发即可绕过）+ 最小间隔，
+  阈值可配（默认 10 次/天、60 秒）。单测 `ListingPublishRateLimitTest`（7）。
+- **#8 路径消歧**：`@GetMapping("/{orderNo}")` → `@GetMapping("/{orderNo:\\d{21}}")`（订单号固定 21 位纯数字）。
+  否则 `/api/orders/xxx` 这类「明细」与「其他子路径」会互相抢占匹配，表现为随机 404/405。
+  冒烟断言由 `st in (404,405)` **收紧为 `st == 405`**（宽松断言等于没断言）。
+- **#9 旧内部端点收敛**：**未开工** —— 需先迁移 6 套冒烟脚本，见文末人工确认项。
+
+#### P2 / P3
+
+- **#10 零单测模块补单测**：新增 `JwtAuthGlobalFilterTest`（8：公开读放行 / 写路径拦 /
+  三段不被两段通配连带放行 / 微信绑定需登录 / **伪造身份头与 IP 头被剥离** / OPTIONS 放行）、
+  `NoticeServicePushTest`（7：两阶段落库 —— 第 N 条非法则整批不写、落地页白名单、公告收件人固定 0）、
+  `UnreadServiceTest`（3：角标不重叠）、`SnowflakeIdGeneratorTest`（6：首条断言
+  **生成的 id 超出 JS 安全整数** → 前端禁止 `Number()` 强转有了机器可检的依据）、
+  `AfterSaleServiceTest`（9）、`SellerProductServiceTest`（8）。
+- **#14 过时文档**：`README.md` 里「AI 导购未部署」改为已上线（`DUODUO_AI_MOCK_ENABLED` 决定形态）。
+  **#15 归档**：`docs/PROJECT-STATUS.md` → `docs/archive/`，同步 `GITHUB-PUSH-GUIDE` 与 `handover/08`。
+  **#16 待办同步**：`docs/agent/07` 追加 R57/R58，`docs/待协助问题.md` H-01 销项。
+
+#### AI 加强（#17~#22，原 R57「加强 3 项」扩展）
+
+- **#17 宠物档案个性化**：AI 侧新增 `UserProfileClient` + `PetBrief`，用户域新增
+  `GET /api/users/internal/pet-profiles` 与**裁剪视图**（**不含病史 / 生日 / 体重**，
+  越少字段越安全）；`PetContext` 三条硬边界：**档案只补充不覆盖**（用户明说品类时不注入）、
+  取不到就当没有、**只说档案里有的事实**。
+- **#18 政策知识库**：`PolicyKnowledge` 5 条，**只写流程与入口、不写时效与赔付数字**
+  （那些是配置项，写死就是另一种编造）；**条目顺序 = 匹配优先级**，仲裁条目排最前
+  （否则「卖家不同意退款」会先命中含「退款」的退货条目）。
+- **#19 快捷问题 / 追问 / 对比**：`Suggestions`。**对比不进模型** —— 只用候选客观字段并列，
+  不写「哪个更好」（需要成分 / 适配数据，服务没有）。**前端必须消费**（后端下发而页面不接 = 没做，
+  接口探针永远测不到）：小程序 `pages/ai` 新增「大家都在问」快捷 chips（**只在首屏显示** ——
+  聊过之后再显示类目级问题会打断话题）+ 回答后的相关追问 chips（与澄清选项同形、颜色更淡以区分
+  「AI 在问你」与「你还可以问」）；**换话题时 followUps 与 options 一起清掉**（旧追问是针对上一轮候选的）。
+  新增 `scripts/r59-ai-suggestions-test.js` **22 项**（含 4 组反向验证）。
+- **#20 限流多实例**：`IpRateLimiter` 改 `ObjectProvider<StringRedisTemplate>`（有 Redis 就共享窗口，
+  否则内存）；Redis 报错**冷却 60 秒**再回退，不每次重试（超时会叠加到每个对话）。
+- **#21 mock 护栏可达性**：`MockReply` 走**独立话术** —— 原先 mock 复用 `ReplyGuard.factsReply`，
+  护栏检查的是自己的输出 → **永不命中**（这就是「有护栏、没验证过」的典型）。
+- **#22 召回去重多样性**：`RecallDiversifier` 按「标题去规格后缀」归一去重、同款保留更便宜那件
+  （原始取 12 → 去重后留 8），避免整屏同款不同规格。
+
+**★ 本轮教训**：① **mock 形态必须有自己的出口**，否则护栏 / 断言全在自查自纠；
+② **429 与 422 不能混**；③ 断言**收紧**才有意义（`in (404,405)` → `== 405`）；
+④ 新增类必须 `unzip -l` 验进 jar（R52 教训第三次复述）；
+⑤ **后端下发 ≠ 前端接了** —— `quickQuestions` / `followUps` 服务端早就返回，页面不渲染等于没做，
+而接口探针永远测不到；⑥ **反向验证也可能空转**：两个 chips 区块写法相同时，
+全文件 `includes` 会把「改坏了的那段」之外的同名字段也算作命中 —— 反向验证必须**按块取片段**判定。
+
+**验证**：全模块 `mvn -o test` 全绿（common 6 / common-web 18 / gateway 8 / user 15 / product 15 /
+trade 19 / fulfilment 9 / marketing 13 / **ai 94** / social 10 = **207/0**）；前端 node 单测
+**251/0**（既有的 229 项全过 + 新增 `r59-ai-suggestions-test` 22 项）；小程序静态自检 **0 错 0 警**；
+`mvn -o -DskipTests package` **BUILD SUCCESS** 且新类均在 jar 内；每一项均做**反向验证**
+（故意改坏 → 断言转红 → 还原）。
+
 ### 2026-09-30（R58 · 资金闭环 / 测试底盘 / 闲置编辑删除 / AI 问候身份出口）
 
 > 用户指令：先做全项目未完成项盘点（AI 相关仅记录、不改），再按 A→B→C→D 顺序无中断推进。

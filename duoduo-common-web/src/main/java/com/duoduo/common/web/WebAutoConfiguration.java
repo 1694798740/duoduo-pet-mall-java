@@ -1,12 +1,21 @@
 package com.duoduo.common.web;
 
+import com.duoduo.common.web.internal.InternalCallAuth;
+import com.duoduo.common.web.sched.SchedLeaderLock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -48,6 +57,52 @@ public class WebAutoConfiguration {
     @Bean
     public LongToStringJacksonModule longToStringJacksonModule() {
         return new LongToStringJacksonModule();
+    }
+
+    /**
+     * 定时任务选主锁（第五十八轮 · P0-2）。
+     *
+     * <p>两个条件装配是必须的，不是保险：
+     * <ul>
+     *   <li>{@code @ConditionalOnBean(DataSource)}：AI 服务依赖本模块但<b>不连数据库</b>，
+     *       无条件注册会在启动时因缺 DataSource 而失败 —— 基础设施不该反过来要求业务服务配库。</li>
+     *   <li>{@code @ConditionalOnClass(JdbcTemplate)}：本模块的依赖是可选的，
+     *       不给 JDBC 的环境里连类都不该被加载。</li>
+     * </ul>
+     *
+     * <p>注意它必须由自动装配显式登记：本模块包名 {@code com.duoduo.common.web}
+     * 与各业务服务的组件扫描根不重叠（见本类注释开头）。
+     */
+    @Bean
+    @ConditionalOnClass(JdbcTemplate.class)
+    @ConditionalOnBean(DataSource.class)
+    public SchedLeaderLock schedLeaderLock(
+            JdbcTemplate jdbcTemplate,
+            @Value("${duoduo.sched.leader-enabled:true}") boolean enabled) {
+        return new SchedLeaderLock(jdbcTemplate, SchedLeaderLock.defaultOwner(), enabled);
+    }
+
+    /**
+     * 服务间调用凭据（第五十八轮 · P0-3）：出向 Feign 签发签名、入向内部接口校验签名。
+     *
+     * <p>必须是 Bean 而不是各域自己 new：密钥派生规则全项目只有一处实现，
+     * 一处改错（比如派生时漏了 caller）会表现为「所有内部调用 403」，
+     * 分散在六个域里各写一份等于把这种错误复制六遍。
+     *
+     * <p>{@code spring.application.name} 就是调用方身份（duoduo-trade / duoduo-product …），
+     * 因此不需要额外配置「我是谁」—— 身份与 Spring 应用名天然一致，不会配错。
+     *
+     * <p>两个可选配置：{@code duoduo.internal.signature-skew-seconds}（时间窗，默认 300 秒）
+     * 与 {@code duoduo.internal.caller-secrets}（每个调用方一把显式密钥，默认空 = 走派生密钥）。
+     */
+    @Bean
+    public InternalCallAuth internalCallAuth(
+            @Value("${duoduo.internal.token}") String rootSecret,
+            @Value("${spring.application.name:unknown}") String selfCaller,
+            @Value("${duoduo.internal.signature-skew-seconds:300}") long skewSeconds,
+            @Value("${duoduo.internal.caller-secrets:}") String callerSecrets) {
+        return new InternalCallAuth(rootSecret, selfCaller, skewSeconds,
+                InternalCallAuth.parseCallerSecrets(callerSecrets));
     }
 
     @Bean

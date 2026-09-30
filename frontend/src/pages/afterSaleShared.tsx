@@ -14,6 +14,8 @@ export const AFTER_SALE_STATUS_TABS: Array<{ value: string; label: string }> = [
   { value: '', label: '全部' },
   { value: 'PENDING', label: '待卖家处理' },
   { value: 'SELLER_REJECTED', label: '卖家已拒绝' },
+  { value: 'WAITING_RETURN', label: '待买家寄回' },
+  { value: 'RETURNING', label: '待卖家收货' },
   { value: 'ARBITRATING', label: '平台仲裁中' },
   { value: 'REFUNDED', label: '已退款' },
   { value: 'CLOSED', label: '已关闭' },
@@ -34,7 +36,8 @@ export const AFTER_SALE_TYPE_OPTIONS: Array<{ value: AfterSaleType; label: strin
   {
     value: 'RETURN_REFUND',
     label: '退货退款',
-    hint: '需要把商品寄回给卖家 —— 适合货不对板、不想要了这类情况（本期系统不跟踪退货物流）',
+    hint:
+      '需要把商品寄回给卖家 —— 适合货不对板、不想要了这类情况：卖家同意后你填写寄回运单，卖家签收即退款',
   },
 ];
 
@@ -72,6 +75,12 @@ function stepReached(status: string): number {
     case 'PENDING':
       return 2;
     case 'SELLER_REJECTED':
+      return 2;
+    // 「待寄回 / 待收货」仍属「卖家处理」这一阶段：钱没动、结论没定，
+    // 画成独立一步会让进度条看起来比实际走得远
+    case 'WAITING_RETURN':
+      return 2;
+    case 'RETURNING':
       return 2;
     case 'ARBITRATING':
       return 3;

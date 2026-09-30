@@ -63,6 +63,10 @@ duoduo:
     # 服务间调用共享密钥。用户域的内部接口只有「批量取昵称/头像」这类只读能力，
     # 但仍然必须凭据保护：昵称头像同样是用户数据，不能因为「不敏感」就裸奔。
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+    # 服务间调用凭据（第五十八轮 P0-3）：签名有效期（秒）与「每个调用方一把显式密钥」。
+    # 两者都可不配：默认 300 秒，且密钥按调用方身份从根密钥派生（见 InternalCallAuth）。
+    signature-skew-seconds: ${INTERNAL_SKEW_SECONDS:300}
+    caller-secrets: ${INTERNAL_CALLER_SECRETS:}
   user:
     # 新用户初始信用分（A4）= 履约域信用分模型的基础分。
     # 两处各自持有这个常量（无共享模块），一致性由 credit-smoke 守住：

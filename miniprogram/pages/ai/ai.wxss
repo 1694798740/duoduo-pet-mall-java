@@ -86,3 +86,28 @@
   font-size: 26rpx;
   white-space: nowrap;
 }
+/* 追问用淡色：与「AI 反问你」的澄清选项区分开 —— 两者都是点一下就发，但来源不同 */
+.chip-muted {
+  border-color: var(--line);
+  color: var(--text-2);
+  background: var(--bg);
+}
+
+/* ── 快捷问题（第五十八轮 S3）───────────────────────────────────────────────
+   复用 .clarify-chip 的胶囊（四条齐备已验证），这里只补外框与标题。
+   一行放不下时**横向滚动而不是换行**（R53 教训）：flex-wrap 在这里是刻意的 ——
+   快捷问题最多 4 条且文案短，换行比横向滑动更好点；若日后文案变长，改 here 一处即可。 */
+.ai-quick {
+  margin: 12rpx 0 24rpx 80rpx;
+}
+.ai-quick-title {
+  font-size: 24rpx;
+  color: var(--text-2);
+  margin-bottom: 12rpx;
+}
+.ai-quick-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16rpx;
+}

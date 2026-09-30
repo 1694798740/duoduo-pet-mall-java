@@ -55,4 +55,15 @@ public class BizException extends RuntimeException {
     public static BizException conflict(String message) {
         return new BizException(ErrorCode.CONFLICT, message);
     }
+
+    /**
+     * 频率受限（HTTP 429）。
+     *
+     * <p>刻意与 {@link #businessRule(String)}（422）区分开：422 是「这次请求的内容不对，
+     * 改一改就能成功」，429 是「内容没问题，但发得太快，等一会儿再试」——
+     * 两者的用户动作完全不同，前端据此决定是提示修改还是倒计时重试。
+     */
+    public static BizException rateLimited(String message) {
+        return new BizException(ErrorCode.RATE_LIMITED, message);
+    }
 }

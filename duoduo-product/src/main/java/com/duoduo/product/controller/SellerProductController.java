@@ -7,6 +7,7 @@ import com.duoduo.product.service.SellerProductService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -55,5 +56,23 @@ public class SellerProductController {
     public ApiResponse<SellerProductView> changeStatus(@PathVariable Long spuId,
                                                        @RequestBody StatusRequest request) {
         return ApiResponse.ok(sellerProductService.changeStatus(spuId, request == null ? null : request.action()));
+    }
+
+    /**
+     * 编辑请求体（第五十八轮 · P1-4）：{@code {"title": "...", "mainImage": "..."}}
+     *
+     * <p>字段<b>三态</b>：不传 / {@code null} = 不改；{@code ""} = 清空（只有主图允许）；
+     * 有值 = 替换。前端要把「用户没填」显式归一成 {@code null} 再上行 ——
+     * 把「不改」传成空串，用户的原有主图会被清掉。
+     */
+    public record UpdateRequest(String title, String mainImage) {
+    }
+
+    @PutMapping("/{spuId}")
+    public ApiResponse<SellerProductView> update(@PathVariable Long spuId,
+                                                 @RequestBody(required = false) UpdateRequest request) {
+        return ApiResponse.ok(sellerProductService.update(spuId,
+                request == null ? null : request.title(),
+                request == null ? null : request.mainImage()));
     }
 }

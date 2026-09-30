@@ -71,7 +71,12 @@ public final class AiDtos {
             /** mock / llm —— 让前端与排查者一眼看清「这句回复是谁生成的」 */
             String mode,
             /** 反问题（含可点选项）；非 null 时本响应是澄清而非回答 */
-            ClarifyView clarify
+            ClarifyView clarify,
+            /**
+             * 相关追问（第五十八轮 S3）：**由当前候选推导**出来的可点问题，
+             * 不是固定文案 —— 候选为空时不给（此时任何追问点下去都是空结果）。
+             */
+            List<String> followUps
     ) {
     }
 
@@ -111,7 +116,12 @@ public final class AiDtos {
     public record CapabilityView(
             boolean chatAvailable,
             String mode,
-            String hint
+            String hint,
+            /**
+             * 快捷问题（第五十八轮 S3）：取自商品域的<b>真实类目</b>，
+             * 保证点下去有结果；类目取不到时为空（前端不展示这一块）。
+             */
+            List<String> quickQuestions
     ) {
     }
 }

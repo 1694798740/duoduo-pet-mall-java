@@ -75,12 +75,33 @@ export const SellerAfterSalesPage: React.FC = () => {
         action,
         reply: reply.trim() || undefined,
       });
-      push(action === 'AGREE' ? '已同意并执行退款' : '已拒绝该售后', 'success');
+      push(
+        action === 'AGREE'
+          ? handling.type === 'RETURN_REFUND'
+            ? '已同意退货，等待买家寄回（签收后才退款）'
+            : '已同意并执行退款'
+          : '已拒绝该售后',
+        'success',
+      );
       setHandling(null);
       reload();
     } catch (err) {
       // 422 的常见原因：订单已完成（钱已放款给卖家），系统退不了，需人工追偿
       setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmReceived = async (item: AfterSaleView) => {
+    setBusy(true);
+    try {
+      await afterSaleApi.receiveReturn(item.id);
+      push('已确认收货并退款，款项退回买家', 'success');
+      reload();
+    } catch (err) {
+      // 常见失败：订单已完成且已放款（需走平台垫付 / 追偿），后端会给具体原因
+      push(toFriendlyMessage(err), 'error');
     } finally {
       setBusy(false);
     }
@@ -96,7 +117,8 @@ export const SellerAfterSalesPage: React.FC = () => {
       </div>
 
       <Alert kind="info">
-        「同意」会<b>立刻执行退款</b>（钱退回买家、库存回补），不可撤销；
+        「同意」对<b>仅退款</b>是<b>立刻执行退款</b>（钱退回买家、库存回补），不可撤销；
+        对<b>退货退款</b>则是「同意退货」—— 要等买家寄回、你<b>确认收货</b>后才退款。
         「拒绝」必须写清原因，买家可以据此<b>申请平台仲裁</b>。
       </Alert>
 
@@ -150,8 +172,19 @@ export const SellerAfterSalesPage: React.FC = () => {
                       <button className="btn btn-sm btn-primary" onClick={() => openHandle(item)}>
                         处理
                       </button>
+                    ) : item.status === 'RETURNING' ? (
+                      // 买家已寄回：这一步才真正把钱退给买家，所以提示要写清后果
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled={busy}
+                        onClick={() => confirmReceived(item)}
+                      >
+                        {busy ? '处理中…' : '确认收货并退款'}
+                      </button>
                     ) : (
-                      <span className="muted">—</span>
+                      <span className="muted">
+                        {item.status === 'WAITING_RETURN' ? '等待买家寄回' : '—'}
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -184,7 +217,13 @@ export const SellerAfterSalesPage: React.FC = () => {
               disabled={busy}
               onClick={submit}
             >
-              {busy ? '处理中…' : action === 'AGREE' ? '同意并退款' : '确认拒绝'}
+              {busy
+                ? '处理中…'
+                : action === 'AGREE'
+                  ? handling?.type === 'RETURN_REFUND'
+                    ? '同意退货（等寄回）'
+                    : '同意并退款'
+                  : '确认拒绝'}
             </button>
           </>
         }

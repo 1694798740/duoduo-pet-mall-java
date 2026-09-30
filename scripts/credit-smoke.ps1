@@ -55,9 +55,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 8)
@@ -143,7 +151,7 @@ function SubmitReview($sess, [string]$orderNo, [long]$spuId, [int]$skuId, [int]$
     })
 }
 
-$H_INTERNAL = @{ 'X-Internal-Token' = $InternalToken }
+$H_INTERNAL = @{ 'X-Internal-Token' = 'internal' }
 $H_BAD = @{ 'X-Internal-Token' = 'wrong-token-should-be-rejected' }
 $phoneS = '133' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $phoneA = '135' + (Get-Random -Minimum 10000000 -Maximum 99999999)

@@ -70,6 +70,24 @@ public class FulfilmentNotifier {
                 "AFTER_SALE_CREATED", orderNo, PAGE_AFTER_SALES);
     }
 
+    /** 卖家同意退货（第五十八轮 P1-5）：告诉买家「接下来该你寄回了」，否则他会一直等退款 */
+    public void notifyReturnAgreed(Long buyerId, String orderNo) {
+        push(buyerId, "卖家已同意退货", "请尽快寄回商品并填写物流单号，卖家签收后即退款",
+                "AFTER_SALE_RETURN_AGREED", orderNo, PAGE_AFTER_SALES);
+    }
+
+    /**
+     * 买家已寄回：告诉卖家去收货，否则这条单子会一直停在「待收货」。
+     *
+     * <p>落地页仍用 {@link #PAGE_AFTER_SALES}：小程序侧只有这一个售后页路径在白名单里，
+     * 拼一个「卖家售后页」的路径会被社交域的白名单校验挡下 —— 而那种错误既不报错也
+     * 不打日志，只表现为「点了通知没反应」。要用新页面，得先加进 {@code MiniProgramPages}。
+     */
+    public void notifyReturnShipped(Long sellerId, String orderNo, String trackingNo) {
+        push(sellerId, "买家已寄回商品", "运单号 " + trackingNo + "，收到货后请确认收货并退款",
+                "AFTER_SALE_RETURN_SHIPPED", orderNo, PAGE_AFTER_SALES);
+    }
+
     /** 卖家同意退款 */
     public void notifyAfterSaleRefunded(Long buyerId, String orderNo, long amount) {
         push(buyerId, "售后已同意退款", "卖家已同意退款 ¥" + yuan(amount) + "，款项按原路退回",

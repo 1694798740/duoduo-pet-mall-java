@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -71,6 +72,10 @@ public class ListingService {
     private final BannedWordGuard bannedWordGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final int maxItemsPerSeller;
+    /** 发布频率：24 小时内的新增条数上限（含已删除的 —— 见 {@link #checkPublishQuota}） */
+    private final int publishMaxPerDay;
+    /** 发布频率：两条之间的最小间隔（秒），挡住「连点发布 / 脚本批量刷」 */
+    private final long publishMinIntervalSeconds;
     private final org.springframework.beans.factory.ObjectProvider<
             com.duoduo.product.support.search.EsSearchEngine> esSearchProvider;
     private static final Logger log = LoggerFactory.getLogger(ListingService.class);
@@ -80,6 +85,9 @@ public class ListingService {
                           BannedWordGuard bannedWordGuard,
                           SnowflakeIdGenerator idGenerator,
                           @Value("${duoduo.product.listing.max-per-seller:200}") int maxItemsPerSeller,
+                          @Value("${duoduo.product.listing.publish-max-per-day:10}") int publishMaxPerDay,
+                          @Value("${duoduo.product.listing.publish-min-interval-seconds:60}")
+                                  long publishMinIntervalSeconds,
                           org.springframework.beans.factory.ObjectProvider<
                                   com.duoduo.product.support.search.EsSearchEngine> esSearchProvider) {
         this.listingMapper = listingMapper;
@@ -87,6 +95,8 @@ public class ListingService {
         this.bannedWordGuard = bannedWordGuard;
         this.idGenerator = idGenerator;
         this.maxItemsPerSeller = maxItemsPerSeller;
+        this.publishMaxPerDay = publishMaxPerDay;
+        this.publishMinIntervalSeconds = publishMinIntervalSeconds;
         this.esSearchProvider = esSearchProvider;
     }
 
@@ -278,6 +288,9 @@ public class ListingService {
      *       {@code auditStatus=APPROVED}，人工审核链当场失效。</li>
      *   <li><b>违禁词在写库前拦</b>：标题 + 描述一起过 {@link BannedWordGuard}，
      *       而不是等运营审核时才看 —— 违规内容连库都不该进。</li>
+     *   <li><b>发布频率受限（第五十八轮 P1-7）</b>：24 小时内的条数上限 + 两条之间的最小间隔，
+     *       命中返回 429 —— 见 {@link #checkPublishQuota}。只有总量上限的话，
+     *       一个账号可以在一分钟内把 200 个额度全发完，审核队列当场被冲垮。</li>
      * </ol>
      *
      * <p>发布成功后返回的是<b>卖家视角</b>条目（带 PENDING 状态），
@@ -294,6 +307,7 @@ public class ListingService {
             throw BizException.businessRule(
                     "单个账号最多发布 " + maxItemsPerSeller + " 件闲置，请先下架部分商品");
         }
+        checkPublishQuota(user.userId());
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         ListingEntity entity = new ListingEntity();
@@ -312,6 +326,61 @@ public class ListingService {
         log.info("用户 {} 发布闲置 {}「{}」（价格 {} 分），已进入待审核",
                 user.userId(), entity.getId(), normalized.title(), normalized.price());
         return toMineView(entity);
+    }
+
+    /**
+     * 发布频率闸门（第五十八轮 P1-7）。
+     *
+     * <p>两道限流，缺一不可：
+     * <ul>
+     *   <li><b>24 小时条数上限</b>：挡「一天发几十条」的量级攻击。滑动窗口用
+     *       {@code created_at >= now - 24h} 计数，而不是自然日 ——
+     *       自然日边界会出现「23:59 发 10 条、00:01 再发 10 条」的翻倍窗口。</li>
+     *   <li><b>两条之间的最小间隔</b>：挡「连点发布 / 脚本批量刷」。
+     *       没有这道的话，一个账号仍可在一分钟内把当天的额度一次性打满，
+     *       审核队列照样被冲垮（峰值比总量更致命）。</li>
+     * </ul>
+     *
+     * <p>两个刻意的取舍：
+     * <ul>
+     *   <li><b>计数包含已软删的条目</b>：与既有的总量上限同一口径。
+     *       若排除已删除的，「发一条 → 删一条 → 再发」就能无限发，限流形同虚设。</li>
+     *   <li><b>只管 publish，不管「重新提审」</b>：重新提审不新增条目（不写 created_at），
+     *       且入口本身要求该条处于 REJECTED，天然自带上限，不必再加一道。</li>
+     * </ul>
+     *
+     * <p>为什么不用 Redis：频率口径是「每账号每天数十次」的量级，
+     * 一次带索引的 count 足够；引缓存就要处理「缓存挂了是放行还是拒绝」的第二种口径，
+     * 为这个量级不值得（与全站 AI 限流走网关是两套场景）。
+     */
+    private void checkPublishQuota(Long sellerId) {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+
+        Long recent = listingMapper.selectCount(new LambdaQueryWrapper<ListingEntity>()
+                .eq(ListingEntity::getSellerId, sellerId)
+                .ge(ListingEntity::getCreatedAt, now.minusHours(24)));
+        if (recent != null && recent >= publishMaxPerDay) {
+            throw BizException.rateLimited(
+                    "24 小时内最多发布 " + publishMaxPerDay + " 件闲置，请稍后再试");
+        }
+
+        if (publishMinIntervalSeconds <= 0) {
+            return;
+        }
+        ListingEntity last = listingMapper.selectOne(new LambdaQueryWrapper<ListingEntity>()
+                .eq(ListingEntity::getSellerId, sellerId)
+                .orderByDesc(ListingEntity::getCreatedAt)
+                .last("LIMIT 1"));
+        if (last == null || last.getCreatedAt() == null) {
+            return;
+        }
+        long elapsed = Duration.between(last.getCreatedAt(), now).toSeconds();
+        if (elapsed < publishMinIntervalSeconds) {
+            log.info("用户 {} 发布过于频繁：距上一条仅 {} 秒（要求 {} 秒）",
+                    sellerId, elapsed, publishMinIntervalSeconds);
+            throw BizException.rateLimited(
+                    "发布太频繁了，请 " + (publishMinIntervalSeconds - elapsed) + " 秒后再试");
+        }
     }
 
     /**

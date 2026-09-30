@@ -1,5 +1,7 @@
 package com.duoduo.fulfilment.service;
 
+import com.duoduo.common.web.sched.SchedLeaderLock;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,12 +37,21 @@ public class CreditRefreshJob {
     /** 每次最多处理多少用户，避免一轮把对端打满 */
     private static final int BATCH_LIMIT = 200;
 
+    /** 选主用的任务名（一个任务一个名字，跨实例必须一致） */
+    private static final String TASK_NAME = "credit-refresh";
+
+    /** 持锁时长：本任务间隔 15 分钟、单轮最多 200 个用户，留足余量 */
+    private static final long LEADER_TTL_MS = 600_000L;
+
     private final CreditService creditService;
+    private final SchedLeaderLock leaderLock;
     private final boolean enabled;
 
     public CreditRefreshJob(CreditService creditService,
+                            SchedLeaderLock leaderLock,
                             @Value("${duoduo.credit.refresh-enabled:false}") boolean enabled) {
         this.creditService = creditService;
+        this.leaderLock = leaderLock;
         this.enabled = enabled;
         if (enabled) {
             log.info("信用分定时回写已启用");
@@ -57,6 +68,10 @@ public class CreditRefreshJob {
             initialDelayString = "${duoduo.credit.refresh-initial-delay-ms:120000}")
     public void refresh() {
         if (!enabled) {
+            return;
+        }
+        // 选主（第五十八轮 · P0-2）：多实例部署时只有抢到锁的实例执行本轮
+        if (!leaderLock.tryAcquire(TASK_NAME, LEADER_TTL_MS)) {
             return;
         }
         try {

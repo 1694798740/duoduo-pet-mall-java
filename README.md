@@ -4,6 +4,38 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**R59（2026-09-30，用户要求：按《未完成项清单》优先级全量开工）** — **券口径固化 / 调度选主 / 内部凭据升级 / 角色升级即时生效 / 发布限流 / 路径消歧 / 零单测模块补测 / 文档同步 / AI 加强 6 项**。
+
+**① P0-2 定时任务选主（多实例去重跑）**。新增 `common-web` 的 `SchedLeaderLock` + 表 `docs/sql/incremental/23-r58-sched-leader.sql`（主键即锁名，`expire_at` 自动过期，崩溃/被杀无需显式释放）。
+- **抢占两步且顺序不能反**：先 `UPDATE`（锁已过期或本就是自己持有 → 续约）→ 影响 0 行再 `INSERT`（首次运行）；撞唯一键即别人持有、本轮放弃。**先 SELECT 再写**在并发下会让两个实例都看到「没有这行」而双双写入 —— 唯一键是唯一可靠的仲裁者。
+- 锁事务 `REQUIRES_NEW` **独立提交**：挂在业务事务里时业务回滚会把锁一起回滚，等于没上锁。
+- 4 个既有定时任务接入；`duoduo.sched.leader-enabled=false` 可整体退回外部调度（XXL-Job 等），**零新增中间件**。
+
+**② P0-3 内部凭据升级为 HMAC 签名**。`common-web` 新增 `InternalCallAuth`，5 个域的 `InternalTokenFilter` 统一接入：
+- 头格式 `dd1.<caller>.<tsSeconds>.<nonce>.<签名>`，签名覆盖调用方 + 时间戳 + nonce —— 旧实现是**明文共享密钥相等即放行**，口令一旦泄露（日志 / 配置仓库）谁都能冒充内部服务；新实现即使被截获一条也只能重放一次、超出时间窗即失效。
+- **失败关闭**：解析 / 验签异常一律拒绝，不放行兜底。冒烟脚本共用 `scripts/lib/internal-token.ps1` 生成凭据。
+
+**③ P1-4 商家自助管理自己的商品**。`SellerProductService` 抽出 `requireOwned()`（**上下架与编辑共用同一条归属判定** —— 少一处就变成「上下架挡住、编辑没挡住」这类只在越权时才暴露的漏洞，而两处代码看起来几乎一样）；新增 `PUT /api/seller/products/{spuId}` 编辑**标题与主图**。字段**三态**：`null` = 不改 / `""` = 清空 / 有值 = 替换（把「不改」传成空串，用户原有主图会被清掉）。**价格 / 库存 / 类目刻意不开** —— 牵动 SKU、ES 索引与在途订单金额口径，属「改价即改合约」。标题变更后**不直接写 ES**，交给幂等的对账型同步任务收敛（直接写索引反而绕过它）。
+
+**④ P1-5 退货物流**。`t_after_sale` 增寄回运单 / 签收四列（`docs/sql/incremental/24-r58-return-logistics.sql`），状态机新增 `WAITING_RETURN`（买家填寄回）→ `RETURNING`（卖家签收，**退款在这一刻才发生**）。**退款时点从「卖家同意」挪到「卖家确认收货」** —— 同意即退款意味着货没回来钱先走；而「等收货再退」若没有系统入口，就只是一句靠线下执行的空话。**刻意不建退货轨迹表**：正向轨迹的「签收」是订单交付终态，混进退货节点会让「已签收」在一张订单里有两种含义。新增 `POST /{id}/return-shipment`、`POST /{id}/return-receipt`，两态**同样可进仲裁**。
+
+**⑤ P1-6 角色升级即时生效**。新增 `AuthCookieWriter`（`dd_at` / `dd_rt`）与 `AuthService.renewAccessToken`：
+- **角色从库现读，不接受调用方传参** —— 允许传角色等于允许伪造。BANNED 抛 403。
+- 升级场景**只覆盖访问令牌、不动刷新令牌**（不必逼用户重登）；**降级 / 运营改角色必须 `revokeAllByUser` 吊销全部刷新令牌** —— 权限变小却留着旧刷新令牌，等于降级可以被打回。
+- 商家申请通过后在 `UserController.applyMerchant` 直接覆盖 Cookie；另加 `POST /api/users/me/merchant/token` 供前端静默换取。
+
+**⑥ P1-7 闲置发布频率限流**。`BizException.rateLimited()`（**429**）与既有 `businessRule`（**422**）语义分开：429 = 内容没问题但发太快、422 = 改一改就能成功，混用会让前端把「等一分钟」提示成「填写有误」。`ListingService.checkPublishQuota()` 滑动 24h 计数（**含软删**，否则删了重发即可绕过）+ 最小间隔，阈值可配（默认 10 次/天、60 秒）。
+
+**⑦ P1-8 路径变量形状约束**。`@GetMapping("/{orderNo}")` → `@GetMapping("/{orderNo:\d{21}}")`（订单号固定 21 位纯数字）：不限定形状时「明细」与其他子路径会互相抢占匹配，表现为随机 404/405。探针断言由 `st in (404,405)` **收紧为 `st == 405`**。
+
+**⑧ P0-1 券 v1 口径**：维持「不支持的组合明确 422 拒绝」（不擅自放宽成静默降级 —— 用户会以为券生效、结算才发现没减），改用 `CouponV1BoundaryTest` **13 项有断言的单测**把行为固化，防止日后被顺手改成放行。
+
+**⑨ P2-10 零单测模块补测**：新增网关 `JwtAuthGlobalFilterTest`（8：公开读放行 / 写路径拦 / 三段不被两段通配连带放行 / 微信绑定需登录 / **伪造身份头与 IP 头被剥离** / OPTIONS 放行）、`NoticeServicePushTest`（7：两阶段落库 —— 第 N 条非法则整批不写）、`UnreadServiceTest`（3）、`SnowflakeIdGeneratorTest`（6：首条断言 **id 超出 JS 安全整数**，为「前端禁止 `Number()` 强转」提供机器可检依据）、`AfterSaleServiceTest`（9）、`SellerProductServiceTest`（8）、`SchedLeaderLockTest` / `InternalCallAuthTest` / `RoleTokenEffectiveTest` / `AdminUserServiceRoleChangeTest` / `PetProfileBriefTest`。
+
+**⑩ AI 加强 6 项（原 R57 选修 S1-S3 扩展）** —— 详见 `docs/PLAN.md` R59 段：宠物档案个性化（**只补充不覆盖**、裁剪视图不含病史）、政策知识库（**只写流程与入口、不写时效与赔付数字**）、快捷问题 / 追问 / 对比（**对比不进模型**，只并列客观差异）、限流多实例（`ObjectProvider<StringRedisTemplate>`，Redis 故障**冷却 60s** 再退回内存）、mock 走独立话术（**护栏可达**，否则护栏在检查自己的输出）、召回多样性（同款按标题去规格归一去重，保留更便宜那件）。小程序 `pages/ai` 已消费新字段：「大家都在问」快捷 chips（**只首屏显示**）+ 回答后的相关追问 chips，**换话题时 followUps 与 options 一起清掉** —— 后端下发而页面不渲染等于没做，接口探针永远测不到这一层。
+
+**验证**：全模块 `mvn -o test` **207/0**（ai 94 / trade 19 / common-web 18 / user 15 / product 15 / marketing 13 / social 10 / fulfilment 9 / gateway 8 / common 6）；前端 node 单测 **251/0**（既有 229 项全过 + 新增 `scripts/r59-ai-suggestions-test.js` 22 项，含 4 组反向验证）；小程序静态自检 **0 错 0 警**；`mvn -o -DskipTests package` BUILD SUCCESS 且 `unzip -l` 确认新类均在 jar 内；**每一项新能力均做反向验证**（故意改坏 → 断言转红 → 还原）。
+
 **R57（2026-09-29，用户要求：「仅实现 6 项必修」AI 改造）** — **约束硬过滤 / 超时隔离 / 限流加固 / 输出护栏 / 澄清与失败出口 / 测试真绿**（必修 M1-M6；选修 S1-S3 按用户指令不做）。
 
 **① M1 预算与品类的服务端硬过滤（本轮核心）**
@@ -1234,7 +1266,9 @@ npm run build      # tsc --noEmit && vite build
 3 秒轮询自动刷新为「已付款」→ 托管明细金额核对（¥59.00 / 服务费 ¥0.59 / 卖家实收 ¥58.41）。
 验证截图见 `frontend/docs/screenshots/`。
 
-已知边界（对齐 `docs/PLAN.md`）：依赖未部署服务（**AI 导购「多多」**）的功能未做页面；
+已知边界（对齐 `docs/PLAN.md`）：AI 导购「多多」已部署（服务 `duoduo-ai` `:8086`，形态由
+`DUODUO_AI_MOCK_ENABLED` 决定：`true` 用真实候选拼回复、`false` 走 DashScope 真实模型），
+Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限流 20 次/分钟/IP）；
 闲置发布与下单入口留待后续迭代；演示库**不预置演示账号**（登录页提供一键生成体验账号）。
 
 ---

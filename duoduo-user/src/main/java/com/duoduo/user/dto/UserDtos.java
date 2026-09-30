@@ -340,6 +340,25 @@ public final class UserDtos {
     }
 
     /**
+     * 宠物档案的**服务间裁剪视图**（第五十八轮 · AI 加强项 S1）。
+     *
+     * <p>刻意只留「挑商品用得上」的四个字段（名称 / 物种 / 品种 / 生命阶段 + 过敏原），
+     * **不含**生日、体重、性别、绝育、病史 ——
+     * 病史是健康数据，导购**完全不需要**它就能给出合适的推荐；
+     * 而一旦跨服务下发，它就多了一处副本、多了一份泄露面。
+     * 判断标准很简单：<b>这条字段会不会改变推荐结果？不会就别传。</b>
+     */
+    public record PetBrief(
+            Long id,
+            String name,
+            String species,
+            String breed,
+            String lifeStage,
+            List<String> allergens
+    ) {
+    }
+
+    /**
      * 地址簿视图（服务间只读，A8）。
      *
      * <p>与 {@link AddressView} 的差别：<b>只有收货人三要素 + 完整地址</b>。

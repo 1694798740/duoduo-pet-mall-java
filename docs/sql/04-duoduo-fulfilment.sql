@@ -109,6 +109,12 @@ CREATE TABLE t_after_sale (
     arbitrated_by     BIGINT,
     -- 实际退款金额（分），由交易域退款结果回填；本域不自己算金额
     refund_amount     BIGINT,
+    -- 退货退款的寄回信息（第五十八轮 P1-5）：只有 RETURN_REFUND 会用到，
+    -- 两个时刻即两个节点 —— 寄回（买家填单号）与签收（卖家确认，退款在此刻发生）
+    return_courier      VARCHAR(64),
+    return_tracking_no  VARCHAR(64),
+    return_shipped_at   TIMESTAMP,
+    return_received_at  TIMESTAMP,
     created_at        TIMESTAMP    NOT NULL,
     updated_at        TIMESTAMP    NOT NULL,
     PRIMARY KEY (id),

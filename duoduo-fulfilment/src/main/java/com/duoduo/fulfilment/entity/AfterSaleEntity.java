@@ -56,6 +56,14 @@ public class AfterSaleEntity {
     private Long arbitratedBy;
     /** 实际退款金额（分），由交易域退款结果回填 */
     private Long refundAmount;
+    /** 买家寄回的快递公司（第五十八轮 P1-5，仅 RETURN_REFUND 用） */
+    private String returnCourier;
+    /** 买家寄回的运单号 */
+    private String returnTrackingNo;
+    /** 买家填写寄回信息的时间 —— 即「已寄回」这一个节点 */
+    private LocalDateTime returnShippedAt;
+    /** 卖家确认收货的时间 —— 即「已签收」节点，退款在这一刻发生 */
+    private LocalDateTime returnReceivedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -87,6 +95,14 @@ public class AfterSaleEntity {
     public void setArbitratedBy(Long arbitratedBy) { this.arbitratedBy = arbitratedBy; }
     public Long getRefundAmount() { return refundAmount; }
     public void setRefundAmount(Long refundAmount) { this.refundAmount = refundAmount; }
+    public String getReturnCourier() { return returnCourier; }
+    public void setReturnCourier(String returnCourier) { this.returnCourier = returnCourier; }
+    public String getReturnTrackingNo() { return returnTrackingNo; }
+    public void setReturnTrackingNo(String returnTrackingNo) { this.returnTrackingNo = returnTrackingNo; }
+    public LocalDateTime getReturnShippedAt() { return returnShippedAt; }
+    public void setReturnShippedAt(LocalDateTime returnShippedAt) { this.returnShippedAt = returnShippedAt; }
+    public LocalDateTime getReturnReceivedAt() { return returnReceivedAt; }
+    public void setReturnReceivedAt(LocalDateTime returnReceivedAt) { this.returnReceivedAt = returnReceivedAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

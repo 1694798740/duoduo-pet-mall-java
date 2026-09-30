@@ -20,7 +20,9 @@ import { useAsync } from '../../components/hooks';
 import {
   Alert,
   Empty,
+  Field,
   LoadingBlock,
+  Modal,
   Pagination,
   formatPrice,
   useToast,
@@ -45,6 +47,9 @@ export const SellerProductsPage: React.FC = () => {
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keywordDraft, setKeywordDraft] = useState(keyword);
+  const [editing, setEditing] = useState<SellerProductView | null>(null);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [imageDraft, setImageDraft] = useState('');
 
   const fetcher = useCallback(
     () => sellerApi.products({ keyword: keyword || undefined, page, pageSize: 20 }),
@@ -79,6 +84,43 @@ export const SellerProductsPage: React.FC = () => {
       reload();
     } catch (err) {
       push(err instanceof Error ? err.message : '操作失败，请重试', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const closeEdit = () => setEditing(null);
+
+  const openEdit = (item: SellerProductView) => {
+    setEditing(item);
+    setTitleDraft(item.title);
+    setImageDraft(item.mainImage ?? '');
+  };
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    const title = titleDraft.trim();
+    if (!title) {
+      push('商品标题不能为空', 'error');
+      return;
+    }
+    // 「用户没填」= 不改：该字段根本不出现在请求体里（服务端按三态语义处理）
+    const body: { title?: string; mainImage?: string } = {};
+    if (title !== editing.title) body.title = title;
+    const image = imageDraft.trim();
+    if (image !== (editing.mainImage ?? '')) body.mainImage = image;
+    if (!body.title && body.mainImage === undefined) {
+      push('没有需要保存的修改', 'info');
+      return;
+    }
+    setBusyId(editing.id);
+    try {
+      await sellerApi.updateProduct(editing.id, body);
+      push('商品已更新，买家端列表随之刷新', 'success');
+      closeEdit();
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
     } finally {
       setBusyId(null);
     }
@@ -191,13 +233,22 @@ export const SellerProductsPage: React.FC = () => {
                       <span className="tag">{item.statusLabel}</span>
                     </td>
                     <td>
-                      <button
-                        className={`btn btn-sm ${item.status === 'ON_SALE' ? 'btn-ghost' : 'btn-primary'}`}
-                        disabled={busyId === item.id}
-                        onClick={() => toggle(item)}
-                      >
-                        {busyId === item.id ? '处理中…' : item.status === 'ON_SALE' ? '下架' : '上架'}
-                      </button>
+                      <div className="row" style={{ gap: 8 }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={busyId === item.id}
+                          onClick={() => openEdit(item)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className={`btn btn-sm ${item.status === 'ON_SALE' ? 'btn-ghost' : 'btn-primary'}`}
+                          disabled={busyId === item.id}
+                          onClick={() => toggle(item)}
+                        >
+                          {busyId === item.id ? '处理中…' : item.status === 'ON_SALE' ? '下架' : '上架'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -223,6 +274,48 @@ export const SellerProductsPage: React.FC = () => {
           }
         />
       )}
+      <Modal
+        open={editing !== null}
+        title="编辑商品"
+        onClose={closeEdit}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={closeEdit}>
+              取消
+            </button>
+            <button className="btn btn-primary" disabled={busyId !== null} onClick={submitEdit}>
+              {busyId !== null ? '保存中…' : '保存'}
+            </button>
+          </>
+        }
+      >
+        {editing ? (
+          <div>
+            <Field label="商品标题">
+              <input
+                className="input"
+                value={titleDraft}
+                maxLength={60}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                placeholder="最多 60 个字"
+              />
+            </Field>
+            <Field label="主图地址">
+              <input
+                className="input"
+                value={imageDraft}
+                maxLength={500}
+                onChange={(e) => setImageDraft(e.target.value)}
+                placeholder="留空表示不显示图片"
+              />
+            </Field>
+            <p className="small muted" style={{ marginTop: 8 }}>
+              只开放标题与主图：价格 / 库存牵动 SKU 与在途订单金额，不做成随手可改的字段。
+              标题改完后由检索同步任务收敛到搜索结果，可能有短暂延迟。
+            </p>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 };

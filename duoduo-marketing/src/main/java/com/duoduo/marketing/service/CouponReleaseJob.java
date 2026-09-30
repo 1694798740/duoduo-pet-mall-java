@@ -1,5 +1,6 @@
 package com.duoduo.marketing.service;
 
+import com.duoduo.common.web.sched.SchedLeaderLock;
 import com.duoduo.marketing.dto.CouponDtos.SweepResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,14 @@ public class CouponReleaseJob {
 
     private static final Logger log = LoggerFactory.getLogger(CouponReleaseJob.class);
 
+    /** 选主用的任务名（一个任务一个名字，跨实例必须一致） */
+    private static final String TASK_NAME = "coupon-release-sweep";
+
+    /** 持锁时长：必须大于单轮执行耗时，否则会出现「上一个没扫完、下一个已接管」的并发 */
+    private static final long LEADER_TTL_MS = 120_000L;
+
     private final CouponService couponService;
+    private final SchedLeaderLock leaderLock;
 
     @Value("${duoduo.coupon.lock-ttl-minutes:35}")
     private int lockTtlMinutes;
@@ -33,12 +41,17 @@ public class CouponReleaseJob {
     @Value("${duoduo.coupon.release-batch-size:200}")
     private int batchSize;
 
-    public CouponReleaseJob(CouponService couponService) {
+    public CouponReleaseJob(CouponService couponService, SchedLeaderLock leaderLock) {
         this.couponService = couponService;
+        this.leaderLock = leaderLock;
     }
 
     /**
      * 调度入口。
+     *
+     * <p><b>选主</b>（第五十八轮 · P0-2）：多实例部署时只有抢到锁的实例执行本轮。
+     * 任务本身可重入，重复跑不会算错，但会互相覆盖彼此的扫描窗口，
+     * 让「这轮解锁了多少张券」说不清，且压力按实例数放大。
      *
      * <p>异常必须吞掉：调度线程里抛出未捕获异常会让<b>后续所有轮次静默停摆</b>，
      * 表面看「任务还在」、实际一次都没再跑 —— 这类故障最难发现。
@@ -46,6 +59,9 @@ public class CouponReleaseJob {
     @Scheduled(fixedDelayString = "${duoduo.coupon.release-sweep-interval-ms:60000}",
             initialDelayString = "${duoduo.coupon.release-sweep-initial-delay-ms:30000}")
     public void scheduledSweep() {
+        if (!leaderLock.tryAcquire(TASK_NAME, LEADER_TTL_MS)) {
+            return;
+        }
         try {
             SweepResult result = sweepNow();
             if (result.scanned() > 0 || result.released() > 0 || result.expired() > 0) {

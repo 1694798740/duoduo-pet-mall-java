@@ -57,6 +57,10 @@ duoduo:
     # 服务间调用共享密钥（交易域下单时来锁券 / 核销 / 解锁）。
     # 失败关闭：配置为空一律拒绝，绝不能「没配就放行」（INV-11）。
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+    # 服务间调用凭据（第五十八轮 P0-3）：签名有效期（秒）与「每个调用方一把显式密钥」。
+    # 两者都可不配：默认 300 秒，且密钥按调用方身份从根密钥派生（见 InternalCallAuth）。
+    signature-skew-seconds: ${INTERNAL_SKEW_SECONDS:300}
+    caller-secrets: ${INTERNAL_CALLER_SECRETS:}
   coupon:
     # 券被下单锁定后的保留时长（分钟）。超时未支付 → 补偿任务自动解锁。
     # 应与交易域的订单超时关单时长（duoduo.trade.order-expire-minutes，默认 30）保持

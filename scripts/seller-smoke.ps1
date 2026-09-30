@@ -38,9 +38,17 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+. (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
     if ($session) { $params.WebSession = $session }
+    # 内部凭据哨兵：'internal' 表示「这条要走服务间调用」，由这里现场签发签名
+    # （签名里带一次性 nonce，必须在调用前生成，不能复用同一个请求头）
+    if ($headers -and $headers.ContainsKey('X-Internal-Token') -and $headers['X-Internal-Token'] -eq 'internal') {
+        $headers = @{} + $headers
+        $headers['X-Internal-Token'] = (New-InternalToken -Method $method -Path ([System.Uri]$uri).AbsolutePath)
+    }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
         $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
@@ -175,7 +183,7 @@ Check "普通卖家不含平台自营范围（platformScope=false）" ($r.body.d
 # ---------- 3. 夹具：买家下单支付 ----------
 Write-Host ""
 Write-Host "> 夹具：买家下单并支付"
-$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU" $null $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' }
+$batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU" $null $null @{ 'X-Internal-Token' = 'internal' }
 $skuInfo = @($batch.body.data)[0]
 $P1 = [long]$skuInfo.price
 $stockBefore = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU;")
@@ -338,7 +346,7 @@ Check "重复退款被拒（422）" ($r.status -eq 422) $r.status
 if (-not $SkipDbCheck) {
     Check "退款日志操作者类型为 SELLER" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id=(SELECT id FROM t_order WHERE order_no='$onA') AND to_status='REFUNDED' AND operator_type='SELLER';") -eq '1')
     # 触发补偿调度完成退货入库
-    Call 'Post' "$Gateway/api/orders/internal/sweep" $sessBuyer $null @{ 'X-Internal-Token' = 'duoduo-local-dev-internal-token' } | Out-Null
+    Call 'Post' "$Gateway/api/orders/internal/sweep" $sessBuyer $null @{ 'X-Internal-Token' = 'internal' } | Out-Null
     Check "（售后）台账已置 RESTOCKED（货已回库）" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id=(SELECT id FROM t_order WHERE order_no='$onA') AND status='RESTOCKED';") -eq '1')
     Check "（售后）库存已回补（$stockBeforeRefund → $(Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU;")）" ((Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU;") -eq "$($stockBeforeRefund + 1)")
 }

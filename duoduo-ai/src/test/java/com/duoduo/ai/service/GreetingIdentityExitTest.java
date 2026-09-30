@@ -69,7 +69,7 @@ class GreetingIdentityExitTest {
 
         // ReplyGuard 的构造器容忍 provider 为 null（护栏行为不依赖监控），单测直接传 null
         chatService = new ChatService(productSearchClient, dashScopeClient,
-                new ConstraintParser(catalog), catalog, new ReplyGuard(null), true);
+                new ConstraintParser(catalog), catalog, new ReplyGuard(null), null, true);
     }
 
     private void assertNoRecallAndNoLlm() {
@@ -81,7 +81,7 @@ class GreetingIdentityExitTest {
 
     @Test
     void 纯问候返回自我介绍且不走召回() {
-        ChatResponse r = chatService.chat("你好", List.of(), false);
+        ChatResponse r = chatService.chat("你好", List.of(), false, null);
         assertThat(r.reply()).contains("AI 导购");
         assertThat(r.recommendations()).isEmpty();
         assertThat(r.clarify()).isNull();
@@ -90,7 +90,7 @@ class GreetingIdentityExitTest {
 
     @Test
     void 报障原句_你好你是谁_回答身份而不是没找到商品() {
-        ChatResponse r = chatService.chat("你好，你是谁", List.of(), false);
+        ChatResponse r = chatService.chat("你好，你是谁", List.of(), false, null);
         assertThat(r.reply()).doesNotContain("暂时没找到匹配的商品");
         assertThat(r.reply()).contains("我是多多宠物商店的 AI 导购");
         // 身份说明必须同时说清「能做什么」与「做不到什么」，否则用户会拿它当万能入口
@@ -100,62 +100,62 @@ class GreetingIdentityExitTest {
 
     @Test
     void 问能力_你能做什么_命中身份出口() {
-        ChatResponse r = chatService.chat("你能做什么？", List.of(), false);
+        ChatResponse r = chatService.chat("你能做什么？", List.of(), false, null);
         assertThat(r.reply()).contains("AI 导购");
         assertNoRecallAndNoLlm();
     }
 
     @Test
     void 英文问候与标点变体都能命中() {
-        assertThat(chatService.chat("hi", List.of(), false).reply()).contains("AI 导购");
-        assertThat(chatService.chat("Hello！", List.of(), false).reply()).contains("AI 导购");
-        assertThat(chatService.chat("你好呀", List.of(), false).reply()).contains("AI 导购");
-        assertThat(chatService.chat("在吗？", List.of(), false).reply()).contains("AI 导购");
+        assertThat(chatService.chat("hi", List.of(), false, null).reply()).contains("AI 导购");
+        assertThat(chatService.chat("Hello！", List.of(), false, null).reply()).contains("AI 导购");
+        assertThat(chatService.chat("你好呀", List.of(), false, null).reply()).contains("AI 导购");
+        assertThat(chatService.chat("在吗？", List.of(), false, null).reply()).contains("AI 导购");
     }
 
     @Test
     void 自我介绍类问法命中() {
-        assertThat(chatService.chat("介绍一下你自己", List.of(), false).reply()).contains("AI 导购");
-        assertThat(chatService.chat("你叫什么名字", List.of(), false).reply()).contains("AI 导购");
+        assertThat(chatService.chat("介绍一下你自己", List.of(), false, null).reply()).contains("AI 导购");
+        assertThat(chatService.chat("你叫什么名字", List.of(), false, null).reply()).contains("AI 导购");
     }
 
     @Test
     void 出口不消耗澄清次数_不返回澄清卡片() {
-        assertThat(chatService.chat("你好", List.of(), false).clarify()).isNull();
+        assertThat(chatService.chat("你好", List.of(), false, null).clarify()).isNull();
     }
 
     // ---------------- 反向：真实购物意图绝不能被问候规则掐掉 ----------------
 
     @Test
     void 带问候词的购物意图必须走导购链路() {
-        ChatResponse r = chatService.chat("你好，我想买猫粮", List.of(), false);
+        ChatResponse r = chatService.chat("你好，我想买猫粮", List.of(), false, null);
         assertThat(r.reply()).doesNotContain("我是多多宠物商店的 AI 导购");
         assertThat(r.recommendations()).isNotEmpty();
     }
 
     @Test
     void 带问候词的预算问句必须走导购链路() {
-        ChatResponse r = chatService.chat("你好，200 以内的猫粮", List.of(), false);
+        ChatResponse r = chatService.chat("你好，200 以内的猫粮", List.of(), false, null);
         assertThat(r.recommendations()).isNotEmpty();
     }
 
     @Test
     void 问商品功能不命中身份出口() {
         // 「这个猫爬架有什么功能」问的是商品：身份出口若误判，用户会收到一段自我介绍
-        ChatResponse r = chatService.chat("你好，这个猫爬架有什么功能", List.of(), false);
+        ChatResponse r = chatService.chat("你好，这个猫爬架有什么功能", List.of(), false, null);
         assertThat(r.reply()).doesNotContain("我是多多宠物商店的 AI 导购");
     }
 
     @Test
     void 优惠券怎么用归优惠券出口而不是身份出口() {
-        ChatResponse r = chatService.chat("优惠券怎么用", List.of(), false);
+        ChatResponse r = chatService.chat("优惠券怎么用", List.of(), false, null);
         assertThat(r.reply()).contains("领券中心");
         assertThat(r.reply()).doesNotContain("我是多多宠物商店的 AI 导购");
     }
 
     @Test
     void 空消息不抛异常也不走召回() {
-        ChatResponse r = chatService.chat("", List.of(), false);
+        ChatResponse r = chatService.chat("", List.of(), false, null);
         assertThat(r.reply()).isNotNull();
         assertNoRecallAndNoLlm();
     }

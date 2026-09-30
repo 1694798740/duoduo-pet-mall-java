@@ -64,6 +64,22 @@ public final class AfterSaleDtos {
     }
 
     /**
+     * 买家填写寄回物流请求（第五十八轮 P1-5）。
+     *
+     * <p>只收「快递公司 + 运单号」两个字段，不收买家自己输入的退货地址：
+     * 退货地址由卖家 / 平台给出，让买家手填等于把「寄错地方」的责任与纠纷留给了系统之外。
+     * 本阶段退货地址沿用卖家处理说明里的约定（seller_reply），后续若要有结构化地址，
+     * 应当加在售后单上由服务端给出，而不是让买家侧提供。
+     */
+    public record AfterSaleReturnShipRequest(
+            @NotBlank(message = "请填写快递公司")
+            @Size(max = 64, message = "快递公司不能超过 64 字") String courierCompany,
+            @NotBlank(message = "请填写运单号")
+            @Size(max = 64, message = "运单号不能超过 64 字") String trackingNo
+    ) {
+    }
+
+    /**
      * 售后单视图（买家 / 卖家 / 运营三端共用一份，可见范围由各自查询条件决定）。
      *
      * <p>刻意<b>不返回</b> {@code arbitratedBy}（运营人员 id）：对买卖双方而言
@@ -92,6 +108,14 @@ public final class AfterSaleDtos {
             String arbitrateResult,
             String arbitrateNote,
             Long refundAmount,
+            /** 买家寄回的快递公司（仅退货退款，未寄回时为 null） */
+            String returnCourier,
+            /** 买家寄回的运单号 */
+            String returnTrackingNo,
+            /** 已寄回时间（ISO-8601 UTC，未寄回时为 null） */
+            String returnShippedAt,
+            /** 卖家确认收货时间（退款在这一刻发生，未签收时为 null） */
+            String returnReceivedAt,
             String createdAt,
             String updatedAt
     ) {

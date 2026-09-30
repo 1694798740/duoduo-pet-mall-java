@@ -43,6 +43,7 @@ import com.duoduo.trade.mapper.CartItemMapper;
 import com.duoduo.trade.mapper.OrderItemMapper;
 import com.duoduo.trade.mapper.OrderMapper;
 import com.duoduo.trade.mapper.OrderStatusLogMapper;
+import com.duoduo.common.web.sched.SchedLeaderLock;
 import com.duoduo.trade.mapper.PaymentMapper;
 import com.duoduo.trade.mapper.StockFreezeMapper;
 import com.duoduo.trade.payment.PaymentChannel;
@@ -101,6 +102,12 @@ import java.util.stream.Collectors;
 public class OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
+    /** 选主用的任务名（一个任务一个名字，跨实例必须一致） */
+    private static final String TASK_NAME = "order-sweep";
+
+    /** 持锁时长：本轮含跨服务调用（库存释放 / 入库回补），留足余量 */
+    private static final long LEADER_TTL_MS = 180_000L;
 
     /**
      * 平台自营的卖家 ID。
@@ -162,6 +169,7 @@ public class OrderService {
      * SeckillService 只依赖 Mapper 与网关，不反向依赖本类，无循环依赖。
      */
     private final SeckillService seckillService;
+    private final SchedLeaderLock leaderLock;
 
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
@@ -179,7 +187,8 @@ public class OrderService {
                         ApplicationEventPublisher eventPublisher,
                         LogisticsNotifier logisticsNotifier,
                         OrderNotifier orderNotifier,
-                        SeckillService seckillService) {
+                        SeckillService seckillService,
+                        SchedLeaderLock leaderLock) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -197,6 +206,7 @@ public class OrderService {
         this.logisticsNotifier = logisticsNotifier;
         this.orderNotifier = orderNotifier;
         this.seckillService = seckillService;
+        this.leaderLock = leaderLock;
     }
 
     // ---------------- 结算预览（只读） ----------------
@@ -1625,6 +1635,12 @@ public class OrderService {
             initialDelayString = "${duoduo.trade.sweep-initial-delay-ms:30000}")
     @Transactional
     public void scheduledSweep() {
+        // 选主（第五十八轮 · P0-2）：多实例部署时只有抢到锁的实例执行本轮。
+        // 锁的写入由 SchedLeaderLock 自己用 REQUIRES_NEW 提交 —— 若写在本方法的
+        // 事务里，锁要等整轮扫描结束才提交，期间别的实例看到的仍是旧值，等于没加锁。
+        if (!leaderLock.tryAcquire(TASK_NAME, LEADER_TTL_MS)) {
+            return;
+        }
         try {
             SweepResult result = sweepExpiredOrders();
             if (result.scanned() > 0 || result.closed() > 0 || result.released() > 0 || result.releaseFailed() > 0

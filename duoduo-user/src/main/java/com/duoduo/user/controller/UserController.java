@@ -8,6 +8,9 @@ import com.duoduo.user.dto.UserDtos.RealNameRequest;
 import com.duoduo.user.dto.UserDtos.UpdateProfileRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
 import com.duoduo.user.service.AuthService;
+import com.duoduo.user.service.PetProfileService;
+import com.duoduo.user.support.AuthCookieWriter;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -28,9 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
     private final AuthService authService;
+    private final PetProfileService petProfileService;
 
-    public UserController(AuthService authService) {
+    public UserController(AuthService authService, PetProfileService petProfileService) {
         this.authService = authService;
+        this.petProfileService = petProfileService;
     }
 
     @GetMapping("/me")
@@ -55,11 +60,37 @@ public class UserController {
      * <p>幂等：已是卖家时直接返回当前资料。未实名返回 422 —— 钱最终要放款给卖家，
      * 匿名卖家会让资金流向不可追责。
      *
-     * <p>注意：角色升级后必须<b>重新登录</b>才能生效，因为 access token 里带了 role 快照。
+     * <p><b>角色即时生效（第五十八轮 P1-6）</b>：浏览器通道在这里顺手覆盖访问令牌 Cookie，
+     * 因此入驻成功后<b>无需重新登录</b>，下一次请求就带着 SELLER 角色 ——
+     * 旧令牌里写的是 USER 快照，不改 Cookie 就要等它过期（15 分钟）才生效，
+     * 用户视角就是「明明申请成功了，商家端还是进不去」。
+     * 小程序没有 Cookie，请改用 {@link #applyMerchantToken()} 取新令牌覆盖本地存储。
      */
     @PostMapping("/me/merchant")
-    public ApiResponse<UserView> applyMerchant() {
-        return ApiResponse.ok(authService.applyMerchant(UserContext.requireUserId()));
+    public ApiResponse<UserView> applyMerchant(HttpServletResponse response) {
+        Long userId = UserContext.requireUserId();
+        UserView view = authService.applyMerchant(userId);
+        AuthCookieWriter.writeAccess(response, authService.renewAccessToken(userId),
+                authService.accessTtlSeconds());
+        return ApiResponse.ok(view);
+    }
+
+    /**
+     * 小程序通道的入驻（纯增量端点）：响应体里带回新访问令牌。
+     *
+     * <p>与 {@code /api/auth/login/token} 同一形态 —— 小程序没有 Cookie 语义，
+     * 令牌必须由端侧自己存。端侧拿到后覆盖本地令牌，新角色即刻生效。
+     */
+    @PostMapping("/me/merchant/token")
+    public ApiResponse<MerchantTokenResponse> applyMerchantToken() {
+        Long userId = UserContext.requireUserId();
+        authService.applyMerchant(userId);
+        return ApiResponse.ok(new MerchantTokenResponse(authService.renewAccessToken(userId),
+                authService.accessTtlSeconds()));
+    }
+
+    /** 入驻后的新访问令牌（小程序通道用） */
+    public record MerchantTokenResponse(String accessToken, long expiresInSeconds) {
     }
 
     /**
@@ -100,6 +131,23 @@ public class UserController {
                 .map(Long::valueOf)
                 .toList();
         return ApiResponse.ok(authService.userRoles(userIds));
+    }
+
+    /**
+     * 服务间读：AI 导购用的宠物档案（第五十八轮 · AI 加强项 S1）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token} ——
+     * 与 {@code /internal/briefs} 同一道门。只回 {@link com.duoduo.user.dto.UserDtos.PetBrief}
+     * （名称 / 物种 / 品种 / 生命阶段 / 过敏原），**不含病史等健康数据** ——
+     * 裁剪理由见该 DTO 的注释。
+     *
+     * <p>单用户参数（{@code userId}）而不是批量：调用方只有 AI 域一个，
+     * 且它一次只为一个对话取档案。批量端点在没有第二个调用方时只是多一份越权面。
+     */
+    @GetMapping("/internal/pet-profiles")
+    public ApiResponse<java.util.List<com.duoduo.user.dto.UserDtos.PetBrief>> petProfiles(
+            @org.springframework.web.bind.annotation.RequestParam("userId") Long userId) {
+        return ApiResponse.ok(petProfileService.briefsForAssistant(userId));
     }
 
     /**

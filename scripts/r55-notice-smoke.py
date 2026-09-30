@@ -38,7 +38,10 @@ R55 冒烟：通知体系补全（生产者 + 合并未读 + 内部推送端点�
 前置：social / trade / fulfilment 三容器已重建且 healthy。
 用法：python scripts/r55-notice-smoke.py
 """
+import base64
 import datetime
+import hashlib
+import hmac
 import json
 import os
 import random
@@ -46,12 +49,33 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 GW = (os.environ.get("R55_GATEWAY") or "http://127.0.0.1:8080").rstrip("/")
 SOCIAL = (os.environ.get("R55_SOCIAL") or "http://127.0.0.1:8087").rstrip("/")
 TRADE = (os.environ.get("R55_TRADE") or "http://127.0.0.1:8083").rstrip("/")
 FULFILMENT = (os.environ.get("R55_FULFILMENT") or "http://127.0.0.1:8084").rstrip("/")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "duoduo-local-dev-internal-token")
+
+
+def _hmac_b64url(key, data):
+    """服务间凭据签名用：与 Java 侧 Base64.getUrlEncoder().withoutPadding() 同口径"""
+    raw = hmac.new(key.encode("utf-8"), data.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def sign_internal(method, path, caller="duoduo-smoke"):
+    """服务间调用凭据（第五十八轮 P0-3）：用签名替代明文共享密钥。
+
+    请求头里带的是 HMAC 签名而不是密钥本身：dd1.<caller>.<ts>.<nonce>.<签名>。
+    **每次调用都要重新签** —— 签名里带一次性 nonce，复用同一条头会被判重放。
+    path 只取路径、不含查询串，与服务端 request.getRequestURI() 口径一致。
+    """
+    key = _hmac_b64url(INTERNAL_TOKEN, "dd1|key|%s" % caller.lower())
+    ts = int(time.time())
+    nonce = uuid.uuid4().hex
+    sig = _hmac_b64url(key, "\n".join(["dd1", caller, str(ts), nonce, method.upper(), path]))
+    return "dd1.%s.%d.%s.%s" % (caller, ts, nonce, sig)
 PWD = "duoduo12345"
 CS_PHONE = "13900000002"
 
@@ -151,7 +175,9 @@ def find_notice(token, biz_type, timeout=8.0):
 
 
 def internal_push(items, token=INTERNAL_TOKEN, base=SOCIAL, path="/api/socials/internal/notices"):
-    return call("POST", path, {"items": items}, base=base, headers={"X-Internal-Token": token})
+    # 传进来的 token 可能是探针自己造的（错误令牌断言），只有默认那个才是根密钥
+    header = sign_internal("POST", path) if token == INTERNAL_TOKEN else token
+    return call("POST", path, {"items": items}, base=base, headers={"X-Internal-Token": header})
 
 
 def now_iso():
@@ -384,8 +410,9 @@ def part_e():
           "条数=%d" % len(paid_rows))
 
     # E4 发货（内部凭据直连交易域）
-    st, r = call("POST", "/api/orders/%s/ship" % order_no, base=TRADE,
-                 headers={"X-Internal-Token": INTERNAL_TOKEN}, body={})
+    ship_path = "/api/orders/%s/ship" % order_no
+    st, r = call("POST", ship_path, base=TRADE,
+                 headers={"X-Internal-Token": sign_internal("POST", ship_path)}, body={})
     if st in (200, 201):
         hit_ship, all_ship = find_notice(tok, "ORDER_SHIPPED")
         check("E4 发货 → ORDER_SHIPPED 通知", hit_ship is not None,
@@ -411,7 +438,8 @@ def part_f(ctx_e):
     st, r = call("POST", "/api/logistics/internal/%s/tracks" % order_no,
                  {"source": "COURIER", "nodes": [
                      {"nodeCode": "SIGNED", "nodeText": "已签收，感谢使用", "occurredAt": occurred, "raw": None}]},
-                 base=FULFILMENT, headers={"X-Internal-Token": INTERNAL_TOKEN})
+                 base=FULFILMENT,
+                 headers={"X-Internal-Token": sign_internal("POST", "/api/logistics/internal/%s/tracks" % order_no)})
     check("F0 上报 SIGNED 节点成功", st == 200, "%s %s" % (st, str(r)[:200]))
 
     hit, all_rows = find_notice(token, "LOGISTICS_SIGNED")
@@ -422,7 +450,8 @@ def part_f(ctx_e):
     call("POST", "/api/logistics/internal/%s/tracks" % order_no,
          {"source": "COURIER", "nodes": [
              {"nodeCode": "SIGNED", "nodeText": "已签收，感谢使用", "occurredAt": occurred, "raw": None}]},
-         base=FULFILMENT, headers={"X-Internal-Token": INTERNAL_TOKEN})
+         base=FULFILMENT,
+         headers={"X-Internal-Token": sign_internal("POST", "/api/logistics/internal/%s/tracks" % order_no)})
     signed_rows = [x for x in notices(token) if x.get("bizType") == "LOGISTICS_SIGNED"]
     check("F2 重复上报同一节点 → 不重复推通知", len(signed_rows) == 1, "条数=%d" % len(signed_rows))
 

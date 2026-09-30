@@ -3,6 +3,7 @@ package com.duoduo.user.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.user.dto.UserDtos;
 import com.duoduo.user.dto.UserDtos.PetUpsertRequest;
 import com.duoduo.user.dto.UserDtos.PetView;
 import com.duoduo.user.entity.PetProfileEntity;
@@ -51,6 +52,44 @@ public class PetProfileService {
                 .stream()
                 .map(this::toView)
                 .toList();
+    }
+
+    /**
+     * 服务间读：AI 导购用的宠物档案（第五十八轮 · AI 加强项 S1）。
+     *
+     * <p>为什么单独给 AI 一个方法而不是复用 {@link #listByUser}：
+     * 那份视图带生日 / 体重 / 性别 / **病史**，是给「我的宠物」页面看的；
+     * 跨服务下发的字段一旦给出去就会在各处留下副本，裁剪必须在**出口**这一侧完成 ——
+     * 让调用方自己挑字段，等于要求每个调用方都记得「不要病史」，迟早有人忘。
+     *
+     * <p>上限 3 只：导购只需要知道「这个人大致养什么」，
+     * 把十几只宠物全拼进提示词只会稀释真正相关的那一只。
+     */
+    public List<UserDtos.PetBrief> briefsForAssistant(Long userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        return petMapper.selectList(Wrappers.<PetProfileEntity>lambdaQuery()
+                        .eq(PetProfileEntity::getUserId, userId)
+                        .orderByDesc(PetProfileEntity::getIsDefault)
+                        .orderByAsc(PetProfileEntity::getCreatedAt)
+                        .last("LIMIT 3"))
+                .stream()
+                .map(PetProfileService::toBrief)
+                .toList();
+    }
+
+    private static UserDtos.PetBrief toBrief(PetProfileEntity entity) {
+        return new UserDtos.PetBrief(
+                entity.getId(),
+                entity.getName(),
+                entity.getSpecies(),
+                entity.getBreed(),
+                entity.getLifeStage(),
+                entity.getAllergens() == null || entity.getAllergens().isBlank()
+                        ? List.of()
+                        : Arrays.stream(entity.getAllergens().split(",")).map(String::trim).toList()
+        );
     }
 
     @Transactional

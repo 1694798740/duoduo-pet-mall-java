@@ -4,6 +4,7 @@ import com.duoduo.ai.dto.AiDtos.CapabilityView;
 import com.duoduo.ai.dto.AiDtos.ChatRequest;
 import com.duoduo.ai.dto.AiDtos.ChatResponse;
 import com.duoduo.ai.service.ChatService;
+import com.duoduo.ai.support.CategoryCatalog;
 import com.duoduo.ai.support.DashScopeClient;
 import com.duoduo.ai.support.IpRateLimiter;
 import com.duoduo.common.api.ApiResponse;
@@ -12,7 +13,11 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import jakarta.servlet.http.HttpServletRequest;
+
+import java.util.List;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,18 +40,23 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/duoduo")
 public class AiController {
 
+    private static final Logger log = LoggerFactory.getLogger(AiController.class);
+
     private final ChatService chatService;
     private final DashScopeClient dashScopeClient;
     private final IpRateLimiter rateLimiter;
+    private final CategoryCatalog categoryCatalog;
     private final boolean mockEnabled;
 
     public AiController(ChatService chatService,
                         DashScopeClient dashScopeClient,
                         IpRateLimiter rateLimiter,
+                        CategoryCatalog categoryCatalog,
                         @Value("${duoduo.ai.mock-enabled:true}") boolean mockEnabled) {
         this.chatService = chatService;
         this.dashScopeClient = dashScopeClient;
         this.rateLimiter = rateLimiter;
+        this.categoryCatalog = categoryCatalog;
         this.mockEnabled = mockEnabled;
     }
 
@@ -56,8 +66,11 @@ public class AiController {
         if (!rateLimiter.allow(clientKey(httpRequest))) {
             throw new BizException(ErrorCode.RATE_LIMITED, "对话太频繁啦，请一分钟后再来");
         }
+        // userId 可为 null（匿名问答是硬需求）；有值时 AI 会按宠物档案做个性化（第五十八轮 S1）
+        LoginUser user = UserContext.get();
+        Long userId = user == null ? null : user.userId();
         return ApiResponse.ok(chatService.chat(
-                request.message(), request.history(), request.clarifiedOnce()));
+                request.message(), request.history(), request.clarifiedOnce(), userId));
     }
 
     /** 能力声明：前端据此显示/隐藏 AI 入口，并在 mock / 未配置形态下给出相应提示 */
@@ -69,7 +82,17 @@ public class AiController {
         String hint = mockEnabled
                 ? "当前为演示模式（未接大模型），推荐结果均来自真实商品库。"
                 : (llmReady ? "AI 导购已就绪。" : "AI 服务未配置，暂不可用。");
-        return ApiResponse.ok(new CapabilityView(available, mode, hint));
+        // 快捷问题取自真实类目（第五十八轮 S3）：类目取不到就不给，
+        // 免得用户点了一句「帮我挑一款宠物无人机」却什么都没有
+        List<String> quick = new java.util.ArrayList<>();
+        try {
+            for (var c : categoryCatalog.clarifyOptions(4)) {
+                quick.add("帮我挑一款" + c.name());
+            }
+        } catch (Exception ex) {
+            log.warn("类目取不到，本次不返回快捷问题: {}", ex.getMessage());
+        }
+        return ApiResponse.ok(new CapabilityView(available, mode, hint, quick));
     }
 
     /**

@@ -27,6 +27,9 @@ Page({
     // 能力探测（第五十五轮）：服务端未配置大模型时 chatAvailable=false
     aiReady: true,
     aiNotice: '',
+    // 快捷问题（第五十八轮 S3）：取自商品域**真实类目**，保证点下去有结果；
+    // 类目取不到时服务端给空数组，前端就不展示这一块（不拿固定文案凑数 —— 点了是空结果更像敷衍）
+    quickQuestions: [],
   },
 
   _keyboardHandler: null,
@@ -69,6 +72,8 @@ Page({
         this.setData({
           aiReady: ready,
           aiNotice: ready ? '' : 'AI 导购暂时不可用：服务端尚未配置大模型，请稍后再来～',
+          // 探测失败时保持「可用」且不给快捷问题：接口抖动不该让首屏少一块内容又多一行解释
+          quickQuestions: ready && cap && cap.quickQuestions ? cap.quickQuestions : [],
         });
         if (!ready) {
           // 提示直接进消息流：用户一进页面就看见，且不会被后续滚动丢掉。
@@ -131,9 +136,10 @@ Page({
     }
 
     this.push({ id: nextId(), role: 'user', content: text });
-    // 用户已经作答，历史里的选项不该再能点（点了会重复发同一条）——发送时统一清掉
+    // 用户已经作答，历史里的选项不该再能点（点了会重复发同一条）——发送时统一清掉。
+    // 追问（followUps）同理：它们是**针对上一轮候选**推导出来的，话题一换就答非所问。
     const cleared = this.data.messages.map((m) =>
-      m.options ? Object.assign({}, m, { options: null }) : m
+      m.options || m.followUps ? Object.assign({}, m, { options: null, followUps: null }) : m
     );
     this.setData({ messages: cleared, input: '', sending: true });
 
@@ -160,6 +166,8 @@ Page({
             Object.assign({}, r, { priceText: api.fen2yuan(r.minPrice) })
           ),
           options: clarify && clarify.options ? clarify.options : null,
+          // 相关追问：由本轮候选推导，候选为空时服务端不给（此时任何追问点下去都是空结果）
+          followUps: res.followUps && res.followUps.length ? res.followUps : null,
         });
       })
       .catch((err) => {
@@ -173,7 +181,12 @@ Page({
       .then(() => this.setData({ sending: false }));
   },
 
-  /** 点澄清选项：直接把选项要发送的文本发出去（`send` 与 `label` 分离，见后端 DTO 注释） */
+  /**
+   * 点澄清选项 / 相关追问：直接把要发送的文本发出去（`send` 与 `label` 分离，见后端 DTO 注释）。
+   *
+   * <p>两类 chips 走同一个处理：语义完全一致 —— 都是「点一下就发这一句」。
+   * 分两个方法只会多一处需要同步修改的地方，而它们的差别只在样式。
+   */
   tapOption(e) {
     const send = e.currentTarget.dataset.send;
     if (!send) return;

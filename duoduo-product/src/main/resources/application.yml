@@ -63,6 +63,10 @@ duoduo:
     # 默认值只是为了让本地容器开箱可跑；**生产必须用环境变量 INTERNAL_TOKEN 覆盖**。
     # 校验默认开启（失败关闭），不做「没配就放行」。
     token: ${INTERNAL_TOKEN:duoduo-local-dev-internal-token}
+    # 服务间调用凭据（第五十八轮 P0-3）：签名有效期（秒）与「每个调用方一把显式密钥」。
+    # 两者都可不配：默认 300 秒，且密钥按调用方身份从根密钥派生（见 InternalCallAuth）。
+    signature-skew-seconds: ${INTERNAL_SKEW_SECONDS:300}
+    caller-secrets: ${INTERNAL_CALLER_SECRETS:}
   product:
     # 平台禁售/违规词表，搜索与商品标题双向拦截。
     # 生产形态下由配置中心下发，并叠加内容安全服务做语义识别。

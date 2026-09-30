@@ -52,6 +52,16 @@
       <artifactId>spring-cloud-starter-loadbalancer</artifactId>
     </dependency>
 
+    <!-- 限流计数（第五十八轮 · AI 加强项）：**可选**的分布式计数。
+         多实例部署时，本机内存计数会让 LLM 的实际消耗变成配额的 N 倍（不报错，只在账单上出现）。
+         这里用 ObjectProvider 可选注入 —— 没有 Redis 就退回内存（本地与单实例部署完全等价），
+         连不上也自动降级并冷却，绝不因为「统计个数字」把对话拖慢或拖挂。
+         仍然刻意**不连数据库**：Redis 只存分钟级计数，不是业务数据面。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
     <!-- 刻意无数据库依赖：v1 对话是无状态检索 + 生成，会话历史留给后续
          （t_chat_session / t_chat_message 已在 01-duoduo-user.sql 预留）。
          少一个数据面就少一份迁移与备份负担，等有真实需求再加不迟。 -->
