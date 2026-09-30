@@ -294,7 +294,9 @@ share-circle 74 / notice 42）+ 静态自检 **0 错 0 警** + 三容器重建 h
 
 - **#1 券 v1 口径**：维持「不支持的组合**明确 422 拒绝**」这一既有行为（不擅自放宽成静默降级 ——
   静默降级会让用户以为券生效了、结算时才发现没减），改用**有断言的单测**把它固化下来：
-  `CouponV1BoundaryTest`（13 项）—— 叠加/跨品类/过期/非本店等边界逐条断言拒绝码与提示，
+  `CouponV1BoundaryTest`（非满减类型一律拒绝且文案明确 / 类型大小写不敏感 / `release` 只解锁 LOCKED、
+  已核销的不退回 / 没有锁定券时不报错且返回 0）+ `CouponStatusTest` / `CouponCodeGeneratorTest`
+  = marketing 券相关共 **13 项**，
   避免以后有人「顺手改成放行」而无人察觉。**口径本身仍需产品确认**（见文末人工确认项）。
 - **#2 调度选主（多实例重复跑）**：新增 `common-web` 的 `SchedLeaderLock` + 表
   `docs/sql/incremental/23-r58-sched-leader.sql`（主键即锁名，`expire_at` 自动过期）。
@@ -371,6 +373,23 @@ share-circle 74 / notice 42）+ 静态自检 **0 错 0 警** + 三容器重建 h
 - **#22 召回去重多样性**：`RecallDiversifier` 按「标题去规格后缀」归一去重、同款保留更便宜那件
   （原始取 12 → 去重后留 8），避免整屏同款不同规格。
 
+#### 联调补丁（编译过了、单测绿了，只有容器真跑起来才现形的三项）
+
+- **补丁 1 · 内部凭据签名去掉请求路径**：原实现把 path 签进 HMAC 规范串，而 Feign 的
+  `RequestTemplate.path()` **取不到 `@FeignClient(path="/api/products")` 的类级前缀**
+  （实测客户端 `path=/internal/skus/batch`、服务端实际路径 `/api/products/internal/skus/batch`）
+  → 两边签出来的串永远不等 → **全站服务间调用 403**，冒烟从 20/23 掉到 3/23。
+  改为只签 `METHOD`（+ caller / ts / nonce）：安全性不下降（nonce 一次性，且「签了但服务端不校验」
+  只会增加假失败面）。同步改 10 处调用点 + `internal-token.ps1` / `r54` / `r55` 三个脚本；
+  新增单测「换路径不影响校验结果」。
+- **补丁 2 · `spring-boot-starter-jdbc` 标 `<optional>true</optional>`**：AI 服务没有数据库，
+  依赖被**传递**进来 → `DataSourceAutoConfiguration` 启动失败（`Failed to determine a suitable driver class`）。
+  且 `@ConditionalOnClass(JdbcTemplate.class)` 必须挂在**内层配置类**上 —— 挂在 `@Bean` 方法上时，
+  Spring 为解析方法签名会先加载 `JdbcTemplate`，条件注解还没生效就 `NoClassDefFoundError`。
+- **补丁 3 · `NoResourceFoundException` 显式映射为 404**：加了路径形状约束（如 `{orderNo:\d{21}}`）后，
+  形状不匹配的请求不再命中 Controller，转去查静态资源再抛该异常 → 被 `Exception` 兜底成 **500**。
+  「不存在的订单」必须是 404，否则前端的重试 / 空态判断全错。新增 `GlobalExceptionHandlerTest` 2 项。
+
 **★ 本轮教训**：① **mock 形态必须有自己的出口**，否则护栏 / 断言全在自查自纠；
 ② **429 与 422 不能混**；③ 断言**收紧**才有意义（`in (404,405)` → `== 405`）；
 ④ 新增类必须 `unzip -l` 验进 jar（R52 教训第三次复述）；
@@ -378,11 +397,21 @@ share-circle 74 / notice 42）+ 静态自检 **0 错 0 警** + 三容器重建 h
 而接口探针永远测不到；⑥ **反向验证也可能空转**：两个 chips 区块写法相同时，
 全文件 `includes` 会把「改坏了的那段」之外的同名字段也算作命中 —— 反向验证必须**按块取片段**判定。
 
-**验证**：全模块 `mvn -o test` 全绿（common 6 / common-web 18 / gateway 8 / user 15 / product 15 /
-trade 19 / fulfilment 9 / marketing 13 / **ai 94** / social 10 = **207/0**）；前端 node 单测
+⑦ **形态自适应要问服务端，不要读配置猜形态** —— 微信登录冒烟场景② 有两种合法形态
+  （注入真实 AppID → 假 code 被微信侧拒 → 401；未注入 → 外部依赖缺失 → 503 降级）。写死 503
+  在配了凭据的机器上永远红；改读 `.env` 判断仍不稳（compose 是**环境变量注入**，
+  `.env` 的位置 / 编码 / 键名都可能踩空）。最终按**实际返回**选分支，非 401 非 503 才算真失败；
+⑧ **守卫报警不等于真有问题，先确认守卫本身对不对** —— 断言总数守卫原放在「清理夹具」那条 Check
+  **之前**，于是把那条还没执行的断言当成「被静默跳过」报红；且互斥分支的声明数要扣掉未走的那几支。
+
+**验证**：全模块 `mvn -o test` 全绿（common 6 / **common-web 21** / gateway 8 / user 15 / product 15 /
+trade 19 / fulfilment 9 / marketing 13 / **ai 94** / social 10 = **210/0**）；前端 node 单测
 **251/0**（既有的 229 项全过 + 新增 `r59-ai-suggestions-test` 22 项）；小程序静态自检 **0 错 0 警**；
 `mvn -o -DskipTests package` **BUILD SUCCESS** 且新类均在 jar 内；每一项均做**反向验证**
 （故意改坏 → 断言转红 → 还原）。
+**容器联调**：`docker compose build` 8 个业务镜像全部 Built；`docker compose up -d` 14 容器全 healthy；
+**逐模块 md5 比对宿主机 jar 与容器内 `/app/app.jar` 8/8 一致**（镜像里跑的确实是最新代码 ——
+只看构建退出码不算数）。冒烟 `smoke.ps1` **55/0**、`wechat-auth-smoke.ps1` **26/0**。
 
 ### 2026-09-30（R58 · 资金闭环 / 测试底盘 / 闲置编辑删除 / AI 问候身份出口）
 

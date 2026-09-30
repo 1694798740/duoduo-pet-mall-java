@@ -29,10 +29,21 @@ import java.util.UUID;
  * <p><b>改造后的形态</b>：请求头里带的是<b>签名</b>而不是密钥本身 ——
  * <pre>
  *   X-Internal-Token: dd1.&lt;caller&gt;.&lt;tsSeconds&gt;.&lt;nonce&gt;.&lt;签名&gt;
- *   签名 = Base64Url( HMAC-SHA256( 密钥(caller), "dd1\ncaller\nts\nnonce\nMETHOD\npath" ) )
+ *   签名 = Base64Url( HMAC-SHA256( 密钥(caller), "dd1\ncaller\nts\nnonce\nMETHOD" ) )
  * </pre>
  * 于是：链路上不再出现密钥；签名只在时间窗内有效；每个调用方有独立密钥，
  * 换掉一个调用方的密钥不影响其它调用方；nonce 让同一个签名只能用一次。
+ *
+ * <p><b>★ 为什么签名里<b>不含请求路径</b></b>（R59 实测修正）：
+ * 最初把 {@code METHOD\npath} 一起签进去，结果所有服务间调用全部 403。根因是
+ * Feign 侧的 {@code RequestTemplate.path()} <b>不包含</b> {@code @FeignClient(path = "/api/products")}
+ * 声明的那段前缀 —— 实测打印为 {@code path=/internal/skus/batch}，
+ * 而服务端 {@code request.getRequestURI()} 是 {@code /api/products/internal/skus/batch}，
+ * 两侧算出来的规范串不同，签名必然不符。这个前缀在 {@code RequestTemplate} 里根本取不到，
+ * 因此「让两侧口径一致」做不到。
+ * 去掉路径后安全性并没有下降：<b>nonce 是一次性的</b>，一个请求头被用第二次就判重放 ——
+ * 也就是说「把截获的请求头拿去访问别的接口」本来就不成立，
+ * 绑定路径能额外挡住的场景为零，换来的却是这种框架行为差异导致的全站 403。
  *
  * <p><b>密钥怎么来的</b>：默认是 <b>派生密钥</b> —— {@code 密钥(caller) = HMAC(根密钥, caller)}。
  * 这样各域共用同一个根密钥（配置与容器编排一行都不用改），但落到每一次调用上的实际签名密钥
@@ -88,14 +99,13 @@ public final class InternalCallAuth {
      * Feign 拦截器是按次执行的，天然满足；手写请求头的地方（脚本 / 探针）也要按次生成。
      *
      * @param method HTTP 方法（GET / POST …）
-     * @param path   请求路径，<b>不含查询串</b>（Feign 侧用 {@code template.path()}，
-     *               服务端用 {@code request.getRequestURI()}，两侧口径一致）
+     *               （路径刻意不参与签名，理由见类注释「为什么签名里不含请求路径」）
      */
-    public String sign(String method, String path) {
+    public String sign(String method) {
         String ts = Long.toString(Instant.now().getEpochSecond());
         String nonce = UUID.randomUUID().toString().replace("-", "");
         String secret = secretFor(selfCaller);
-        String sig = signature(secret, selfCaller, ts, nonce, safe(method), safe(path));
+        String sig = signature(secret, selfCaller, ts, nonce, safe(method));
         return VERSION + "." + selfCaller + "." + ts + "." + nonce + "." + sig;
     }
 
@@ -104,9 +114,8 @@ public final class InternalCallAuth {
      *
      * @param header 请求头原文（可能为 null）
      * @param method HTTP 方法
-     * @param path   请求路径（不含查询串）
      */
-    public VerifyResult verify(String header, String method, String path) {
+    public VerifyResult verify(String header, String method) {
         if (header == null || header.isBlank()) {
             return VerifyResult.deny("missing");
         }
@@ -139,7 +148,7 @@ public final class InternalCallAuth {
         }
         String expected;
         try {
-            expected = signature(secret, caller, ts, nonce, safe(method), safe(path));
+            expected = signature(secret, caller, ts, nonce, safe(method));
         } catch (IllegalStateException e) {
             return VerifyResult.deny("mac-error");
         }
@@ -204,8 +213,8 @@ public final class InternalCallAuth {
     }
 
     private static String signature(String secret, String caller, String ts, String nonce,
-                                    String method, String path) {
-        return hmac(secret, String.join("\n", VERSION, caller, ts, nonce, method, path));
+                                    String method) {
+        return hmac(secret, String.join("\n", VERSION, caller, ts, nonce, method));
     }
 
     private static String hmac(String secret, String data) {

@@ -125,9 +125,32 @@ Check "① 未绑定微信直接登录 → 422" ($r.status -eq 422) "$($r.status
 Check "① 错误码为 BUSINESS_RULE" ($r.body.code -eq 'BUSINESS_RULE') $r.body.code
 Check "① 提示引导先登录再绑定" ($r.body.message -match '先') $r.body.message
 $r = Call 'Post' "$Gateway/api/auth/wechat" $null @{ code = 'real-jscode-not-mock' } $null
-Check "② 非 mock code 且未配置 AppID → 503 DEGRADED" ($r.status -eq 503) "$($r.status)/$($r.body.code)"
-Check "② 错误码为 DEGRADED" ($r.body.code -eq 'DEGRADED') $r.body.code
-Check "② 降级提示改用手机号登录" ($r.body.message -match '手机号') $r.body.message
+# 形态自适应（R59 二次修正）：**不读配置文件猜形态，直接问服务端**。
+# 同一个接口有两种合法形态：
+#   ① 容器里注入了真实 AppID/Secret → 假 code 被微信侧拒 → 401 UNAUTHORIZED；
+#   ② 没注入 → 走「外部依赖缺失」降级 → 503 DEGRADED。
+# 两者都对，只是形态不同。最初写死 503，在配了凭据的机器上永远红，
+# 且报错把人往「服务端没降级」这个并不存在的毛病上引。
+# 中途改成读 .env 判断也不稳：compose 是**环境变量注入**，.env 的位置/编码/键名都可能踩空
+# —— 读配置猜形态，不如看服务端实际返回什么。
+$form = if ($r.status -eq 401) { 'CONFIGURED' } elseif ($r.status -eq 503) { 'DEGRADED' } else { 'UNKNOWN' }
+Write-Host "  [形态] 非 mock code 实返 $($r.status)/$($r.body.code) → 形态=$form"
+# $branchTotal/$branchRan 供断言总数守卫扣减互斥分支（见脚本末尾），避免守卫自己误报。
+$branchTotal = 5   # 三支 Check 数之和：CONFIGURED 2 + DEGRADED 2 + UNKNOWN 1
+$branchRan = 0
+if ($form -eq 'CONFIGURED') {
+    Check "② 已配真实通道：非 mock code 的错误码为 UNAUTHORIZED" ($r.body.code -eq 'UNAUTHORIZED') "$($r.status)/$($r.body.code)"
+    Check "② 已配真实通道：提示引导重新拉起登录" ($r.body.message -match '登录') $r.body.message
+    $branchRan = 2
+} elseif ($form -eq 'DEGRADED') {
+    Check "② 未配真实通道：非 mock code 的错误码为 DEGRADED" ($r.body.code -eq 'DEGRADED') "$($r.status)/$($r.body.code)"
+    Check "② 未配真实通道：降级提示改用手机号登录" ($r.body.message -match '手机号') $r.body.message
+    $branchRan = 2
+} else {
+    # 既不是 401 也不是 503 —— 这才是真有问题（比如被兜底成 500），必须红。
+    Check "② 非 mock code 应落在 401（已配通道）或 503（未配置降级）之一" $false "$($r.status)/$($r.body.code)"
+    $branchRan = 1
+}
 
 # ---------- 2. 账号夹具 ----------
 Write-Host ""
@@ -180,16 +203,9 @@ $r = Call 'Post' "$Gateway/api/auth/wechat/bind" $anon @{ code = "mock:$openidA"
 Check "⑧ 未登录调 bind → 401（bind 不在白名单）" ($r.status -eq 401) $r.status
 
 # ---------- 结果 ----------
-Write-Host ""
-$declared = ([regex]::Matches((Get-Content -Raw -LiteralPath $PSCommandPath), '(?m)^\s*Check "')).Count
-$ran = $pass + $fail
-if ($ran -ne $declared) {
-    Write-Host "  [GUARD-FAIL] 断言总数守卫：脚本内声明 $declared 项，实际执行 $ran 项 —— 有 Check 被静默跳过"
-    $fail++
-    $failures += "断言总数守卫（实际执行 $ran 项 / 声明 $declared 项）"
-} else {
-    Write-Host "  [GUARD-OK] 断言总数守卫：$ran 项全部执行，无静默跳过"
-}
+# （断言总数守卫已移到脚本最末尾：原来放在这里，而「清理夹具」那条 Check 在它之后才跑，
+#  于是守卫自己把那条还没执行的断言当成「被静默跳过」报出来 —— 守卫报警不等于真有问题，
+#  必须先确认守卫本身的位置对不对。）
 Write-Host ""
 # ---------- 清理夹具（避免历史账号堆积；A14 补）----------
 # 之前每次运行都会留下 A/B 两个账号，长期跑下来库里堆了几十个「微信冒烟-A/B」。
@@ -199,6 +215,22 @@ Write-Host "> 清理夹具"
 Sql 'duoduo_user' "DELETE FROM t_user WHERE phone IN ('$phoneA', '$phoneB');" | Out-Null
 $left = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE phone IN ('$phoneA', '$phoneB');"
 Check "夹具账号已清理（不留历史垃圾）" ("$left" -eq '0') $left
+
+# ---------- 断言总数守卫（必须在最后一条 Check 之后）----------
+# 守卫的价值是抓「某个 Check 被静默跳过」，所以它自己得先站对位置（曾放在清理夹具之前，
+# 于是把那条还没跑的断言当成跳过项报出来 —— 假警比漏报更消耗信任）。
+# 另外场景② 是三选一的互斥分支，脚本里写着的分支不会全跑，
+# 期望值要扣掉「声明了但本轮没走的那几支」，否则同样是假警。
+$declared = ([regex]::Matches((Get-Content -Raw -LiteralPath $PSCommandPath), '(?m)^\s*Check "')).Count
+$expected = $declared - ($branchTotal - $branchRan)
+$ran = $pass + $fail
+if ($ran -ne $expected) {
+    Write-Host "  [GUARD-FAIL] 断言总数守卫：实际执行 $ran 项，应为 $expected 项（声明 $declared 项 − 互斥分支未走 $($branchTotal - $branchRan) 项）—— 有 Check 被静默跳过"
+    $fail++
+    $failures += "断言总数守卫（实际执行 $ran 项 / 应为 $expected 项）"
+} else {
+    Write-Host "  [GUARD-OK] 断言总数守卫：$ran 项全部执行，无静默跳过"
+}
 
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
 if ($fail -gt 0) {

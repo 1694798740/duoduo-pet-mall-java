@@ -62,24 +62,35 @@ public class WebAutoConfiguration {
     /**
      * 定时任务选主锁（第五十八轮 · P0-2）。
      *
-     * <p>两个条件装配是必须的，不是保险：
+     * <p>★ 为什么放进一个**独立的内层配置类**而不是直接在本类上写 {@code @Bean}（R59 实测踩到）：
+     * 本模块的 {@code spring-boot-starter-jdbc} 是 {@code optional}，不给 JDBC 的服务（AI）
+     * 运行时根本没有 {@code JdbcTemplate} 这个类。条件注解是**写在方法上**时，
+     * Spring 为了拿到这个 {@code @Bean} 方法的签名（参数类型 {@code JdbcTemplate}）会先去加载它，
+     * 于是在条件生效之前就抛 {@code NoClassDefFoundError} —— 也就是说
+     * {@code @ConditionalOnClass} 挂在方法上**救不了方法签名本身**。
+     * 放到内层类上，条件由 Spring 用 ASM 读字节码判定，不匹配时这个类压根不被加载。
+     *
+     * <p>两个条件装配各管一件事：
      * <ul>
+     *   <li>{@code @ConditionalOnClass(JdbcTemplate)}：不给 JDBC 的环境里连类都不该被加载（内层类级）。</li>
      *   <li>{@code @ConditionalOnBean(DataSource)}：AI 服务依赖本模块但<b>不连数据库</b>，
-     *       无条件注册会在启动时因缺 DataSource 而失败 —— 基础设施不该反过来要求业务服务配库。</li>
-     *   <li>{@code @ConditionalOnClass(JdbcTemplate)}：本模块的依赖是可选的，
-     *       不给 JDBC 的环境里连类都不该被加载。</li>
+     *       有 JDBC 却没有数据源时也不该注册 —— 基础设施不该反过来要求业务服务配库。</li>
      * </ul>
      *
      * <p>注意它必须由自动装配显式登记：本模块包名 {@code com.duoduo.common.web}
      * 与各业务服务的组件扫描根不重叠（见本类注释开头）。
      */
-    @Bean
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(JdbcTemplate.class)
-    @ConditionalOnBean(DataSource.class)
-    public SchedLeaderLock schedLeaderLock(
-            JdbcTemplate jdbcTemplate,
-            @Value("${duoduo.sched.leader-enabled:true}") boolean enabled) {
-        return new SchedLeaderLock(jdbcTemplate, SchedLeaderLock.defaultOwner(), enabled);
+    static class SchedLeaderConfiguration {
+
+        @Bean
+        @ConditionalOnBean(DataSource.class)
+        public SchedLeaderLock schedLeaderLock(
+                JdbcTemplate jdbcTemplate,
+                @Value("${duoduo.sched.leader-enabled:true}") boolean enabled) {
+            return new SchedLeaderLock(jdbcTemplate, SchedLeaderLock.defaultOwner(), enabled);
+        }
     }
 
     /**

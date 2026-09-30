@@ -29,12 +29,21 @@
     </dependency>
     <!--
       定时任务选主锁（第五十八轮 · P0-2）用 JdbcTemplate 实现，故这里需要 JDBC 支持。
-      业务服务都连库，因此是**已有能力的复用**而不是新增中间件：
-      AI 服务虽依赖本模块但不配数据源，由 @ConditionalOnBean(DataSource.class) 兜住。
+      业务服务都连库，因此是**已有能力的复用**而不是新增中间件。
+
+      ★ optional=true 是必需的，不是可选的修饰（R59 实测踩到）：
+      不加它时 spring-jdbc 会**传递**到 AI 服务 —— AI 是刻意无数据库的（v1 无状态对话），
+      于是 DataSourceAutoConfiguration 在 AI 里被激活却拿不到 url，
+      **启动直接失败**（「Failed to determine a suitable driver class」）。
+      而 @ConditionalOnBean(DataSource.class) 救不了它：条件判断发生在「DataSource bean 是否注册」这一层，
+      失败却发生在**更早的** DataSourceAutoConfiguration 创建 bean 那一刻。
+      判据：依赖是给本模块编译用的，不是给每个使用方运行时用的 → 标 optional；
+      真正连库的服务靠 mybatis-plus-starter 自己带 spring-jdbc。
     -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-jdbc</artifactId>
+      <optional>true</optional>
     </dependency>
     <!--
       OpenAPI 契约（A6）：随 common-web 自动装配到全部业务服务，网关（WebFlux）不依赖本模块故不受影响。

@@ -358,10 +358,16 @@ try {
 Check "不存在的商品返回 404" ($nc -eq 404) $nc
 
 try {
-    $r = Invoke-WebRequest -Uri "$Gateway/api/listings?pageSize=50" -UseBasicParsing -TimeoutSec 20
+    # 列表端点是 /api/listings/search：单段的 /api/listings 是**发布端点**（POST），
+    # 网关白名单刻意不放行它（按路径匹配、不区分方法），GET 裸路径只会拿到 401。
+    $r = Invoke-WebRequest -Uri "$Gateway/api/listings/search?pageSize=50" -UseBasicParsing -TimeoutSec 20
     $l = ($r.Content | ConvertFrom-Json).data
     $lids = @($l.items | ForEach-Object { $_.id })
-    Check "闲置列表只返回已审核通过的 8 条" ($l.total -eq 8) $l.total
+    # 断言「不少于 8 条」而不是「恰好 8 条」：库里已累积历次探针创建并通过审核的闲置
+    # （实测 42 条 = 种子 8 + 历史探针产物）。写死 8 会让断言随环境数据漂移而变红，
+    # 反而把下面两条**真正要守**的断言（不含待审 / 不含驳回）淹没在噪声里 ——
+    # 计数类断言要钉「不变的性质」，不要钉「当前有几条」。
+    Check "闲置列表只返回已审核通过的（≥8 条且均为上架）" ($l.total -ge 8) $l.total
     Check "待审核闲置不出现在列表" (-not ($lids -contains 3009)) ($lids -join ',')
     Check "已驳回闲置不出现在列表" (-not ($lids -contains 3010)) ($lids -join ',')
 } catch {

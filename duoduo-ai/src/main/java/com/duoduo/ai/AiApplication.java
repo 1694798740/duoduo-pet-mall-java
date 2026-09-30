@@ -22,8 +22,13 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  * </ul>
  *
  * <p>无数据库（v1 无状态对话）；每 IP 限流在应用内实现（限流是保护 LLM 配额的第一道闸）。
+ *
+ * <p>★ 显式排除 {@code DataSourceAutoConfiguration}（R59 实测）：AI 不配数据源，
+ * 只要 classpath 上出现 spring-jdbc（哪怕是某个公共模块传递进来的），
+ * 它就会尝试创建 DataSource 并在「没有 url」上**启动失败** —— 这类失败单测抓不到，
+ * 只在容器启动时暴露，所以在这里显式声明「本服务就是不连库」，比依赖依赖树永远干净更可靠。
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = {org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration.class})
 @EnableDiscoveryClient
 @EnableFeignClients(basePackages = "com.duoduo.ai.client")
 public class AiApplication {

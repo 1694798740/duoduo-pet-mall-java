@@ -57,7 +57,7 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             return;
         }
         String token = request.getHeader(InternalCallAuth.HEADER);
-        if (internalCallAuth.verify(token, request.getMethod(), uri).ok()) {
+        if (internalCallAuth.verify(token, request.getMethod()).ok()) {
             filterChain.doFilter(request, response);
             return;
         }

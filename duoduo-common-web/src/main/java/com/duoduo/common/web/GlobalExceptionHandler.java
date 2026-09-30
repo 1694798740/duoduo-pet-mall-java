@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -112,6 +113,25 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.httpStatus())
                 .body(ApiResponse.fail(ErrorCode.METHOD_NOT_ALLOWED.name(),
                         ErrorCode.METHOD_NOT_ALLOWED.defaultMessage()));
+    }
+
+    /**
+     * 没有匹配到任何处理器的路径 → 404，而不是 500。
+     *
+     * <p><b>实测触发场景（R59）</b>：给订单号路径加了 {@code {orderNo:\d{21}}} 形状约束后，
+     * 一个 24 位的非法订单号不再匹配任何 {@code @GetMapping}，Spring 6.1 会去查静态资源、
+     * 查不到就抛 {@code NoResourceFoundException}，被 {@code Exception} 兜底分支接住 → 500。
+     * 后果有两层：用户输错一个号码被报成「服务内部错误」；
+     * 更重要的一层是 <b>5xx 告警被这类噪声淹没</b> —— 真正的服务故障反而看不见。
+     *
+     * <p>与 {@link #handleMethodNotSupported} 同类：路径/方法对不上是<b>调用方的问题</b>，
+     * 必须回 4xx。这类「框架异常漏配」不会报错、不会告警，只在真实调用时表现为语义错误的状态码。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResource(NoResourceFoundException ex) {
+        log.warn("路径不存在 requestId={} msg={}", RequestIdHolder.get(), ex.getMessage());
+        return ResponseEntity.status(ErrorCode.NOT_FOUND.httpStatus())
+                .body(ApiResponse.fail(ErrorCode.NOT_FOUND.name(), ErrorCode.NOT_FOUND.defaultMessage()));
     }
 
     private ResponseEntity<ApiResponse<Void>> validationFailure(List<FieldError> errors) {

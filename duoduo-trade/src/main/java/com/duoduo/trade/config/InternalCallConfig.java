@@ -24,9 +24,11 @@ public class InternalCallConfig {
     @Bean
     public RequestInterceptor internalTokenInterceptor(InternalCallAuth internalCallAuth) {
         // 每次调用都重新签发：签名里带一次性 nonce，复用同一个请求头会被判为重放。
-        // 这里用 template.path()（解析后的路径、不含查询串），与服务端
-        // request.getRequestURI() 口径一致 —— 两侧都必须取「方法 + 路径」。
+        // 只签 METHOD、不签路径：见 InternalCallAuth 类注释「为什么签名里不含请求路径」——
+        // Feign 的 template.path() **取不到** @FeignClient(path="/api/products") 那段前缀
+        // （实测打印为 /internal/skus/batch，服务端看到的却是 /api/products/internal/skus/batch），
+        // 签进去就是两侧算出的串不同，表现为全站内部调用 403。
         return template -> template.header(InternalCallAuth.HEADER,
-                internalCallAuth.sign(template.method(), template.path()));
+                internalCallAuth.sign(template.method()));
     }
 }

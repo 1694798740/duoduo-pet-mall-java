@@ -28,13 +28,22 @@
 
 **⑦ P1-8 路径变量形状约束**。`@GetMapping("/{orderNo}")` → `@GetMapping("/{orderNo:\d{21}}")`（订单号固定 21 位纯数字）：不限定形状时「明细」与其他子路径会互相抢占匹配，表现为随机 404/405。探针断言由 `st in (404,405)` **收紧为 `st == 405`**。
 
-**⑧ P0-1 券 v1 口径**：维持「不支持的组合明确 422 拒绝」（不擅自放宽成静默降级 —— 用户会以为券生效、结算才发现没减），改用 `CouponV1BoundaryTest` **13 项有断言的单测**把行为固化，防止日后被顺手改成放行。
+**⑧ P0-1 券 v1 口径**：维持「不支持的组合明确 422 拒绝」（不擅自放宽成静默降级 —— 用户会以为券生效、结算才发现没减），改用 marketing 模块**券相关 13 项有断言的单测**把行为固化（`CouponV1BoundaryTest` 4 项：非满减类型一律拒绝且文案明确 / 类型大小写不敏感 / `release` 只解锁 LOCKED、已核销的不退回 / 没有锁定券时不报错且返回 0；另有 `CouponStatusTest` 5 项、`CouponCodeGeneratorTest` 4 项），防止日后被顺手改成放行。
 
 **⑨ P2-10 零单测模块补测**：新增网关 `JwtAuthGlobalFilterTest`（8：公开读放行 / 写路径拦 / 三段不被两段通配连带放行 / 微信绑定需登录 / **伪造身份头与 IP 头被剥离** / OPTIONS 放行）、`NoticeServicePushTest`（7：两阶段落库 —— 第 N 条非法则整批不写）、`UnreadServiceTest`（3）、`SnowflakeIdGeneratorTest`（6：首条断言 **id 超出 JS 安全整数**，为「前端禁止 `Number()` 强转」提供机器可检依据）、`AfterSaleServiceTest`（9）、`SellerProductServiceTest`（8）、`SchedLeaderLockTest` / `InternalCallAuthTest` / `RoleTokenEffectiveTest` / `AdminUserServiceRoleChangeTest` / `PetProfileBriefTest`。
 
 **⑩ AI 加强 6 项（原 R57 选修 S1-S3 扩展）** —— 详见 `docs/PLAN.md` R59 段：宠物档案个性化（**只补充不覆盖**、裁剪视图不含病史）、政策知识库（**只写流程与入口、不写时效与赔付数字**）、快捷问题 / 追问 / 对比（**对比不进模型**，只并列客观差异）、限流多实例（`ObjectProvider<StringRedisTemplate>`，Redis 故障**冷却 60s** 再退回内存）、mock 走独立话术（**护栏可达**，否则护栏在检查自己的输出）、召回多样性（同款按标题去规格归一去重，保留更便宜那件）。小程序 `pages/ai` 已消费新字段：「大家都在问」快捷 chips（**只首屏显示**）+ 回答后的相关追问 chips，**换话题时 followUps 与 options 一起清掉** —— 后端下发而页面不渲染等于没做，接口探针永远测不到这一层。
 
-**验证**：全模块 `mvn -o test` **207/0**（ai 94 / trade 19 / common-web 18 / user 15 / product 15 / marketing 13 / social 10 / fulfilment 9 / gateway 8 / common 6）；前端 node 单测 **251/0**（既有 229 项全过 + 新增 `scripts/r59-ai-suggestions-test.js` 22 项，含 4 组反向验证）；小程序静态自检 **0 错 0 警**；`mvn -o -DskipTests package` BUILD SUCCESS 且 `unzip -l` 确认新类均在 jar 内；**每一项新能力均做反向验证**（故意改坏 → 断言转红 → 还原）。
+**⑪ R59 补丁（全站联调暴露，同一轮内修完）** —— 三项都是「编译过了、单测绿了，只有真跑起来才现形」的问题：
+- **内部凭据签名去掉请求路径**。原实现把 path 签进规范串，而 Feign 的 `RequestTemplate.path()` **取不到 `@FeignClient(path=...)` 的类级前缀**（实测 `path=/internal/skus/batch`，服务端实际是 `/api/products/internal/skus/batch`）→ 签出来的串两边永远不等 → 全站服务间调用 403，冒烟从 20/23 掉到 3/23。改为只签 `METHOD`（+ caller/ts/nonce），安全性不下降：nonce 一次性，且签了也不校验等于只增假失败面。同步改 10 处调用点 + 3 个脚本；新增单测「换路径不影响校验结果」。
+- **`spring-boot-starter-jdbc` 标 `<optional>true</optional>`**。AI 服务没有数据库，`DataSourceAutoConfiguration` 因依赖被**传递**进来而启动失败（`Failed to determine a suitable driver class`）。且 `@ConditionalOnClass(JdbcTemplate.class)` 必须挂在**内层配置类**上 —— 挂在 `@Bean` 方法上时，Spring 为解析方法签名会先加载 `JdbcTemplate`，条件注解还没生效就 `NoClassDefFoundError`。
+- **`NoResourceFoundException` 显式映射为 404**。加了路径形状约束（如 `{orderNo:\d{21}}`）后，形状不匹配的请求不再命中 Controller，转去查静态资源再抛此异常 → 被 `Exception` 兜底成 500。「不存在的订单」该是 404 而不是 500，否则前端重试逻辑全错。
+
+**验证**：全模块 `mvn -o test` **210/0 失败**（ai 94 / common-web 21 / trade 19 / product 15 / user 15 / marketing 13 / social 10 / fulfilment 9 / gateway 8 / common 6）；前端 node 单测 **251/0**（既有 229 项全过 + 新增 `scripts/r59-ai-suggestions-test.js` 22 项，含 4 组反向验证）；小程序静态自检 **0 错 0 警**；`mvn -o -DskipTests package` BUILD SUCCESS 且 `unzip -l` 确认新类均在 jar 内；**每一项新能力均做反向验证**（故意改坏 → 断言转红 → 还原）；冒烟 `scripts/smoke.ps1` **55/0**、`scripts/wechat-auth-smoke.ps1` **26/0**。
+
+**冒烟脚本的两条纪律（本轮踩出来的）**：
+- **形态自适应靠问服务端，不靠读配置猜**。微信登录冒烟的场景② 有两种合法形态（注入了真实 AppID → 假 code 被微信侧拒 → 401 UNAUTHORIZED；没注入 → 外部依赖缺失降级 → 503 DEGRADED）。写死 503 会在配了凭据的机器上永远红，且把人往一个并不存在的毛病上引；改成读 `.env` 判断仍不稳（compose 是**环境变量注入**，`.env` 的位置/编码/键名都可能踩空）。最终按**实际返回**选分支，返回既非 401 也非 503 才算真失败。
+- **断言总数守卫自己也要站对位置**。守卫原在「清理夹具」那条 Check **之前**，于是把那条还没执行的断言当成「被静默跳过」报红；且场景② 是互斥分支，声明数要扣掉未走的那几支。**守卫报警不等于真有问题 —— 先确认守卫本身对不对。**
 
 **R57（2026-09-29，用户要求：「仅实现 6 项必修」AI 改造）** — **约束硬过滤 / 超时隔离 / 限流加固 / 输出护栏 / 澄清与失败出口 / 测试真绿**（必修 M1-M6；选修 S1-S3 按用户指令不做）。
 

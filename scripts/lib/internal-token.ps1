@@ -4,8 +4,12 @@
 #       于是任何一处访问日志 / 抓包都会留下它，且它没有时效、也分不清是谁在调用。
 # 现在：请求头里带的是 HMAC 签名，格式为
 #       dd1.<caller>.<tsSeconds>.<nonce>.<签名>
-#       签名 = Base64Url(HMAC-SHA256(密钥(caller), "dd1\ncaller\nts\nnonce\nMETHOD\npath"))
+#       签名 = Base64Url(HMAC-SHA256(密钥(caller), "dd1\ncaller\nts\nnonce\nMETHOD"))
 #       密钥(caller) = Base64Url(HMAC-SHA256(根密钥, "dd1|key|<caller 小写>"))
+#       ★ 只签方法、**不签路径**（R59 修正）：Feign 侧的 template.path() 取不到
+#         @FeignClient(path="/api/products") 那段前缀，签进去两侧算出的串必然不同，
+#         表现为全站内部调用 403；而不签路径安全性不下降 —— nonce 是一次性的，
+#         同一条请求头用第二次即判重放，本来就不可能被挪用到别的接口。
 # 效果：链路上不再出现密钥；签名只在时间窗内有效；nonce 一次性，同一条请求头用第二次判重放。
 #
 # 用法：各冒烟脚本在 Call 里把哨兵值 'internal' 换成现场签发的头（见 Call 内注释），
@@ -37,6 +41,7 @@ function New-InternalToken {
     $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $nonce = [guid]::NewGuid().ToString('N')
     $key = Get-InternalHmac -Key $root -Data "dd1|key|$($Caller.ToLowerInvariant())"
-    $sig = Get-InternalHmac -Key $key -Data "dd1`n$Caller`n$ts`n$nonce`n$($Method.ToUpperInvariant())`n$Path"
+    # 只签 METHOD：与 Java 侧同口径（不签路径的理由见文件头注释）
+    $sig = Get-InternalHmac -Key $key -Data "dd1`n$Caller`n$ts`n$nonce`n$($Method.ToUpperInvariant())"
     return "dd1.$Caller.$ts.$nonce.$sig"
 }

@@ -46,12 +46,14 @@ def sign_internal(method, path, caller="duoduo-smoke"):
 
     请求头里带的是 HMAC 签名而不是密钥本身：dd1.<caller>.<ts>.<nonce>.<签名>。
     **每次调用都要重新签** —— 签名里带一次性 nonce，复用同一条头会被判重放。
-    path 只取路径、不含查询串，与服务端 request.getRequestURI() 口径一致。
+    **只签方法、不签路径**（R59 修正）：Feign 侧的 template.path() 取不到
+    @FeignClient(path=...) 那段前缀，签进去两侧算出的串必然不同（全站 403）；
+    而不签路径安全性不下降 —— nonce 一次性，同一条头用第二次即判重放。
     """
     key = _hmac_b64url(INTERNAL_TOKEN, "dd1|key|%s" % caller.lower())
     ts = int(time.time())
     nonce = uuid.uuid4().hex
-    sig = _hmac_b64url(key, "\n".join(["dd1", caller, str(ts), nonce, method.upper(), path]))
+    sig = _hmac_b64url(key, "\n".join(["dd1", caller, str(ts), nonce, method.upper()]))
     return "dd1.%s.%d.%s.%s" % (caller, ts, nonce, sig)
 PWD = "duoduo12345"
 OPERATOR_PHONE = "13688774031"

@@ -64,7 +64,7 @@ public class InternalTokenFilter extends OncePerRequestFilter {
         }
         // 路径不含查询串：签名时两侧都用「方法 + 路径」，口径必须一致
         String token = request.getHeader(InternalCallAuth.HEADER);
-        if (internalCallAuth.verify(token, request.getMethod(), uri).ok()) {
+        if (internalCallAuth.verify(token, request.getMethod()).ok()) {
             filterChain.doFilter(request, response);
             return;
         }

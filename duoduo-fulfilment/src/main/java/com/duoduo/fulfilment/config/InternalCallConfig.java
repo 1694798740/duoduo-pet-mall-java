@@ -27,6 +27,6 @@ public class InternalCallConfig {
         // 这里用 template.path()（解析后的路径、不含查询串），与服务端
         // request.getRequestURI() 口径一致 —— 两侧都必须取「方法 + 路径」。
         return template -> template.header(InternalCallAuth.HEADER,
-                internalCallAuth.sign(template.method(), template.path()));
+                internalCallAuth.sign(template.method()));
     }
 }
