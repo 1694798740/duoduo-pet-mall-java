@@ -204,6 +204,50 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-01（第六十一轮 · 剩余任务全量收口 + 完整自测手册）
+
+> 用户指令：先梳理整体进度、列出**所有**未完成项并逐项说明剩余工作 → **全部完成** → 给出
+> 一份完整自测流程（环境/数据准备 · 功能点清单 · 逐项步骤与预期 · 排障建议）。
+> 盘点出的 5 项（#206~#210）已全部完成，详见下表。
+
+| 文件 | 变更 |
+|---|---|
+| `duoduo-trade/.../dto/SeckillDtos.java` | `ActivityView` 增加 `enabled` —— 没有它前端无法区分「从未上架」与「已下架」，下架就成了不可逆操作 |
+| `duoduo-trade/.../service/SeckillService.java` | 新增 `listActivitiesForAdmin()`：**不过滤 enabled**，运营列表才能看见已下架的活动并重新上架 |
+| `duoduo-trade/.../controller/AdminSeckillController.java` | `list()` 改走 `listActivitiesForAdmin()` |
+| `frontend/src/pages/admin/Seckill.tsx`（新增）、`shared.tsx`、`App.tsx`、`api/endpoints.ts`、`api/types.ts` | 后台第 9 个页签「秒杀活动」：列表（含已下架）/ 新建（标题·起止时间·参与 SKU 与秒杀价）/ 上架·下架开关 |
+| `scripts/e2e/seckill-ui-check.mjs`（新增） | 秒杀真实浏览器 e2e **45 项**：新建 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 |
+| `scripts/mp-harness/runtime.js` | 新增 `stub()` 与 `matchStub()`（请求级打桩），供行为断言驱动真实页面 js |
+| `scripts/mp-harness/behavior.test.js`（新增） | 小程序页面行为 **21 项**：长 id 按字符串上行 / 加购 PATCH 的 skuId 在 URL / 下单带 `idempotentKey` / 跳订单页用 `navigateTo` 而非 `switchTab` |
+| `duoduo-trade/.../service/CartService.java`、`mapper/CartItemMapper.java` | **并发加购三个真缺陷修复**（详见下） |
+| `duoduo-trade/src/test/.../CartDuplicateKeyTest.java`（新增） | 6 项：唯一键冲突识别不能只认 `DuplicateKeyException`，且不能误吞别的表/别的错误 |
+| `scripts/perf/bench.py` | 补齐**真实写链路**（加购 / 下单 / 支付发起）+ `Pacer` 限速 + 加购数量守恒对账 + **三重自还原** |
+| `scripts/perf/cleanup-leftovers.py`（新增） | 测试环境清场工具：按手机号取消遗留待付款订单（走业务接口，不改库） |
+| `docs/SELFTEST.md`（新增） | **完整自测手册**：环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 23 条排障表 → 交付门禁 |
+| `README.md`、`docs/PLAN.md` | 按约定同步：项数口径（接口 1551 / 浏览器 321 / 小程序无浏览器 62）、新增脚本条目、自测手册入口 |
+
+**★ 本轮靠压测抓出的三个真缺陷（并发加购）**
+
+| # | 症状 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 120 次并发加购 9 次 500 | 只 catch `DuplicateKeyException`，MyBatis 还会抛别的包装类型 | `isCartUniqueConflict()` 遍历 cause 链判 `Duplicate entry` + `uk_cart_user_sku` |
+| 2 | 改成「先查后写」后出现**死锁** | 失败的 INSERT 留下唯一索引锁，后续事务互相等 | 改成单条 `INSERT ... ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)` |
+| 3 | 200 次**全部返回 200**，购物车却只多了 46 件 | `@Transactional` + MySQL RR：一致读快照看不到他事务已提交的插入，回查恒为 null；既有的读-改-写分支并发下**丢更新** | 删掉 `mergeInto`，永远走数据库侧原子 upsert |
+
+第 3 条最危险：**错误率 / P99 / QPS 三项全绿，只有「数量守恒对账」看得见**。
+对账已固化进 `bench.py`（成功次数 == 购物车增量），修完实测 200 == 200。
+
+**★ 本轮最重要的教训：脏数据会伪装成代码回归**
+
+全量冒烟一度 20/23，三套红在「库里不应残留 FROZEN 冻结行」。查下来是压测遗留的
+**754 笔待付款订单 + 752 条 FROZEN**（下单冻库存，要等 30 分钟超时才释放）。
+清干净后三套立刻恢复 **77 / 72 / 125 项全通过，代码一行没改**。
+由此加了三道防线：压测开跑前自愈、每档收尾、收尾全库兜底；外加 `cleanup-leftovers.py`。
+
+**验证（全绿）**：后端单测 **228/0** ｜ 接口冒烟 **23 套 1551 项 0 失败** ｜
+契约 `--check` PASS（241 端点）｜ 小程序无浏览器 **62/0** ｜ 前端真实浏览器 **9 套 321 项全 PASS** ｜
+压测 `--check` 全部达标且跑完 FROZEN = 0 ｜ 静态自检 0 错 0 警 ｜ 14 容器 healthy。
+
 ### 2026-10-01（第六十轮 · 券放宽 + 性能压测 + 旧接口下线 + 两套测试环境 + 六套脚本迁移）
 
 > 用户一次性派下五项，要求按顺序执行、每项说明「改了什么 / 怎么验的 / 结果」。
@@ -2085,12 +2129,24 @@ node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项
 node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项
 node scripts/e2e/share-report-ui-check.mjs          # 举报处理台 24 项
 node scripts/e2e/coupon-ui-check.mjs                # 优惠券 43 项（夹具由一键运行器自动建/拆；手工跑用 coupon-ui-fixture.ps1 -Action create|drop）
-# 合计 8 套 276 项
+node scripts/e2e/seckill-ui-check.mjs               # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
+# 合计 9 套 321 项
+
+# ================= 测试环境清场（跑测试前的「数据准备」，别跳过） =================
+# 先体检：待付款订单与 FROZEN 冻结行应为 0（否则下一套脚本会撞「库存不足」，
+#         三套含全局不变式的冒烟会直接红 —— 看着像代码回归，其实是数据脏）
+docker exec duoduo-mysql mysql -uroot -pduoduo_root -N -B -e "SELECT COUNT(*) FROM duoduo_trade.t_stock_freeze WHERE status='FROZEN';"
+# 清场：按手机号取消遗留待付款订单（走业务接口，不改库；手机号用上面的体检 SQL 查）
+python scripts/perf/cleanup-leftovers.py --phones 139xxxxxxxx,139yyyyyyyy
+
+# ================= 完整自测流程（人工逐项验收） =================
+# 见 docs/SELFTEST.md：环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 23 条排障表 → 交付门禁
 
 # ---------- 小程序「无浏览器」自动化测试（不需要浏览器，只需网关在跑） ----------
 node --test scripts/mp-harness/pages-smoke.test.js     # 30 个页面逐个挂载（33 项）：生命周期抛错 / 卸载清理写错
 node --test scripts/mp-harness/ai-page.test.js         # AI 页 4 项：快捷问题接住 / 真实发消息 / 换话题清追问
 node --test scripts/lib/internal-token-parity.test.js  # 内部凭据 HMAC：JS 侧与 PowerShell 侧对拍 4 项
+node scripts/mp-harness/behavior.test.js               # 页面行为 21 项（**自带汇总与退出码，直接跑，别套 node --test**）
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

@@ -168,6 +168,19 @@ public class SeckillService {
         return toViews(activities);
     }
 
+    /**
+     * 运营端全量列表（**含已下架**）。
+     *
+     * <p>与 C 端 {@link #listActivities()} 的区别只在过滤条件：运营必须能看到自己下架过的活动，
+     * 否则「下架」是一次性操作 —— 活动从列表消失后没有任何入口能把它恢复上架。
+     */
+    public List<ActivityView> listActivitiesForAdmin() {
+        List<SeckillActivityEntity> activities = activityMapper.selectList(
+                new LambdaQueryWrapper<SeckillActivityEntity>()
+                        .orderByDesc(SeckillActivityEntity::getStartAt));
+        return toViews(activities);
+    }
+
     public ActivityView detail(Long activityId) {
         SeckillActivityEntity activity = requireEnabledActivity(activityId);
         return toViews(List.of(activity)).get(0);
@@ -204,7 +217,8 @@ public class SeckillService {
             phase = PHASE_ONGOING;
         }
         return new ActivityView(activity.getId(), activity.getTitle(),
-                activity.getStartAt(), activity.getEndAt(), phase, views);
+                activity.getStartAt(), activity.getEndAt(), phase,
+                SeckillActivityEntity.STATUS_ENABLED.equals(activity.getStatus()), views);
     }
 
     private List<ActivityView> toViews(List<SeckillActivityEntity> activities) {

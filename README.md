@@ -594,7 +594,10 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1354 项接口断言 + 八套真实浏览器 UI 断言 276 项 + 小程序无浏览器 37 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 九套真实浏览器 UI 断言 321 项 + 小程序无浏览器 62 项）
+
+> **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
+> 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
@@ -647,6 +650,7 @@ node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买
 node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
+node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================
@@ -656,6 +660,7 @@ node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（
 node --test scripts/mp-harness/ai-page.test.js       # AI 页 4 项（快捷问题接住 / 真实发消息 / 换话题清追问）
 node --test scripts/mp-harness/pages-smoke.test.js   # 30 个页面逐个挂载（33 项），挡住生命周期抛错与卸载清理写错
 node --test scripts/lib/internal-token-parity.test.js # 内部凭据 HMAC：JS 侧与 PowerShell 侧对拍 4 项
+node scripts/mp-harness/behavior.test.js             # 页面行为 21 项：长 id 按字符串上行 / 加购 PATCH 的 skuId 在 URL / 下单带 idempotentKey / 跳订单页用 navigateTo 而非 switchTab
 # 前置：网关在跑（http://127.0.0.1:8080）
 ```
 

@@ -77,6 +77,7 @@ import type {
   UsableCouponResult,
   UserView,
   PlaceSeckillResult,
+  SeckillActivityCreateRequest,
   SeckillActivityView,
   ShareReportHandleRequest,
   ShareReportView,
@@ -399,6 +400,22 @@ export const adminApi = {
    */
   handleShareReport: (id: string, body: ShareReportHandleRequest) =>
     api.post<ShareReportView>(`/api/admin/share-reports/${id}/handle`, body),
+
+  // ---- 秒杀活动运营（A14，落在 duoduo-trade） ----
+
+  /**
+   * 秒杀活动全量列表（**含已下架**）。
+   * 只列已上架的话，「下架」就成了不可逆操作 —— 运营点不到「上架」把它放回来。
+   */
+  seckillActivities: () => api.get<SeckillActivityView[]>('/api/admin/seckill/activities'),
+
+  /** 建活动：skuId 必须真实存在（服务端会去商品服务校验，不存在返回 404） */
+  createSeckillActivity: (body: SeckillActivityCreateRequest) =>
+    api.post<SeckillActivityView>('/api/admin/seckill/activities', body),
+
+  /** 上下架；enabled=false 即对 C 端隐藏 */
+  setSeckillActivityStatus: (id: string, enabled: boolean) =>
+    api.post<SeckillActivityView>(`/api/admin/seckill/activities/${id}/status`, { enabled }),
 };
 
 // ---------- 支付（/api/payments） ----------

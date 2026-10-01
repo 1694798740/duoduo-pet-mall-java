@@ -13,7 +13,6 @@ import com.duoduo.trade.dto.CartDtos.CartView;
 import com.duoduo.trade.dto.CartDtos.InvalidReason;
 import com.duoduo.trade.entity.CartItemEntity;
 import com.duoduo.trade.mapper.CartItemMapper;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -142,11 +141,27 @@ public class CartService {
         checkQuantity(quantity);
         SkuSnapshot snap = requireSellableSnapshot(request.skuId());
 
-        CartItemEntity existing = findBySku(userId, request.skuId());
-        if (existing != null) {
-            return mergeInto(userId, existing, quantity, snap);
-        }
-
+        /*
+         * 加购的正确性**完全交给数据库**：一条 upsert 同时覆盖「不在就插、在就累加」。
+         *
+         * 这里踩过三个连环坑，全都是实测复现出来的，记下来免得再走一遍：
+         *
+         * 1) 最早是「INSERT，catch DuplicateKey，再 SELECT + updateById」。
+         *    但本方法带 @Transactional，MySQL 默认 REPEATABLE READ ——
+         *    事务快照看不到别的事务刚提交的行，兜底里的 SELECT 恒为 null，
+         *    只能把异常原样抛回去（并发 10 稳定 9/120 报 500）。
+         *
+         * 2) 把 SELECT 换成 UPDATE 自增后又变成**死锁**：失败的 INSERT 会在唯一索引上
+         *    留下锁，十几个事务互相等对方的锁，MySQL 直接判死锁回滚
+         *    （200 次里 8 次 500，日志全是 Deadlock found when trying to get lock）。
+         *
+         * 3) 最容易漏的是**丢失更新**：原本还有一条「行已存在 → 读出来 +delta 再 updateById」
+         *    的捷径。一致读不加锁，十个事务读到同一个旧值再各自写回，
+         *    结果是 200 次加购**全部返回成功，总数却只有 46**。
+         *    这类缺陷不报错、不告警，只有对账才会发现 —— 比 500 更危险。
+         *
+         * ON DUPLICATE KEY UPDATE 是**同一条语句**内判定并自增，没有中间态，三个坑一起消失。
+         */
         requireStock(quantity, snap);
         CartItemEntity row = new CartItemEntity();
         row.setId(idGenerator.nextId());
@@ -159,17 +174,47 @@ public class CartService {
         row.setCreatedAt(now);
         row.setUpdatedAt(now);
         try {
-            cartItemMapper.insert(row);
-        } catch (DuplicateKeyException e) {
-            // 并发加购：唯一索引 uk_cart_user_sku 已拦下第二条，退化为累加即可
-            CartItemEntity concurrent = findBySku(userId, request.skuId());
-            if (concurrent == null) {
-                // 命中的不是本约束（或刚被并发删除），交给全局异常处理器，不静默吞掉
+            cartItemMapper.upsert(row.getId(), userId, row.getSpuId(), row.getSkuId(), quantity, now);
+        } catch (RuntimeException e) {
+            // upsert 理论上不会再撞唯一键；真撞了（例如并发 DDL / 索引重建期）退回纯 UPDATE 一次，
+            // 那也是当前读、不受快照影响。仍然失败就必须抛出去，绝不静默吞。
+            if (!isCartUniqueConflict(e) || cartItemMapper.addQuantity(userId, request.skuId(), quantity, now) == 0) {
                 throw e;
             }
-            return mergeInto(userId, concurrent, quantity, snap);
         }
-        return toView(row, snap);
+        // 本事务刚写过这一行，一定能读到它；读不到就按本次请求的数量回视图，
+        // 宁可展示偏小，也不要在「加购已经成功」之后再抛一个 500。
+        CartItemEntity saved = findBySku(userId, request.skuId());
+        CartItemEntity result = saved != null ? saved : row;
+        checkMergedLimit(result, snap);
+        return toView(result, snap);
+    }
+
+    /** 累加后的数量必须同时满足「单规格上限」与「可售库存」；不满足就抛，事务回滚，不会留下半截数据 */
+    private void checkMergedLimit(CartItemEntity item, SkuSnapshot snap) {
+        int merged = safeQuantity(item);
+        if (merged > MAX_QUANTITY) {
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "单个规格最多购买 " + MAX_QUANTITY + " 件，当前购物车已有 " + merged + " 件");
+        }
+        requireStock(merged, snap);
+    }
+
+    /**
+     * 判断是不是「购物车同一用户同一 SKU 已存在」这条唯一键冲突。
+     *
+     * <p>沿异常链找 {@code Duplicate entry} 且键名是本表的 {@code uk_cart_user_sku}。
+     * 只认这一条：别的表、别的原因（字段超长、外键）一律不算，继续往上抛。
+     */
+    static boolean isCartUniqueConflict(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t == t.getCause()) break; // 防自引用成环
+            String msg = String.valueOf(t.getMessage());
+            if (msg.contains("Duplicate entry") && msg.contains("uk_cart_user_sku")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 修改数量（会校验库存上限） */
@@ -223,20 +268,6 @@ public class CartService {
     }
 
     // ---------------- 内部实现 ----------------
-
-    private CartItemView mergeInto(Long userId, CartItemEntity existing, int delta, SkuSnapshot snap) {
-        int merged = safeQuantity(existing) + delta;
-        if (merged > MAX_QUANTITY) {
-            throw new BizException(ErrorCode.BUSINESS_RULE,
-                    "单个规格最多购买 " + MAX_QUANTITY + " 件，当前购物车已有 " + safeQuantity(existing) + " 件");
-        }
-        requireStock(merged, snap);
-        existing.setQuantity(merged);
-        existing.setSelected(SELECTED);
-        existing.setUpdatedAt(nowUtc());
-        cartItemMapper.updateById(existing);
-        return toView(existing, snap);
-    }
 
     private CartItemEntity findBySku(Long userId, Long skuId) {
         return cartItemMapper.selectOne(new LambdaQueryWrapper<CartItemEntity>()

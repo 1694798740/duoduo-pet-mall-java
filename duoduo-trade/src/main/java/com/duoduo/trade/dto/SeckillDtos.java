@@ -26,6 +26,13 @@ public final class SeckillDtos {
             LocalDateTime endAt,
             /** ONGOING / UPCOMING / ENDED（按当前时间计算，与运营开关正交） */
             String phase,
+            /**
+             * 运营开关（true=已上架）。
+             *
+             * <p>必须下发：运营端列表要显示「上架 / 下架」，且**下架的活动也要能列出来** ——
+             * 否则一旦下架就从列表消失，运营再也点不到「上架」，活动等于被永久封印。
+             */
+            boolean enabled,
             List<SkuView> skus) {
     }
 

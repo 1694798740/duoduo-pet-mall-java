@@ -33,7 +33,7 @@ public class AdminSeckillController {
     @GetMapping("/activities")
     public ApiResponse<List<ActivityView>> list() {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(seckillService.listActivities());
+        return ApiResponse.ok(seckillService.listActivitiesForAdmin());
     }
 
     /** 创建秒杀活动（原价缺省取商品当前售价；余量自动装载进 Redis） */

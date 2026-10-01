@@ -27,6 +27,7 @@ const TABS = [
   { to: '/admin/orders', label: '订单干预', end: false },
   { to: '/admin/after-sales', label: '售后仲裁', end: false },
   { to: '/admin/operators', label: '运营账号', end: false },
+  { to: '/admin/seckill', label: '秒杀活动', end: false },
 ];
 
 export const AdminTabs: React.FC = () => (

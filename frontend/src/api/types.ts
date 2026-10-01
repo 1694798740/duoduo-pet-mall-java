@@ -991,7 +991,27 @@ export interface SeckillActivityView {
   startAt: string;
   endAt: string;
   phase: 'ONGOING' | 'UPCOMING' | 'ENDED';
+  /**
+   * 运营开关：false = 已下架，C 端查不到。
+   * 运营端列表**仍会下发**下架的活动，否则下架后没有任何入口能重新上架。
+   */
+  enabled: boolean;
   skus: SeckillSkuView[];
+}
+
+/** 运营端创建秒杀活动的入参 */
+export interface SeckillActivityCreateRequest {
+  title: string;
+  /** ISO 字符串（不带时区后缀，服务端按 UTC 挂钟解析） */
+  startAt: string;
+  endAt: string;
+  skus: Array<{
+    skuId: string;
+    seckillPrice: number;
+    originalPrice?: number | null;
+    totalStock: number;
+    perLimit?: number | null;
+  }>;
 }
 
 /** 秒杀下单结果：拿 orderNo 去订单详情走沙箱支付 */

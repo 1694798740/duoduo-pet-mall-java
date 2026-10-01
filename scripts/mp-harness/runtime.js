@@ -53,6 +53,7 @@ export function createMiniProgramRuntime(options = {}) {
     requests: [],       // 记录所有 wx.request
     responses: [],      // 记录所有响应（排查「页面为什么当失败处理」时看这里）
     unknownWxApis: new Set(), // 页面用到了但运行时没显式实现的 wx API（供审计，不静默吞）
+    stubs: [],       // 请求桩：命中即不发真实网络请求（写接口绝不能真打到库）
     toasts: [],
     navigations: [],
     storage: new Map(),
@@ -120,6 +121,40 @@ export function createMiniProgramRuntime(options = {}) {
     return moduleObj.exports;
   }
 
+  /**
+   * 注册一个请求桩：命中的请求**不发真实网络请求**。
+   *
+   * 为什么必须有它：行为断言要验「加购 / 下单」这类写操作，但让测试真去下单会
+   * 在库里留下一堆脏订单 —— 上一次跑留下的脏数据会污染下一次的断言，而且报错的
+   * 是**下一个脚本**，最难归因。所以写接口一律用桩拦住：请求照样被记录下来
+   * （可以断言「请求体到底发了什么」），只是不落到库里。
+   *
+   * @param {string|RegExp} matcher URL 包含该子串 / 匹配该正则即命中
+   * @param {object|Function} handler 直接给响应体，或 (opts) => 响应体
+   */
+  function stub(matcher, handler) {
+    state.stubs.push({ matcher, handler });
+    return () => {
+      const i = state.stubs.findIndex((s) => s.matcher === matcher && s.handler === handler);
+      if (i >= 0) state.stubs.splice(i, 1);
+    };
+  }
+
+  function matchStub(url, method, opts) {
+    for (const s of state.stubs) {
+      const hit = typeof s.matcher === 'string'
+        ? url.includes(s.matcher)
+        : s.matcher.test(url);
+      if (!hit) continue;
+      // 把请求体一并交给桩：断言要看的就是「请求体到底发了什么」
+      const body = typeof s.handler === 'function'
+        ? s.handler({ url, method, data: opts?.data })
+        : s.handler;
+      return { statusCode: 200, data: { code: 'SUCCESS', message: 'OK', data: body } };
+    }
+    return null;
+  }
+
   function makeWx() {
     return {
       request(opts) {
@@ -132,6 +167,17 @@ export function createMiniProgramRuntime(options = {}) {
         // 表现为「接口明明 200 且返回了数据，页面却当失败处理」。
         const hasBody = method !== 'GET' && method !== 'HEAD' && opts.data != null;
         state.requests.push({ url: absolute, method, data: opts.data });
+
+        // 桩优先：写接口不落库，但仍然完整记录请求（行为断言要看的就是请求体）
+        const stubbed = matchStub(absolute, method, opts);
+        if (stubbed) {
+          state.responses.push({ url: absolute, method, status: 200, data: stubbed.data, stubbed: true });
+          const wrapped = { statusCode: 200, data: stubbed.data, errMsg: 'request:ok' };
+          opts.success?.(wrapped);
+          opts.complete?.(wrapped);
+          return Promise.resolve(wrapped);
+        }
+
         const promise = (async () => {
           try {
             const res = await fetch(absolute, {
@@ -333,6 +379,7 @@ export function createMiniProgramRuntime(options = {}) {
     state,
     loadPage,
     mountPage,
+    stub,
     app: appInstance,
     /** 断言辅助：最近一次请求的 url */
     lastRequest: () => state.requests[state.requests.length - 1],

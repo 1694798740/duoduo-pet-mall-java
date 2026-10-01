@@ -53,6 +53,7 @@ import { AdminAuditsPage } from './pages/admin/Audits';
 import { AdminCategoriesPage } from './pages/admin/Categories';
 import { AdminBrandsPage } from './pages/admin/Brands';
 import { AdminOperatorsPage } from './pages/admin/Operators';
+import { AdminSeckillPage } from './pages/admin/Seckill';
 import { AdminOrdersPage } from './pages/admin/Orders';
 import { AdminAfterSalesPage } from './pages/admin/AfterSales';
 import { AdminShareReportsPage } from './pages/admin/ShareReports';
@@ -360,6 +361,14 @@ export const App: React.FC = () => (
         element={
           <RequireOperator>
             <AdminOperatorsPage />
+          </RequireOperator>
+        }
+      />
+      <Route
+        path="/admin/seckill"
+        element={
+          <RequireOperator>
+            <AdminSeckillPage />
           </RequireOperator>
         }
       />
