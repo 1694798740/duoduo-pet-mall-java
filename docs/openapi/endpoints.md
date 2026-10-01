@@ -96,7 +96,6 @@
 - `POST /api/orders/{orderNo}/pay`
 - `POST /api/orders/{orderNo}/refund`
 - `GET /api/orders/{orderNo}/settlement`
-- `POST /api/orders/{orderNo}/ship`
 - `GET /api/orders/internal/{orderNo}/fact`
 - `POST /api/orders/internal/{orderNo}/refund`
 - `GET /api/orders/internal/seller/{sellerId}/stats`

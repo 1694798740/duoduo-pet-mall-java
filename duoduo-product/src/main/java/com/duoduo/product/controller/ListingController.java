@@ -94,7 +94,7 @@ public class ListingController {
     }
 
     /** 闲置详情（免登）；未过审的一律 404 */
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ApiResponse<ListingDetail> detail(@PathVariable Long id) {
         return ApiResponse.ok(listingService.detail(id));
     }
@@ -137,7 +137,7 @@ public class ListingController {
      * 用它拿不回内容 —— 编辑重提需要 owner 视角读端点。路径 {@code /mine/{id}}
      * 与 {@code /mine/list} 共存：字面量 {@code list} 优先于 {@code {id}} 变量匹配。
      */
-    @GetMapping("/mine/{id}")
+    @GetMapping("/mine/{id:\\d+}")
     public ApiResponse<ListingOwnerView> ownerDetail(@PathVariable Long id) {
         return ApiResponse.ok(listingService.ownerDetail(id));
     }

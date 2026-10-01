@@ -15,13 +15,12 @@ import java.io.IOException;
 /**
  * 内部接口访问控制：校验服务间 / 运营侧调用的共享密钥。
  *
- * <p>保护的接口：
+ * <p><b>{@code POST /api/orders/{orderNo}/ship} 已于 R60 删除</b>：它曾是发货的内部凭据通道，
+ * 但只验凭据、不验「调用者是不是这笔订单的卖家」。卖家端落地后它就是那个更松的口子 ——
+ * 留着它，等于把「给任意订单发货」的钥匙继续放在同一个抽屉里。
+ * 依赖它的 7 套冒烟脚本已迁到 {@code POST /api/seller/orders/{orderNo}/ship}。<br>
+ * 保护范围现在只剩：
  * <ul>
- *   <li>{@code POST /api/orders/{orderNo}/ship} —— <b>发货</b>。
- *       发货本该由卖家执行；卖家账号体系在卖家中心（M5-9）落地后，
- *       真正的入口是 {@code POST /api/seller/orders/{orderNo}/ship}。
- *       这里保留内部凭据通道，是因为既有的运维脚本与集成测试仍在用它，
- *       且「运营代卖家发货」本身也是合法场景。</li>
  *   <li>{@code /api/orders/internal/**} —— 运营侧动作与补偿调度：
  *       售后退款（{@code /internal/{orderNo}/refund}）与手动触发补偿调度（{@code /internal/sweep}）。</li>
  * </ul>

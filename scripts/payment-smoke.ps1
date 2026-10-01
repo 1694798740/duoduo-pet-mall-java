@@ -34,6 +34,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -75,6 +80,11 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货 ——
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$op = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
+$sessOp = $op.session
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -124,8 +134,15 @@ Check "直连交易服务、无凭据触发关单调度被拒绝（403）" ($r.s
 Check "拒绝响应为规范化错误结构（code=FORBIDDEN）" ($r.body.code -eq 'FORBIDDEN') $r.body.code
 $r = Call 'Post' "$Trade/api/orders/internal/sweep" $null $null @{ 'X-Internal-Token' = 'wrong-token' }
 Check "直连交易服务、错误凭据被拒绝（403）" ($r.status -eq 403) $r.status
-$r = Call 'Post' "$Trade/api/orders/ANYORDER/ship" $null $null
-Check "直连交易服务、无凭据发货被拒绝（403）" ($r.status -eq 403) $r.status
+# 旧的无归属校验发货端点（POST /api/orders/{orderNo}/ship）已下线，收敛为卖家端单一入口。
+# 这里断言它**确实下线了**（网关对已删除的路径给 404），否则「删了但没人验证」会让它悄悄复活。
+$r = Call 'Post' "$Gateway/api/seller/orders/ANYORDER/ship" $sessShip @{}
+Check "已登录但订单号不合法 → 不是 200（发货要校验订单存在）" ($r.status -ne 200) $r.status
+# 实测：端点删除后，这段路径不再有路由 —— 带登录态得到 403，不带登录态网关先给 401，
+# 都不可能是 200。断言「不是 200」而不是写死 404：网关对无路由路径给什么码属于实现细节，
+# 真正要守住的性质是「这条口子再也发不出货」。
+$r = Call 'Post' "$Gateway/api/orders/ANYORDER/ship" $sessA @{}
+Check "旧发货端点（/api/orders/{no}/ship）已下线 → 不再是 200" ($r.status -ne 200) $r.status
 
 Write-Host "> 内部接口访问控制（第二层：网关先挡未登录流量）"
 $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $null $null
@@ -227,12 +244,12 @@ Write-Host ""
 Write-Host "> 发货与确认收货"
 $r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
 Check "未发货不能确认收货（422）" ($r.status -eq 422) $r.status
-$r = Call 'Post' "$Gateway/api/orders/$on1/ship" $sessA $null $H_INTERNAL
-Check "带内部凭据发货成功（200）" ($r.status -eq 200) $r.status
+$r = Call 'Post' "$Gateway/api/seller/orders/$on1/ship" $sessShip @{}
+Check "平台运营（自营订单归属方）发货成功（200）" ($r.status -eq 200) $r.status
 Check "订单转为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
 Check "状态文案为「已发货」" ($r.body.data.statusLabel -eq '已发货') $r.body.data.statusLabel
 Check "发货时间非空" (-not [string]::IsNullOrEmpty($r.body.data.shippedAt)) $r.body.data.shippedAt
-$r = Call 'Post' "$Gateway/api/orders/$on1/ship" $sessA $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$on1/ship" $sessShip @{}
 Check "重复发货被拒（422）" ($r.status -eq 422) $r.status
 $r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
 Check "确认收货返回 200" ($r.status -eq 200) $r.status

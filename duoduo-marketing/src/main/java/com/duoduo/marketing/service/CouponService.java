@@ -197,7 +197,8 @@ public class CouponService {
             throw BizException.validation("订单金额不能为负数");
         }
         LocalDateTime now = nowUtc();
-        List<CouponEntity> candidates = couponMapper.selectUsable(userId, now);
+        // 传「当天零点」而非当前时刻：有效期按自然日判定（见 startOfDayUtc 注释）
+        List<CouponEntity> candidates = couponMapper.selectUsable(userId, startOfDayUtc(now));
         Map<Long, CouponTemplateEntity> templates = loadTemplates(candidates);
 
         List<UsableCoupon> rows = new ArrayList<>(candidates.size());
@@ -251,8 +252,10 @@ public class CouponService {
 
         LocalDateTime now = nowUtc();
         LockResult verdict = precheck.result();
-        // CAS：只有 UNUSED 且未过期的那一行会被改成 LOCKED，并发下只有一单能成功
-        int affected = couponMapper.lock(verdict.code(), request.userId(), request.orderNo(), now);
+        // CAS：只有 UNUSED 且未过期的那一行会被改成 LOCKED，并发下只有一单能成功。
+        // 有效期判定传「当天零点」（自然日口径），时刻戳仍传精确 now —— 见 CouponMapper#lock。
+        int affected = couponMapper.lock(verdict.code(), request.userId(), request.orderNo(), now,
+                startOfDayUtc(now));
         if (affected == 0) {
             return LockResult.reject("该优惠券刚刚被其他订单占用，请重新选择");
         }
@@ -300,7 +303,7 @@ public class CouponService {
         if (status == CouponStatus.USED) {
             return new Precheck(LockResult.reject("该优惠券已被使用"), 0L);
         }
-        if (status == CouponStatus.EXPIRED || coupon.getExpireAt().isBefore(now)) {
+        if (status == CouponStatus.EXPIRED || expiredByDay(coupon.getExpireAt(), now)) {
             return new Precheck(LockResult.reject("该优惠券已过期"), 0L);
         }
         if (status == CouponStatus.LOCKED) {
@@ -438,7 +441,8 @@ public class CouponService {
         if (released > 0) {
             log.warn("券补偿调度：解锁 {} 张超时锁定的券（锁定早于 {}）", released, isoTs(deadline));
         }
-        int expired = couponMapper.markExpired(now);
+        // 同样按自然日判定：到期日当天不该被标记成 EXPIRED（否则列表里还能看到、下单却说已过期）
+        int expired = couponMapper.markExpired(startOfDayUtc(now));
         if (expired > 0) {
             log.info("券补偿调度：{} 张过期券已标记为 EXPIRED", expired);
         }
@@ -573,6 +577,32 @@ public class CouponService {
 
     private static LocalDateTime nowUtc() {
         return LocalDateTime.now(ZoneOffset.UTC);
+    }
+
+    // ---------------- R60 放宽：有效期按「自然日」判定 ----------------
+
+    /**
+     * 有效期判定用「当天零点」。
+     *
+     * <p><b>放宽了什么</b>：此前 {@code expire_at} 是秒级比较 —— 一张到期日写「今天」的券，
+     * 若 {@code expire_at} 落在今天 08:00，那么早上 9 点它就已经不能用了，
+     * 而卡包上明明写着「今天到期」。用户会认为是系统提前作废了自己的券。
+     * 券的有效期本来就是按天发的（运营建券给的是日期），按秒判定属于实现细节泄漏到了用户可见行为上。
+     *
+     * <p><b>按自然日判定后</b>：到期日当天 23:59:59 之前都可用，次日零点起失效。
+     * 所有「查可用券 / 锁券 / 标记过期」三条链路必须<b>同时</b>改用这个口径，
+     * 只改一条就会出现「列表里能看到、下单说已过期」—— 那比放宽之前更难解释。
+     */
+    private static LocalDateTime startOfDayUtc(LocalDateTime now) {
+        return now.toLocalDate().atStartOfDay();
+    }
+
+    /** 券在 {@code expireAt} 当日 23:59:59.999 之前都算未过期（见 {@link #startOfDayUtc}）。 */
+    static boolean expiredByDay(LocalDateTime expireAt, LocalDateTime now) {
+        if (expireAt == null) {
+            return false;
+        }
+        return expireAt.toLocalDate().atTime(23, 59, 59).plusNanos(999_000_000L).isBefore(now);
     }
 
     private static String isoTs(LocalDateTime time) {

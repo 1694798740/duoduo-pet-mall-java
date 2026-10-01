@@ -39,6 +39,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -80,6 +85,11 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货 ——
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$op = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
+$sessOp = $op.session
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -241,7 +251,7 @@ $r = Call 'Post' "$Gateway/api/orders/$on1/confirm" $sessA $null
 Check "未发货不能确认收货（422）" ($r.status -eq 422) $r.status
 
 # 发货：钱仍应在托管里
-$r = Call 'Post' "$Gateway/api/orders/$on1/ship" $sessA $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$on1/ship" $sessShip @{}
 Check "带内部凭据发货成功（200）" ($r.status -eq 200) $r.status
 Check "发货后订单为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
 Check "★ 发货不等于放款：托管仍为 CUSTODY" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
@@ -361,7 +371,7 @@ $before3 = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU_A
 $c3 = PlaceAndPay $sessA $SKU_A 1 0 0 '场景三'
 Check "场景三：下单并支付成功（200）" $c3.ok $c3.step
 $on4 = $c3.orderNo
-$r = Call 'Post' "$Gateway/api/orders/$on4/ship" $sessA $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$on4/ship" $sessShip @{}
 Check "（准备）发货成功" ($r.status -eq 200) $r.status
 Check "（准备）订单为 SHIPPED" ($r.body.data.status -eq 'SHIPPED') $r.body.data.status
 
@@ -389,7 +399,7 @@ Write-Host "> 场景四：发货满 N 天自动确认收货并放款"
 $c4 = PlaceAndPay $sessA $SKU_A 1 0 0 '场景四'
 Check "场景四：下单并支付成功（200）" $c4.ok $c4.step
 $on5 = $c4.orderNo
-$r = Call 'Post' "$Gateway/api/orders/$on5/ship" $sessA $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$on5/ship" $sessShip @{}
 Check "（准备）发货成功（SHIPPED）" ($r.status -eq 200) $r.status
 $r = Call 'Get' "$Gateway/api/orders/$on5/settlement" $sessA $null
 Check "（准备）自动收货前资金仍在托管（CUSTODY）" ($r.body.data.status -eq 'CUSTODY') $r.body.data.status

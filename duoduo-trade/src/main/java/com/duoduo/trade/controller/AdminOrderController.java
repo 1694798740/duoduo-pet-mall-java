@@ -43,7 +43,7 @@ public class AdminOrderController {
     }
 
     /** 运营按订单号查详情（无归属限制） */
-    @GetMapping("/{orderNo}")
+    @GetMapping("/{orderNo:\\d+}")
     public ApiResponse<OrderView> detail(@PathVariable String orderNo) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(orderService.adminDetail(orderNo));

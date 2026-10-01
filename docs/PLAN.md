@@ -204,6 +204,49 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-01（第六十轮 · 券放宽 + 性能压测 + 旧接口下线 + 两套测试环境 + 六套脚本迁移）
+
+> 用户一次性派下五项，要求按顺序执行、每项说明「改了什么 / 怎么验的 / 结果」。
+> 其中第 3 项（旧接口下线）依赖第 5 项（脚本迁移），故**先迁移脚本再删端点**。
+
+**① 优惠券放宽（用户拍板「放宽」）**
+
+| 规则 | 放宽前 | 放宽后 |
+|---|---|---|
+| 门槛 | 只看拆单后**金额最大那一子单** | 按本次下单的**商品总额**判定 |
+| 抵扣 | 只抵在**最大那一单** | 按各子单金额**比例分摊到每一单**，取整余数补给最大单（各单之和严格等于券面额） |
+| 有效期 | 秒级比较（到期日当天上午就不能用） | **按自然日**判定，到期日 23:59:59 前仍可用 |
+
+券**归属不变**：仍只锁在归属单的订单号上，券码仍只写在归属单 —— 分摊改的是「钱怎么算」，不是「券归谁」。
+新增 `CouponAllocationTest`（8 项，含「丢余数 → 总和小於面额」的反向验证）与 `CouponValidityTest`（4 项）。
+
+**② 性能压测**：`scripts/perf/bench.py`（纯标准库，不依赖 JMeter）。
+并发 10/25/50/100 × 10 秒，读/写两套基线（读 avg≤300 / P95≤600 / P99≤1000 ms；写 avg≤800 / P95≤1500 / P99≤3000 ms；错误率<0.1%）。
+100 并发峰值：商品列表 1659 QPS / P99 175ms、搜索 1477 / 131ms、详情 1559 / 198ms、类目树 3782 / 69ms、闲置列表 1966 / 151ms、结算预览 2278 / 107ms，**错误率全 0**。结果落 `logs/perf/r60-bench.json`。
+- **压测暴露并修掉真实缺陷**：`@GetMapping("/{spuId}")` 会捕获 `/api/products/home` 这类非数字段 → 转 `Long` 失败 → 兜底 **500**（应为 404）。已给 6 处同类路径加 `\d+` 形状约束。
+- 压测器自身两处假绿同修：每请求新建 TCP 连接耗尽本机临时端口（改每线程长连接）；只把 5xx 计错会让 401/422 被算成成功（改非 2xx 一律计失败）。
+
+**③ 旧接口下线**：`POST /api/orders/{orderNo}/ship` **只验内部凭据、不验归属**（有凭据就能发任何人的货）已删除，
+收敛为 `/api/seller/orders/{orderNo}/ship`（`requireSellerScope` + `requireOwnOrder`）。过滤器注释与三处接口文档同步清理，`extract-api-contract.py --check` 转 PASS。
+
+**④ 两套测试环境**
+- 小程序「无浏览器」运行时 `scripts/mp-harness/`：`node:vm` 沙箱 + `wx.*` 桩 + 自实现 require，**直接加载仓库里真实的页面 js**。
+  `pages-smoke.test.js` 逐个挂载 30 个页面（33 项），`ai-page.test.js` 断言 AI 页真实行为（4 项）。
+- 前端真实浏览器：Playwright + Chromium 装进 `scripts/e2e/node_modules`（仓库自包含），新增一键运行器 `scripts/e2e/run-ui-checks.ps1`，**8 套全 PASS**。
+
+**⑤ 六套脚本迁移**（aftersale / backfill / credit / logistics / payment / review / settlement）：旧发货端点全部切到卖家正规入口；
+新增 `scripts/lib/platform-operator.ps1`（自营订单 `seller_id=0` 归平台，**只有 OPERATOR 可见**）。
+结果：101 / 88 / 82 / 79 / 59 / 125 / 72，全 0 失败。
+
+**迁移中修掉的三个共性问题**（都表现为「环境问题」，实为脚本问题）：
+1. **PowerShell 5.1 的 BOM**：写回 .ps1 丢了 UTF-8 BOM，中文注释被解析成乱码 → `ParserError 字符串缺少终止符`。已批量补回。
+2. **Node 同步派生态被禁**：本机 `spawnSync`/`execFileSync` 一律 `EBUSY errno -4082`（连 `cmd`/`where` 都起不来），而**异步 `spawn` 正常**。
+   新增 `scripts/lib/docker-exec.mjs`（异步），6 套 e2e 的 `sql()` 全部改为 `await`。
+3. **雪花/长 id 已按字符串下发**：`"id":"5003"` 拿数字 `5003` 去 `===` 恒 false。已统一字符串比对，`bigId` 正则放宽为 `"?(\d{15,})"?`。
+
+**本轮质量口径**：后端单测 **222/0**（+12）；小程序无浏览器 **37/0** + 内部凭据对拍 **4/0**；
+前端真实浏览器 **8 套全 PASS**；`run-all-smoke.ps1` **23 套全通过 / 0 失败**；Docker 8/8 jar md5 逐模块一致。
+
 ### 2026-09-25（第二十五轮 · 微信一键登录引导加固）
 
 > 用户反馈「微信一键登录还是不行」+ 截图（`/api/auth/wechat/token 422`，屏幕无任何引导）。
@@ -2019,20 +2062,35 @@ java -jar ApacheJMeter.jar -n -t D:\智能体项目\duoduo-pet-mall-java\scripts
      -JTHREADS=100 -JRAMP=30 -JDURATION=300 -j D:\智能体项目\duoduo-pet-mall-java\logs\perf\step100-run.log
 # 队列通道换 order-queued-enqueue.jmx（trade 需 DUODUO_TRADE_ORDER_MODE=queue）；汇总：python scripts/perf/summarize_jtl.py <jtl...>
 
+# ---------- R60 压测（scripts/perf/bench.py，纯标准库，无外部依赖；结果落 logs/perf/r60-bench.json） ----------
+# 并发梯度 10/25/50/100 × 10s；读/写两套基线；--check 供 CI 用（不达标退出码 1）
+python scripts/perf/bench.py --concurrency 10,25,50,100 --duration 10   # 跑全梯度并落盘（默认梯度 10,25,50）
+python scripts/perf/bench.py --check                                    # 只判定达标与否，退出码 0/1
+python scripts/perf/bench.py --out logs/perf/自定义.json                  # 换落盘路径
+
 # 手动触发一轮托管单回补（先 dryRun 看计划，再执行；运营账号的 Cookie 需自行带上）
 # curl.exe -X POST "http://127.0.0.1:8080/api/admin/settlements/backfill?dryRun=true"
 
-# 六套真实浏览器 UI 自测（需先起前端 dev server）
-# ⚠️ 端口用 3000 而非 5173：本机 5173 落在 Windows 排除端口段（Docker Desktop 启动后 WinNAT 保留 5149-5248，
-#    报 listen EACCES）。3000 本就在网关 CORS_ORIGINS 白名单里，且必须走 localhost（不能 127.0.0.1）。
+# ---------- 八套真实浏览器 UI 自测（一键：起服务 → 跑 8 套 → 建/拆券夹具 → 收尾） ----------
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1          # 8 套全跑
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home  # 只跑自包含那套
+# 手工跑（默认 UI_BASE=http://localhost:5173，必须走 localhost 不能 127.0.0.1 —— CORS 白名单）
 cd D:\智能体项目\duoduo-pet-mall-java\frontend
-node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开一个终端
-cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs      # 商家端 29 项
-UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs              # 评价与晒单 20 项
-UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs           # 售后三端 44 项（买家→卖家→运营整条链）
-UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs           # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
-UI_BASE=http://localhost:3000 node scripts/e2e/share-report-ui-check.mjs        # 举报处理台 24 项（运营视角；含「驳回不误删内容」）
-# 地址簿 64 项 / 优惠券 43 项（优惠券需先建夹具：scripts\e2e\coupon-ui-fixture.ps1 -Action create|drop）——合计 7 套 268 项
+node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开一个终端
+cd .. && node scripts/e2e/home-ui-check.mjs          # 首页 7 项（非白屏 / 可点击 / 真点进详情 / 无非预期接口错误）
+node scripts/e2e/address-ui-check.mjs               # 收货地址簿 64 项
+node scripts/e2e/seller-ui-check.mjs                # 商家端 29 项
+node scripts/e2e/review-ui-check.mjs                # 评价与晒单 21 项
+node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项
+node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项
+node scripts/e2e/share-report-ui-check.mjs          # 举报处理台 24 项
+node scripts/e2e/coupon-ui-check.mjs                # 优惠券 43 项（夹具由一键运行器自动建/拆；手工跑用 coupon-ui-fixture.ps1 -Action create|drop）
+# 合计 8 套 276 项
+
+# ---------- 小程序「无浏览器」自动化测试（不需要浏览器，只需网关在跑） ----------
+node --test scripts/mp-harness/pages-smoke.test.js     # 30 个页面逐个挂载（33 项）：生命周期抛错 / 卸载清理写错
+node --test scripts/mp-harness/ai-page.test.js         # AI 页 4 项：快捷问题接住 / 真实发消息 / 换话题清追问
+node --test scripts/lib/internal-token-parity.test.js  # 内部凭据 HMAC：JS 侧与 PowerShell 侧对拍 4 项
 
 # ---------- 买家端 Web 商城（frontend/） ----------
 cd D:\智能体项目\duoduo-pet-mall-java\frontend

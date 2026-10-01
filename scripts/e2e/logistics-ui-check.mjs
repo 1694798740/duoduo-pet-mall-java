@@ -40,27 +40,27 @@
  * 用法：
  *   cd frontend && node node_modules/vite/bin/vite.js --port 3000   # 另开一个终端
  *   node scripts/e2e/logistics-ui-check.mjs
- * 环境变量覆盖：GATEWAY / FULFILMENT / INTERNAL_TOKEN / UI_BASE / CHROME_PATH / PW_CORE / KEEP_FIXTURE=1
+ * 环境变量覆盖：GATEWAY / FULFILMENT / INTERNAL_TOKEN(根密钥) / UI_BASE / CHROME_PATH / PW_CORE / KEEP_FIXTURE=1
  */
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
+import { newInternalToken } from '../lib/internal-token.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 内部摄入接口**直连**履约服务：网关里没有 /api/logistics/internal/** 这条路由，
 // 且走网关会先被 JWT 过滤器拦成 401（那是 T-25 那类最难查的假象）
 const FUL = process.env.FULFILMENT ?? 'http://127.0.0.1:8084';
-const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN ?? 'duoduo-local-dev-internal-token';
+const INTERNAL_TOKEN_HEADER = () => ({ 'X-Internal-Token': newInternalToken('POST') });
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
 
 const PWD = 'duoduo12345';
 
@@ -122,7 +122,7 @@ async function call(method, p, body, jar) {
 async function ingest(orderNo, nodes, source = 'COURIER') {
   const res = await fetch(`${FUL}/api/logistics/internal/${orderNo}/tracks`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'X-Internal-Token': INTERNAL_TOKEN },
+    headers: { 'content-type': 'application/json', ...INTERNAL_TOKEN_HEADER() },
     body: JSON.stringify({ source, nodes }),
   });
   const raw = await res.text();
@@ -141,24 +141,20 @@ async function ingest(orderNo, nodes, source = 'COURIER') {
  * JSON.parse 会改写成另一个数 —— 拿去改库就「改到根本不存在的卖家头上」。
  */
 function bigId(raw, key = 'id') {
-  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*(\\d{15,})`));
+  // 兼容两种下发形态：雪花 id 早已按**字符串**下发（"id":"710..."），
+  // 只认数字型（"id":710...）会在「后端改了序列化」之后静默取不到值 —— 那比报错更难查。
+  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"?(\\d{15,})"?`));
   if (!m) throw new Error(`未从响应中提取到 ${key}：${raw.slice(0, 200)}`);
   return m[1];
 }
 
-function sql(db, q) {
-  const env = {
-    ...process.env,
-    PATH: 'C:\\Program Files\\Docker\\Docker\\resources\\bin;' + process.env.PATH,
-    DOCKER_CONFIG: 'D:\\duoduo-infra\\docker-nocreds',
-  };
-  return execFileSync(
-    'docker',
-    ['exec', 'duoduo-mysql', 'mysql', '-uduoduo', '-pduoduo', '-N', '-B',
-     '--default-character-set=utf8mb4', '-D', db, '-e', q],
-    { env, encoding: 'utf8' },
-  ).trim();
-}
+/**
+ * 库查询（异步）。
+ * 不能用 execFileSync：本机 Node 的**同步**派生态一律 EBUSY（连 cmd/where 都起不来），
+ * 而异步 spawn 正常 —— 详见 scripts/lib/docker-exec.mjs 文件头。之前卡在这里时，
+ * 表象是 `Error: spawnSync docker EBUSY`，看起来像 docker 不可用，方向会整个跑偏。
+ */
+const sql = (db, q) => mysqlExec(db, q);
 
 async function newUser(prefix) {
   const phone = `139${String(Math.floor(1e7 + Math.random() * 8e7))}`;
@@ -194,7 +190,7 @@ check('卖家重新登录后角色为 SELLER', (sellerMe.data.role ?? '').toUppe
 const sellerId = bigId(sellerMe.raw);
 
 // 运营：库内提权 → 重登（没有自助入驻入口，与 logistics-smoke.ps1 同口径）
-sql('duoduo_user', `UPDATE t_user SET role = 'OPERATOR' WHERE phone = '${operator.phone}';`);
+await sql('duoduo_user', `UPDATE t_user SET role = 'OPERATOR' WHERE phone = '${operator.phone}';`);
 await call('POST', '/api/auth/login', { phone: operator.phone, password: PWD }, operator.jar);
 const opMe = await call('GET', '/api/users/me', undefined, operator.jar);
 check('运营账号提权并重登生效', (opMe.data.role ?? '').toUpperCase() === 'OPERATOR', opMe.data.role);
@@ -204,7 +200,7 @@ const list = (await call('GET', '/api/products?page=1&pageSize=1', undefined, bu
 const spuId = list.items[0].id;
 const detail = (await call('GET', `/api/products/${spuId}`, undefined, buyer.jar)).data;
 const skuId = detail.skus[0].id;
-const stockBefore = Number(sql('duoduo_product', `SELECT stock FROM t_sku WHERE id = ${skuId};`));
+const stockBefore = Number(await sql('duoduo_product', `SELECT stock FROM t_sku WHERE id = ${skuId};`));
 
 async function placeAndPay() {
   await call('POST', '/api/cart/items', { skuId, quantity: 1 }, buyer.jar);
@@ -226,12 +222,12 @@ const orderNo2 = await placeAndPay();  // O2：不发货
 check('两笔订单下单并支付成功', Boolean(orderNo && orderNo2), { orderNo, orderNo2 });
 
 // 商品域没有 seller_id，「这笔单是谁的」只能即位此刻到位：订单与托管单一起改
-sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
+await sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                      SET o.seller_id = ${sellerId}, s.seller_id = ${sellerId}
                      WHERE o.order_no IN ('${orderNo}', '${orderNo2}');`);
 check(
   '（夹具）两笔订单归属已划给卖家',
-  sql('duoduo_trade', `SELECT COUNT(*) FROM t_order WHERE order_no IN ('${orderNo}','${orderNo2}') AND seller_id = ${sellerId};`) === '2',
+  await sql('duoduo_trade', `SELECT COUNT(*) FROM t_order WHERE order_no IN ('${orderNo}','${orderNo2}') AND seller_id = ${sellerId};`) === '2',
   null,
 );
 
@@ -267,7 +263,7 @@ async function waitForTrackCount(no, expected) {
 // ---------------- 2. UI ----------------
 
 const { chromium } = await import(PW_CORE);
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const httpErrors = [];
 const consoleErrors = [];
 
@@ -436,12 +432,12 @@ check('无 console / pageerror（401/403/404 资源加载提示与 favicon 除�
 await browser.close();
 
 if (!process.env.KEEP_FIXTURE) {
-  sql('duoduo_fulfilment', `DELETE FROM t_logistics_track WHERE order_no IN ('${orderNo}','${orderNo2}');`);
-  sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
+  await sql('duoduo_fulfilment', `DELETE FROM t_logistics_track WHERE order_no IN ('${orderNo}','${orderNo2}');`);
+  await sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                        SET o.seller_id = 0, s.seller_id = 0
                        WHERE o.order_no IN ('${orderNo}','${orderNo2}');`);
-  sql('duoduo_product', `UPDATE t_sku SET stock = ${stockBefore}, frozen_stock = 0 WHERE id = ${skuId};`);
-  sql('duoduo_user', `UPDATE t_user SET role = 'USER' WHERE phone = '${operator.phone}';`);
+  await sql('duoduo_product', `UPDATE t_sku SET stock = ${stockBefore}, frozen_stock = 0 WHERE id = ${skuId};`);
+  await sql('duoduo_user', `UPDATE t_user SET role = 'USER' WHERE phone = '${operator.phone}';`);
   console.log(`  （夹具已复原）两笔订单的轨迹已删除、订单归还平台自营、SKU ${skuId} 库存复原为 ${stockBefore}、运营账号降回 USER`);
 }
 

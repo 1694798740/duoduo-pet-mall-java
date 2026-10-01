@@ -66,6 +66,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -108,6 +113,7 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -290,8 +296,10 @@ Check "① 节点描述带上了卖家填的物流公司与单号" ($tracks1[0].
 Check "① 发生时间是 ISO-8601（UTC，以 Z 结尾）" ($tracks1[0].occurredAt -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$') $tracks1[0].occurredAt
 
 # 内部接口发货（不带物流信息）—— 证明「节点文案缺失时由服务端兜底为节点名」
-$r = Call 'Post' "$Gateway/api/orders/$on2/ship" $sessA $null $H_INTERNAL
-Check "内部凭据发货成功（无物流信息）" ($r.status -eq 200) $r.status
+# 注意归属：$on2 是卖家 S 的订单，只能由 S 自己发货 —— 用平台运营会话会 403
+# （旧的无归属校验端点不校验这个，迁移后身份必须对得上）。
+$r = Call 'Post' "$Gateway/api/seller/orders/$on2/ship" $sessS @{}
+Check "卖家 S 不带物流信息发货也成功（200）" ($r.status -eq 200) $r.status
 $tracks2 = @()
 for ($i = 0; $i -lt 20; $i++) {
     $r = Call 'Get' "$Gateway/api/logistics/orders/$on2/tracks" $sessA $null $null

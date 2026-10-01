@@ -55,6 +55,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -97,6 +102,7 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -272,7 +278,7 @@ if (-not $SkipDbCheck) {
     Check "（夹具）A / B 的托管单已删除" ($leftAB -eq '0') $leftAB
 }
 
-$r = Call 'Post' "$Gateway/api/orders/$onB/ship" $sessB $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$onB/ship" $sessShip @{}
 Check "B 发货成功（200）" ($r.status -eq 200) $r.status
 $r = Call 'Post' "$Gateway/api/orders/$onB/confirm" $sessB $null
 Check "★ B 确认收货仍然成功（放款失败不阻断买家收货）" ($r.status -eq 200) $r.status
@@ -292,7 +298,7 @@ if (-not $SkipDbCheck) {
 }
 
 # 控制组 D：走正常链路，保留托管单，用于验证「已有托管单的订单不被改动」
-$r = Call 'Post' "$Gateway/api/orders/$onD/ship" $sessB $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$onD/ship" $sessShip @{}
 Check "D 发货成功（控制组）" ($r.status -eq 200) $r.status
 $r = Call 'Post' "$Gateway/api/orders/$onD/confirm" $sessB $null
 Check "D 确认收货成功且已放款（控制组）" ($r.status -eq 200 -and $r.body.data.settlement.status -eq 'RELEASED') $r.status

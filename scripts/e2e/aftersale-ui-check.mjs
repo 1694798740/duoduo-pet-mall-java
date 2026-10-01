@@ -31,18 +31,17 @@
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
 
 const PWD = 'duoduo12345';
 
@@ -93,24 +92,20 @@ async function call(method, p, body, jar) {
  * JSON.parse 会改写成另一个数 —— 拿去改库就「改到根本不存在的卖家头上」。
  */
 function bigId(raw, key = 'id') {
-  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*(\\d{15,})`));
+  // 兼容两种下发形态：雪花 id 早已按**字符串**下发（"id":"710..."），
+  // 只认数字型（"id":710...）会在「后端改了序列化」之后静默取不到值 —— 那比报错更难查。
+  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"?(\\d{15,})"?`));
   if (!m) throw new Error(`未从响应中提取到 ${key}：${raw.slice(0, 200)}`);
   return m[1];
 }
 
-function sql(db, q) {
-  const env = {
-    ...process.env,
-    PATH: 'C:\\Program Files\\Docker\\Docker\\resources\\bin;' + process.env.PATH,
-    DOCKER_CONFIG: 'D:\\duoduo-infra\\docker-nocreds',
-  };
-  return execFileSync(
-    'docker',
-    ['exec', 'duoduo-mysql', 'mysql', '-uduoduo', '-pduoduo', '-N', '-B',
-     '--default-character-set=utf8mb4', '-D', db, '-e', q],
-    { env, encoding: 'utf8' },
-  ).trim();
-}
+/**
+ * 库查询（异步）。
+ * 不能用 execFileSync：本机 Node 的**同步**派生态一律 EBUSY（连 cmd/where 都起不来），
+ * 而异步 spawn 正常 —— 详见 scripts/lib/docker-exec.mjs 文件头。之前卡在这里时，
+ * 表象是 `Error: spawnSync docker EBUSY`，看起来像 docker 不可用，方向会整个跑偏。
+ */
+const sql = (db, q) => mysqlExec(db, q);
 
 async function newUser(prefix) {
   const phone = `139${String(Math.floor(1e7 + Math.random() * 8e7))}`;
@@ -143,7 +138,7 @@ check('卖家重新登录后角色为 SELLER', (sellerMe.data.role ?? '').toUppe
 const sellerId = bigId(sellerMe.raw);
 
 // 运营：库内提权 → 重登（没有自助入驻入口，与 aftersale-smoke.ps1 同口径）
-sql('duoduo_user', `UPDATE t_user SET role = 'OPERATOR' WHERE phone = '${operator.phone}';`);
+await sql('duoduo_user', `UPDATE t_user SET role = 'OPERATOR' WHERE phone = '${operator.phone}';`);
 await call('POST', '/api/auth/login', { phone: operator.phone, password: PWD }, operator.jar);
 const opMe = await call('GET', '/api/users/me', undefined, operator.jar);
 check('运营账号提权并重登生效', (opMe.data.role ?? '').toUpperCase() === 'OPERATOR', opMe.data.role);
@@ -167,7 +162,7 @@ const paid = await call('POST', `/api/orders/${orderNo}/pay`, { channel: 'mock',
 check('订单支付成功', paid.status === 200, paid.status);
 
 // 商品域没有 seller_id，「这笔单是谁的」只能即位此刻到位：订单与托管单一起改
-sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
+await sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                      SET o.seller_id = ${sellerId}, s.seller_id = ${sellerId}
                      WHERE o.order_no = '${orderNo}';`);
 const shipped = await call(
@@ -184,7 +179,7 @@ check('（前置）订单状态为 SHIPPED', orderBefore.status === 'SHIPPED', o
 // ---------------- 2. UI：三端走完整链路 ----------------
 
 const { chromium } = await import(PW_CORE);
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const httpErrors = [];
 const consoleErrors = [];
 
@@ -352,7 +347,7 @@ const orderAfter = (await call('GET', `/api/orders/${orderNo}`, undefined, buyer
 check('订单状态同步为 REFUNDED', orderAfter.status === 'REFUNDED', orderAfter.status);
 
 // 两张表都有 status，必须限定别名 —— 「字段歧义」在 SQL 里是最容易漏的一类错误
-const settleStatus = sql(
+const settleStatus = await sql(
   'duoduo_trade',
   `SELECT s.status FROM t_settlement s JOIN t_order o ON o.id = s.order_id WHERE o.order_no = '${orderNo}';`,
 );
@@ -393,9 +388,9 @@ check(
 await browser.close();
 
 if (!process.env.KEEP_FIXTURE) {
-  sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
+  await sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                        SET o.seller_id = 0, s.seller_id = 0 WHERE o.order_no = '${orderNo}';`);
-  sql('duoduo_user', `UPDATE t_user SET role = 'USER' WHERE phone = '${operator.phone}';`);
+  await sql('duoduo_user', `UPDATE t_user SET role = 'USER' WHERE phone = '${operator.phone}';`);
   console.log(`  （夹具已复原）订单 ${orderNo} 归还平台自营；运营账号降回 USER`);
 }
 

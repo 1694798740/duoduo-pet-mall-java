@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十五套 1578 项接口断言 + 七套真实浏览器 UI 断言 268 项）
+### 端到端冒烟（二十三套 1354 项接口断言 + 八套真实浏览器 UI 断言 276 项 + 小程序无浏览器 37 项）
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
@@ -608,7 +608,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 55 项：用户域 + 商品域
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 77 项：下单拆单 + 库存冻结
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 71 项：支付幂等 + 状态机 + 超时关单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 72 项：支付幂等 + 状态机 + 超时关单
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
@@ -631,20 +631,32 @@ python scripts/r58-restock-idempotent-smoke.py     # 10 项：退货入库幂等
 python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖家追偿（闭环 / 重复 409 / 未放款拒 / 垫付**不回补库存** / 收回核销二次 409 / 非运营 401）
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 
-# 六套 UI 自测都需先起前端 dev server。
-# 端口约定 5173，但**本机 5173 会被 Windows 排除端口段占用**（Docker Desktop 启动后 WinNAT 保留 5149-5248，
-# 报 `listen EACCES`）。改用 3000 即可 —— 它已在网关 CORS_ORIGINS 默认白名单里，不用改任何配置：
-cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost   # 另开终端
+# ================= 前端真实浏览器 UI 自测（8 套） =================
+# 一键跑：起 dev server → 跑 8 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
+# Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
+
+# 也可手工跑（默认 UI_BASE=http://localhost:5173）：
+cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
 # 注意必须走 localhost，不能是 127.0.0.1（不在 CORS 白名单）
-cd .. && UI_BASE=http://localhost:3000 node scripts/e2e/seller-ui-check.mjs        # 商家端 29 项
-UI_BASE=http://localhost:3000 node scripts/e2e/review-ui-check.mjs                # 评价与晒单 20 项
-UI_BASE=http://localhost:3000 node scripts/e2e/aftersale-ui-check.mjs             # 售后三端 44 项（买家→卖家→运营整条链）
-UI_BASE=http://localhost:3000 node scripts/e2e/logistics-ui-check.mjs             # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
-UI_BASE=http://localhost:3000 node scripts/e2e/share-report-ui-check.mjs          # 举报处理台 24 项（运营视角：摘要可见 / 默认不下架 / 驳回不误删内容 / 非运营拦截）
-# 优惠券（A5）43 项：夹具先建、跑完再删（**SQL 由 PowerShell 执行，别放进 Node**，踩坑见 T-38）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\coupon-ui-fixture.ps1 -Action create
-UI_BASE=http://localhost:3000 node scripts/e2e/coupon-ui-check.mjs                 # 优惠券 43 项（未登录态 / 领券 / 券包 / 结算选券与费用口径 / 订单详情券码 / 取消退回 / 噪声）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\coupon-ui-fixture.ps1 -Action drop
+cd .. && node scripts/e2e/home-ui-check.mjs           # 首页 7 项：非白屏 / 可点击 / 真点进详情 / 无非预期接口错误
+node scripts/e2e/seller-ui-check.mjs                 # 商家端 29 项
+node scripts/e2e/review-ui-check.mjs                 # 评价与晒单 21 项
+node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买家→卖家→运营整条链）
+node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
+node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
+node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
+# 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
+
+# ================= 小程序「无浏览器」自动化测试 =================
+# 小程序逻辑层没有 DOM，真正要驱动的是 Page 实例的生命周期与 setData ——
+# 因此不需要浏览器：runtime.js 用 node:vm 沙箱 + wx.* 桩 + 自实现 require，
+# **直接加载仓库里真实的页面 js**（不是复制一份），页面改了而测试没改就会红。
+node --test scripts/mp-harness/ai-page.test.js       # AI 页 4 项（快捷问题接住 / 真实发消息 / 换话题清追问）
+node --test scripts/mp-harness/pages-smoke.test.js   # 30 个页面逐个挂载（33 项），挡住生命周期抛错与卸载清理写错
+node --test scripts/lib/internal-token-parity.test.js # 内部凭据 HMAC：JS 侧与 PowerShell 侧对拍 4 项
+# 前置：网关在跑（http://127.0.0.1:8080）
 ```
 
 十四套脚本的共同约定（踩过坑才有的）：
@@ -1404,6 +1416,64 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-01（第六十轮 · 券放宽 + 性能压测 + 旧接口下线 + 两套测试环境 + 脚本迁移）
+
+- **① 优惠券放宽（用户拍板「放宽」）** —— 原 v1 口径偏严，本轮放宽三条，并用单测固定住：
+  - **门槛**：由「只看拆单后金额最大的那一子单」改为**按本次下单的商品总额判定**。
+    此前买家把同一笔订单拆给两个卖家时，明明总额够，却因为单看某一单不够门槛而用不了券。
+  - **抵扣**：由「只抵在最大的那一单」改为**按各子单金额比例分摊到每一单**。
+    分摊取整丢掉的**余数一律补给金额最大的那一单**，因此各单抵扣之和**严格等于券面额**
+    （不补余数会让用户少减几毛钱且查不出原因）。
+  - **有效期**：由「秒级比较」改为**按自然日判定** —— 到期日当天 23:59:59 前仍可用。
+    「券上写 10 月 1 日到期，1 号上午就不能用」是最容易被当成 bug 的一处。
+  - **券归属不变**（只锁在归属单的订单号上，券码也只写在归属单）：分摊改的是「钱怎么算」，
+    不是「券归谁」。新增 `CouponAllocationTest`（8 项，含「丢余数会导致总和小於面额」的反向验证）
+    与 `CouponValidityTest`（4 项）。
+- **② 性能压测（`scripts/perf/bench.py`，纯标准库）** —— 并发 10/25/50/100 × 10 秒，
+  读/写两套基线（读 avg≤300 / P95≤600 / P99≤1000 ms；写 avg≤800 / P95≤1500 / P99≤3000 ms；错误率<0.1%）。
+  峰值 100 并发下 6 个核心接口全部达标、错误率全 0：
+  商品列表 1659 QPS / P99 175ms，商品搜索 1477 / 131ms，商品详情 1559 / 198ms，
+  类目树 3782 / 69ms，闲置列表 1966 / 151ms，结算预览 2278 / 107ms。结果落 `logs/perf/r60-bench.json`。
+  - **压测暴露并修掉一个真实缺陷**：`@GetMapping("/{spuId}")` 会把 `/api/products/home`
+    这类非数字段也捕获进来，转 `Long` 失败 → 兜底成 **500**（应为 404）。已给 6 处
+    同类路径加 `\d+` 形状约束（`AfterSaleController` / `ShareController` / `CategoryController` /
+    `ListingController` / `AdminOrderController` / `ProductController`）。
+  - 压测器自身两处「假绿」也一并修掉：每请求新建 TCP 连接会耗尽本机临时端口（改为每线程长连接）；
+    只把 5xx 计为错误会让 401/422 被统计成成功（改为非 2xx 一律计失败）。
+- **③ 旧接口下线** —— `POST /api/orders/{orderNo}/ship` **只验内部凭据、不验归属**
+  （有内部凭据就能发任何人的货），已删除，收敛为卖家端单一入口
+  `/api/seller/orders/{orderNo}/ship`（`requireSellerScope` + `requireOwnOrder`）。
+  同步清理：网关内部凭据过滤器的注释、三处接口文档（`docs/handover/05` / `docs/openapi/endpoints.md` /
+  `docs/agent/04`），`extract-api-contract.py --check` 转 PASS。
+- **④ 两套测试环境都可实际运行**：
+  - **小程序「无浏览器」运行时**（`scripts/mp-harness/`）：小程序逻辑层没有 DOM，真正要驱动的是
+    Page 实例的生命周期与 setData。用 `node:vm` 沙箱 + `wx.*` 桩 + 自实现 require，**直接加载仓库里
+    真实的页面 js**（不是复制一份），因此页面改了而测试没改就会红。
+    `pages-smoke.test.js` 逐个挂载 30 个页面（33 项），`ai-page.test.js` 断言 AI 页的真实行为（4 项）。
+  - **前端真实浏览器**：Playwright + Chromium 装进 `scripts/e2e/node_modules`（仓库自包含，
+    不再依赖用户级 workspace），新增一键运行器 `scripts/e2e/run-ui-checks.ps1`
+    （起 dev server → 跑 8 套 → 建/拆券夹具 → 收尾），**8 套全 PASS**。
+- **⑤ 六套脚本迁移**（aftersale / backfill / credit / logistics / payment / review / settlement）：
+  旧发货端点全部切到卖家正规入口，并补了 `scripts/lib/platform-operator.ps1`
+  （自营订单 `seller_id=0` 归平台，**只有 OPERATOR 可见**，普通卖家是 403）。
+  结果：aftersale 101 / backfill 88 / credit 82 / logistics 79 / review 59 / settlement 125 / payment 72，全 0 失败。
+
+  **迁移中修掉的三个共性问题**（都是「看起来像环境问题，其实是脚本问题」）：
+  - **PowerShell 5.1 的 BOM**：写回 .ps1 丢了 UTF-8 BOM，中文注释被解析成乱码 →
+    `ParserError 字符串缺少终止符`。已批量补回。
+  - **Node 同步派生态被禁**：本机 `spawnSync` / `execFileSync` 一律 `EBUSY errno -4082`（连 `cmd`/`where`
+    都起不来），而**异步 `spawn` 正常**。6 套 e2e 卡在 `execFileSync('docker', ...)` 上，
+    表象是「docker 不可用」。新增 `scripts/lib/docker-exec.mjs`（异步），全部改为 `await sql(...)`。
+  - **雪花/长 id 已按字符串下发**：`"id":"5003"` 拿数字 `5003` 去 `===` 恒为 false，
+    表现为「模板明明存在却说不可见」「取不到卖家 ID」。已统一为字符串比对
+    （含 `bigId` 正则放宽为 `"?(\d{15,})"?`）。
+- **新增对拍守卫**：`scripts/lib/internal-token.mjs` 是内部凭据 HMAC 的 JS 侧实现，
+  与 PowerShell 侧 `scripts/lib/internal-token.ps1` 同一算法两份实现 —— 新增
+  `internal-token-parity.test.js` 用固定输入比对两侧输出（4 项），算法漂移即红。
+- **本轮质量口径**：后端单测 **222/0**（新增 12 项：券分摊 8 + 券有效期 4）；
+  小程序无浏览器测试 **37/0** + 内部凭据对拍 **4/0**；前端真实浏览器 **8 套全 PASS**；
+  主冒烟 **55/0**；七套业务冒烟全 0 失败；Docker 8/8 镜像与容器内 jar md5 **逐模块一致**。
 
 ### 2026-09-28（第五十二轮 · 跳蚤市场发布链路 + 结算预览 + 405 修复）
 

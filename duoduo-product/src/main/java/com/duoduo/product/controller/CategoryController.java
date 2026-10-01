@@ -35,7 +35,7 @@ public class CategoryController {
         return ApiResponse.ok(categoryService.flat());
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ApiResponse<CategoryNode> get(@PathVariable Long id) {
         return ApiResponse.ok(categoryService.get(id));
     }

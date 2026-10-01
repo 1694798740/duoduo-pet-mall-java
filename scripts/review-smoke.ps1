@@ -46,6 +46,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -87,6 +92,11 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货 ——
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$op = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
+$sessOp = $op.session
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -172,7 +182,7 @@ Check "（准备）订单待付款" ($order.status -eq 'PENDING_PAYMENT') $order
 
 $r = Call 'Post' "$Gateway/api/orders/$orderNo/pay" $sessB @{ channel = 'MOCK'; idempotentKey = (NewKey) }
 Check "（准备）支付成功（MOCK 即时）" ($r.status -eq 200 -and $r.body.data.orderStatus -eq 'PAID') ($r.body | ConvertTo-Json -Compress)
-$r = Call 'Post' "$Trade/api/orders/$orderNo/ship" $null @{ logisticsCompany = '顺丰速运'; logisticsNo = 'SF' + (Get-Random) } $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$orderNo/ship" $sessShip @{ logisticsCompany = '顺丰速运'; logisticsNo = 'SF' + (Get-Random) }
 Check "（准备）内部凭据发货 200" ($r.status -eq 200 -and $r.body.data.status -eq 'SHIPPED') ($r.body | ConvertTo-Json -Compress)
 $r = Call 'Post' "$Gateway/api/orders/$orderNo/confirm" $sessB $null
 Check "（准备）确认收货 → COMPLETED" ($r.status -eq 200 -and $r.body.data.status -eq 'COMPLETED') ($r.body | ConvertTo-Json -Compress)

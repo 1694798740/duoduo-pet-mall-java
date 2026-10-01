@@ -61,7 +61,7 @@ public class AfterSaleController {
     }
 
     /** 售后单详情（当事人或运营） */
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ApiResponse<AfterSaleView> detail(@PathVariable Long id) {
         return ApiResponse.ok(afterSaleService.detail(UserContext.requireUserId(), id));
     }

@@ -90,7 +90,7 @@ public class ShareController {
     }
 
     /** 分享详情（公开）：分享落地页的数据源（同样支持可选浏览者标记） */
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ApiResponse<ShareView> detail(@PathVariable Long id) {
         return ApiResponse.ok(shareService.detail(currentViewerId(), id));
     }

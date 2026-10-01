@@ -45,17 +45,17 @@
  */
 
 import path from 'node:path';
+import { internalHeaders } from '../lib/internal-token.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
-const INTERNAL_TOKEN = 'duoduo-local-dev-internal-token';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+// 内部凭据：R58 起是 HMAC 签名（dd1.caller.ts.nonce.sig），发明文旧令牌只会 403。
 const PWD = 'duoduo12345';
 const SKU = 2001;
 
@@ -104,9 +104,7 @@ async function call(method, p, body, jar, extraHeaders) {
 
 /** SKU 快照（含可售库存）—— 走内部只读接口，不碰数据库 */
 async function skuSnapshot() {
-  const r = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, {
-    'X-Internal-Token': INTERNAL_TOKEN,
-  });
+  const r = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, internalHeaders('GET'));
   return Array.isArray(r.data) ? r.data[0] : r.data;
 }
 
@@ -127,7 +125,7 @@ const reg = await call('POST', '/api/auth/register', { phone, password: PWD, nic
 check('买家注册成功', reg.status === 200, reg.status);
 
 // ---------------- 2. 浏览器 ----------------
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
 const page = await ctx.newPage();
 const consoleErrors = [];

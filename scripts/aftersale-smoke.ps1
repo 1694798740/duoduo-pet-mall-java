@@ -54,6 +54,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -96,6 +101,7 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -244,10 +250,10 @@ $on1 = $c1.orderNo; $on2 = $c2.orderNo; $on3 = $c3.orderNo; $on4 = $c4.orderNo; 
 $pay1 = [long]$c1.order.payAmount
 
 foreach ($on in @($on1, $on2, $on3)) {
-    $r = Call 'Post' "$Gateway/api/orders/$on/ship" $sessA $null $H_INTERNAL
+    $r = Call 'Post' "$Gateway/api/seller/orders/$on/ship" $sessShip @{}
     if ($r.status -ne 200) { Check "夹具：订单 $on 发货成功" $false $r.status }
 }
-$r = Call 'Post' "$Gateway/api/orders/$on4/ship" $sessA $null $H_INTERNAL
+$r = Call 'Post' "$Gateway/api/seller/orders/$on4/ship" $sessShip @{}
 $r = Call 'Post' "$Gateway/api/orders/$on4/confirm" $sessA $null
 Check "（夹具）O4 已发货并确认收货（COMPLETED，钱已放款给卖家）" ($r.status -eq 200 -and $r.body.data.status -eq 'COMPLETED') $r.body.data.status
 

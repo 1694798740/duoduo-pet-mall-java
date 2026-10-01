@@ -172,16 +172,14 @@ public class OrderController {
     }
 
     /**
-     * 发货（已付款 → 已发货）。
+     * 发货（已付款 → 已发货）：**只有卖家端这一个入口**（R60 收敛）。
      *
-     * <p><b>内部接口</b>：由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}，
-     * 调用方是卖家侧 / 运营侧系统。卖家账号体系在卖家中心（M5-9）落地后，
-     * 这里会改为校验「调用者是否为该订单的卖家」。
+     * <p>这里原来有一个 {@code POST /api/orders/{orderNo}/ship}：它挂在买家侧的订单路径上，
+     * 只校验内部凭据、**不校验调用者是不是这笔订单的卖家**，于是「给任意订单发货」对任何
+     * 拿到凭据的人都成立。卖家端 {@code /api/seller/orders/{orderNo}/ship} 落地之后它就是
+     * 一个纯冗余且更松的口子 —— 保留它的唯一代价是「哪天被人照着文档调一次」。
+     * 已于 R60 删除，7 套依赖它的冒烟脚本同步迁移到卖家端（迁移记录见 docs/PLAN.md R60）。
      */
-    @PostMapping("/{orderNo}/ship")
-    public ApiResponse<OrderView> ship(@PathVariable String orderNo) {
-        return ApiResponse.ok(orderService.ship(orderNo));
-    }
 
     /** 确认收货（已发货 → 已完成） */
     @PostMapping("/{orderNo}/confirm")

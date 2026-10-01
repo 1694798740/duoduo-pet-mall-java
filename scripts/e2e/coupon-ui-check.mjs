@@ -37,18 +37,18 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import { internalHeaders } from '../lib/internal-token.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const TPL_ID_FILE = 'D:/智能体项目/duoduo-pet-mall-java/.tmp-coupon-ui-tpl-id';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
-const INTERNAL_TOKEN = 'duoduo-local-dev-internal-token';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+// 内部凭据：R58 起是 HMAC 签名（dd1.caller.ts.nonce.sig），发明文旧令牌只会 403。
 const PWD = 'duoduo12345';
 const SKU = 2001;
 
@@ -114,9 +114,7 @@ async function call(method, p, body, jar, extraHeaders) {
 
 /** 内部只读接口：拿 SKU 快照（含可售库存），替代 SQL 查 t_sku */
 async function skuSnapshot() {
-  const r = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, {
-    'X-Internal-Token': INTERNAL_TOKEN,
-  });
+  const r = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, internalHeaders('GET'));
   return Array.isArray(r.data) ? r.data[0] : r.data;
 }
 
@@ -130,7 +128,9 @@ check(`（夹具）SKU ${SKU} 单价为 ${EXPECT_UNIT} 分（高于券门槛，�
 check(`（夹具）已取得自建券模板 id=${TPL_ID}`, TPL_ID > 0, TPL_ID);
 
 const tplList = await call('GET', '/api/coupons/templates');
-const fixtureTpl = (tplList.data ?? []).find((t) => t.id === TPL_ID);
+// id 一律按**字符串**比对：长 id 早已以字符串形式下发（"5003"），
+// 拿数字 5003 去 === 恒为 false —— 表现是「模板明明存在却说不可见」。
+const fixtureTpl = (tplList.data ?? []).find((t) => String(t.id) === String(TPL_ID));
 check('（夹具）自建券模板已在领券中心可见', Boolean(fixtureTpl), tplList.status);
 check('（夹具）模板门槛 / 抵扣与预期一致',
   fixtureTpl?.thresholdAmount === TPL_THRESHOLD && fixtureTpl?.discountAmount === TPL_DISCOUNT,
@@ -143,7 +143,7 @@ const reg = await call('POST', '/api/auth/register', { phone, password: PWD, nic
 check('买家注册成功', reg.status === 200, reg.status);
 
 // ---------------- 2. 浏览器 ----------------
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
 const page = await ctx.newPage();
 const consoleErrors = [];
@@ -224,7 +224,7 @@ await shot('coupon_mine.png');
 
 // 与接口对账：UI 上看到的券码必须就是服务端那张
 const mineApi = await call('GET', '/api/coupons/mine?status=UNUSED', undefined, jar);
-const myCoupon = (mineApi.data ?? []).find((c) => c.templateId === TPL_ID);
+const myCoupon = (mineApi.data ?? []).find((c) => String(c.templateId) === String(TPL_ID));
 check('接口与页面券码一致', Boolean(myCoupon) && myCoupon.code === codeInBag, { api: myCoupon?.code, ui: codeInBag });
 const CODE = myCoupon?.code;
 
@@ -292,7 +292,7 @@ step('取消订单后券退回');
 const cancelled = await call('POST', `/api/orders/${orderNo}/cancel`, { reason: 'UI 自测收尾' }, jar);
 check('取消订单成功', cancelled.status === 200, cancelled.status);
 const mineAfter = await call('GET', '/api/coupons/mine?status=UNUSED', undefined, jar);
-const backCoupon = (mineAfter.data ?? []).find((c) => c.templateId === TPL_ID);
+const backCoupon = (mineAfter.data ?? []).find((c) => String(c.templateId) === String(TPL_ID));
 check('★ 取消后券回到 UNUSED（用户立刻能用回来）', Boolean(backCoupon), (mineAfter.data ?? []).map((c) => c.status));
 check('★ 券的锁定订单字段被清空', backCoupon ? backCoupon.lockedOrderNo === null : false, backCoupon?.lockedOrderNo);
 

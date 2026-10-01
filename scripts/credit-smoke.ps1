@@ -56,6 +56,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -98,6 +103,11 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
+
+# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货 ——
+# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
+$op = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
+$sessOp = $op.session
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -136,7 +146,7 @@ function CompleteOrder($sess, [int]$sku) {
     $no = @($o.body.data.orders)[0].orderNo
     $p = Call 'Post' "$Gateway/api/orders/$no/pay" $sess @{ channel = 'MOCK'; idempotentKey = (NewKey) }
     if ($p.status -ne 200) { return @{ ok = $false; orderNo = $no; step = '支付' } }
-    $s = Call 'Post' "$Trade/api/orders/$no/ship" $null @{ logisticsCompany = '顺丰速运'; logisticsNo = ('SF' + (Get-Random)) } $H_INTERNAL
+    $s = Call 'Post' "$Gateway/api/seller/orders/$no/ship" $sessShip @{ logisticsCompany = '顺丰速运'; logisticsNo = ('SF' + (Get-Random)) }
     if ($s.status -ne 200) { return @{ ok = $false; orderNo = $no; step = '发货' } }
     $c = Call 'Post' "$Gateway/api/orders/$no/confirm" $sess $null
     if ($c.status -ne 200) { return @{ ok = $false; orderNo = $no; step = '确认收货' } }

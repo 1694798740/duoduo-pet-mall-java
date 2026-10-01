@@ -65,7 +65,16 @@ public class ProductController {
         return ApiResponse.ok(suggestion == null ? Map.of() : Map.of("suggestion", suggestion));
     }
 
-    @GetMapping("/{spuId}")
+    /**
+     * 商品详情。
+     *
+     * <p><b>{@code spuId} 必须是纯数字</b>（R60 压测发现）：不限定形状时，任何一段非数字路径
+     * （{@code /api/products/home}、{@code /api/products/abc}）都会被这里捕获，
+     * 然后倒在为 {@code "home"} 转 Long 上 → 抛 {@code NumberFormatException} →
+     * 兜底成 <b>500</b>。而它正确的答案是 404（没有这个路径），500 会把「拼错 URL」
+     * 记成服务器故障，告警、重试、排障全都往错的方向走。
+     */
+    @GetMapping("/{spuId:\\d+}")
     public ApiResponse<ProductDetail> detail(@PathVariable Long spuId) {
         return ApiResponse.ok(productService.detail(spuId));
     }

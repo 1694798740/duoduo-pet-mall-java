@@ -285,29 +285,32 @@ public class OrderService {
                     return sellerId == null ? PLATFORM_SELLER_ID : sellerId;
                 }, LinkedHashMap::new, Collectors.toList()));
 
-        // 4.5) 券：只读试算，不占用。作用于商品总额最大的那一单（与 placeOrder 同一规则）
+        // 4.5) 券：只读试算，不占用。
+        //
+        // 【R60 放宽】两处口径变化：
+        // ① **门槛按本次下单的商品总额判定**（原：只按金额最大的那一子单）。
+        //    购物车里有 3 家店各 80 元、券是「满 200 减 30」，按旧口径永远差 20 元；
+        //    而用户看到的金额就是总计 240 元 —— 门槛写 200 却按 80 判定，是系统自说自话。
+        // ② **抵扣按各子单商品金额比例分摊到每一单**（原：只抵金额最大的那一单）。
+        //    只抵一单会让「用了券」在另外几单上完全看不出来，且退掉那一单后优惠全没了。
         String couponCode = trimToNull(request.couponCode());
         Long couponSellerId = null;
         long couponDiscount = 0L;
         String couponMessage = null;
+        Map<Long, Long> groupAmounts = groupGoodsAmounts(groups, snapshots);
+        long totalGoodsAmount = groupAmounts.values().stream().mapToLong(Long::longValue).sum();
+        Map<Long, Long> allocations = new LinkedHashMap<>();
         if (couponCode != null) {
-            long bestAmount = -1L;
-            for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
-                long amount = 0L;
-                for (CartItemEntity row : entry.getValue()) {
-                    SkuSnapshot snap = snapshots.get(row.getSkuId());
-                    amount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
-                }
-                if (amount > bestAmount) {
-                    bestAmount = amount;
-                    couponSellerId = entry.getKey();
-                }
-            }
+            // 券的归属仍是「金额最大的那一单」（并列取最先拆出的）：券只锁一张，
+            // 解锁/核销都按订单号定位，必须挂在一个确定的订单上 —— 分摊改的是「钱怎么算」，
+            // 不是「券归谁」。
+            couponSellerId = largestGroup(groupAmounts);
             try {
-                LockResult trialed = marketingGateway.trial(couponCode, userId, Math.max(0L, bestAmount));
+                LockResult trialed = marketingGateway.trial(couponCode, userId, Math.max(0L, totalGoodsAmount));
                 if (trialed != null && trialed.success()) {
                     couponDiscount = trialed.discountAmount();
                     couponCode = trialed.code();
+                    allocations = allocateCouponDiscount(groupAmounts, couponDiscount);
                 } else {
                     // 券不可用：预览不拦，如实告知并把抵扣按 0 计
                     couponMessage = trialed == null || trialed.reason() == null
@@ -327,16 +330,14 @@ public class OrderService {
         long discountAmount = 0L;
         long payAmount = 0L;
         for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
-            boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
-            long groupTotal = 0L;
+            long groupTotal = groupAmounts.getOrDefault(entry.getKey(), 0L);
             long groupFreight = 0L;
-            long groupDiscount = couponTarget ? couponDiscount : 0L;
+            long groupDiscount = allocations.getOrDefault(entry.getKey(), 0L);
             List<OrderItemView> items = new ArrayList<>(entry.getValue().size());
             for (CartItemEntity row : entry.getValue()) {
                 SkuSnapshot snap = snapshots.get(row.getSkuId());
                 int quantity = row.getQuantity() == null ? 0 : row.getQuantity();
                 long amount = snap.price() * quantity;
-                groupTotal += amount;
                 items.add(new OrderItemView(snap.skuId(), snap.spuId(), safeTitle(snap),
                         snap.specText(), snap.image(), snap.price(), quantity, amount));
             }
@@ -352,6 +353,73 @@ public class OrderService {
         return new PreviewOrderResult(previews, previews.size(), totalAmount, freightAmount,
                 discountAmount, payAmount, couponSellerId,
                 couponDiscount > 0 ? couponCode : null, couponMessage);
+    }
+
+    /**
+     * 各卖家子单的商品金额（分）。
+     *
+     * <p>门槛判定与抵扣分摊都要用它，抽出来是为了让两条规则共用同一份金额 ——
+     * 两处各算一遍，「门槛按 240 通过、抵扣按 80 分摊」这类对不上账的偏差迟早出现。
+     */
+    private static Map<Long, Long> groupGoodsAmounts(Map<Long, List<CartItemEntity>> groups,
+                                                     Map<Long, SkuSnapshot> snapshots) {
+        Map<Long, Long> amounts = new LinkedHashMap<>();
+        for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+            long amount = 0L;
+            for (CartItemEntity row : entry.getValue()) {
+                SkuSnapshot snap = snapshots.get(row.getSkuId());
+                amount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
+            }
+            amounts.put(entry.getKey(), amount);
+        }
+        return amounts;
+    }
+
+    /** 商品金额最大的那一子单（并列时取最先拆出的 —— 与券的归属同一条确定性规则）。 */
+    static Long largestGroup(Map<Long, Long> groupAmounts) {
+        Long best = null;
+        long bestAmount = -1L;
+        for (Map.Entry<Long, Long> entry : groupAmounts.entrySet()) {
+            if (entry.getValue() > bestAmount) {
+                bestAmount = entry.getValue();
+                best = entry.getKey();
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 把券的抵扣额按各子单商品金额比例分摊（R60 放宽）。
+     *
+     * <p><b>整除余数一律给金额最大的那一单</b>：按比例取整必然产生余数，
+     * 丢掉会少减钱（用户看到的抵扣小于券面额、又查不出为什么），
+     * 随机补则会在两单之间摇摆、重现不了。给最大单既确定，
+     * 也符合「主要那单承担零头」的直觉。分摊后各单之和<b>严格等于</b>券面额。
+     *
+     * <p>单子单的分摊额不会超过它自己的商品额（因为券面额已被营销域夹到不超过订单总额），
+     * 因此不会出现某一单应付为负。
+     */
+    static Map<Long, Long> allocateCouponDiscount(Map<Long, Long> groupAmounts, long discount) {
+        Map<Long, Long> out = new LinkedHashMap<>();
+        if (discount <= 0) {
+            groupAmounts.keySet().forEach(key -> out.put(key, 0L));
+            return out;
+        }
+        long total = groupAmounts.values().stream().mapToLong(Long::longValue).sum();
+        long allocated = 0L;
+        for (Map.Entry<Long, Long> entry : groupAmounts.entrySet()) {
+            long share = total <= 0L ? 0L : discount * entry.getValue() / total;
+            out.put(entry.getKey(), share);
+            allocated += share;
+        }
+        long remainder = discount - allocated;
+        if (remainder > 0L) {
+            Long largest = largestGroup(groupAmounts);
+            if (largest != null) {
+                out.put(largest, out.get(largest) + remainder);
+            }
+        }
+        return out;
     }
 
     /**
@@ -467,31 +535,29 @@ public class OrderService {
         // 券只作用于**商品总额最大的那个订单**（并列时取最先拆出的那个）：
         // 一个购物车可能拆成多家卖家的多单，而 v1 一张券只能用一次，
         // 必须有一个确定性的归属规则，否则「券到底抵在哪一单」就成了谁也说不清的事。
+        //
+        // 【R60 放宽】① 门槛按商品总额判定；② 抵扣按各子单金额比例分摊到每一单
+        // （口径与 preview 完全一致 —— 见 preview 里的同一段注释。两处各写一遍，
+        //  是「预览显示减 30、下单只减 10」这类对不上账的必然后果）。
         String couponCode = trimToNull(request.couponCode());
         String couponOrderNo = null;
         long couponDiscount = 0L;
         Long couponSellerId = null;
+        Map<Long, Long> allocations = new LinkedHashMap<>();
         if (couponCode != null) {
-            long bestAmount = -1L;
-            for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
-                long amount = 0L;
-                for (CartItemEntity row : entry.getValue()) {
-                    SkuSnapshot snap = snapshots.get(row.getSkuId());
-                    amount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
-                }
-                if (amount > bestAmount) {
-                    bestAmount = amount;
-                    couponSellerId = entry.getKey();
-                }
-            }
+            Map<Long, Long> groupAmounts = groupGoodsAmounts(groups, snapshots);
+            long totalGoodsAmount = groupAmounts.values().stream().mapToLong(Long::longValue).sum();
+            couponSellerId = largestGroup(groupAmounts);
             couponOrderNo = orderNoGenerator.next();
-            LockResult locked = marketingGateway.lock(couponCode, userId, couponOrderNo, Math.max(0L, bestAmount));
+            LockResult locked = marketingGateway.lock(couponCode, userId, couponOrderNo,
+                    Math.max(0L, totalGoodsAmount));
             if (locked == null || !locked.success()) {
                 throw new BizException(ErrorCode.BUSINESS_RULE,
                         locked == null || locked.reason() == null ? "优惠券不可用" : locked.reason());
             }
             couponDiscount = locked.discountAmount();
             couponCode = locked.code();
+            allocations = allocateCouponDiscount(groupAmounts, couponDiscount);
         }
 
         try {
@@ -499,8 +565,11 @@ public class OrderService {
                 boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
                 created.add(createOne(userId, entry.getKey(), entry.getValue(), snapshots,
                         request, receiver, now, expireAt,
+                        // 券只锁在归属单的订单号上（解锁/核销都按订单号定位，券必须只有一个归属），
+                        // 但**每一单都记上自己分摊到的那部分抵扣** —— 各单独立退款时按自己的实付退，
+                        // 优惠也就跟着这单的退款自然回收了。券码仍只写在归属单，保持核销链路不变。
                         couponTarget ? couponOrderNo : orderNoGenerator.next(),
-                        couponTarget ? couponDiscount : 0L,
+                        allocations.getOrDefault(entry.getKey(), 0L),
                         couponTarget ? couponCode : null,
                         frozenRefs));
             }

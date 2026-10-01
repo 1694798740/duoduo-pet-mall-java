@@ -13,9 +13,11 @@
  *   后端 9 容器在跑（网关 :8080）；frontend dev server 在跑（见下方端口说明）
  *
  * ⚠️ 必须用 http://localhost:<port>，不能用 127.0.0.1：网关 CORS_ORIGINS 只认 localhost。
- * ⚠️ 端口用 3000（5173 落在 Windows 排除端口段）：
- *      cd frontend && node node_modules/vite/bin/vite.js --port 3000 --strictPort --host localhost
- *      UI_BASE=http://localhost:3000 node scripts/e2e/share-report-ui-check.mjs
+ * 端口：默认与其余 e2e 一致用 5173。此前写死 3000 是因为「5173 落在 Windows 排除端口段」，
+ *      但那台机器的结论不能当通用事实 —— 本机 5173 可用，写死 3000 反而让
+ *      run-ui-checks.ps1 一键跑的时候这一套必然连不上（其余七套都连 5173）。
+ *      真遇到端口被排除的机器，用 UI_BASE=http://localhost:3000 覆盖即可。
+ *      cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost
  *
  * 用法：node scripts/e2e/share-report-ui-check.mjs
  * 环境变量：GATEWAY / UI_BASE / CHROME_PATH / PW_CORE / KEEP_FIXTURE=1
@@ -24,14 +26,13 @@
 import path from 'node:path';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
-const UI = process.env.UI_BASE ?? 'http://localhost:3000';
+const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
 
 const PWD = 'duoduo12345';
 const OPERATOR_PHONE = '13688774031'; // 历史运营账号（role=OPERATOR）
@@ -147,7 +148,7 @@ check('夹具：举报人成功举报（PENDING）', !!reportId && reportBody?.d
 // ---------------- 2. 浏览器：运营处理举报 ----------------
 
 const { chromium } = await import(PW_CORE);
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 
 async function login(page, phone) {
   await page.goto(`${UI}/login`, { waitUntil: 'networkidle' });

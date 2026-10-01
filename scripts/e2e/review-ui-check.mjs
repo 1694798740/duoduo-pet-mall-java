@@ -23,22 +23,21 @@
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
+import { internalHeaders } from '../lib/internal-token.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
-// 交易服务直连地址：发货接口走**内部凭据**，而网关对 /api/orders/** 强制登录
-// （卖家发货的正规入口是 /api/seller/orders/{no}/ship，这里模拟「平台代发货」，
-//  与 review-smoke.ps1 用同一个姿势：直连服务 + X-Internal-Token）
-const TRADE = process.env.TRADE_BASE ?? 'http://127.0.0.1:8083';
+// 注：R60 前这里靠「直连交易服务 :8083 + 内部凭据」发货，那条路子已随旧端点一起下线，
+// 现在统一走网关的卖家正规入口，所以不再需要 TRADE_BASE。
+
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
-const INTERNAL_TOKEN = 'duoduo-local-dev-internal-token';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+// 内部凭据：R58 起是 HMAC 签名（dd1.caller.ts.nonce.sig），发明文旧令牌只会 403。
 const PWD = 'duoduo12345';
 const SKU = 2001;
 
@@ -83,25 +82,44 @@ async function call(method, p, body, jar, extraHeaders) {
   return { status: res.status, data: json?.data, json, raw };
 }
 
-function sql(db, q) {
-  const env = {
-    ...process.env,
-    PATH: 'C:\\Program Files\\Docker\\Docker\\resources\\bin;' + process.env.PATH,
-    DOCKER_CONFIG: 'D:\\duoduo-infra\\docker-nocreds',
-  };
-  return execFileSync(
-    'docker',
-    ['exec', 'duoduo-mysql', 'mysql', '-uduoduo', '-pduoduo', '-N', '-B',
-     '--default-character-set=utf8mb4', '-D', db, '-e', q],
-    { env, encoding: 'utf8' },
-  ).trim();
+/**
+ * 库查询（异步）。
+ * 不能用 execFileSync：本机 Node 的**同步**派生态一律 EBUSY（连 cmd/where 都起不来），
+ * 而异步 spawn 正常 —— 详见 scripts/lib/docker-exec.mjs 文件头。之前卡在这里时，
+ * 表象是 `Error: spawnSync docker EBUSY`，看起来像 docker 不可用，方向会整个跑偏。
+ */
+const sql = (db, q) => mysqlExec(db, q);
+
+/**
+ * 平台运营会话（R60）
+ *
+ * 为什么需要它：旧的直连发货 `/api/orders/{no}/ship` 只验内部凭据、**不验归属** ——
+ * 有内部凭据就能发任何人的货。它已在 R60 下线，正规入口是 `/api/seller/orders/{no}/ship`，
+ * 走 `requireSellerScope` + `requireOwnOrder`。而本脚本这笔是**自营订单**（seller_id=0，
+ * 归平台），按归属规则只有 OPERATOR 发得动，普通 SELLER 会被 403。
+ * 所以这里必须现场造一个 OPERATOR 会话，不能沿用买家 jar。
+ *
+ * 提权走库（与 scripts/lib/platform-operator.ps1 同姿势）：运营角色没有自助申请入口，
+ * 也不该有 —— 那是后台人工审批的事。角色没提成就让调用方看见：带 USER 角色去调
+ * 卖家接口只会得到 403，报错却是「该账号不是卖家」，排查方向会完全跑偏。
+ */
+async function newPlatformOperator() {
+  const phone = `136${String(Math.floor(1e7 + Math.random() * 8e7))}`;
+  await call('POST', '/api/auth/register', { phone, password: PWD, nickname: '平台运营' }, null);
+  let role = '';
+  for (let i = 0; i < 5; i++) {
+    await sql('duoduo_user', `UPDATE t_user SET role='OPERATOR' WHERE phone='${phone}';`);
+    role = (await sql('duoduo_user', `SELECT role FROM t_user WHERE phone='${phone}';`)).trim();
+    if (role === 'OPERATOR') break;
+  }
+  const jar = new Map();
+  const login = await call('POST', '/api/auth/login', { phone, password: PWD }, jar);
+  return { phone, role, jar, status: login.status };
 }
 
 // ---------------- 1. 夹具 ----------------
 step('夹具：SKU 快照');
-const snapRes = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, {
-  'X-Internal-Token': INTERNAL_TOKEN,
-});
+const snapRes = await call('GET', `/api/products/internal/skus/batch?ids=${SKU}`, undefined, null, internalHeaders('GET'));
 const snap = Array.isArray(snapRes.data) ? snapRes.data[0] : snapRes.data;
 if (!snap?.spuId) throw new Error(`取 SKU 快照失败：${snapRes.status} ${snapRes.raw?.slice(0, 200)}`);
 const SPU = snap.spuId;
@@ -126,16 +144,23 @@ check('下单成功（取到订单号）', Boolean(orderNo), placed.status);
 const paid = await call('POST', `/api/orders/${orderNo}/pay`, { channel: 'MOCK', idempotentKey: randomUUID() }, jar);
 check('支付成功（MOCK 即时）', paid.data?.orderStatus === 'PAID', paid.data?.orderStatus);
 
-const shipped = await call('POST', `${TRADE}/api/orders/${orderNo}/ship`, {
+step('夹具：平台运营会话（自营订单只归平台，普通卖家发不动）');
+const op = await newPlatformOperator();
+check(`平台运营会话就绪（role=${op.role}）`, op.role === 'OPERATOR' && op.status === 200, {
+  role: op.role,
+  login: op.status,
+});
+
+const shipped = await call('POST', `/api/seller/orders/${orderNo}/ship`, {
   logisticsCompany: '顺丰速运', logisticsNo: `SF${Date.now()}`,
-}, null, { 'X-Internal-Token': INTERNAL_TOKEN });
-check('内部凭据发货成功', shipped.data?.status === 'SHIPPED', shipped.data?.status);
+}, op.jar);
+check('卖家正规入口发货成功', shipped.data?.status === 'SHIPPED', { status: shipped.data?.status, http: shipped.status });
 
 const confirmed = await call('POST', `/api/orders/${orderNo}/confirm`, undefined, jar);
 check('确认收货 → COMPLETED', confirmed.data?.status === 'COMPLETED', confirmed.data?.status);
 
 // ---------------- 2. 浏览器 ----------------
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
 const page = await ctx.newPage();
 const consoleErrors = [];
@@ -225,7 +250,7 @@ check(
 await browser.close();
 
 if (!process.env.KEEP_FIXTURE) {
-  sql('duoduo_fulfilment', `DELETE FROM t_review WHERE order_no = '${orderNo}';`);
+  await sql('duoduo_fulfilment', `DELETE FROM t_review WHERE order_no = '${orderNo}';`);
   console.log(`  （夹具已复原）评价已删除，订单号 ${orderNo} 留档`);
 }
 

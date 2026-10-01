@@ -35,3 +35,7 @@ data/
 .DS_Store
 Thumbs.db
 miniprogram/project.private.config.json
+
+# 前端 e2e 的浏览器运行时（scripts/e2e/node_modules，19M）：
+# 刻意装进仓库目录是为了「换台机器不用重装」，但它不是源码 —— 用 package.json + npm i 重建即可。
+scripts/e2e/node_modules/

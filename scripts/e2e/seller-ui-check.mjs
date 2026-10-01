@@ -27,18 +27,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释（网关 CORS 白名单只认 localhost）
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
-  process.env.CHROME_PATH ??
-  'C:/Users/16947/AppData/Local/ms-playwright/chromium-1161/chrome-win/chrome.exe';
+  process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///C:/Users/16947/.workbuddy/binaries/node/workspace/node_modules/playwright-core/index.mjs';
+  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
 
 const PWD = 'duoduo12345';
 
@@ -91,24 +90,20 @@ async function call(method, p, body, jar) {
  * 表现为「夹具明明改成功了，卖家列表却一笔都看不到」——极难排查。
  */
 function bigId(raw, key = 'id') {
-  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*(\\d{15,})`));
+  // 兼容两种下发形态：雪花 id 早已按**字符串**下发（"id":"710..."），
+  // 只认数字型（"id":710...）会在「后端改了序列化」之后静默取不到值 —— 那比报错更难查。
+  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"?(\\d{15,})"?`));
   if (!m) throw new Error(`未从响应中提取到 ${key}：${raw.slice(0, 200)}`);
   return m[1];
 }
 
-function sql(db, q) {
-  const env = {
-    ...process.env,
-    PATH: 'C:\\Program Files\\Docker\\Docker\\resources\\bin;' + process.env.PATH,
-    DOCKER_CONFIG: 'D:\\duoduo-infra\\docker-nocreds',
-  };
-  return execFileSync(
-    'docker',
-    ['exec', 'duoduo-mysql', 'mysql', '-uduoduo', '-pduoduo', '-N', '-B',
-     '--default-character-set=utf8mb4', '-D', db, '-e', q],
-    { env, encoding: 'utf8' },
-  ).trim();
-}
+/**
+ * 库查询（异步）。
+ * 不能用 execFileSync：本机 Node 的**同步**派生态一律 EBUSY（连 cmd/where 都起不来），
+ * 而异步 spawn 正常 —— 详见 scripts/lib/docker-exec.mjs 文件头。之前卡在这里时，
+ * 表象是 `Error: spawnSync docker EBUSY`，看起来像 docker 不可用，方向会整个跑偏。
+ */
+const sql = (db, q) => mysqlExec(db, q);
 
 async function newUser(prefix) {
   const phone = `139${String(Math.floor(1e7 + Math.random() * 8e7))}`;
@@ -174,10 +169,10 @@ check('订单 B 支付成功', b.payStatus === 200, b.payStatus);
 const ownerSql = `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                   SET o.seller_id = ${sellerId}, s.seller_id = ${sellerId}
                   WHERE o.order_no IN ('${a.orderNo}','${b.orderNo}');`;
-sql('duoduo_trade', ownerSql);
+await sql('duoduo_trade', ownerSql);
 check(
   '夹具：两笔订单已归属该卖家',
-  sql('duoduo_trade', `SELECT COUNT(*) FROM t_order WHERE order_no IN ('${a.orderNo}','${b.orderNo}') AND seller_id=${sellerId};`) === '2',
+  await sql('duoduo_trade', `SELECT COUNT(*) FROM t_order WHERE order_no IN ('${a.orderNo}','${b.orderNo}') AND seller_id=${sellerId};`) === '2',
   null,
 );
 
@@ -196,7 +191,7 @@ await call('POST', `/api/seller/orders/${b.orderNo}/ship`, { logisticsCompany: '
 // ---------------- 2. UI：真实 Chromium 走四页 ----------------
 
 const { chromium } = await import(PW_CORE);
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
 const page = await ctx.newPage();
 const consoleErrors = [];
@@ -319,7 +314,7 @@ await browser.close();
 
 if (!process.env.KEEP_FIXTURE) {
   // 复原：把两笔订单还给平台自营，避免留下「这单到底是谁的」的脏数据
-  sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
+  await sql('duoduo_trade', `UPDATE t_order o LEFT JOIN t_settlement s ON s.order_id = o.id
                        SET o.seller_id = 0, s.seller_id = 0
                        WHERE o.order_no IN ('${a.orderNo}','${b.orderNo}');`);
   console.log(`  （夹具已复原）订单 ${a.orderNo} / ${b.orderNo} 归还平台自营`);
