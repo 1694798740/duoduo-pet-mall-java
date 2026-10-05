@@ -4,7 +4,12 @@
  * 数据来源：GET /api/listings（对应后端 ListingQuery）
  *  · 后端只返回「已上架且审核通过」的闲置，前端不做二次过滤
  *  · 与商品检索页一样，筛选条件全部写进 URL query
- *  · 本期不支持发布闲置（没有对应后端接口），因此不提供「我要卖」入口
+ *  · **Web 端不提供「我要卖」入口** —— 注意与「后端没有接口」区分开：
+ *    后端 R52 已建齐（`POST /api/listings` 发布、`GET /api/listings/mine/list` 我的发布、
+ *    `POST /api/listings/{id}/status` 上下架、`/{id}/edit`、`/{id}/delete`、`/{id}/resubmit`），
+ *    且只要求「登录 + 实名」、**不要求 SELLER 角色**；缺口在 Web 页面没接
+ *    （小程序已有 flea-publish / flea-mine 四页）。此处注释曾写作「没有对应后端接口」，与事实不符，
+ *    2026-10-05 更正 —— 免得下一个人照它判断「做不了」。
  */
 
 import React, { useCallback, useMemo } from 'react';

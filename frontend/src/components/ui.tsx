@@ -379,6 +379,18 @@ export const StatusSteps: React.FC<{ status: OrderStatus }> = ({ status }) => {
 
 // ---------------- 统计条（自测/运营用的小图） ----------------
 
+/**
+ * 迷你柱状图。
+ *
+ * <p>★ 柱子外包一层 `.bar-track` **不是多余的**：柱高是百分比，而百分比高度只有在
+ * **父元素高度确定**时才能解析。此前柱子直接放在 `.bar-col`（`height:auto`）里，
+ * 形成「父高由内容决定、内容高又依赖父高」的循环依赖 —— 浏览器按规范把百分比
+ * 退化成 `auto`，于是**无论数值多大，所有柱子都塌成 `min-height:3px`**。
+ * 表象是「图表全平、看起来数值全是 0」，而接口数据其实完全正常
+ * （实测：待发货 144 / 在途 20 / 已完成 260 / 已退款 104 / 已关闭 273）。
+ *
+ * <p>`.bar-track` 用 `flex:1` 在高度确定的列里拿到确定高度，百分比才有解析基准。
+ */
 export const MiniBars: React.FC<{ data: { label: string; value: number }[]; unit?: string }> = ({
   data,
   unit = '',
@@ -388,11 +400,13 @@ export const MiniBars: React.FC<{ data: { label: string; value: number }[]; unit
     <div className="bars">
       {data.map((d) => (
         <div className="bar-col" key={d.label}>
-          <div
-            className="bar"
-            style={{ height: `${Math.max(3, (d.value / max) * 100)}%` }}
-            title={`${d.label}: ${d.value}${unit}`}
-          />
+          <div className="bar-track">
+            <div
+              className="bar"
+              style={{ height: `${Math.max(3, (d.value / max) * 100)}%` }}
+              title={`${d.label}: ${d.value}${unit}`}
+            />
+          </div>
           <span className="bar-label">{d.label}</span>
         </div>
       ))}

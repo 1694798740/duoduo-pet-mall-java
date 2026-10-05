@@ -1318,6 +1318,19 @@ button.link:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  /* 必须显式给高度：否则列高由内容决定，而柱子用的是百分比高度 ——
+     形成循环依赖，百分比退化成 auto，柱子全部塌成 min-height（图表「全平」）。
+     与 .bar-track 配套，缺一不可。 */
+  height: 100%;
+}
+/* 柱子的解析基准：flex:1 在高度确定的列里拿到确定高度，百分比才生效 */
+.bar-track {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
 }
 .bar {
   width: 100%;

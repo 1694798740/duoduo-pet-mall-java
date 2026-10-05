@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十一套真实浏览器 UI 断言 433 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十二套真实浏览器 UI 断言 454 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -635,8 +635,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（11 套） =================
-# 一键跑：起 dev server → 跑 11 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（12 套） =================
+# 一键跑：起 dev server → 跑 12 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
@@ -654,6 +654,7 @@ node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 80 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达）
+node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 21 项（**柱高必须与数值成正比** / 最高柱不得塌 / 0 值不画高度 / 六状态之和等于总单数 / 普通用户 403 边界）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================
@@ -1448,6 +1449,56 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-05（第六十五轮 · 商家端「订单状态分布」柱状图全平 —— 百分比高度解析失败）
+
+用户报障「订单状态分布柱状图全部显示为平的、数值全为零」。
+
+**★ 定性：数据是好的，塌掉的是渲染。** 实测（`GET /api/seller/summary` 与页面 DOM 同时读）：
+
+| 状态 | 接口值 | 柱子 `style.height` | **实际渲染高度** |
+|---|---|---|---|
+| 待付款 | 0 | 3% | 3px |
+| 待发货 | 144 | 52.75% | **3px** |
+| 在途 | 20 | 7.33% | **3px** |
+| 已完成 | 260 | 95.24% | **3px** |
+| 已退款 | 104 | 38.10% | **3px** |
+| 已关闭 | 273 | 100% | **3px** |
+
+**根因（CSS 的循环依赖）**：柱高用百分比，而百分比高度只有在**父元素高度确定**时才能解析。
+原实现把柱子直接放在 `.bar-col`（`height: auto`）里 —— 「父高由内容决定、内容高又依赖父高」，
+浏览器按规范把百分比**退化成 `auto`**，于是**无论数值多大，所有柱子都塌成 `min-height: 3px`**。
+`.bar-col` 的计算高度实测只有 25px（只剩标签的高度）。
+
+⚠️ 这类缺陷**接口层与静态检查都测不出来**：接口 200、六个字段齐全且和为 801、
+连 `style.height` 的百分比字符串都算对了 —— 只有真开浏览器量一次「实际渲染高度」才看得见。
+
+**改动（2 个前端文件）**：
+- `frontend/src/components/ui.tsx`：`MiniBars` 的柱子外包一层 `.bar-track`
+  （`flex:1` 在高度确定的列里拿到确定高度，给百分比一个解析基准），并补注释说明「这层不是多余的」；
+- `frontend/src/styles.css`：`.bar-col` 加 `height: 100%`，新增 `.bar-track`
+  （`flex:1; min-height:0; display:flex; align-items:flex-end; justify-content:center`）。
+
+修复后实测：待发货 47.5px / 在途 6.6px / 已完成 85.7px / 已退款 34.3px / 已关闭 90px（轨道 90px），
+**与数值严格成正比**（最差一格相对偏差 0.1%）；值为 0 的「待付款」仍保持 3px 最小高度。
+
+**新增自测** `scripts/e2e/seller-dashboard-ui-check.mjs`（**21 项 / 0 失败**，自包含）：
+钉的是**不变式**而非当前数值 ——
+① 柱高比例 == 数值比例（任取两根，相对偏差 < 10%）；
+② 最高柱 ≥ 轨道 80%（不能塌）；
+③ 值为 0 的柱子保持最小高度（不能把 0 画成有高度）；
+④ 六状态之和 == 页面上「共 N 笔订单」（图与总数同源）；
+⑤ 权限边界：普通用户进 `/seller` 看到入驻引导、顶栏无「商家端」、调 `/api/seller/summary` **403**。
+
+**★ 反向验证**：去掉 `.bar-col` 的 `height:100%` → **精确报红 2 条**
+（「最高柱 3px / 轨道 112px」、「最差一格相对偏差 278%」），还原后 21/0。
+
+**顺手更正一处会误导人的注释**：`frontend/src/pages/Listings.tsx` 顶部原写
+「本期不支持发布闲置（**没有对应后端接口**）」—— 与事实不符：后端 R52 已建齐六个闲置端点，
+且只要求「登录 + 实名」、**不要求 SELLER 角色**，缺口在 Web 页面没接（小程序已有四页）。
+已把注释改成准确表述，免得下一个人照它判断「做不了」。
+
+**回归**：`npm run build`（tsc + vite）exit 0。UI 自测口径：十一套 433 项 → **十二套 454 项**。
 
 ### 2026-10-05（第六十四轮 · 顶栏标签被截断 / 昵称折行：收紧信息架构 + 补响应式收口）
 
