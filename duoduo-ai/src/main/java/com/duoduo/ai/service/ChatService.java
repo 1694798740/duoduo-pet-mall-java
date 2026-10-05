@@ -266,10 +266,30 @@ public class ChatService {
         if (compare != null) {
             draft = new ChatResponse(compare, toRecommendations(topN(candidates, 3)),
                     mockEnabled ? "mock" : "llm", null, List.of());
+        } else if (mockEnabled) {
+            draft = mockReply(candidates, personalized);
         } else {
-            draft = mockEnabled
-                    ? mockReply(candidates, personalized)
-                    : llmReply(message, history, candidates, constraints, pets);
+            // LLM 不可用（额度用尽 / 上游 5xx / 超时）→ **降级为召回拼装**，而不是整段 503。
+            //
+            // 2026-10-05 排障结论：线上 503 的根因是 DashScope 免费额度用尽（403
+            // AllocationQuota.FreeTierOnly）—— 外部凭据问题不是改代码能解决的，
+            // 但「功能整段消失」与「额度用尽」不该绑死：推荐仍来自**真实商品库**，
+            // 只是话术从模型生成退回规则拼装。mode 标为 fallback，前端与排查者一眼可辨。
+            //
+            // 只接 DEGRADED（上游不可用类）；其他业务异常照常抛出，不吞。
+            try {
+                draft = llmReply(message, history, candidates, constraints, pets);
+            } catch (BizException e) {
+                if (e.getErrorCode() != ErrorCode.DEGRADED) {
+                    throw e;
+                }
+                log.warn("LLM 不可用（{}），降级为召回拼装回复 mode=fallback", e.getMessage());
+                ChatResponse fallback = mockReply(candidates, personalized);
+                // 开头如实说明「这句不是模型写的」—— 静默降级等于让用户以为还是 AI 生成
+                draft = new ChatResponse(
+                        "（AI 生成暂时不可用，以下为按你的需求从真实商品库筛选的结果）\n" + fallback.reply(),
+                        fallback.recommendations(), "fallback", null, List.of());
+            }
         }
 
         // ⑥ 护栏：合规词与价格一致性过一遍出口（命中即换成事实版回复）

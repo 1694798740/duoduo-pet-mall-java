@@ -88,7 +88,12 @@ public class DashScopeClient {
                     HttpResponse.BodyHandlers.ofString());
             long cost = System.currentTimeMillis() - start;
             if (resp.statusCode() / 100 != 2) {
-                log.warn("LLM 调用失败 status={} cost={}ms", resp.statusCode(), cost);
+                // ★ 把上游错误体记进日志：状态码只有 401/403/429 一个数字，
+                //   「额度用尽」与「key 无效」的排障方向完全不同 —— 只记状态码等于
+                //   让下一次排障还要手工复现一遍才能看到原因（2026-10-05 实测教训）。
+                String errBody = resp.body();
+                String head = errBody == null ? "" : errBody.substring(0, Math.min(errBody.length(), 300));
+                log.warn("LLM 调用失败 status={} cost={}ms body={}", resp.statusCode(), cost, head);
                 throw new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
             }
             String content = extractContent(resp.body());
