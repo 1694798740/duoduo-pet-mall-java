@@ -2,6 +2,7 @@ package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.trade.dto.AnalyticsDtos.SellerAnalytics;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.RefundRequest;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
@@ -46,6 +47,17 @@ public class SellerController {
     @GetMapping("/summary")
     public ApiResponse<SellerSummary> summary() {
         return ApiResponse.ok(sellerService.summary());
+    }
+
+    /**
+     * 商家端多维度统计（图表用）。
+     *
+     * <p>与 {@code /summary} 分开是刻意的：统计卡比图表重要得多，
+     * 图表取数异常不该把卡片一起拖下水。前端两个请求各自降级。
+     */
+    @GetMapping("/analytics")
+    public ApiResponse<SellerAnalytics> analytics() {
+        return ApiResponse.ok(sellerService.analytics());
     }
 
     /** 卖出的订单列表；status 可按状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED） */

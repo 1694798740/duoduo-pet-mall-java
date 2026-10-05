@@ -6,6 +6,10 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.trade.dto.AnalyticsDtos;
+import com.duoduo.trade.dto.AnalyticsDtos.SellerAnalytics;
+import com.duoduo.trade.dto.AnalyticsDtos.Slice;
+import com.duoduo.trade.dto.AnalyticsDtos.TrendPoint;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.SellerDtos.SellerSummary;
@@ -17,10 +21,12 @@ import com.duoduo.trade.entity.SettlementEntity;
 import com.duoduo.trade.mapper.OrderMapper;
 import com.duoduo.trade.mapper.SettlementMapper;
 import com.duoduo.trade.support.OrderStatus;
+import com.duoduo.trade.support.TrendSeries;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -273,6 +279,67 @@ public class SellerService {
                 custodyAmount, custodySellerAmount,
                 releasedAmount, releasedSellerAmount,
                 refundedAmount,
+                isoTs(LocalDateTime.now(ZoneOffset.UTC)));
+    }
+
+    // ---------------- 多维度图表统计（第六十六轮） ----------------
+
+    /**
+     * 商家端多维度统计（图表用）。
+     *
+     * <p><b>为什么与 {@link #summary()} 分成两个接口</b>：那种是「几张数字卡」，
+     * 这种是「几组序列」。合成一个接口后，任何一张图取数失败都会把统计卡一起拖垮 ——
+     * 而页面上「待发货 144」比「趋势图」重要得多，不该被图表连坐。
+     *
+     * <p>五个维度都走 SQL 聚合、且都在 {@code visibleSellerIds} 范围内，
+     * 与订单列表、归属校验共用同一个范围定义 —— 图表的可见范围必须与明细一致，
+     * 否则会出现「图上 100 笔、点进去只有 3 笔」这种最难解释的一致性问题。
+     */
+    public SellerAnalytics analytics() {
+        SellerScope scope = requireSellerScope();
+        List<Long> visible = scope.visibleSellerIds();
+
+        // 维度一：订单状态分布（复用概览那套聚合，保证两处口径完全一致）
+        List<Slice> status = new ArrayList<>();
+        Map<String, Long> statusCount = new HashMap<>();
+        for (Map<String, Object> row : orderMapper.countBySellerAndStatus(visible)) {
+            statusCount.merge(str(row, "status"), lng(row, "cnt"), Long::sum);
+        }
+        for (OrderStatus s : OrderStatus.values()) {
+            status.add(new Slice(s.label(), statusCount.getOrDefault(s.name(), 0L)));
+        }
+
+        // 维度二：近 14 天趋势（补零口径见 TrendSeries：稀疏结果直接画折线会把「没单的日子」跳过）
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate fromDay = today.minusDays(AnalyticsDtos.TREND_DAYS - 1L);
+        List<TrendPoint> trend = TrendSeries.fill(
+                orderMapper.dailyTrend(visible, fromDay.atStartOfDay()), fromDay, AnalyticsDtos.TREND_DAYS);
+
+        // 维度三：商品销量 Top N
+        List<Slice> topProducts = orderMapper.topProductsBySales(visible, AnalyticsDtos.TOP_PRODUCT_LIMIT).stream()
+                .map(row -> new Slice(str(row, "name"), lng(row, "qty")))
+                .toList();
+
+        // 维度四：资金构成（复用概览的资金聚合，同样保证口径一致）
+        Map<String, Long> fund = new HashMap<>();
+        for (Map<String, Object> row : settlementMapper.aggregateBySellers(visible)) {
+            fund.merge(str(row, "status"), lng(row, "amount_sum"), Long::sum);
+        }
+        List<Slice> fundComposition = List.of(
+                new Slice("托管中", fund.getOrDefault(SettlementEntity.STATUS_CUSTODY, 0L)),
+                new Slice("已放款", fund.getOrDefault(SettlementEntity.STATUS_RELEASED, 0L)),
+                new Slice("已退回", fund.getOrDefault(SettlementEntity.STATUS_REFUNDED, 0L)));
+
+        // 维度五：订单类型占比
+        Map<String, Long> typeMix = new HashMap<>();
+        for (Map<String, Object> row : orderMapper.countByOrderType(visible)) {
+            typeMix.merge(str(row, "t"), lng(row, "cnt"), Long::sum);
+        }
+        List<Slice> orderTypeMix = List.of(
+                new Slice("普通下单", typeMix.getOrDefault("NORMAL", 0L)),
+                new Slice("秒杀", typeMix.getOrDefault("SECKILL", 0L)));
+
+        return new SellerAnalytics(status, trend, topProducts, fundComposition, orderTypeMix,
                 isoTs(LocalDateTime.now(ZoneOffset.UTC)));
     }
 

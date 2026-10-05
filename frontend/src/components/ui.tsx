@@ -377,39 +377,13 @@ export const StatusSteps: React.FC<{ status: OrderStatus }> = ({ status }) => {
   );
 };
 
-// ---------------- 统计条（自测/运营用的小图） ----------------
+// ---------------- 统计条 ----------------
+//
+// 原先这里有一个手写的 `MiniBars`（纯 div + 百分比高度）。第六十六轮已由
+// `components/charts.tsx` 的 ECharts 版本取代，原实现与配套的 `.bars` 系列样式一并删除。
+// 删掉而不是留着，理由有两条：
+//   ① 它的悬停提示用的是 HTML 原生 `title`，延迟由操作系统决定（1–2 秒）且不可配置 ——
+//      留着就是留一个「下次有人再踩一遍」的坑；
+//   ② 它的百分比高度依赖一个高度确定的父元素，改样式时极易再次退化成「柱子全平」
+//      （第六十五轮刚修过一次）。同一件事不维护两套实现。
 
-/**
- * 迷你柱状图。
- *
- * <p>★ 柱子外包一层 `.bar-track` **不是多余的**：柱高是百分比，而百分比高度只有在
- * **父元素高度确定**时才能解析。此前柱子直接放在 `.bar-col`（`height:auto`）里，
- * 形成「父高由内容决定、内容高又依赖父高」的循环依赖 —— 浏览器按规范把百分比
- * 退化成 `auto`，于是**无论数值多大，所有柱子都塌成 `min-height:3px`**。
- * 表象是「图表全平、看起来数值全是 0」，而接口数据其实完全正常
- * （实测：待发货 144 / 在途 20 / 已完成 260 / 已退款 104 / 已关闭 273）。
- *
- * <p>`.bar-track` 用 `flex:1` 在高度确定的列里拿到确定高度，百分比才有解析基准。
- */
-export const MiniBars: React.FC<{ data: { label: string; value: number }[]; unit?: string }> = ({
-  data,
-  unit = '',
-}) => {
-  const max = Math.max(1, ...data.map((d) => d.value));
-  return (
-    <div className="bars">
-      {data.map((d) => (
-        <div className="bar-col" key={d.label}>
-          <div className="bar-track">
-            <div
-              className="bar"
-              style={{ height: `${Math.max(3, (d.value / max) * 100)}%` }}
-              title={`${d.label}: ${d.value}${unit}`}
-            />
-          </div>
-          <span className="bar-label">{d.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-};

@@ -1059,3 +1059,120 @@ export interface ShareReportHandleRequest {
   /** 处理说明，必填 —— 这是回应申诉的唯一凭据 */
   note: string;
 }
+
+// ---------- 图表统计（第六十六轮 · duoduo-trade） ----------
+//
+// 后端把柱状/饼图/横条统一成一种形状 `Slice`（名称 → 数值），
+// 前端因此不需要为每种图各写一份数据组装逻辑，换图类型只是换渲染器。
+//
+// **数值一律是原始值**：金额单位「分」、计数单位「笔」，
+// 千分位与「¥」由展示层处理 —— 后端一旦下发 "¥1,234.00" 这类字符串，
+// 前端就无法做占比、排序、同比，等于把数据降级成文案。
+
+/** 通用图表切片：柱状/饼图/横条共用 */
+export interface AnalyticsSlice {
+  /** 展示名（后端已本地化，前端不再维护映射表） */
+  name: string;
+  /** 原始数值：计数类为「笔」，金额类为「分」 */
+  value: number;
+}
+
+/** 趋势点；date 为 UTC 自然日 yyyy-MM-dd */
+export interface AnalyticsTrendPoint {
+  date: string;
+  /** 当日下单数（按下单时间归集） */
+  orderCount: number;
+  /** 当日成交额（分）：只含「已付款及之后」的订单 */
+  gmv: number;
+}
+
+/** 商家端多维度统计 */
+export interface SellerAnalytics {
+  /** 维度一：订单状态分布 */
+  statusDistribution: AnalyticsSlice[];
+  /** 维度二：近 14 天成交趋势（**已补零**，无成交的日期也在，不会断线） */
+  trend: AnalyticsTrendPoint[];
+  /** 维度三：商品销量 Top N（value = 销量件数） */
+  topProducts: AnalyticsSlice[];
+  /** 维度四：资金构成（value = 金额，分） */
+  fundComposition: AnalyticsSlice[];
+  /** 维度五：订单类型占比 */
+  orderTypeMix: AnalyticsSlice[];
+  generatedAt: string;
+}
+
+/** 平台后台图表数据 */
+export interface AdminCharts {
+  statusDistribution: AnalyticsSlice[];
+  trend: AnalyticsTrendPoint[];
+  topProducts: AnalyticsSlice[];
+  fundComposition: AnalyticsSlice[];
+  generatedAt: string;
+}
+
+// ---------- 我的闲置（第六十六轮 · A 方案补齐 Web 端） ----------
+
+/** 交易维度（与审核维度正交） */
+export type ListingStatus = 'ON_SALE' | 'OFF_SHELF' | 'SOLD';
+/** 审核维度 */
+export type ListingAuditStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/** 我的发布条目（卖家视角：必须带出审核态与驳回原因，否则发布完就「查无此项」） */
+export interface ListingMineView {
+  id: string;
+  title: string;
+  price: number;
+  conditionLevel: string | null;
+  city: string | null;
+  cover: string | null;
+  species: string | null;
+  status: ListingStatus;
+  statusLabel: string;
+  auditStatus: ListingAuditStatus;
+  /** 被驳回的原因 —— 不给原因卖家只能猜着改 */
+  auditReason: string | null;
+  viewCount: number;
+  wantCount: number;
+  createdAt: string;
+}
+
+/** 卖家视角详情：编辑表单的回填来源（公开详情对未过审内容一律 404） */
+export interface ListingOwnerView {
+  id: string;
+  title: string;
+  description: string | null;
+  categoryId: string | null;
+  price: number;
+  originalPrice: number | null;
+  conditionLevel: string | null;
+  city: string | null;
+  images: string[];
+  species: string | null;
+  breed: string | null;
+  status: ListingStatus;
+  statusLabel: string;
+  auditStatus: ListingAuditStatus;
+  auditReason: string | null;
+  viewCount: number;
+  wantCount: number;
+  createdAt: string;
+}
+
+/**
+ * 发布 / 编辑 / 重提共用的请求体。
+ *
+ * 价格单位是**分**（后端 `requirePrice` 直接按分校验上限 99999 元）；
+ * 表单里用户填的是元，提交前必须换算，别把「元」当「分」发上去 —— 那会让价格差 100 倍。
+ */
+export interface ListingPublishRequest {
+  title: string;
+  description?: string | null;
+  categoryId?: string | null;
+  price: number;
+  originalPrice?: number | null;
+  conditionLevel?: string | null;
+  city?: string | null;
+  images?: string[];
+  species?: string | null;
+  breed?: string | null;
+}

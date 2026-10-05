@@ -106,6 +106,16 @@ public class LongToStringJacksonModule extends SimpleModule {
             // 于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里退化成**字典序比较**
             // （"15" -ge "3" 为 False）而恒失败 —— 一个类型错误伪装成业务失败。
             "total",
+            // 第六十六轮补齐：图表切片 `AnalyticsDtos.Slice(name, long value)`。
+            // 图表数值一律是「会被运算的量」—— ECharts 要拿它算最大值、占比、柱高，
+            // 字符串下去直接画不出图（实测：`"value":"144"` 会被当成类目名而非数值）。
+            //
+            // ⚠️ `value` 是个很泛的名字，与「漏标方向是安全的」这条默认相反：
+            // 将来若真出现一个**标识**字段叫 `value`（雪花 id），它会被这里误伤为数字。
+            // 届时请把那个字段改名（如 `xxxId`），**不要**把本行删掉 ——
+            // 删掉会让所有图表一起失效。全仓当前仅此一处 Long 名为 value
+            // （其余同名项都是方法参数，与序列化无关）。
+            "value",
             // —— 时间戳（epoch 毫秒，前端要 new Date(ts) 参与运算）——
             "timestamp", "createdAtMs", "updatedAtMs", "expireAtMs"
     ));

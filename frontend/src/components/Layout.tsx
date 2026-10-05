@@ -158,6 +158,13 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/addresses" style={{ display: 'block' }}>
                       收货地址
                     </Link>
+                    {/* 「我的闲置」放在个人事务里而不是顶栏：顶栏只放「逛 / 买」一级动线
+                        （见上面 NAV 的注释），而这是「我要卖」的个人事务入口。
+                        ★ 刻意不加角色判断 —— 发布与管理闲置只要求「登录 + 实名」，
+                        与「卖家身份」（自营店铺）是两条线，普通用户就是闲置卖家本人。 */}
+                    <Link className="nav-link" to="/listings/mine" style={{ display: 'block' }}>
+                      我的闲置
+                    </Link>
                     {/* 工作台入口单独排在个人事务之后 —— 它们是「另一重身份」的入口，
                         不是个人资料，混在中间会让菜单读起来没有层次。 */}
                     {canAccessSellerConsole(user.role) ? (

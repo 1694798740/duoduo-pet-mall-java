@@ -89,6 +89,17 @@ export const ListingsPage: React.FC = () => {
         <span className="section-sub">
           {data ? `共 ${data.total} 件` : loading ? '加载中…' : ''}
         </span>
+        {/* 「我要卖」入口（第六十六轮补齐）：后端发布/管理端点早在 R52/R53 就绪，
+            只差 Web 没接。**不套卖家角色** —— 闲置是个人对个人，
+            只要求「登录 + 实名」，所以这里直接给出入口，未登录点进来自会引导登录。 */}
+        <div className="row" style={{ gap: 8, marginLeft: 'auto' }}>
+          <Link className="btn btn-ghost btn-sm" to="/listings/mine">
+            我的闲置
+          </Link>
+          <Link className="btn btn-primary btn-sm" to="/listings/new">
+            + 我要卖
+          </Link>
+        </div>
       </div>
 
       <Alert kind="info">

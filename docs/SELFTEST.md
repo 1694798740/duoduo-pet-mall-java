@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 12 套 454 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 14 套 539 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | 228 项 |
@@ -285,15 +285,16 @@ node scripts/mp-harness/behavior.test.js               # 页面行为（31 项�
 ### 4.6 前端真实浏览器 e2e
 
 ```powershell
-# 一键：起 dev server → 跑 12 套 → 建/拆券夹具 → 收尾
+# 一键：起 dev server → 跑 14 套 → 建/拆券夹具 → 收尾
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：12 套全 PASS，合计 454 项。判定同样看退出码。
+**预期**：14 套全 PASS，合计 539 项。判定同样看退出码。
 
-其中 5 套是**自包含**的（不需要外部夹具，可单独跑）：
-`home`（7 项）、`admin-entry`（32 项）、`header-layout`（80 项）、`seller-dashboard`（21 项）、`seckill`（45 项）；
+其中 8 套是**自包含**的（不需要外部夹具，可单独跑）：
+`home`（7）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
+`admin-charts`（28）、`my-listings`（47）、`seckill`（45）、`address`（64）；
 其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
 
 **后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，32 项）单独跑：
@@ -432,6 +433,9 @@ done
 | 30 | 断言「下拉菜单里有 X」，实际有两个却报 `found 2`；或反过来明明有却查不到 | **同一标签可能在两处出现**（运营账号的「商家端」顶栏与下拉里都有），在 `.app-header` 这种大作用域里查会把两处都数进来 | 给浮层加稳定类名（本项目是 `.user-menu`），断言一律**限定在目标容器内**：`page.locator('.app-header .user-menu').getByRole('link', { name: '商家端', exact: true })` |
 | 31 | 点击某个按钮一直超时，日志写 `… <a href="/orders" class="nav-link">我的订单</a> … intercepts pointer events`，看起来像「按钮点不动 / 按钮坏了」 | **浮层遮挡**，不是按钮的问题：右上角展开的头像下拉（176px 宽、`zIndex:80`）正好压住了页面右上角的按钮；而 `Layout` 的菜单**只在路由变化时收起，没有 Esc 关闭** | 测试里显式收起浮层：`await page.locator('.app-header button.icon-btn').first().click()`（再点一次头像）。**判据：Playwright 说「被某某元素拦截点击」时，先想「谁盖住了它」，别去怀疑被点元素本身**。（给菜单补 Esc 关闭仍是一个待办的小改进） |
 | 32 | 图表**看起来数据全是 0**（柱子全平），但接口 200、字段齐全、数值也非零，连元素上的 `style="height:52.75%"` 都算对了 | **百分比高度解析失败**：柱高是 `height: X%`，而父元素 `.bar-col` 的 `height` 是 `auto` —— 「父高由内容决定、内容高又依赖父高」形成循环依赖，浏览器按规范把百分比**退化成 `auto`**，于是所有柱子一起塌成 `min-height`。实测 `.bar-col` 计算高只有 25px | **给柱子一个高度确定的容器**：外层 `flex:1` 的轨道 + 列 `height:100%`（两者缺一不可）。**判据：凡是「按比例画高度」的地方，先确认它的父链上有一个 definite height** —— `auto` 高度父元素里的百分比 = 不生效。这类缺陷接口层与静态检查都测不出来，只能开浏览器量实际渲染高度 |
+| 33 | 图表**画不出来 / 柱子全空**，但接口数据看着完全正常 | `long value` 被序列化成了**字符串**（`{"name":"待发货","value":"144"}`）—— ECharts 会把字符串当**类目名**而不是数值。根因是 `LongToStringJacksonModule` **默认把所有 Long 转字符串**（保护雪花 id），只有 `LongToStringJacksonModule.NUMERIC_LONG_FIELDS` 白名单里的字段保持数字 | 把该字段名加进白名单（模块注释里写明的规矩：**这个值前端会拿去做加减/乘除/比大小吗？会就加**）。⚠️ 改的是**共用模块** ⇒ 必须重建全部依赖方，且**逐模块比对宿主机 jar 与容器内 `/app/app.jar`**；注意判据是「**该模块是否依赖被改的模块**」——网关只依赖 `duoduo-common`、jar 内 common-web 条目数为 0，它没被重建是**正确**的，不是漏构建 |
+| 34 | UI 套件里点某个按钮，日志说元素被 `<a href="/orders" class="nav-link">…` 之类的浮层元素拦截（`intercepts pointer events`） | **浮层遮挡**，不是被点元素坏了：展开的头像下拉（176px、`zIndex:80`）正好压在页面右上角的按钮上；而 `Layout` 的菜单**只在路由变化时收起、没有 Esc 关闭** | 测试里显式收起浮层：再点一次头像。**判据：Playwright 说「被某某元素拦截点击」时，先想「谁盖住了它」** |
+| 35 | 写 e2e 时请求返回 `undefined`，断言无法判定（既不是通过也不是明确失败） | 用了**不存在的路径或参数名**：例如公开闲置检索其实是 `/api/listings/search`（裸 `/api/listings` 是发布写端点），把 `data.items` 读成 `undefined` 后 `?? 0` 会**静默变成 0**、令断言失去意义 | 断言里**不要用 `?? 0` 兜底掩盖形状错误**：先断言「结构存在且类型正确」（如 `typeof data.total === 'number'`），再做业务判定。写路径前先看后端 Controller 的 `@GetMapping`，别照抄页面注释 |
 
 ---
 
@@ -443,7 +447,7 @@ done
 - [ ] `scripts\run-all-smoke.ps1` → 23 套全通过，0 失败
 - [ ] `python scripts/extract-api-contract.py --check` → PASS
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
-- [ ] `scripts\e2e\run-ui-checks.ps1` → 12 套全 PASS
+- [ ] `scripts\e2e\run-ui-checks.ps1` → 14 套全 PASS
 - [ ] `python scripts/perf/bench.py --check` → 全部达标
 - [ ] 8 个模块容器内 jar md5 与宿主机一致
 - [ ] 跑完做一次数据体检：FROZEN = 0

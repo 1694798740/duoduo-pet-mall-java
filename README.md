@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十二套真实浏览器 UI 断言 454 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十四套真实浏览器 UI 断言 539 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -635,8 +635,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（12 套） =================
-# 一键跑：起 dev server → 跑 12 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（14 套） =================
+# 一键跑：起 dev server → 跑 14 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
@@ -654,7 +654,9 @@ node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 80 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达）
-node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 21 项（**柱高必须与数值成正比** / 最高柱不得塌 / 0 值不画高度 / 六状态之和等于总单数 / 普通用户 403 边界）
+node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
+node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 28 项（**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403）
+node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================
@@ -1449,6 +1451,77 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-05（第六十六轮 · 图表体系重建：悬停即时 / 换主流图表组件 / 多维度 / 后台补图 + A 方案）
+
+用户四项要求：① 柱状图悬停要**即时**（原为 2–3 秒）；② 用**主流图表组件**替换手写实现；
+③ 订单状态分布**单一维度扩成多维度**；④ 平台后台补**分布图 / 折线图 / 柱状图 / 饼图**。
+另要求一并实现 **A 方案**（Web 端补「我的闲置」）。
+
+**① 悬停 2–3 秒的根因：用错了机制。**
+原实现用 HTML 原生 `title` 属性做提示 —— **原生 title 的显示延迟由操作系统决定
+（Windows 约 1–2 秒）且无法通过 CSS/JS 配置**。换成 ECharts 自绘 tooltip 后**实测 6–26ms**。
+
+**② 图表组件：ECharts 6（按需引入 + 懒加载）**
+- 只 `use` 用到的：`BarChart / LineChart / PieChart + Grid/Legend/Tooltip + CanvasRenderer`；
+- `animation: false`（仪表盘不需要入场动画；动画期间悬停是无反馈的，反而显得卡）；
+- **懒加载拆包**：新增 `components/lazy-charts.tsx` 作为 `React.lazy` 边界 ——
+  构建产物核对：主包 237.07 kB（较改造前 +16 kB），ECharts 独立成
+  `charts-*.js 558.14 kB`，**只有打开商家端/后台才会下载**，买家端首屏不为它买单。
+
+**③ 多维度：从 1 个维度扩到 5 个**（`GET /api/seller/analytics`）
+订单状态分布（柱）/ 近 14 天成交趋势（折线，**补零**）/ 商品销量 Top 8（横条）/
+资金构成（饼）/ 订单类型占比（饼）。原手写的 `MiniBars` 与其 CSS **一并删除**
+（留着就是留一个「下次再踩」的坑），并保留其历史教训注释。
+
+**④ 平台后台补图**（`GET /api/admin/reports/charts`）
+折线（近 14 天趋势）/ 饼（资金构成）/ 柱状（商品销量 Top 8）/ 分布（订单状态横条）。
+**图表不参与页面的 loading 门** —— 报表卡比图表重要，图慢不该把数字一起拖住。
+
+**★ 两个必须记下的坑**
+
+1. **`long value` 被序列化成字符串**（`{"value":"144"}`），ECharts 会把它当类目名、直接画不出图。
+   根因是 `LongToStringJacksonModule` **默认把所有 Long 转字符串**（保护雪花 id），
+   只有白名单里的字段保持数字。按该模块自己写明的规矩把 `value` 加进白名单，
+   并注明它是泛用名（将来若有 id 叫 `value`，请改字段名而不是删这一行）。
+   ⚠️ 这一步改的是**共用模块**，因此按纪律**重建全部依赖方**：
+   实测 `duoduo-gateway` 镜像**仍是 4 天前的** —— 但它只依赖 `duoduo-common`、
+   jar 内 common-web 条目数为 **0**，Maven 跳过它是**正确行为**（不是漏构建）；
+   其余 7 个服务逐模块比对宿主机与容器内 `/app/app.jar` **8/8 一致**。
+2. **`mvn package` 不带 `clean` 会跳过没有源码改动的模块** → 它们的 jar 不链接新的
+   `common-web`。这正是项目台账里记过的「增量检测认为无需重打」。
+
+**★ 顺手修掉一个既存缺陷：Web《二手闲置》列表页对所有人 401**
+后端第五十二轮把公开检索从裸 `/api/listings` 挪到了 `/api/listings/search`
+（单段路径要让给 `POST /api/listings`，而网关白名单**不区分方法**），**前端漏改**，
+于是该页一直报「身份未认证或登录已过期」——而十四套 e2e 此前恰好**没有一套访问过 `/listings`**，
+长期没被发现。已修正并补断言；反向验证：改回旧路径后页面立刻复现该报错。
+
+**A 方案：Web 端「我的闲置」**（发布 / 我的闲置 / 编辑三页）
+**不套 `RequireSeller`** —— 发布与管理闲置只要求「登录 + 实名」，与「卖家身份」是两条线，
+普通用户就是闲置卖家本人。筛选口径与小程序严格一致（**不重不漏划分**：
+审核两标签只带 `auditStatus`，交易三标签必须同带 `auditStatus=APPROVED`）。
+顺带给共享请求层加了 **multipart 支持**（`body instanceof FormData` 时不写 content-type、
+不 JSON 序列化），这样图片上传也走**同一条请求路径**（401 单飞刷新、错误文案映射都在那里），
+而不是在页面里另起一个 fetch。
+
+**新增自测（3 套，共 106 项）**
+- `seller-dashboard-ui-check.mjs` **31 项**：五张图 canvas 非零 / 摘要与接口一致 /
+  **悬停 10–12ms 内出数据**（预算 500ms）/ **断言不许再用原生 title** / 普通用户 403；
+- `admin-charts-ui-check.mjs` **28 项**：四类图都在 / 悬停 6–26ms / 数据与接口一致 / 403；
+- `my-listings-ui-check.mjs` **47 项**：未登录回跳 → 发布 → 审核中 → 过审 → 在售 → 下架 →
+  重新上架 → 编辑回审核中 → 软删（**库里 `deleted_at` 落库、行还在**）/ 未实名 403 /
+  公开页匿名可用（守住上一条缺陷）。
+
+**回归**：`npm run build` exit 0；`home` 7/0、`address` 64/0、`admin-entry` 32/0、
+`header-layout` 80/0、`seckill` 45/0，加新增 3 套 —— **8 套 334 项全绿**。
+UI 自测口径：十二套 454 项 → **十四套 539 项**。
+
+**另记一处既存缺陷（本轮未修，已登记）**：C2C 闲置的**关键词检索恒为 0**。
+ES 索引 `duoduo-search` 里有 **124 条 LISTING 文档、0 条 SPU**，
+但都是历史自测遗留的旧状态；新建与刚过审的条目**没有进索引**，
+而「ES 返回 0 命中」不是异常 ⇒ **不触发降级**，于是静默空结果。
+修法属独立工作（闲置索引的增量同步/回补），且本轮的 e2e 已刻意绕开 ES 取数以免混淆归因。
 
 ### 2026-10-05（第六十五轮 · 商家端「订单状态分布」柱状图全平 —— 百分比高度解析失败）
 

@@ -119,14 +119,20 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function rawRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, signal } = options;
+  // 文件上传走 multipart：**不能**手写 content-type —— 边界串由浏览器生成，
+  // 手写会把 boundary 写错，服务端解析直接失败。同理不能 JSON.stringify 二进制。
+  //
+  // 刻意改在这一层而不是在页面里另起一个 fetch：401 单飞刷新、错误文案映射、
+  // 重试策略都在这里，绕过去等于让上传成为唯一一个「令牌失效不续期」的请求。
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(buildUrl(path, query), {
       method,
       credentials: 'include',
       signal,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: body === undefined || isForm ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : (isForm ? body : JSON.stringify(body)),
     });
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;

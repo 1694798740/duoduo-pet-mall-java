@@ -23,6 +23,7 @@
 import { api } from './client';
 import type {
   AbnormalSettlement,
+  AdminCharts,
   AdminReport,
   AdminSettlementSummary,
   AdminUserView,
@@ -50,6 +51,9 @@ import type {
   ListingAuditRequest,
   ListingAuditView,
   ListingCard,
+  ListingMineView,
+  ListingOwnerView,
+  ListingPublishRequest,
   ListingDetail,
   OrderView,
   PageResult,
@@ -69,6 +73,7 @@ import type {
   RoleChangeRequest,
   RoleChangeResult,
   SellerProductView,
+  SellerAnalytics,
   SellerSummary,
   SettlementPage,
   SettlementView,
@@ -204,9 +209,18 @@ export const productApi = {
   /** 商品详情：SKU、适用属性聚合、同类与相关推荐 */
   detail: (spuId: string) => api.get<ProductDetail>(`/api/products/${spuId}`),
 
-  /** C2C 闲置列表（只返回已上架且审核通过的） */
+  /**
+   * C2C 闲置列表（只返回已上架且审核通过的）。
+   *
+   * ★ 路径是 `/api/listings/search` 而**不是** `/api/listings`。
+   * 后端第五十二轮把公开检索从裸 `/api/listings` 挪到了 `/search` ——
+   * 因为单段路径要让给 `POST /api/listings`（发布），而网关白名单**不区分 HTTP 方法**，
+   * 两者不可能共存于同一路径。前端当时漏改，于是这个页面**对所有人 401**（不是空列表，是直接报错），
+   * 而十二套 e2e 恰好没有一套访问过 `/listings`，所以一直没被发现。
+   * 第六十六轮补 A 方案时才发现并修正。
+   */
   listings: (query: ListingQuery & { signal?: AbortSignal }) =>
-    api.get<PageResult<ListingCard>>('/api/listings', { query }),
+    api.get<PageResult<ListingCard>>('/api/listings/search', { query }),
 
   /** 闲置详情 + 「同款全新」推荐 */
   listing: (id: string) => api.get<ListingDetail>(`/api/listings/${id}`),
@@ -279,6 +293,14 @@ export const sellerApi = {
    */
   summary: () => api.get<SellerSummary>('/api/seller/summary'),
 
+  /**
+   * 商家端多维度统计（图表用）。
+   *
+   * <p>与 summary 分成两个请求是刻意的：统计卡比图表重要得多，
+   * 图表取数异常不该把卡片一起拖下水 —— 两个 useAsync 各自降级。
+   */
+  analytics: () => api.get<SellerAnalytics>('/api/seller/analytics'),
+
   /** 卖出的订单列表；status 可选 PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED */
   orders: (query?: { status?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/seller/orders', { query }),
@@ -330,6 +352,9 @@ export const sellerApi = {
 export const adminApi = {
   // ---- 运营报表与资金对账（落在 duoduo-trade） ----
   reportOverview: () => api.get<AdminReport>('/api/admin/reports/overview'),
+
+  /** 运营概览的图表数据（分布图 / 折线图 / 柱状图 / 饼图） */
+  reportCharts: () => api.get<AdminCharts>('/api/admin/reports/charts'),
   settlementSummary: () => api.get<AdminSettlementSummary>('/api/admin/settlements/summary'),
   settlementAbnormal: () => api.get<AbnormalSettlement[]>('/api/admin/settlements/abnormal'),
 
@@ -643,4 +668,52 @@ export const seckillApi = {
    */
   place: (body: { activityId: string; skuId: string; addressId: string; idempotentKey: string }) =>
     api.post<PlaceSeckillResult>('/api/seckill/orders', body),
+};
+
+// ---------- 我的闲置（C2C 闲置管理 · 第六十六轮补齐 Web 端） ----------
+//
+// 写入路径一律**三段或单段 + POST**（`/{id}/status`、`/{id}/edit`、`/{id}/delete`、`/mine/list`）：
+// 网关白名单按**路径**匹配且不区分方法，`/api/listings/*` 只放行了公开只读那一层，
+// 把写端点写成两段等于给匿名用户开了 UGC 直写。
+//
+// 这六个端点**只要求「登录 + 实名」，不要求卖家角色** —— 二手闲置是个人对个人，
+// 与「自营店铺」是两条线。所以普通用户也能在这里发布与管理。
+export const listingApi = {
+  /** 发布闲置（需登录 + 实名；未实名服务端 403，文案会说明原因） */
+  publish: (body: ListingPublishRequest) => api.post<ListingMineView>('/api/listings', body),
+
+  /** 我的发布；status 与 auditStatus 正交组合（前端分类标签按此过滤） */
+  mine: (query?: { status?: string; auditStatus?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ListingMineView>>('/api/listings/mine/list', { query }),
+
+  /** 卖家视角详情：编辑表单的回填来源（公开详情对未过审内容 404） */
+  mineDetail: (id: string) => api.get<ListingOwnerView>(`/api/listings/mine/${id}`),
+
+  /** 上下架；action = ON_SALE | OFF_SHELF */
+  changeStatus: (id: string, action: 'ON_SALE' | 'OFF_SHELF') =>
+    api.post<ListingMineView>(`/api/listings/${id}/status`, { action }),
+
+  /** 编辑（内容变更后审核态回到 PENDING —— 审核结论只对「当时那段内容」有效） */
+  edit: (id: string, body: ListingPublishRequest) =>
+    api.post<ListingMineView>(`/api/listings/${id}/edit`, body),
+
+  /** 重新提审（仅 auditStatus=REJECTED 可调，其余 422） */
+  resubmit: (id: string, body: ListingPublishRequest) =>
+    api.post<ListingMineView>(`/api/listings/${id}/resubmit`, body),
+
+  /** 删除（**软删**：别人的订单页与聊天记录里不会变成「查无此物」） */
+  remove: (id: string) => api.post<void>(`/api/listings/${id}/delete`),
+};
+
+// ---------- 图片上传（duoduo-fulfilment；写走 /api/uploads，读走公开的 /uploads/**） ----------
+//
+// 读路径刻意没有 /api 前缀：`<img>` 标签发不出 Authorization 头，
+// 而白名单是按路径放行的 —— 读写同路径的话，给 GET 开白名单会把匿名 POST 一起放行。
+export const uploadApi = {
+  /** 上传一张图片，返回可直接放进 `images` 的 URL */
+  image: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ url: string }>('/api/uploads', form);
+  },
 };

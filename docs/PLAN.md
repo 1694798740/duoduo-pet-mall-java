@@ -204,6 +204,67 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-05（第六十六轮 · 图表体系重建 + A 方案）
+
+> 用户四项要求：① 悬停即时（原 2–3 秒）；② 换主流图表组件；③ 状态分布扩成多维度；
+> ④ 平台后台补分布图/折线图/柱状图/饼图。另要求一并实现 **A 方案**（Web「我的闲置」）。
+
+**① 悬停 2–3 秒的根因：用错了机制。** 原实现用 HTML 原生 `title` ——
+其显示延迟**由操作系统决定（Windows 约 1–2 秒）且无法用 CSS/JS 配置**。
+换 ECharts 自绘 tooltip 后实测 **6–26ms**。
+
+**② 组件选型：ECharts 6，按需引入 + 懒加载**
+
+| 文件 | 变更 |
+|---|---|
+| `frontend/src/components/charts.tsx`（新增） | ECharts 封装：只 `use` Bar/Line/Pie + Grid/Legend/Tooltip + CanvasRenderer；`animation:false`；tooltip `transitionDuration:0`；四类图共用一个 `Chart`（`type` 切换）；空数据显式出「暂无数据」；容器带 `role="img"` + 可读摘要（canvas 对读屏是黑箱） |
+| `frontend/src/components/lazy-charts.tsx`（新增） | `React.lazy` 边界：**ECharts 不进买家端首屏包**。构建核对：主包 237.07 kB（+16 kB），`charts-*.js` 558.14 kB 独立成 chunk |
+| `frontend/src/components/ui.tsx` | **删除**手写 `MiniBars`（连同 `.bars/.bar-*` 样式），保留历史教训注释 |
+
+**③ 多维度：1 → 5**（`GET /api/seller/analytics`）
+订单状态分布 / 近 14 天成交趋势（折线，**补零**）/ 商品销量 Top 8 / 资金构成（饼）/ 订单类型占比（饼）。
+
+**④ 平台后台补图**（`GET /api/admin/reports/charts`）
+折线 / 饼 / 柱状 / 分布，四类齐全；**图表不参与页面 loading 门**（报表卡比图重要）。
+
+**后端（duoduo-trade，全部 SQL 聚合、零 DDL、不改现有端点契约）**
+
+| 文件 | 变更 |
+|---|---|
+| `dto/AnalyticsDtos.java`（新增） | `Slice(name,value)` / `TrendPoint(date,orderCount,gmv)` / `SellerAnalytics` / `AdminCharts`；`TREND_DAYS=14`、`TOP_PRODUCT_LIMIT=8` |
+| `support/TrendSeries.java`（新增） | 趋势**补零**口径集中一处（两份实现迟早只改一处，然后两个页面横轴不一致） |
+| `mapper/OrderMapper.java` | 新增 `dailyTrend` / `topProductsBySales` / `countByOrderType`；`sellerIds` 传 `null` 即全平台，刻意不写两份 SQL |
+| `service/SellerService.java` | 新增 `analytics()`：五维度，全部走 `visibleSellerIds()` 与明细同范围 |
+| `service/AdminOpsService.java` | 新增 `charts()`：四维度（`OperatorGuard` 把关） |
+| 两个 Controller | 各加一个 GET 端点 |
+
+**★ 坑一：`long value` 被序列化成字符串**（`{"value":"144"}`）→ ECharts 当类目名、直接画不出图。
+根因：`LongToStringJacksonModule` **默认把所有 Long 转字符串**（保护雪花 id），只有白名单字段保持数字。
+按该模块自己写明的规矩把 `value` 加进白名单，并注明它是泛用名。
+⚠️ 改的是**共用模块** → 按纪律重建全部依赖方；实测 `duoduo-gateway` 镜像仍是 4 天前，
+但它只依赖 `duoduo-common`、jar 内 common-web 条目数 **0** ⇒ Maven 跳过它是**正确行为**；
+其余 7 服务逐模块比对宿主机与容器内 `/app/app.jar` **8/8 一致**。
+
+**★ 坑二：`mvn package` 不带 `clean` 会跳过没有源码改动的模块** → jar 不链接新的 `common-web`
+（台账里记过的「增量检测认为无需重打」，又踩一次）。
+
+**★ 顺手修掉一个既存缺陷：Web《二手闲置》页对所有人 401**
+后端 R52 把公开检索从裸 `/api/listings` 挪到 `/api/listings/search`（单段路径要让给
+`POST /api/listings`，白名单**不区分方法**），**前端漏改**，页面一直报「身份未认证或登录已过期」；
+而十四套 e2e 此前**没有一套访问过 `/listings`**。已修 + 补断言 + 反向验证。
+
+**A 方案：Web 端「我的闲置」**（`/listings/mine`、`/listings/new`、`/listings/:id/edit`）
+**不套 `RequireSeller`**：发布与管理闲置只要求「登录 + 实名」，与「卖家身份」是两条线。
+筛选口径与小程序严格一致（审核两标签只带 `auditStatus`；交易三标签必须同带 `auditStatus=APPROVED`）。
+顺带给共享请求层加 **multipart 支持**，让图片上传也走同一条请求路径（401 单飞刷新在里面）。
+
+**新增自测 3 套 106 项**：`seller-dashboard` 31 / `admin-charts` 28 / `my-listings` 47。
+UI 自测口径：十二套 454 项 → **十四套 539 项**；`npm run build` exit 0；
+回归 8 套 334 项全绿。
+
+**登记未修**：C2C 闲置**关键词检索恒为 0**（ES 索引里 124 条 LISTING 全是历史遗留、
+新建条目未同步，且「0 命中」不是异常 ⇒ 不降级）；修法属独立工作。
+
 ### 2026-10-05（第六十五轮 · 商家端「订单状态分布」柱状图全平：百分比高度解析失败）
 
 > 用户报障「柱状图全部显示为平的、数值全为零」。

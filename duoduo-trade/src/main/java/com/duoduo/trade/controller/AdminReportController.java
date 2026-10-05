@@ -2,6 +2,7 @@ package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.trade.dto.AdminDtos.AdminReport;
+import com.duoduo.trade.dto.AnalyticsDtos.AdminCharts;
 import com.duoduo.trade.service.AdminOpsService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,5 +27,15 @@ public class AdminReportController {
     @GetMapping("/overview")
     public ApiResponse<AdminReport> overview() {
         return ApiResponse.ok(adminOpsService.report());
+    }
+
+    /**
+     * 运营概览的图表数据（第六十六轮）：分布图 / 折线图 / 柱状图 / 饼图。
+     *
+     * <p>与 {@code /overview} 分开：报表卡比图表重要，图表取数异常不该把卡片一起拖下水。
+     */
+    @GetMapping("/charts")
+    public ApiResponse<AdminCharts> charts() {
+        return ApiResponse.ok(adminOpsService.charts());
     }
 }

@@ -32,6 +32,8 @@ import { SeckillPage } from './pages/Seckill';
 import { HomePage } from './pages/Home';
 import { ListingDetailPage } from './pages/ListingDetail';
 import { ListingsPage } from './pages/Listings';
+import { MyListingsPage } from './pages/MyListings';
+import { ListingFormPage } from './pages/ListingForm';
 import { LoginPage } from './pages/Login';
 import { MePage } from './pages/Me';
 import { NotFoundPage } from './pages/NotFound';
@@ -128,6 +130,36 @@ export const App: React.FC = () => (
       <Route path="/product/:id" element={<ProductDetailPage />} />
       <Route path="/listing/:id" element={<ListingDetailPage />} />
       <Route path="/login" element={<LoginPage />} />
+
+      {/* ---------- 我的闲置（C2C 管理，第六十六轮补齐 Web 端） ----------
+          刻意**不套 RequireSeller**：发布与管理闲置只要求「登录 + 实名」，
+          与「卖家身份」（自营店铺）是两条线 —— 普通用户就是闲置卖家本人，
+          把入口锁在卖家角色后面等于让 C2C 在 Web 上不可用。
+          未登录时 RequireAuth 会带 ?next= 回跳，登录后原路返回。 */}
+      <Route
+        path="/listings/mine"
+        element={
+          <RequireAuth>
+            <MyListingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/listings/new"
+        element={
+          <RequireAuth>
+            <ListingFormPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/listings/:id/edit"
+        element={
+          <RequireAuth>
+            <ListingFormPage />
+          </RequireAuth>
+        }
+      />
 
       <Route
         path="/pets"

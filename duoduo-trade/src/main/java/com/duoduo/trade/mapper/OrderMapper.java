@@ -35,6 +35,71 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
     @Select("SELECT status, COUNT(*) AS cnt FROM t_order GROUP BY status")
     List<Map<String, Object>> countAllByStatus();
 
+    // ---------------- 图表聚合（第六十六轮） ----------------
+    //
+    // 四条查询的公共点：都**只返回聚合结果**，绝不把明细捞回来在内存里算。
+    // 图表数据比统计卡更容易失控 —— 一次 14 天 × 全平台的明细在演示库就有几千行，
+    // 上线后随时间单调增长；而这类慢查询往往要等到数据库 CPU 打满才被发现。
+    //
+    // sellerIds 传 null 表示「全平台」（运营后台用），传集合表示「这几个卖家」（商家端用）。
+    // 刻意用同一个方法而不是写两份 SQL：两份 SQL 迟早在某次口径调整后只改一处。
+
+    /**
+     * 按天聚合：当日下单数 + 当日成交额（分）。
+     *
+     * <p>口径说明（写清楚是为了避免后来者按直觉改）：
+     * <ul>
+     *   <li>日期取 {@code DATE(created_at)} —— 容器时区全为 UTC，所以这里是 **UTC 自然日**；
+     *       北京时间 00:00–08:00 的订单会被算进前一天。这是刻意与存储口径保持一致，
+     *       而不是在 SQL 里偷偷 +8 小时（那种「藏在查询里的时区假设」最难排查）。</li>
+     *   <li>成交额只累计「已付款及之后」的订单；待付款与已关闭的钱从未收过，计 0。</li>
+     * </ul>
+     */
+    @Select("<script>"
+            + "SELECT DATE(created_at) AS d, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(CASE WHEN status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "THEN pay_amount ELSE 0 END), 0) AS gmv "
+            + "FROM t_order WHERE created_at &gt;= #{from} "
+            + "<if test='sellerIds != null'>AND seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "</if>"
+            + "GROUP BY DATE(created_at) ORDER BY d"
+            + "</script>")
+    List<Map<String, Object>> dailyTrend(@Param("sellerIds") Collection<Long> sellerIds,
+                                         @Param("from") java.time.LocalDateTime from);
+
+    /**
+     * 商品销量 Top N（按件数）。
+     *
+     * <p>只统计「已付款及之后」的订单 —— 待付款/已关闭的商品不该出现在销量榜上，
+     * 否则卖家会照着排行榜去补一个根本没人买过的货。
+     *
+     * <p>{@code GROUP BY i.spu_id} + {@code MAX(i.title)}：同一个 SPU 的历史订单标题
+     * 可能因为改过名而不一致，按 spu_id 归一才是一条商品；取 MAX 是为了在
+     * {@code ONLY_FULL_GROUP_BY} 下也能合法地挑出一个展示名。
+     */
+    @Select("<script>"
+            + "SELECT MAX(i.title) AS name, COALESCE(SUM(i.quantity), 0) AS qty "
+            + "FROM t_order_item i JOIN t_order o ON o.id = i.order_id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "<if test='sellerIds != null'>AND o.seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "</if>"
+            + "GROUP BY i.spu_id ORDER BY qty DESC, i.spu_id ASC LIMIT #{limit}"
+            + "</script>")
+    List<Map<String, Object>> topProductsBySales(@Param("sellerIds") Collection<Long> sellerIds,
+                                                 @Param("limit") int limit);
+
+    /** 订单类型分布（NORMAL / SECKILL），返回形如 {@code [{t:"SECKILL", cnt:28}, ...]} */
+    @Select("<script>"
+            + "SELECT order_type AS t, COUNT(*) AS cnt FROM t_order "
+            + "<if test='sellerIds != null'>WHERE seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "</if>"
+            + "GROUP BY order_type"
+            + "</script>")
+    List<Map<String, Object>> countByOrderType(@Param("sellerIds") Collection<Long> sellerIds);
+
     /** 已付款订单的实付总额（GMV）：PAID / SHIPPED / COMPLETED 都算「钱已进平台托管」 */
     @Select("SELECT COALESCE(SUM(pay_amount), 0) FROM t_order "
             + "WHERE status IN ('PAID','SHIPPED','COMPLETED')")
