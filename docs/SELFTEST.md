@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 10 套 353 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 11 套 433 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | 228 项 |
@@ -285,15 +285,15 @@ node scripts/mp-harness/behavior.test.js               # 页面行为（31 项�
 ### 4.6 前端真实浏览器 e2e
 
 ```powershell
-# 一键：起 dev server → 跑 10 套 → 建/拆券夹具 → 收尾
+# 一键：起 dev server → 跑 11 套 → 建/拆券夹具 → 收尾
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：10 套全 PASS，合计 353 项。判定同样看退出码。
+**预期**：11 套全 PASS，合计 433 项。判定同样看退出码。
 
-其中 3 套是**自包含**的（不需要外部夹具，可单独跑）：
-`home`（7 项）、`admin-entry`（32 项）、`seckill`（45 项）；
+其中 4 套是**自包含**的（不需要外部夹具，可单独跑）：
+`home`（7 项）、`admin-entry`（32 项）、`header-layout`（80 项）、`seckill`（45 项）；
 其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
 
 **后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，32 项）单独跑：
@@ -429,6 +429,8 @@ done
 | 27 | 新写的 UI 套件「功能全对但断言全红」，失败信息全是 `Failed to load resource: ... 401` | **断言把设计内状态当成了缺陷**。未登录时 `/api/users/me`、`/api/cart/count` 必然 401（页面各自兜底）；「只带 dd_rt」场景更是**靠一次 401 触发单飞刷新再重放** | 过滤掉它：`consoleErrors.filter((e) => !/favicon\|status of 401/i.test(e))`（`seckill-ui-check.mjs` 既有口径）。**页面报错里真正的 `pageerror` 一律不能放过**。判据：401 是「未带令牌的正常往返」，500/`pageerror` 才是缺陷 |
 | 28 | 反向验证时「改坏一处、红了三条」，看起来像三个缺陷 | **断言之间耦合**：后一条依赖前一条的点击结果（下拉入口一旦不存在，脚本停在首页，`reload` 之后自然看不到后台页） | 让每条断言**自证**：需要「在 /admin 刷新」就先显式 `page.goto('/admin')` 再 `reload()`，不要沿用上一步的落点。级联假红会把归因引偏 —— 与「不重不漏划分」是同一条纪律 |
 | 29 | UI 自动化里「入口不存在」时脚本不报 FAIL，而是等 30 秒后抛异常、连汇总行都没打出来 | 直接对可能不存在的元素 `click()`，Playwright 会等到超时抛错 | **先数再点**：`const n = await link.count(); check(..., n === 1); if (n === 1) { await link.click(); ... } else { check(..., false, '入口不存在，无从点击'); }`。反向验证尤其需要这条，否则拿不到可归因的失败信息 |
+| 30 | 断言「下拉菜单里有 X」，实际有两个却报 `found 2`；或反过来明明有却查不到 | **同一标签可能在两处出现**（运营账号的「商家端」顶栏与下拉里都有），在 `.app-header` 这种大作用域里查会把两处都数进来 | 给浮层加稳定类名（本项目是 `.user-menu`），断言一律**限定在目标容器内**：`page.locator('.app-header .user-menu').getByRole('link', { name: '商家端', exact: true })` |
+| 31 | 点击某个按钮一直超时，日志写 `… <a href="/orders" class="nav-link">我的订单</a> … intercepts pointer events`，看起来像「按钮点不动 / 按钮坏了」 | **浮层遮挡**，不是按钮的问题：右上角展开的头像下拉（176px 宽、`zIndex:80`）正好压住了页面右上角的按钮；而 `Layout` 的菜单**只在路由变化时收起，没有 Esc 关闭** | 测试里显式收起浮层：`await page.locator('.app-header button.icon-btn').first().click()`（再点一次头像）。**判据：Playwright 说「被某某元素拦截点击」时，先想「谁盖住了它」，别去怀疑被点元素本身**。（给菜单补 Esc 关闭仍是一个待办的小改进） |
 
 ---
 
@@ -440,7 +442,7 @@ done
 - [ ] `scripts\run-all-smoke.ps1` → 23 套全通过，0 失败
 - [ ] `python scripts/extract-api-contract.py --check` → PASS
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
-- [ ] `scripts\e2e\run-ui-checks.ps1` → 10 套全 PASS
+- [ ] `scripts\e2e\run-ui-checks.ps1` → 11 套全 PASS
 - [ ] `python scripts/perf/bench.py --check` → 全部达标
 - [ ] 8 个模块容器内 jar md5 与宿主机一致
 - [ ] 跑完做一次数据体检：FROZEN = 0

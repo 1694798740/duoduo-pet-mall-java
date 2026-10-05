@@ -114,7 +114,7 @@ h4 {
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 
 .brand {
@@ -124,6 +124,10 @@ h4 {
   font-size: 17px;
   font-weight: 700;
   white-space: nowrap;
+  /* 品牌与右侧功能簇都不参与收缩：让 `.nav-links` 当唯一的弹性项。
+     否则浏览器会把收缩量平摊给三方，结果是「导航被切掉一半、搜索框变窄、
+     用户按钮里的昵称折成两行撑出药丸外」——三处同时坏，且都不明显。 */
+  flex: none;
 }
 
 .brand-logo {
@@ -143,6 +147,10 @@ h4 {
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
+  /* 唯一的弹性项：显式给出可收缩的下限（min-width:0），
+     否则 flex 的自动最小尺寸会让它撑住不缩、把溢出推给别的元素。 */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .nav-links::-webkit-scrollbar {
   display: none;
@@ -154,6 +162,7 @@ h4 {
   color: var(--text-2);
   font-weight: 500;
   white-space: nowrap;
+  flex: none;
   transition: background 0.15s, color 0.15s;
 }
 .nav-link:hover {
@@ -170,13 +179,19 @@ h4 {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 右侧功能簇是「必须完整可见」的部分，不参与收缩 */
+  flex: none;
 }
 
 .search-inline {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 260px;
+  /* 随视口收缩：固定 260px 会让「品牌 + 导航 + 搜索 + 购物车 + 用户按钮」
+     在 1200–1300px 这一档刚好差几个像素，导航最后一个标签被切掉。
+     给搜索框一点弹性、并设一个更小的上限，比让导航被挤掉更合理
+     （搜索在页内还有入口，导航没有）。 */
+  width: clamp(150px, 18vw, 224px);
   height: 38px;
   padding: 0 12px;
   border-radius: 999px;
@@ -204,11 +219,25 @@ h4 {
   justify-content: center;
   gap: 6px;
   color: var(--text-2);
+  /* 昵称禁止折行：`.icon-btn` 的高度是固定 38px，一旦文字折成两行就会撑出药丸外
+     （表现为按钮里出现「平台运／营」这种两行错位）。
+     与小程序端「按钮文字禁止折行」是同一条纪律，Web 侧同样必须显式声明。 */
+  flex: none;
   transition: border-color 0.15s, color 0.15s;
 }
 .icon-btn:hover {
   border-color: var(--brand);
   color: var(--brand-dark);
+}
+
+/* 昵称封顶：昵称最长 20 字，不封顶的话一个长昵称就能把右侧撑宽几十像素、
+   反过来把顶栏最后一个导航项挤出去（顶栏宽度是零和博弈）。
+   截断加省略号 —— 完整昵称在「个人中心」里还能看到。 */
+.icon-btn .small {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .badge-dot {
@@ -287,7 +316,20 @@ h4 {
   .grid-3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* 顶栏的收口顺序（宁可收起搜索、也不切掉导航）：
+   1200px 以下收起搜索框 → 让它腾出的 ~224px 全部给导航；
+   1024px 以下连品牌文字一起收起，只留 logo。
+   判据来自实测：顶栏一行要放下「品牌 146 + 导航 560（运营 8 项）+ 购物车 + 用户按钮」，
+   搜索框固定占 260px 时，1201–1300px 这一档会差几个像素、把最后一个导航标签切掉。 */
+@media (max-width: 1200px) {
   .search-inline {
+    display: none;
+  }
+}
+@media (max-width: 1024px) {
+  .brand-text {
     display: none;
   }
 }

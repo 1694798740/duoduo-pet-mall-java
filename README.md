@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十套真实浏览器 UI 断言 353 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十一套真实浏览器 UI 断言 433 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -635,8 +635,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（10 套） =================
-# 一键跑：起 dev server → 跑 10 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（11 套） =================
+# 一键跑：起 dev server → 跑 11 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
@@ -653,6 +653,7 @@ node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
+node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 80 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================
@@ -1288,6 +1289,20 @@ npm run build      # tsc --noEmit && vite build
   `toFriendlyMessage` 把后端 code 翻成可读文案，绝不把堆栈甩给用户。
 - **零依赖二维码**：自实现 UTF-8 Byte 模式 + Reed-Solomon 纠错 + 8 掩码择优（ISO/IEC 18004），
   SVG 渲染。实测 21×21 模块矩阵在真实 Chromium 中清晰可扫。
+- **顶栏的信息架构与收口顺序（第六十四轮）**：顶栏**只放「逛 / 买」一级动线**
+  （首页 / 逛商品 / AI 导购 / 二手闲置 / 优惠券 / 秒杀），
+  **个人事务（个人中心 / 我的订单 / 我的券包 / 我的宠物 / 收货地址）与两个工作台入口
+  （商家端 / 进入管理后台）统一收进头像下拉**。
+  这不是审美偏好而是硬约束：顶栏所在的 `.container` 最大宽度 1200px，
+  一行可用约 1160px，而「9 项基础导航 + 商家端 + 管理后台」需要 812px，
+  连同品牌 / 搜索 / 购物车 / 用户按钮共需约 1408px —— **在 1920px 屏幕上都不够**；
+  且 `.nav-links` 是唯一可收缩项、滚动条又被刻意隐藏，被挤掉的标签会「静默消失」。
+  配套三条样式纪律：`.brand` 与 `.header-right` **不参与收缩**（避免收缩量平摊导致
+  「导航被切、搜索变窄、昵称折行」三处同时坏）、`.icon-btn` **禁止文字折行**并给昵称封顶
+  88px + 省略号（昵称最长 20 字，不封顶会反过来把导航挤出去）、
+  收口顺序是 **1200px 收起搜索框 → 1024px 收起品牌文字**（宁可收起搜索，也不切掉导航）。
+  自测见 `scripts/e2e/header-layout-ui-check.mjs`（4 个角色 × 6 档宽度 80 项）。
+
 
 自测记录：`tsc --noEmit` 零错误；curl 冒烟覆盖注册/加购/下单幂等/支付/托管/退款全链；
 真实浏览器（Chromium 153）逐页验证 12 个路由的渲染与交互，含真实 UI 填单下单 → 模拟扫码 →
@@ -1433,6 +1448,63 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-05（第六十四轮 · 顶栏标签被截断 / 昵称折行：收紧信息架构 + 补响应式收口）
+
+用户报障「顶栏上有很多标签未能完整显示，部分标签被截断或缺失」。
+
+**先量化再动手**（每项标签的 `getBoundingClientRect()` 与 `.nav-links` 可视框逐项比对，1920px 视口）：
+
+| 身份 | 顶栏应显示 | 实际完整可见 | 被挤掉的标签 |
+|---|---|---|---|
+| 未登录访客 | 9 项 | 7 项 | 收货地址 · 我的订单 |
+| 普通买家 | 9 项 | 8 项 | 我的订单 |
+| 运营（含商家端 + 管理后台） | 11 项 | 8 项 | 我的订单 · 商家端 · 管理后台 |
+
+**四条根因**：
+1. **`--max-w: 1200px` 封住顶栏** → 一行可用仅约 1160px，而内容需要约 1408px。
+   **把窗口拉到 1920px 也毫无改善**（实测 1920 与 1264 的数字完全相同）。
+2. **`.nav-links` 是唯一的收缩承担者**（`overflow-x:auto` 使其 flex 自动最小尺寸变为 0）
+   → 独自让出 218px（812 → 594），把末位标签推出可视区。
+3. **滚动条被显式隐藏**（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`）且无溢出提示。
+   ⚠️ 定性要准：**这些链接仍在 DOM 里、接口 200、跳转正常**，只是被推到可视区之外
+   —— 是**布局 + 可发现性缺陷**，不是「标签没渲染」。这也解释了为什么接口层测不出来。
+4. **`.header-right` 也在收缩且 `.icon-btn` 没有 `white-space: nowrap`** → 昵称折成两行
+   （实测昵称高 32px）撑出固定 38px 的药丸外 —— 与小程序「按钮文字禁止折行」同一类缺陷。
+
+**改动（2 个前端文件）**：
+
+| 文件 | 变更 |
+|---|---|
+| `frontend/src/components/Layout.tsx` | `NAV` 收成 6 项一级动线；头像下拉补「收货地址」并把两个工作台入口移到个人事务之后；下拉加 `user-menu` 类名（测试定位用）；品牌文字加 `brand-text` 类名 |
+| `frontend/src/styles.css` | `.brand` / `.header-right` 加 `flex:none`；`.nav-links` 加 `flex:1 1 auto; min-width:0`；`.icon-btn` 加 `white-space:nowrap` + `flex:none`；新增 `.icon-btn .small{max-width:88px;overflow:hidden;text-overflow:ellipsis}`；`.search-inline` 宽度改 `clamp(150px,18vw,224px)`；`.app-header-inner` gap 20→16px；新增断点 **≤1200px 收起搜索框、≤1024px 收起品牌文字**（原 900px 那条 `display:none` 已并入） |
+
+**信息架构口径**（用户拍板）：顶栏 = 「逛 / 买」一级动线；个人事务与工作台入口收进头像下拉。
+**入口是收起来不是删掉** —— 「收货地址」原本**不在下拉里**，本轮补进，并加断言钉住它仍可达。
+
+**新增自测** `scripts/e2e/header-layout-ui-check.mjs`（**80 项 / 0 失败**，自包含、真实 Chromium）：
+**4 个角色（未登录 / 买家 / 运营 / 超长昵称运营）× 6 档宽度（1920·1440·1280·1264·1152·1024）**
+逐格断言「顶栏一个标签都不许被截断 + 昵称不许折行 + 应有导航项一个不少」，
+另加信息架构可达性（从下拉点「收货地址」真能进入地址页）与工作台入口不回归。
+
+**★ 反向验证**（两次，证明两半修复都必要）：
+- **还原 `NAV`**（把三项加回顶栏）→ 断言精确报红并列出每个角色各自丢了哪几项。
+- **还原 `styles.css` 到改动前**（保留已收窄的 NAV）→ 仍然报红：
+  「需要 560px / 可用 559px」**只差 1px 就截断**、且昵称高 32px 撑出按钮。
+  → 说明**只改信息架构不够、只改样式也不够，两半都必须改**。
+
+**回归**：`npm run build`（tsc + vite）exit 0；`home` 7/0、`address` **64/0**（该项断言已随
+信息架构 1:1 更新为「入口在头像下拉且顶栏不再重复」，**性质不变、强度未降、项数未漂移**）、
+`seckill` 45/0、`admin-entry` 32/0。UI 自测口径由「十套 353 项」更新为 **十一套 433 项**。
+
+**本轮踩到的两件事**（已写入 `docs/SELFTEST.md` 排障表）：
+- **同名标签两处出现时必须限定断言作用域**：运营账号的顶栏与下拉里都有「商家端」，
+  在 `.app-header` 里查会数到 2 个 → 断言假红。已给下拉加 `user-menu` 类名并在断言里限定作用域。
+- **下拉菜单没有 Esc 关闭行为**（`Layout` 只在路由变化时 `setMenuOpen(false)`），
+  于是断开的下拉浮层会盖住页面右上角的「+ 新增地址」按钮，Playwright 报
+  `…nav-link 我的订单 … intercepts pointer events` —— 表象像「按钮点不动」，
+  真因是浮层遮挡。测试里改为「再点一次头像收起菜单」。
+  ⚠️ **未修**（不属本轮范围）：给菜单补 Esc 关闭是个独立的小改进项。
 
 ### 2026-10-05（第六十三轮 · 平台管理后台新增常驻入口「进入管理后台」）
 

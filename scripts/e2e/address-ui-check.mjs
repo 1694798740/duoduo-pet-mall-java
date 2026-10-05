@@ -186,8 +186,24 @@ check('登录取到登录态', !page.url().includes('/login'), page.url());
 step('UI：新用户空地址簿');
 await page.goto(`${UI}/addresses`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
-check('一级导航含「收货地址」入口', (await page.getByRole('link', { name: '收货地址' }).count()) >= 1, page.url());
 let t = await textNow();
+// 入口位置随顶栏信息架构调整而变：顶栏只留「逛 / 买」一级动线，
+// 「收货地址 / 我的订单 / 我的宠物」收进头像下拉（原因见 Layout.tsx 的 NAV 注释：
+// 11 项顶栏在 1920px 屏幕上都会截断）。
+// 断言的**性质没变** —— 入口必须存在且唯一；变的只是它在哪儿。
+// 这里刻意保持 1 条断言（替换而非新增），避免套件项数无谓漂移。
+await page.locator('.app-header button.icon-btn').first().click();
+await page.waitForTimeout(250);
+const addrInMenu = (await page.locator('.app-header .user-menu').getByRole('link', { name: '收货地址', exact: true }).count()) === 1;
+const addrInNav = (await page.locator('.app-header .nav-links').getByRole('link', { name: '收货地址' }).count()) === 1;
+check('「收货地址」入口收进头像下拉且顶栏不再重复（收起来 ≠ 删掉）',
+  addrInMenu && !addrInNav, { addrInMenu, addrInNav });
+await page.keyboard.press('Escape');
+// 注意：菜单**没有** Esc 关闭行为（Layout 只在路由变化时 setMenuOpen(false)），
+// 所以上面那句 Escape 收不起来 —— 必须再点一次头像把它收掉，
+// 否则这个 176px 宽的浮层会盖住页面右上角的「+ 新增地址」按钮、拦截后续点击。
+await page.locator('.app-header button.icon-btn').first().click();
+await page.waitForTimeout(200);
 check('页面渲染出来（标题 + 关联结算的说明）', t.includes('收货地址') && t.includes('结算'), t.slice(0, 240));
 check('空地址簿给出空态文案', t.includes('还没有收货地址'), t.slice(0, 400));
 check('空态提供「立即添加」主按钮', (await page.getByRole('button', { name: '立即添加' }).count()) >= 1, page.url());

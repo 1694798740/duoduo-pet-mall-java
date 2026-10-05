@@ -136,9 +136,10 @@ async function loginUI(page, phone, nickname) {
 /** 顶栏里那条「管理后台」链接（exact 避免命中下拉里的「进入管理后台」） */
 const navAdminLink = (page) =>
   page.locator('.app-header .nav-links').getByRole('link', { name: '管理后台', exact: true });
-/** 头像下拉里那条「进入管理后台」 */
+/** 头像下拉里那条「进入管理后台」——限定在 `.user-menu` 作用域内查，
+ *  否则顶栏里的「商家端」等同名项会被一并数进来（同一标签两处出现时就假红）。 */
 const menuAdminLink = (page) =>
-  page.locator('.app-header').getByRole('link', { name: '进入管理后台', exact: true });
+  page.locator('.app-header .user-menu').getByRole('link', { name: '进入管理后台', exact: true });
 
 async function openUserMenu(page) {
   await page.locator('.app-header button.icon-btn').first().click();
@@ -208,7 +209,7 @@ step('S2 · 普通买家登录：顶栏与下拉都不显示入口');
   await openUserMenu(page);
   check('买家头像下拉里不出现「进入管理后台」', (await menuAdminLink(page).count()) === 0);
   check('下拉菜单本体确实展开了（否则上一条是空断言）',
-    (await page.locator('.app-header').getByRole('link', { name: '个人中心' }).count()) === 1);
+    (await page.locator('.app-header .user-menu').getByRole('link', { name: '个人中心' }).count()) === 1);
   await page.keyboard.press('Escape');
 
   // 权限边界：登录用户进 /admin 不该被踢回登录页，而应看到可读的拦截说明
