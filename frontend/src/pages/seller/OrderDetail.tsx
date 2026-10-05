@@ -12,6 +12,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
+import { productImage } from '../../api/images';
 import { Link, useParams } from 'react-router-dom';
 import { toFriendlyMessage } from '../../api/client';
 import { sellerApi } from '../../api/endpoints';
@@ -194,7 +195,7 @@ export const SellerOrderDetailPage: React.FC = () => {
               <div className="row" style={{ gap: 10 }} key={item.skuId}>
                 {item.mainImage ? (
                   <img
-                    src={item.mainImage}
+                    src={productImage(item.spuId, item.mainImage)}
                     alt={item.title}
                     style={{
                       width: 48,

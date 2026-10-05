@@ -165,6 +165,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/listings/mine" style={{ display: 'block' }}>
                       我的闲置
                     </Link>
+                    <Link className="nav-link" to="/notifications" style={{ display: 'block' }}>
+                      通知中心
+                    </Link>
+                    <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
+                      关注与粉丝
+                    </Link>
                     {/* 工作台入口单独排在个人事务之后 —— 它们是「另一重身份」的入口，
                         不是个人资料，混在中间会让菜单读起来没有层次。 */}
                     {canAccessSellerConsole(user.role) ? (

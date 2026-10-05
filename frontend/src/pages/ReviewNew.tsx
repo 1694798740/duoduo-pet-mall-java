@@ -15,6 +15,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { productImage } from '../api/images';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '../api/endpoints';
 import type { OrderView, ReviewItemRequest, ReviewView } from '../api/types';
@@ -179,7 +180,7 @@ export const ReviewNewPage: React.FC = () => {
               <div className="row" style={{ gap: 10, alignItems: 'center' }}>
                 {draft.mainImage ? (
                   <img
-                    src={draft.mainImage}
+                    src={productImage(draft.spuId, draft.mainImage)}
                     alt=""
                     style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }}
                   />

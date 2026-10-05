@@ -8,6 +8,7 @@
  */
 
 import React, { useCallback, useMemo } from 'react';
+import { productImage } from '../api/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '../api/endpoints';
 import type { OrderView, PageResult, ReviewedOrders } from '../api/types';
@@ -188,7 +189,7 @@ export const OrdersPage: React.FC = () => {
                     <div className="row" style={{ gap: 10 }} key={`${order.orderNo}-${item.skuId}`}>
                       {item.mainImage ? (
                         <img
-                          src={item.mainImage}
+                          src={productImage(item.spuId, item.mainImage)}
                           alt={item.title}
                           style={{
                             width: 48,

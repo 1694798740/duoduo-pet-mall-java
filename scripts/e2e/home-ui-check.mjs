@@ -98,11 +98,22 @@ try {
   const realErrors = consoleErrors.filter(
     (t) => !/favicon|404 \(Not Found\)/i.test(t) && !(/\(Unauthorized\)/.test(t) && unexpectedHttp.length === 0)
   );
+
+// ★ 商品图片不得裂（2026-10-05 报障：Web 端商品图全裂 —— 后端 /img/… 语义路径在本仓库里没有实体文件，
+//   小程序端早有映射层而 Web 没有；现由 src/api/images.ts 统一解析，这里钉死「首页不许有裂图」）
+{
+  const broken = await page.evaluate(() =>
+    [...document.querySelectorAll('img')].filter((im) => im.complete && im.naturalWidth === 0).map((im) => im.getAttribute('src')));
+  check('首页商品图零裂图（/img/… 占位路径必须被解析层接住）', broken.length === 0, broken.slice(0, 4));
+  const rendered = await page.evaluate(() => document.querySelectorAll('img').length);
+  check('首页确实渲染出了商品图（不是整块不渲染）', rendered > 0, rendered);
+}
   check('页面自身无 console 报错', realErrors.length === 0, realErrors.slice(0, 3));
   check('首页没有非预期的接口错误（401 匿名除外）', unexpectedHttp.length === 0, unexpectedHttp.slice(0, 3));
 } finally {
   await browser.close();
 }
+
 
 console.log(`\n=== 前端真实浏览器冒烟：通过 ${pass} 项，失败 ${failures.length} 项 ===`);
 if (failures.length) {

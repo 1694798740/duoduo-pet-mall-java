@@ -33,6 +33,8 @@ import { HomePage } from './pages/Home';
 import { ListingDetailPage } from './pages/ListingDetail';
 import { ListingsPage } from './pages/Listings';
 import { MyListingsPage } from './pages/MyListings';
+import { NotificationsPage } from './pages/Notifications';
+import { FollowPage } from './pages/Follow';
 import { ListingFormPage } from './pages/ListingForm';
 import { LoginPage } from './pages/Login';
 import { MePage } from './pages/Me';
@@ -157,6 +159,22 @@ export const App: React.FC = () => (
         element={
           <RequireAuth>
             <ListingFormPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/notifications"
+        element={
+          <RequireAuth>
+            <NotificationsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/follow"
+        element={
+          <RequireAuth>
+            <FollowPage />
           </RequireAuth>
         }
       />

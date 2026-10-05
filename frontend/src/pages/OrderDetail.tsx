@@ -23,6 +23,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { productImage } from '../api/images';
 import { Link, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '../api/client';
 import { orderApi, paymentApi } from '../api/endpoints';
@@ -346,7 +347,7 @@ export const OrderDetailPage: React.FC = () => {
                   <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
                     {item.mainImage ? (
                       <img
-                        src={item.mainImage}
+                        src={productImage(item.spuId, item.mainImage)}
                         alt={item.title}
                         style={{
                           width: 48,

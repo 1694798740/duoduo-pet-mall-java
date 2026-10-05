@@ -73,7 +73,12 @@ import type {
   RoleChangeRequest,
   RoleChangeResult,
   SellerProductView,
+  FollowCounts,
+  FollowState,
+  FollowView,
+  NoticePageData,
   SellerAnalytics,
+  UnreadCount,
   SellerSummary,
   SettlementPage,
   SettlementView,
@@ -716,4 +721,26 @@ export const uploadApi = {
     form.append('file', file);
     return api.post<{ url: string }>('/api/uploads', form);
   },
+};
+
+// ---------- 通知中心 / 关注与粉丝（duoduo-social；第六十七轮补齐 Web 端） ----------
+export const noticeApi = {
+  /** 通知列表：定向通知 + 全站公告合并视图 */
+  list: (query?: { category?: string; page?: number; pageSize?: number }) =>
+    api.get<NoticePageData>('/api/socials/notices', { query }),
+  unreadCount: () => api.get<UnreadCount>('/api/socials/notices/unread-count'),
+  /** 标记单条已读（幂等） */
+  markRead: (id: string) => api.post<void>(`/api/socials/notices/${id}/read`),
+  /** 全部已读（幂等） */
+  readAll: () => api.post<void>('/api/socials/notices/read-all'),
+};
+
+export const followApi = {
+  follow: (userId: string) => api.post<FollowState>(`/api/socials/follows/${userId}`),
+  unfollow: (userId: string) => api.del<FollowState>(`/api/socials/follows/${userId}`),
+  following: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<FollowView>>('/api/socials/follows/following', { query }),
+  followers: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<FollowView>>('/api/socials/follows/followers', { query }),
+  counts: (userId: string) => api.get<FollowCounts>(`/api/socials/follows/${userId}/counts`),
 };

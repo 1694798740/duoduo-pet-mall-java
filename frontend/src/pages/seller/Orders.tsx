@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
+import { productImage } from '../../api/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '../../api/client';
 import { sellerApi } from '../../api/endpoints';
@@ -216,7 +217,7 @@ export const SellerOrdersPage: React.FC = () => {
                     <div className="row" style={{ gap: 10 }} key={`${order.orderNo}-${item.skuId}`}>
                       {item.mainImage ? (
                         <img
-                          src={item.mainImage}
+                          src={productImage(item.spuId, item.mainImage)}
                           alt={item.title}
                           style={{
                             width: 48,

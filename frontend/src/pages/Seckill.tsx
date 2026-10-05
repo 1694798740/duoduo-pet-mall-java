@@ -16,6 +16,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
+import { skuImage } from '../api/images';
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '../api/client';
 import { addressApi, seckillApi } from '../api/endpoints';
@@ -129,7 +130,7 @@ export const SeckillPage: React.FC = () => {
                   const disabled = act.phase !== 'ONGOING' || soldOut;
                   return (
                     <li key={sku.skuId} className="seckill-sku">
-                      {sku.image && <img src={sku.image} alt={sku.spuTitle} className="seckill-img" />}
+                      {sku.image && <img src={skuImage(sku.skuId, sku.skuId, sku.image)} alt={sku.spuTitle} className="seckill-img" />}
                       <div className="seckill-info">
                         <Link to={`/product/${sku.skuId}`} className="seckill-title">
                           {sku.spuTitle}

@@ -17,6 +17,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
+import { listingImage } from '../api/images';
 import { Link } from 'react-router-dom';
 import { listingApi } from '../api/endpoints';
 import type { ListingMineView } from '../api/types';
@@ -137,11 +138,8 @@ export const MyListingsPage: React.FC = () => {
                     background: 'var(--surface-2)', display: 'grid', placeItems: 'center',
                   }}
                 >
-                  {it.cover ? (
-                    <img src={it.cover} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <span className="muted small">无图</span>
-                  )}
+                  {/* 与小程序一致：任何闲置都有图（无图时按 id 稳定取池图） */}
+                  <img src={listingImage(it.id, it.cover)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>

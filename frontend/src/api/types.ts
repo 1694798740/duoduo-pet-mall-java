@@ -1176,3 +1176,52 @@ export interface ListingPublishRequest {
   species?: string | null;
   breed?: string | null;
 }
+
+// ---------- 通知中心 / 关注与粉丝（第六十七轮 · Web 端功能对齐） ----------
+
+/** 通知条目：定向通知与全站公告在接口层统一为同一视图 */
+export interface NoticeView {
+  id: string;
+  /** 分类（order / aftersale / notice …），后端白名单校验 */
+  category: string;
+  title: string;
+  content: string;
+  bizType: string | null;
+  bizId: string | null;
+  /** 服务端建议的跳转页（前端据此决定跳哪，不自己猜） */
+  jumpPage: string | null;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface NoticePageData {
+  items: NoticeView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface UnreadCount {
+  count: number;
+}
+
+/** 关注/粉丝条目 */
+export interface FollowView {
+  userId: string;
+  nickname: string;
+  avatar: string | null;
+  /** 是否互相关注 */
+  mutual: boolean;
+  followedAt: string;
+}
+
+export interface FollowState {
+  following: boolean;
+  followedBy: boolean;
+  mutual: boolean;
+}
+
+export interface FollowCounts {
+  followers: number;
+  following: number;
+}

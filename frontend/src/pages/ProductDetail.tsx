@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { gallery } from '../api/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toFriendlyMessage } from '../api/client';
 import { cartApi, productApi } from '../api/endpoints';
@@ -110,7 +111,11 @@ export const ProductDetailPage: React.FC = () => {
   if (!data) return null;
 
   const { card, suitability } = data;
-  const images = data.images.length ? data.images : card.mainImage ? [card.mainImage] : [];
+  // 图集交给统一解析：后端的 /img/… 占位路径映射到本地图池（主图+4 变体），
+  // 真实存在的（将来 CDN 下发的绝对 URL / 用户上传的 /uploads/）原样放行
+  const images = data.images.some((u) => /^https?:|^\/uploads\//i.test(u))
+    ? data.images
+    : gallery(card.id, card.mainImage);
   const canBuy = selectedSku?.sellable === true;
   const price = selectedSku?.price ?? card.minPrice;
 

@@ -10,6 +10,7 @@
  */
 
 import React, { useCallback } from 'react';
+import { listingGallery } from '../api/images';
 import { Link, useParams } from 'react-router-dom';
 import { productApi } from '../api/endpoints';
 import type { ListingDetail } from '../api/types';
@@ -50,7 +51,8 @@ export const ListingDetailPage: React.FC = () => {
   if (!data) return null;
 
   const { card } = data;
-  const images = data.images.length ? data.images : card.cover ? [card.cover] : [];
+  // 闲置图集：用户真实上传的（/uploads/）原样用；后端占位路径映射到本地图池
+  const images = listingGallery(card.id, data.images, card.cover);
   const discount =
     card.originalPrice > card.price
       ? Math.round(((card.originalPrice - card.price) / card.originalPrice) * 100)

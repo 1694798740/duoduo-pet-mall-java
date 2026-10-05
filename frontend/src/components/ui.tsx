@@ -19,6 +19,7 @@ import React, {
   useState,
 } from 'react';
 import { Link } from 'react-router-dom';
+import { listingImage, productImage } from '../api/images';
 import { formatDate, formatPrice } from '../api/client';
 import type { ListingCard, OrderStatus, ProductCard } from '../api/types';
 
@@ -186,7 +187,7 @@ export const Modal: React.FC<{
 export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => (
   <Link className="goods-card" to={`/product/${item.id}`}>
     <div className="goods-media">
-      {item.mainImage ? <img src={item.mainImage} alt={item.title} loading="lazy" /> : null}
+      {item.mainImage ? <img src={productImage(item.id, item.mainImage)} alt={item.title} loading="lazy" /> : null}
       <div className="goods-media-tags">
         <SupplyTag supplyType={item.supplyType} />
       </div>
@@ -244,7 +245,8 @@ export const ListingCardView: React.FC<{ item: ListingCard; conditionLabel?: str
 }) => (
   <Link className="goods-card" to={`/listing/${item.id}`}>
     <div className="goods-media">
-      {item.cover ? <img src={item.cover} alt={item.title} loading="lazy" /> : null}
+      {/* 与小程序一致：任何闲置都有图 —— cover 为空时按 id 稳定取池图，不出现「无图灰块」 */}
+      <img src={listingImage(item.id, item.cover)} alt={item.title} loading="lazy" />
       <div className="goods-media-tags">
         <span className="tag tag-second">个人闲置</span>
       </div>
