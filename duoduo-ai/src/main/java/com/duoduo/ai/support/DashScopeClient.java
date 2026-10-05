@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -21,8 +22,25 @@ import java.util.Map;
  * <p>用 JDK HttpClient 直连 REST 而不是引 SDK：本服务只调「对话补全」一个接口，
  * 一个 POST 换一个 SDK 依赖是反向性价比（与 WechatGateway 同一取舍）。
  *
- * <p>Key 只走环境变量；日志只记耗时与状态码，**绝不落请求体与回复内容**
+ * <p>Key 只走环境变量；日志只记耗时与状态码 + **上游错误体**，**绝不落请求体与回复内容**
  * （用户消息可能带个人偏好，模型回复可能被缓存复用，都不是日志该承载的）。
+ *
+ * <h2>多模型自动切换（2026-10-06）</h2>
+ * {@code duoduo.ai.model} 支持逗号分隔的**优先级列表**（如 {@code qwen3.8-flash,qwen3.7-flash-2026-07-15,kimi-k3}）：
+ * <ul>
+ *   <li><b>优先顺序 = 书写顺序</b>，第一个可用的是主力模型；</li>
+ *   <li><b>触发条件</b>：当前模型返回 403（额度用尽/无权限）、404（模型不存在）、
+ *       429（限流）、5xx（上游故障）、超时、或回复为空 —— 这些换了模型就可能好转；</li>
+ *   <li><b>不切换的情况</b>：401（Key 本身无效/被删）—— 换模型救不了凭据，直接按凭据问题降级；</li>
+ *   <li><b>粘性记忆</b>：成功过的模型会被记住，下一次请求**直接从它开始**，
+ *       避免每次都为先撞一遍坏模型而多花一次失败调用；主力恢复后自然回切（下一次失败时再让位）；</li>
+ *   <li>全部模型不可用 → 仍抛 DEGRADED，由 {@code ChatService} 降级为召回拼装回复。</li>
+ * </ul>
+ *
+ * <p>背景（2026-10-05/06 两次排障）：qwen-max 的免费额度用尽导致 AI 整段 503。
+ * 单模型配置下「额度用尽」只能靠人改配置重启；列表化之后，主力额度耗尽时
+ * 自动落到备选上，且平台的免费额度**按模型独立计算**（每模型 1M tokens），
+ * 备选各自有独立额度 —— 切换是真实有效的续命手段。
  */
 @Component
 public class DashScopeClient {
@@ -32,8 +50,12 @@ public class DashScopeClient {
     private final HttpClient http;
     private final String apiKey;
     private final String baseUrl;
-    private final String model;
+    /** 模型优先级列表（书写顺序 = 优先顺序）；至少一项，配置写错时回落到 qwen-plus */
+    private final List<String> models;
     private final Duration timeout;
+
+    /** 粘性记忆：上次成功的模型下标。下一次请求从它开始（成功后回写） */
+    private volatile int preferred = 0;
 
     public DashScopeClient(@Value("${duoduo.ai.api-key:}") String apiKey,
                            @Value("${duoduo.ai.base-url:https://dashscope.aliyuncs.com/compatible-mode/v1}") String baseUrl,
@@ -41,17 +63,39 @@ public class DashScopeClient {
                            @Value("${duoduo.ai.timeout-seconds:15}") int timeoutSeconds) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.baseUrl = baseUrl;
-        this.model = model;
+        this.models = parseModels(model);
         this.timeout = Duration.ofSeconds(timeoutSeconds);
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+    }
+
+    /**
+     * 解析模型列表：逗号分隔、去空白、去空项；全部非法时退回 qwen-plus ——
+     * 配置写错不该让服务起不来（与「漏标方向安全」同一取舍）。
+     */
+    private static List<String> parseModels(String raw) {
+        List<String> list = new ArrayList<>();
+        if (raw != null) {
+            for (String m : raw.split(",")) {
+                String t = m.trim();
+                if (!t.isEmpty()) {
+                    list.add(t);
+                }
+            }
+        }
+        return list.isEmpty() ? List.of("qwen-plus") : List.copyOf(list);
     }
 
     public boolean isConfigured() {
         return !apiKey.isEmpty();
     }
 
+    /** 主力模型（列表第一个），供日志与能力描述使用 */
+    public String primaryModel() {
+        return models.get(0);
+    }
+
     /**
-     * 对话补全。任何失败（超时 / 5xx / 内容缺失）统一抛 503 DEGRADED ——
+     * 对话补全。所有模型都试败后统一抛 503 DEGRADED ——
      * 对调用方而言「模型这次没帮上忙」，不该区分成 N 种内部错误。
      */
     public String chat(String systemPrompt, List<Map<String, String>> history, String userMessage) {
@@ -59,7 +103,7 @@ public class DashScopeClient {
     }
 
     /**
-     * 对话补全（可指定 max_tokens）。
+     * 对话补全（可指定 max_tokens，带多模型故障切换）。
      *
      * <p>{@code maxTokens <= 0} 表示不约束；导购的结构化选择场景给一个小上限，
      * 既省配额又天然限制「模型自由发挥」的空间。
@@ -68,6 +112,44 @@ public class DashScopeClient {
         if (!isConfigured()) {
             throw new BizException(ErrorCode.DEGRADED, "AI 服务未配置，请联系管理员完成百炼 API Key 配置");
         }
+
+        // 从粘性记忆的下标出发，按 (preferred..n) ++ (0..preferred) 的顺序把每个模型试一遍
+        int n = models.size();
+        BizException last = null;
+        for (int i = 0; i < n; i++) {
+            int idx = (preferred + i) % n;
+            String model = models.get(idx);
+            try {
+                String content = callOnce(model, systemPrompt, history, userMessage, maxTokens);
+                if (idx != preferred) {
+                    log.warn("LLM 已切换：{} → {}（主力不可用，按配置顺序落到备选）",
+                            models.get(preferred), model);
+                }
+                preferred = idx;
+                return content;
+            } catch (ModelUnusableException e) {
+                // 换模型可能好转（额度/限流/模型不存在/上游故障/空回复）→ 试下一个
+                log.warn("模型 {} 不可用（{}），{}", model, e.reason,
+                        idx == n - 1 ? "已无备选" : "尝试下一个备选模型");
+                last = e.toDegraded();
+            } catch (BizException e) {
+                // 401（Key 无效）等「换模型救不了」的情况：直接按凭据问题降级，不浪费时间逐个试
+                log.error("LLM 调用被拒绝且切换模型无济于事（{}），跳过其余备选", e.getMessage());
+                throw e;
+            }
+        }
+        throw last != null ? last
+                : new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
+    }
+
+    /**
+     * 对**单个模型**的一次完整尝试。
+     *
+     * @throws ModelUnusableException 换模型可能好转的失败（触发故障切换）
+     * @throws BizException           换模型救不了的失败（如 401 Key 无效），原样上抛
+     */
+    private String callOnce(String model, String systemPrompt, List<Map<String, String>> history,
+                            String userMessage, int maxTokens) {
         var messages = new java.util.ArrayList<Map<String, String>>();
         messages.add(Map.of("role", "system", "content", systemPrompt));
         if (history != null) {
@@ -93,21 +175,40 @@ public class DashScopeClient {
                 //   让下一次排障还要手工复现一遍才能看到原因（2026-10-05 实测教训）。
                 String errBody = resp.body();
                 String head = errBody == null ? "" : errBody.substring(0, Math.min(errBody.length(), 300));
-                log.warn("LLM 调用失败 status={} cost={}ms body={}", resp.statusCode(), cost, head);
-                throw new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
+                log.warn("LLM 调用失败 model={} status={} cost={}ms body={}", model, resp.statusCode(), cost, head);
+                // 401 = Key 本身无效/被删：换模型救不了凭据，单独识别并立即放弃其余备选
+                if (resp.statusCode() == 401) {
+                    throw new BizException(ErrorCode.DEGRADED, "AI 服务凭据无效，请联系管理员检查百炼 API Key");
+                }
+                throw new ModelUnusableException("status=" + resp.statusCode() + " " + head);
             }
             String content = extractContent(resp.body());
             if (content == null || content.isBlank()) {
-                log.warn("LLM 回复为空 cost={}ms", cost);
-                throw new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
+                log.warn("LLM 回复为空 model={} cost={}ms", model, cost);
+                throw new ModelUnusableException("回复为空");
             }
             log.info("LLM 调用成功 cost={}ms model={}", cost, model);
             return content;
-        } catch (BizException ex) {
+        } catch (ModelUnusableException | BizException ex) {
             throw ex;
         } catch (Exception ex) {
-            log.warn("LLM 调用异常 cost={}ms: {}", System.currentTimeMillis() - start, ex.getMessage());
-            throw new BizException(ErrorCode.DEGRADED, "AI 服务超时或不可用，请稍后再试", ex);
+            // 超时 / 连接失败：换模型可能好转（上游单点故障），纳入切换范围
+            log.warn("LLM 调用异常 model={} cost={}ms: {}", model, System.currentTimeMillis() - start, ex.getMessage());
+            throw new ModelUnusableException("超时或连接失败: " + ex.getMessage());
+        }
+    }
+
+    /** 「换模型可能好转」的失败：携带原因（只进日志，不出用户界面） */
+    private static final class ModelUnusableException extends RuntimeException {
+        final String reason;
+
+        ModelUnusableException(String reason) {
+            super(reason, null, false, false);
+            this.reason = reason;
+        }
+
+        BizException toDegraded() {
+            return new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
         }
     }
 
