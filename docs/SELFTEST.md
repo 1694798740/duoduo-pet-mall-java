@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 9 套 321 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 10 套 353 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | 228 项 |
@@ -285,12 +285,27 @@ node scripts/mp-harness/behavior.test.js               # 页面行为（31 项�
 ### 4.6 前端真实浏览器 e2e
 
 ```powershell
-# 一键：起 dev server → 跑 8 套 → 建/拆券夹具 → 收尾
+# 一键：起 dev server → 跑 10 套 → 建/拆券夹具 → 收尾
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：8 套全 PASS，合计 276 项。判定同样看退出码。
+**预期**：10 套全 PASS，合计 353 项。判定同样看退出码。
+
+其中 3 套是**自包含**的（不需要外部夹具，可单独跑）：
+`home`（7 项）、`admin-entry`（32 项）、`seckill`（45 项）；
+其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
+
+**后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，32 项）单独跑：
+
+```powershell
+cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
+cd .. && node scripts/e2e/admin-entry-ui-check.mjs
+```
+
+它自己建运营与买家夹具（随机手机号 + 提权走库），不需要任何前置数据。
+关键断言是 S3b：**只带 `dd_rt` 的全新浏览器上下文**（模拟关掉浏览器再打开）——
+用来证明「入口关掉页面后还能再回来」。
 
 ### 4.7 性能压测
 
@@ -411,6 +426,9 @@ done
 | 24 | 直连 `127.0.0.1:8081` / `:8082` 一律 404，连累 address / credit / id-precision / review / wechat-auth 五套冒烟 | **宿主上有别的进程占了 `127.0.0.1:8081/8082`**（比 docker-proxy 的 `0.0.0.0:8081/8082` 更具体，抢走 loopback 流量）。`netstat -ano \| findstr :8081` 看 PID，再 `tasklist /FI "PID eq <pid>"` 认人 | 换一条能到容器的地址重跑：`-User http://<本机局域网IP>:8081`、`-Product http://<本机局域网IP>:8082`；或先关掉占用进程。**别改脚本默认值**——别的机器上没有这个占用 |
 | 25 | `docker compose --profile search up -d duoduo-es` 报 `bind: An attempt was made to access a socket in a way forbidden by its access permissions` | Windows 把 9200 划进了**保留端口区间**（`netsh interface ipv4 show excludedportrange protocol=tcp`，本机是 9149–9248） | ES 不需要发布宿主端口，容器间走 `duoduo-es:9200` 即可。用 `docker run --network duoduo-pet-mall-java_default` 起、**不带 `-p`**；`run-all-smoke` 探不到 9200 会显式跳过 search 套 |
 | 26 | 券冒烟偶发红在「（夹具）券已被人为改成『锁定超时』」 | 补偿调度每 60 秒扫一次，可能正好落在「改成超时」与「断言超时」之间把券解掉（约 0.5%/次） | 已修：夹具重做一次 + 判据改取**终态**（「超时锁不会被永久锁死」）。若仍红，看券是不是被别的脚本占了 |
+| 27 | 新写的 UI 套件「功能全对但断言全红」，失败信息全是 `Failed to load resource: ... 401` | **断言把设计内状态当成了缺陷**。未登录时 `/api/users/me`、`/api/cart/count` 必然 401（页面各自兜底）；「只带 dd_rt」场景更是**靠一次 401 触发单飞刷新再重放** | 过滤掉它：`consoleErrors.filter((e) => !/favicon\|status of 401/i.test(e))`（`seckill-ui-check.mjs` 既有口径）。**页面报错里真正的 `pageerror` 一律不能放过**。判据：401 是「未带令牌的正常往返」，500/`pageerror` 才是缺陷 |
+| 28 | 反向验证时「改坏一处、红了三条」，看起来像三个缺陷 | **断言之间耦合**：后一条依赖前一条的点击结果（下拉入口一旦不存在，脚本停在首页，`reload` 之后自然看不到后台页） | 让每条断言**自证**：需要「在 /admin 刷新」就先显式 `page.goto('/admin')` 再 `reload()`，不要沿用上一步的落点。级联假红会把归因引偏 —— 与「不重不漏划分」是同一条纪律 |
+| 29 | UI 自动化里「入口不存在」时脚本不报 FAIL，而是等 30 秒后抛异常、连汇总行都没打出来 | 直接对可能不存在的元素 `click()`，Playwright 会等到超时抛错 | **先数再点**：`const n = await link.count(); check(..., n === 1); if (n === 1) { await link.click(); ... } else { check(..., false, '入口不存在，无从点击'); }`。反向验证尤其需要这条，否则拿不到可归因的失败信息 |
 
 ---
 
@@ -422,7 +440,7 @@ done
 - [ ] `scripts\run-all-smoke.ps1` → 23 套全通过，0 失败
 - [ ] `python scripts/extract-api-contract.py --check` → PASS
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
-- [ ] `scripts\e2e\run-ui-checks.ps1` → 8 套全 PASS
+- [ ] `scripts\e2e\run-ui-checks.ps1` → 10 套全 PASS
 - [ ] `python scripts/perf/bench.py --check` → 全部达标
 - [ ] 8 个模块容器内 jar md5 与宿主机一致
 - [ ] 跑完做一次数据体检：FROZEN = 0

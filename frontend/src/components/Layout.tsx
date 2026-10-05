@@ -14,6 +14,10 @@
  * 「商家端」入口按角色显示：卖家中心（M5-9）落在 trade 服务上，不依赖上述服务，
  * 但普通买家点进去只会看到入驻引导，把入口藏掉更干净。
  * 「管理后台」入口（M10）同理：只对运营 / 管理员显示，与后端 isOperator 同口径。
+ * 后台入口刻意做成**两条**（顶栏一个链接 + 头像下拉一条「进入管理后台」）：
+ * 后台不是买家动线上的页面，只有顶栏一条时用户一旦滚动或窄屏折叠就找不到，
+ * 而它的诉求恰恰是「稳定、随时能回来」。两条都指向 /admin（运营概览），
+ * 判定共用 isOperator()，不存在两套口径。
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -133,6 +137,21 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     {canAccessSellerConsole(user.role) ? (
                       <Link className="nav-link" to="/seller" style={{ display: 'block' }}>
                         商家端
+                      </Link>
+                    ) : null}
+                    {/* 平台管理后台入口（与导航栏那条同源同判）——
+                        只对运营 / 管理员显示，与后端 OperatorGuard 同口径。
+                        ★ 这里必须用 isOperator()，不能用 useAuth().isAdmin：
+                        后者写的是全小写比较（user.role === 'admin'），而库内是大写
+                        存储，它**永远返回 false** —— 用它会让入口静默不出现，
+                        且不报任何错，属于最难归因的一类问题。
+                        刷新后仍在的机制：Layout 包住全部路由，user 由
+                        GET /api/users/me 重取（Cookie dd_rt 有效期 7 天），
+                        因此「关掉页面再打开」入口照样在 —— 见
+                        scripts/e2e/admin-entry-ui-check.mjs 的复开断言。 */}
+                    {isOperator(user.role) ? (
+                      <Link className="nav-link" to="/admin" style={{ display: 'block' }}>
+                        进入管理后台
                       </Link>
                     ) : null}
                     <Link className="nav-link" to="/pets" style={{ display: 'block' }}>

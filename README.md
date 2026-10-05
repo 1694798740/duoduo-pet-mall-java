@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 九套真实浏览器 UI 断言 321 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十套真实浏览器 UI 断言 353 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -635,8 +635,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（8 套） =================
-# 一键跑：起 dev server → 跑 8 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（10 套） =================
+# 一键跑：起 dev server → 跑 10 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
@@ -652,6 +652,7 @@ node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
+node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================
@@ -1338,7 +1339,9 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 
 ## 九、平台管理后台 Web（`frontend/src/pages/admin/`，M10）
 
-运营 / 管理员登录后，导航栏出现「管理后台」入口。五个工作台共用一条标签导航：
+运营 / 管理员登录后，**两条入口**同时出现（共用 `isOperator()` 判定，见第六十三轮）：
+顶栏导航的「管理后台」+ 头像下拉菜单的「进入管理后台」，都指向 `/admin`（运营概览）。
+九个工作台共用一条标签导航：
 
 | 路由 | 工作台 | 内容 |
 |---|---|---|
@@ -1347,8 +1350,16 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 | `/admin/categories` | 类目管理 | 增改删 + 启停用；状态列 + 按状态切换按钮；**停用项仍可见可恢复** |
 | `/admin/brands` | 品牌管理 | 同类目 |
 | `/admin/orders` | 订单干预 | 全平台订单（状态过滤 + 订单号前缀搜索）；**仅待付款**可强制关单（确认弹窗说明后果：作废支付单、释放冻结、写状态日志） |
+| `/admin/after-sales` | 售后仲裁 | 全平台售后列表 + 裁定弹窗（支持退款**真的执行** / 驳回，说明必填） |
+| `/admin/share-reports` | 举报处理 | 列表**直接显示被举报内容摘要**；弹窗默认结论为「举报不成立」（一次误点不会删掉别人的内容） |
+| `/admin/operators` | 运营账号 | 脱敏列表 + 检索 + 改角色 Modal（**改角色仅 ADMIN 可操作**） |
+| `/admin/seckill` | 秒杀活动 | 建活动（SKU / 秒杀价 / 库存 / 限购 / 起止时间）+ 上下架开关；**列表含已下架活动**（否则下架不可逆） |
 
 **关键实现决策**（与商家端同一套哲学）：
+
+- **入口只对有权限的登录用户显示**（未登录、普通买家都不显示）。未登录直接访问 `/admin`
+  由 `RequireOperator` 送到 `/login?next=/admin`，登录成功后自动回到运营概览
+  —— 这条 `?next=` 回跳是既有链路，与两条入口互不干扰（`scripts/e2e/admin-entry-ui-check.mjs` 已固化）。
 
 - **`RequireOperator` 只校验登录、不拦角色**。非运营进入时页面统一渲染 `AdminDenied` 拦截页；
   真正的边界在后端 `OperatorGuard.requireOperator()`（403）。
@@ -1422,6 +1433,42 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-05（第六十三轮 · 平台管理后台新增常驻入口「进入管理后台」）
+
+用户报障：后台「只有登录后自动跳转才能进、关闭页面后就再也进不去了」。
+定位后发现**顶栏入口其实已经存在且工作正常**（`Layout.tsx` 按 `isOperator()` 插入「管理后台」，
+本轮截图②可见），真正的问题是**入口只有一条**——窄屏折叠进「…」或滚动后就找不到，
+而用户的诉求恰恰是「稳定、随时能回来」。故把入口做成**两条同源同判**的路径：
+
+- **改动文件**：`frontend/src/components/Layout.tsx`（**唯一一个改动文件**，前端路由与后端零改动）
+  - 头像下拉菜单新增一条「进入管理后台」→ `/admin`（运营概览），紧跟「商家端」之后分组；
+  - 顶栏那条「管理后台」保持原样。两条**共用同一个 `isOperator()` 判定**，不存在两套口径。
+- **权限口径**（按用户拍板的四条规则）：未登录不可见、普通用户登录不可见、
+  有权限的登录用户可见；未登录直奔 `/admin` 由既有 `RequireOperator` 送到
+  `/login?next=/admin`，登录后自动回到运营概览。
+- **★ 顺手挡掉一个隐性陷阱**：`store/auth.tsx` 的 `isAdmin` 写作
+  `user.role === 'admin' || user.role === 'operator'`（**全小写**），而后端下发的是大写
+  `OPERATOR`/`ADMIN` —— 它**永远返回 false**。本轮入口若用它，表现是「代码没错、入口就是不出现、
+  也不报任何错」，属最难归因的一类缺陷。改动处已就地写明「必须用 `isOperator()`」。
+  （该字段当前无任何消费方，故本轮**未改动**它，避免动无关逻辑；建议后续删除或改为忽略大小写。）
+- **保留既有行为**：所谓「登录后自动跳进后台」实为 `?next=` 回跳链路（`Login.tsx:32/63`），
+  并非硬编码跳转。新入口是普通 `<Link to="/admin">`，两者互不干扰 —— 已用 e2e 断言固化。
+- **新增自测** `scripts/e2e/admin-entry-ui-check.mjs`（**32 项 / 0 失败**，真实 Chromium，自包含）：
+  S1 未登录不显示入口且 `next` 精确等于 `/admin`；S2 普通买家顶栏与下拉都不显示、
+  进 `/admin` 渲染拦截页；S3 运营两条入口都能落到运营概览，且**刷新后**、**同浏览器新开标签页**、
+  **只带 `dd_rt` 的全新上下文（模拟关掉浏览器再打开）** 三种情形下入口都仍在且真能进去；
+  S4 未登录直奔 `/admin` → 登录 → 自动回到 `/admin`，且回跳后顶栏入口同时还在。
+- **反向验证**：把下拉入口的判定改成恒假 `false`（等价于误用那个永远是 false 的 `isAdmin`）→
+  断言精确报红 2 条、且**只红这 2 条**（其余 30 条仍绿，证明没有级联假红）；还原后 32/0。
+- **回归**：`npm run build`（tsc + vite）通过；`run-ui-checks.ps1 -Only home` **7/0 PASS**；
+  `seckill-ui-check.mjs` **45/0**（改的是全局 Layout，故必须验后台页仍正常）。
+- **踩坑**：首版断言「无 console 报错」把 `status of 401` 也算失败 → 5 条假红。
+  401 是**设计内状态**（未登录时 `/api/users/me`、`/api/cart/count` 必然 401，页面各自兜底；
+  「只带 dd_rt」场景更是靠一次 401 触发单飞刷新再重放），
+  断言口径已对齐 `seckill-ui-check.mjs` 的 `!/favicon|status of 401/i` 过滤。
+  另把「刷新后仍在」一类的断言**与上一步的点击结果解耦**（先显式 `goto('/admin')` 再 reload），
+  否则「下拉入口坏了」会连带打红它、看起来像两个缺陷。
 
 ### 2026-10-05（第六十二轮 · 用户报障两处的最小修复：下单「应付 ¥0」+ 领券中心不刷新 / 无定时上架）
 
