@@ -103,7 +103,9 @@ Page({
     const sku = this.data.sku;
     if (!sku) return;
     const amountFen = (sku.priceFen || 0) * this.data.quantity;
-    this.setData({ amountFen, amountText: api.fen2yuan(amountFen) });
+    // 先用「当前已选券」把三行金额整体刷一遍，再让服务端覆盖券的选择。
+    // 为什么不能只等服务端返回：请求未回来之前金额会停在旧值（首屏就是初值 0）。
+    this.syncAmounts(amountFen, this.data.chosenCoupon);
     this.refreshCoupons(amountFen);
   },
 
@@ -136,14 +138,23 @@ Page({
           this.applyCoupon(null);
         } else if (result && result.bestCouponCode) {
           const best = usable.find((c) => c.code === result.bestCouponCode);
-          if (best) this.applyCoupon(best);
-        } else if (this.data.chosenCoupon) {
-          // 已选券在新金额下不再可用 → 退回未选
-          const still = usable.find((c) => c.code === this.data.chosenCoupon.code);
-          this.applyCoupon(still || null);
+          // 服务端推荐的券理论上一定在可用列表里；万一不在，退回「不使用」
+          // 而不是什么都不做 —— 什么都不做会让金额停在上一次的券上。
+          this.applyCoupon(best || null);
+        } else {
+          // ★ 最常见的一支：服务端没有推荐券（用户手上没有可用券 / 未达门槛 / 未登录）。
+          // 此前这里写的是 `else if (this.data.chosenCoupon)`，把「未选券 + 无推荐券」
+          // 这条最常见的状态整个漏掉了 —— 于是 applyCoupon 一次都不调用，
+          // 「应付」永远停在 data 初值 '0'，页面上出现「商品金额 189 / 应付 0」的自相矛盾。
+          const still = this.data.chosenCoupon
+            ? usable.find((c) => c.code === this.data.chosenCoupon.code) || null
+            : null;
+          this.applyCoupon(still);
         }
       })
-      .catch(() => {});
+      // 券接口失败（401 / 超时）也必须把金额刷成「不使用券」的正确值：
+      // 只吞异常不刷新，页面上同样会留下「商品金额 189 / 应付 0」。
+      .catch(() => this.applyCoupon(null));
   },
 
   chooseCoupon() {
@@ -172,15 +183,32 @@ Page({
     });
   },
 
-  applyCoupon(coupon) {
+  /**
+   * 金额行的**唯一写入口**：商品金额 / 优惠抵扣 / 应付三行必须一起更新。
+   *
+   * <p>为什么必须收成一个入口：此前 `payText` 只有 `applyCoupon()` 会写、`recalc()`
+   * 只写 `amountText`，于是「既没用券、服务端也没推荐券」这条最常见的分支一旦走到，
+   * 应付就永远停在 data 初值 `'0'`（截图里的「商品金额 ¥189 / 应付 ¥0」）。
+   * 三个数同源同写，才不会出现「某个分支忘了写某一个」。
+   *
+   * <p>金额一律由 `amountFen` 现算，不从 data 里回读 `amountText` ——
+   * 文案是给人看的，拿它当计算输入会在四舍五入处失准。
+   */
+  syncAmounts(amountFen, coupon) {
+    const amount = amountFen || 0;
     const discountFen = (coupon && coupon.discountAmount) || 0;
-    const payFen = Math.max(0, this.data.amountFen - discountFen);
     this.setData({
+      amountFen: amount,
+      amountText: api.fen2yuan(amount),
       chosenCoupon: coupon || null,
       couponText: coupon ? coupon.name : '不使用',
       discountText: coupon ? '-¥' + api.fen2yuan(discountFen) : '',
-      payText: api.fen2yuan(payFen),
+      payText: api.fen2yuan(Math.max(0, amount - discountFen)),
     });
+  },
+
+  applyCoupon(coupon) {
+    this.syncAmounts(this.data.amountFen, coupon);
   },
 
   // ── 提交订单 → 直接进收银台 ─────────────────────────────────────────────

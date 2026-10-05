@@ -43,8 +43,20 @@ public interface CouponTemplateMapper extends BaseMapper<CouponTemplateEntity> {
             + "WHERE id = #{id} AND claimed_count > 0")
     int unclaimOne(@Param("id") Long id, @Param("now") LocalDateTime now);
 
-    /** 当前可领取的模板（启用 + 窗口未结束），按 id 升序 —— 列表顺序稳定，便于断言与截图对比 */
-    @Select("SELECT * FROM t_coupon_template WHERE status = 'ACTIVE' AND end_at >= #{now} "
-            + "ORDER BY id ASC")
+    /**
+     * 当前可领取的模板（启用 + **在领取窗口内**），按 id 升序 —— 列表顺序稳定，便于断言与截图对比。
+     *
+     * <p><b>领取窗口是两头都要判的</b>：此前这里只有 {@code end_at >= now}，漏了
+     * {@code start_at <= now}，后果有两个 ——
+     * <ol>
+     *   <li>还没到开抢时间的活动券**提前出现在领券中心**（只能显示「尚未开始领取」），
+     *       运营配的「到点自动上架」实际不生效；</li>
+     *   <li>与 {@link #claimOne} 的口径不一致 —— 那边是 {@code start_at <= now AND end_at >= now}。
+     *       列表说看得见、点下去又被时间条件拒掉，是典型的「界面与规则各说各话」。</li>
+     * </ol>
+     * 两个方法用同一套窗口条件，「能看见」与「能领到」才是同一件事。
+     */
+    @Select("SELECT * FROM t_coupon_template WHERE status = 'ACTIVE' "
+            + "AND start_at <= #{now} AND end_at >= #{now} ORDER BY id ASC")
     List<CouponTemplateEntity> selectClaimable(@Param("now") LocalDateTime now);
 }

@@ -2,5 +2,8 @@
   "navigationStyle": "custom",
   "navigationBarTitleText": "优惠券",
   "navigationBarBackgroundColor": "#4f6ef7",
-  "navigationBarTextStyle": "white"
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "backgroundColor": "#f5f6fa"
 }

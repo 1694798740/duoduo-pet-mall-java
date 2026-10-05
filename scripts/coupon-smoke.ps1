@@ -494,17 +494,28 @@ $ttlEnv = "$(& docker exec duoduo-app-marketing sh -c 'echo $COUPON_LOCK_TTL_MIN
 Check "★ 券锁定 TTL 已由环境变量注入（值为 35 分钟）" ($ttlEnv -eq '35') $ttlEnv
 Check "★ 券 TTL(35) 严格大于交易域订单超时(30)：订单还活着时券不会被别人领走" (($ttlEnv -match '^\d+$') -and (([int]$ttlEnv) -gt 30)) $ttlEnv
 
-# 消除时序竞态：若这张券已被定时调度抢先解锁，先重新锁定再制造「超时」场景
-if ((CouponStatusOf $CODE_B) -eq 'UNUSED') {
-    Call 'Post' "$Marketing/api/coupons/internal/lock" $null @{ code = $CODE_B; userId = [long]$idB; orderNo = 'SMOKE-TTL-RE'; orderAmount = 100000 } $H_INTERNAL | Out-Null
+# 消除时序竞态：定时补偿调度每 60s 扫一次，可能正好落在「改成锁定超时」与「断言锁定超时」
+# 之间，把这个刚做好的夹具先解掉 —— 于是夹具断言红，并连带把后面两条一起带红。
+# 这是**假阳性**：窗口只有几百毫秒，重做一次即可（调度刚跑过，紧接着的几十秒是安全的）。
+$ttlFixtureOk = $false
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    # 若这张券已被定时调度抢先解锁，先重新锁定再制造「超时」场景
+    if ((CouponStatusOf $CODE_B) -eq 'UNUSED') {
+        Call 'Post' "$Marketing/api/coupons/internal/lock" $null @{ code = $CODE_B; userId = [long]$idB; orderNo = 'SMOKE-TTL-RE'; orderAmount = 100000 } $H_INTERNAL | Out-Null
+    }
+    # 把 B 的券改成「40 分钟前锁定」——远超 lock-ttl-minutes(35)
+    Sql 'duoduo_marketing' "UPDATE t_coupon SET locked_at = UTC_TIMESTAMP() - INTERVAL 40 MINUTE WHERE code = '$CODE_B';" | Out-Null
+    $ttlFixtureOk = ("$(Sql 'duoduo_marketing' "SELECT locked_at < UTC_TIMESTAMP() - INTERVAL 35 MINUTE FROM t_coupon WHERE code = '$CODE_B';")" -eq '1')
+    if ($ttlFixtureOk) { break }
 }
 Check "（夹具）券处于 LOCKED，可制造「锁定超时」场景" ("$(CouponStatusOf $CODE_B)" -eq 'LOCKED') (CouponStatusOf $CODE_B)
-# 把 B 的券改成「40 分钟前锁定」——远超 lock-ttl-minutes(35)
-Sql 'duoduo_marketing' "UPDATE t_coupon SET locked_at = UTC_TIMESTAMP() - INTERVAL 40 MINUTE WHERE code = '$CODE_B';" | Out-Null
-Check "（夹具）券已被人为改成「锁定超时」" ("$(Sql 'duoduo_marketing' "SELECT locked_at < UTC_TIMESTAMP() - INTERVAL 35 MINUTE FROM t_coupon WHERE code = '$CODE_B';")" -eq '1')
+Check "（夹具）券已被人为改成「锁定超时」" $ttlFixtureOk "重试 $attempt 次仍未观察到超时锁定（疑似定时调度在窗口内抢先解锁）"
 $rSweep = Call 'Post' "$Marketing/api/coupons/internal/sweep" $null $null $H_INTERNAL
 Check "补偿调度（带凭据）返回 200" ($rSweep.status -eq 200) "$($rSweep.status)/$($rSweep.raw)"
-Check "★ TTL 兜底解锁生效：released >= 1" ($rSweep.body.data.released -ge 1) ($rSweep.body | ConvertTo-Json -Compress)
+# 判据取**终态**而非「这一次调用解掉了几张」：定时调度同样解超时锁，
+# 它抢先做过之后这一调用的 released 就是 0 —— 但「超时锁不会被永久锁死」这条不变式已经成立。
+# 反向看仍有力：调度真的坏掉时券会停在 LOCKED，此处必然红。
+Check "★ TTL 兜底解锁生效（released >= 1，或定时调度已先行解开）" (($rSweep.body.data.released -ge 1) -or ("$(CouponStatusOf $CODE_B)" -ne 'LOCKED')) ($rSweep.body | ConvertTo-Json -Compress)
 Check "★ 超时锁定的券回到 UNUSED（不会被永久锁死）" ("$(CouponStatusOf $CODE_B)" -eq 'UNUSED') (CouponStatusOf $CODE_B)
 $rSweep2 = Call 'Post' "$Marketing/api/coupons/internal/sweep" $null $null $H_INTERNAL
 Check "★ 补偿调度幂等：第二次 released=0（无 LOCKED 可解，无重复动作）" ($rSweep2.body.data.released -eq 0) ($rSweep2.body | ConvertTo-Json -Compress)

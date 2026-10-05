@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 九套真实浏览器 UI 断言 321 项 + 小程序无浏览器 62 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 九套真实浏览器 UI 断言 321 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -633,6 +633,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\upload-smoke.ps1    
 python scripts/r58-restock-idempotent-smoke.py     # 10 项：退货入库幂等（同 refNo 三次只加一次 / 换 refNo 正常加 / 缺 refNo 400）
 python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖家追偿（闭环 / 重复 409 / 未放款拒 / 垫付**不回补库存** / 收回核销二次 409 / 非运营 401）
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
+python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
 # ================= 前端真实浏览器 UI 自测（8 套） =================
 # 一键跑：起 dev server → 跑 8 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
@@ -660,7 +661,7 @@ node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活
 node --test scripts/mp-harness/ai-page.test.js       # AI 页 4 项（快捷问题接住 / 真实发消息 / 换话题清追问）
 node --test scripts/mp-harness/pages-smoke.test.js   # 30 个页面逐个挂载（33 项），挡住生命周期抛错与卸载清理写错
 node --test scripts/lib/internal-token-parity.test.js # 内部凭据 HMAC：JS 侧与 PowerShell 侧对拍 4 项
-node scripts/mp-harness/behavior.test.js             # 页面行为 21 项：长 id 按字符串上行 / 加购 PATCH 的 skuId 在 URL / 下单带 idempotentKey / 跳订单页用 navigateTo 而非 switchTab
+node scripts/mp-harness/behavior.test.js             # 页面行为 31 项：长 id 按字符串上行 / 加购 PATCH 的 skuId 在 URL / 下单带 idempotentKey / 跳订单页用 navigateTo / 确认订单金额三行自洽 / 领券中心取数时机
 # 前置：网关在跑（http://127.0.0.1:8080）
 ```
 
@@ -1421,6 +1422,37 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 ---
 
 ## 十二、变更记录
+
+### 2026-10-05（第六十二轮 · 用户报障两处的最小修复：下单「应付 ¥0」+ 领券中心不刷新 / 无定时上架）
+
+用户报障：① 下单时「应付金额」显示为 0；② 领券中心长期只有固定的两张券、不刷新、活动券不会自动上架。
+定位为**三个独立缺陷**，均按「最小修改、不动无关逻辑」处理：
+
+- **① 应付 ¥0 —— 是展示缺陷，不是算钱缺陷**（`miniprogram/pages/checkout/checkout.js`）。
+  金额一律由服务端算（`api.order.place()` 只发 `couponCode`，不发金额），所以不可能真的扣 0 元。
+  真因是 `payText` 只有一个写入口 `applyCoupon()`，而 `refreshCoupons()` 的三个分支
+  （`_couponDeclined` / `bestCouponCode` / `chosenCoupon`）**漏掉了最常走的「无券可推」**——
+  新账号 `GET /api/coupons/mine/usable?amount=18900` 实返 `{"coupons":[],"bestCouponCode":null}`，
+  于是 `applyCoupon` 一次都不被调用，`payText` 永远停在 `data` 初值 `'0'`。
+  修法：把三个金额行收成**唯一写入口** `syncAmounts()`；`recalc()` 先本地刷一遍再等服务端；
+  补 `else` 分支；`.catch(() => {})` 改为 `.catch(() => this.applyCoupon(null))`（401/超时同样要刷新）。
+- **② 活动券「到点自动上架」失效在读取那一半**（`duoduo-marketing/.../CouponTemplateMapper.java`）。
+  运营侧 `POST /api/coupons/admin/templates` 一直支持传 `startAt`/`endAt`，
+  但 `selectClaimable` 只判 `end_at >= now`，**漏了 `start_at <= now`** ——
+  未到开抢时间的券提前出现在领券中心，而点领取被 `claimOne` 的窗口条件 422「尚未开始领取」。
+  补上后列表与领取是同一套窗口条件，「到点自动上架」就是这条 SQL 的自然结果，**不需要定时任务**。
+- **③ 领券中心「不刷新」是只有 `onLoad` 取数**（`miniprogram/pages/coupons/coupons.js|json`）。
+  补 `onShow`（30 秒节流，时间戳写在**发起请求时**，否则 `onLoad`+`onShow` 会并发打两次）+ 下拉刷新。
+- **测试**：`behavior.test.js` 行为断言 21 → **31 项**（新增「确认订单金额三行自洽」6 项、
+  「领券中心取数时机」4 项）；新增 `scripts/coupon-window-smoke.py`（6 项，
+  钉**不变式**：「列表里出现的每一条券当下都必须能领成功」——比钉条数值钱）；
+  `coupon-smoke.ps1` 消除 60 秒补偿调度与 TTL 夹具的竞态（~0.5%/次的假阳性）。
+  金额断言一律按**数值**比较，不比对 `'189'`/`'189.00'` 字符串形态。
+- **反例优先**：把 `checkout.js` 暂存回旧版后新断言**精确变红**（`payText="0"`、`0 !== 59`）
+  且「有推荐券」边界仍 PASS；把节流时间戳改回「响应后写」后首次进入**实测发 2 次**请求。
+- **验证**：营销模块单测 17/0 且容器内 jar md5 一致 ｜ `coupon-smoke` **145/0** ｜
+  小程序行为 **31/0** ｜ 静态自检 0 错 0 警 ｜ 券窗口探针 6/0 ｜
+  券窗口真值表（未来/窗口内/已结束/停用）四场景行为全部正确。
 
 ### 2026-10-01（第六十轮 · 券放宽 + 性能压测 + 旧接口下线 + 两套测试环境 + 脚本迁移）
 

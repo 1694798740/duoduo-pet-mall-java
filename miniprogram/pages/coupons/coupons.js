@@ -30,6 +30,26 @@ Page({
     this.fetch();
   },
 
+  /**
+   * onShow 补一次刷新。
+   *
+   * <p>此前只有 onLoad 会拉列表，而 onLoad 一个页面实例只跑一次 ——
+   * 去登录、去商品详情再返回，看到的还是进页面那一刻的旧数据，
+   * 领券中心便「长期只有固定的那几张」。
+   *
+   * <p>30 秒节流：券列表变化很慢，没必要每次切回来都打一次接口。
+   * 时间戳在 {@link fetch} **发起时**就写下（不是等响应回来），因此首次进入
+   * onLoad 发起的请求已经把时间戳落上，紧随其后的 onShow 会自然跳过 —— 不会打两次。
+   */
+  onShow() {
+    if (!this._lastFetchAt || Date.now() - this._lastFetchAt > 30000) this.fetch();
+  },
+
+  /** 下拉刷新：与 onShow 共用同一个 fetch，避免两套取数逻辑各写一份 */
+  onPullDownRefresh() {
+    this.fetch().then(() => wx.stopPullDownRefresh());
+  },
+
   switchTab(e) {
     const tab = e.currentTarget.dataset.tab;
     if (tab === this.data.tab) return;
@@ -38,6 +58,10 @@ Page({
   },
 
   fetch() {
+    // 节流时间戳在**发起时**写下：语义是「上一次发起请求的时间」。
+    // 放在响应回来之后写会有两个问题 —— onLoad 与 onShow 相差不到一毫秒，
+    // 首次进入就会并发打两次接口；接口失败时又变成每次 onShow 都重试，把失败放大成请求风暴。
+    this._lastFetchAt = Date.now();
     this.setData({ loading: true, error: '' });
     const isCenter = this.data.tab === 'center';
     const p = isCenter ? api.coupon.templates() : api.ensureSession().then(() => api.coupon.mine());

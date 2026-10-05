@@ -204,6 +204,70 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-05（第六十二轮 · 两个用户报障的最小修复：下单「应付 ¥0」+ 领券中心不刷新/无定时上架）
+
+> 用户报障原话：① 下单时「应付金额」显示为 0；② 领券中心长期只有固定的两张券，不会刷新，
+> 也没有活动券自动上架。要求**最小化修改**，保持现有风格与目录结构，不顺带重构。
+> 结论：是**三个独立缺陷**（1 个前端金额写入、2 个券窗口/刷新），非资金故障 —— 下单金额一律由服务端算。
+
+| 文件 | 变更 |
+|---|---|
+| `miniprogram/pages/checkout/checkout.js` | `payText` 从「只有 `applyCoupon()` 会写」收成**唯一写入口** `syncAmounts()`；`recalc()` 先本地刷一遍三行金额再等服务端；`refreshCoupons()` 补上最常走的 `else`（无推荐券）分支；`.catch(() => {})` 改为 `.catch(() => this.applyCoupon(null))` |
+| `duoduo-marketing/.../mapper/CouponTemplateMapper.java` | `selectClaimable` 补 `start_at <= #{now}` —— 领取窗口**两头都要判**，原来只有 `end_at >= now` |
+| `duoduo-marketing/.../service/CouponService.java` | 补 javadoc：窗口两头过滤即「到点自动上架」，不需要定时任务 |
+| `miniprogram/pages/coupons/coupons.js` | 补 `onShow`（30 秒节流）+ `onPullDownRefresh`；节流时间戳写在**发起请求时**（写在响应回来后会让 onLoad/onShow 并发打两次） |
+| `miniprogram/pages/coupons/coupons.json` | 开 `enablePullDownRefresh` |
+| `scripts/mp-harness/behavior.test.js` | 行为断言 21 → **31 项**：新增「确认订单金额三行自洽（无券/有券两边界）」6 项 + 「领券中心取数时机（上界+下界）」4 项 |
+| `scripts/coupon-window-smoke.py`（新增） | 券窗口不变式探针 6 项：**列表可见 ⇒ 当下必可领** |
+| `scripts/coupon-smoke.ps1` | TTL 夹具消除 60 秒定时调度竞态（重做一次 + 判据改取**终态**），消掉一类 ~0.5%/次的假阳性 |
+
+**三个缺陷的根因**
+
+1. **「应付 ¥0」是展示 bug，不是算钱 bug。** `payText` 只有一个写入口 `applyCoupon()`，
+   而 `refreshCoupons()` 的三个分支是 `if (_couponDeclined) / else if (bestCouponCode) / else if (chosenCoupon)` ——
+   **「没选券 + 服务端也没推荐券」这条最常见的分支没有任何人调用 `applyCoupon`**，
+   `payText` 就永远停在 `data` 初值 `'0'`。WXML 里「应付」出现两处（明细行 + 提交栏），都读同一个 `payText`。
+   实测新账号 `GET /api/coupons/mine/usable?amount=18900` → `{"coupons":[],"bestCouponCode":null}`，
+   走的正是这条分支。`.catch(() => {})` 吞掉 401/超时后同样不刷新，是第二条复现路径。
+2. **活动券定时上架失效在「读取」那一半。** 运营侧 `POST /api/coupons/admin/templates` 一直支持传 `startAt`/`endAt`，
+   但列表 SQL 只判 `end_at >= now`，于是未到开抢时间的券**提前出现**在领券中心；
+   而领取侧 `claimOne` 是 `start_at <= now AND end_at >= now` —— 看得见、点下去 422「尚未开始领取」。
+   补上 `start_at <= now` 后列表与领取同一套窗口条件，「到点自动上架」是这条 SQL 的自然结果，不需要定时任务。
+3. **领券中心「不刷新」是只有 `onLoad` 取数**：`onLoad` 一个页面实例只跑一次，去登录/去详情再回来看到的还是旧数据。
+
+**★ 反例优先：先证明新断言能抓住旧缺陷，再宣称修好**
+
+- 缺陷 1：`git stash` 掉 `checkout.js` 后新断言**精确变红**（`payText="0"`、`0 !== 59`），
+  且「有推荐券」那条边界仍 PASS → 证明缺陷只发生在「无券」分支，不是断言写宽了。
+- 缺陷 3：把节流时间戳改回「响应后写」→ 首次进入**实测发 2 次**请求（28 项 / 失败 3 项），恢复后 31/0。
+- 断言风格：金额一律按**数值**比较（`Number(payText) === amountFen/100`），
+  不比对 `'189'` / `'189.00'` 字符串形态 —— 把 `fen2yuan` 的显示格式抄进测试只会带来假红。
+
+**★ 把「不变式」写进探针，而不是写死条数**
+
+`scripts/coupon-window-smoke.py` 钉的是「**列表里出现的每一条券，当下都必须能领成功**」。
+这条比「列表里有几张券」值钱得多：列表与领取是两段独立 SQL，时间条件只要有一点点不一致，
+就会出现「看得见、点下去领不到」，而接口日志里每条都是合法的 4xx，最难归因。
+
+**验证（本轮实测）**
+
+- 后端单测：`mvn -o -pl duoduo-marketing -am test` **17/0**；`package` 后与容器内 `/app/app.jar` **md5 一致**。
+- 券窗口真值表（运行时，插夹具券 5003 逐场景验，验完删除）：
+  未来开抢→**不出现**｜窗口内→出现｜已结束→不出现｜停用→不出现；
+  且旧谓词 `status='ACTIVE' AND end_at>=now` 会把它列出来，而直接领它是 **422「尚未开始领取」** —— 正是「看得见领不到」。
+- `scripts/coupon-smoke.ps1` **145/0**（`[GUARD-OK] 145 项全部执行，无静默跳过`）。
+- 小程序行为断言 **31/0**；静态自检 **0 错 0 警**；券窗口探针 **6/0**。
+- 全量 23 套冒烟本轮的 10 套红**全部归因于环境**，与本次改动无关，逐条已定位（见下）。
+
+**⚠️ 本轮环境侧发现（不属代码缺陷，但会让冒烟假红，需先修环境再看结果）**
+
+| 症状 | 根因（实测证据） |
+|---|---|
+| 直连 `127.0.0.1:8081/8082` 一律 404，连累 address / credit / id-precision / review / wechat-auth 五套 | **`WorkBuddy.exe`（PID 18676）占用了 `127.0.0.1:8081` 与 `:8082`**，比 docker-proxy 的 `0.0.0.0:8081/8082` 更具体，抢走了 loopback 流量。`netstat -ano` + `tasklist` 可证；换局域网 IP `192.168.0.103:8081/8082` 立即 200 |
+| `search-smoke` 被跳过、ai 套件 12 项红 | ES/宿主端口问题 + **DashScope 返回 403**（AI 服务日志 `LLM 调用失败 status=403` 共 12 条，与 12 项失败一一对应）。AI 服务按设计降级为 `DEGRADED`，是**凭据/额度**问题，不是代码问题 |
+| order / payment 两套共 18 项红 | 上游 `mq-smoke` 死信用例的**脏数据**（其自证已报 `2001 冻结量 0 -> 2`）：库存与冻结量断言全部对不上 |
+| `mq-smoke` 6 项红（死信查不到、replay 401） | 会话被挂起约 90 分钟，期间商品域一直被停着，恢复时**运营 Cookie 会话已过期**（replay 返回 401） |
+
 ### 2026-10-01（第六十一轮 · 剩余任务全量收口 + 完整自测手册）
 
 > 用户指令：先梳理整体进度、列出**所有**未完成项并逐项说明剩余工作 → **全部完成** → 给出

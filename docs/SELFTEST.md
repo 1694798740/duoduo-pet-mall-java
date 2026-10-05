@@ -213,7 +213,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 |---|---|---|
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
-| 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 21 + 内部凭据对拍 4 = **62 项** |
+| 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
 | 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 9 套 321 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
@@ -273,12 +273,12 @@ node --test scripts/mp-harness/pages-smoke.test.js     # 30 个页面逐个挂�
 node --test scripts/mp-harness/ai-page.test.js         # AI 页（4 项）
 node --test scripts/lib/internal-token-parity.test.js  # 内部凭据 HMAC JS/PowerShell 对拍（4 项）
 
-# 注意：behavior.test.js 是**自带汇总与退出码**的独立运行器（25 处断言 / 21 项），
+# 注意：behavior.test.js 是**自带汇总与退出码**的独立运行器（31 项），
 # 直接跑它，不要套 `node --test`（套上去会被当成「一个文件 = 一项」，项数显示为 1）。
-node scripts/mp-harness/behavior.test.js               # 页面行为（21 项）
+node scripts/mp-harness/behavior.test.js               # 页面行为（31 项）
 ```
 
-**预期**：全部 pass，0 fail（合计 62 项）。
+**预期**：全部 pass，0 fail（合计 72 项）。
 这套 harness 直接 `require` 仓库里**真实的页面 js**（不是复制一份），
 所以页面改坏了这里立刻红 —— 这是它比「截图比对」值钱的地方。
 
@@ -408,6 +408,9 @@ done
 | 21 | 断言「闲置数据应为 8 条」红了，实际 42 条 | 断言写死了**当前条数**而不是不变性质 | 改成 `-ge 8` 之类钉「性质」的写法 |
 | 22 | 前端页面计数排序错乱（"10" < "9"） | 计数字段被序列化成**字符串**下发 | 加进 `LongToStringJacksonModule.NUMERIC_LONG_FIELDS` |
 | 23 | 压测第二档 0 样本 | 夹具只按一档的量准备 | 池子要按「预算 × 并发档数」给 |
+| 24 | 直连 `127.0.0.1:8081` / `:8082` 一律 404，连累 address / credit / id-precision / review / wechat-auth 五套冒烟 | **宿主上有别的进程占了 `127.0.0.1:8081/8082`**（比 docker-proxy 的 `0.0.0.0:8081/8082` 更具体，抢走 loopback 流量）。`netstat -ano \| findstr :8081` 看 PID，再 `tasklist /FI "PID eq <pid>"` 认人 | 换一条能到容器的地址重跑：`-User http://<本机局域网IP>:8081`、`-Product http://<本机局域网IP>:8082`；或先关掉占用进程。**别改脚本默认值**——别的机器上没有这个占用 |
+| 25 | `docker compose --profile search up -d duoduo-es` 报 `bind: An attempt was made to access a socket in a way forbidden by its access permissions` | Windows 把 9200 划进了**保留端口区间**（`netsh interface ipv4 show excludedportrange protocol=tcp`，本机是 9149–9248） | ES 不需要发布宿主端口，容器间走 `duoduo-es:9200` 即可。用 `docker run --network duoduo-pet-mall-java_default` 起、**不带 `-p`**；`run-all-smoke` 探不到 9200 会显式跳过 search 套 |
+| 26 | 券冒烟偶发红在「（夹具）券已被人为改成『锁定超时』」 | 补偿调度每 60 秒扫一次，可能正好落在「改成超时」与「断言超时」之间把券解掉（约 0.5%/次） | 已修：夹具重做一次 + 判据改取**终态**（「超时锁不会被永久锁死」）。若仍红，看券是不是被别的脚本占了 |
 
 ---
 
