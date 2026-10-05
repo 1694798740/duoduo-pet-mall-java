@@ -142,7 +142,7 @@ export const SearchPage: React.FC = () => {
                 onClick={() => patch({ categoryId: String(cat.id) })}
                 type="button"
               >
-                {cat.depth > 0 ? `└ ${cat.name}` : cat.name}
+                {cat.name}
               </button>
             ))}
           </div>
