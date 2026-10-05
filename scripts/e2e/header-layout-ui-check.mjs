@@ -24,16 +24,20 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mysql } from '../lib/docker-exec.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const PW_CORE =
   process.env.PW_CORE ??
   `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
 const CHROME = process.env.CHROME_PATH ?? undefined;
+
+fs.mkdirSync(SHOTS, { recursive: true });
 
 const PWD = 'duoduo12345';
 /** 视口矩阵：从超宽到常见的笔记本宽度（1152 ≈ 13 寸默认，1024 ≈ 老式小屏） */
@@ -184,6 +188,10 @@ for (const [role, { page }] of Object.entries(contexts)) {
     const missing = [...NAV_CORE, ...expectExtra].filter((l) => !m.labels.includes(l));
     check(`${role} @${w}px：应有的导航项一个不少（缺 ${missing.join('·') || '无'}）`,
       missing.length === 0, m.labels);
+    // 留一张证据图：1264px 正是用户截图的实际视口，也是最容易出问题的一档
+    if (role === '运营' && w === 1264) {
+      await page.screenshot({ path: path.join(SHOTS, 'header-layout-1264.png') });
+    }
   }
 }
 
