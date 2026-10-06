@@ -462,8 +462,9 @@ export const adminApi = {
     api.put<SeckillActivityView>(`/api/admin/seckill/activities/${id}`, body),
 
   /**
-   * 删除活动（R74）：**只能删从未成交的活动**。
-   * 已有秒杀订单时服务端返回 422 并提示改用「下架」—— 订单是资金事实，不能连根拔掉。
+   * 删除活动（R74）：**只要还有未关闭的秒杀订单就被拒**（待付款 / 已付款 / 已发货 / 已完成）。
+   * 订单全部已关闭的活动可以删 —— 否则「自测建一场、下单再取消」会让活动只增不减。
+   * 被拒时服务端返回 422 并提示改用「下架」；`t_order` 一律留档。
    */
   deleteSeckillActivity: (id: string) =>
     api.del<void>(`/api/admin/seckill/activities/${id}`),

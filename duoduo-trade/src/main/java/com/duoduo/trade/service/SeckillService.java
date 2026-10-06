@@ -27,6 +27,7 @@ import com.duoduo.trade.mapper.SeckillActivityMapper;
 import com.duoduo.trade.mapper.SeckillOrderMapper;
 import com.duoduo.trade.mapper.SeckillSkuMapper;
 import com.duoduo.trade.support.OrderNoGenerator;
+import com.duoduo.trade.support.OrderStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -461,16 +462,18 @@ public class SeckillService {
     }
 
     /**
-     * 删除活动（R74）：**已有秒杀订单的活动一律拒绝**（改提示去下架）。
+     * 删除活动（R74）：**只要还有「未关闭」的秒杀订单就拒绝**（改提示去下架）。
      *
-     * <p>为什么不做「连带删除订单」：秒杀订单是真实的成交与资金事实（t_order / t_seckill_order
-     * 里挂着订单号、配额台账），删活动就把这条链的根拔掉了 —— 订单详情查不到来源、
-     * 配额回补找不到活动，属于不可逆的数据破坏。运营真正想要的是「从列表清掉」，
-     * 那用下架即可（C 端不再展示，运营列表仍可见）。
+     * <p><b>判据是「有没有未关闭的订单」，不是「有没有订单」</b>：
+     * 「待付款 / 已付款 / 已发货 / 已完成 / 已退款」都还挂着资金或履约事实，必须留档；
+     * 而「已关闭（CLOSED）」= 从未付过一分钱的终态单。若一场活动的订单**全部已关闭**，
+     * 它就没有任何需要追溯的资金链路了，应当允许运营把它删掉 ——
+     * 否则「自测 / 演示各建一场活动、下单再取消」会让活动**只增不减**，
+     * 运营列表最终堆满永远清不掉的垃圾（这正是 R74 要解决的那个问题本身）。
      *
-     * <p>因此本端点只用于清理**从未成交**的活动（自测残留、建错的草稿）。
-     * 删活动时会一并删掉它的秒杀 SKU 行，并清掉 Redis 余量键（个人已购键是按 `skuId:userId`
-     * 分散的、无 TTL，这里不枚举；SKU 行删除后雪花 id 不会复用，残留键只占内存不影响正确性）。
+     * <p>删除时连带清理该活动的 `t_seckill_sku` 行、**已关闭订单的 `t_seckill_order` 链接行**
+     * 与 Redis 余量键；**`t_order` 行一律保留**（订单类型/备注写着「限时秒杀」，溯源信息不丢）。
+     * 已关闭订单不会再触发配额回补（回补只发生在「迁往 CLOSED 的那一刻」），所以删链接行是安全的。
      */
     @Transactional
     public void deleteActivity(Long activityId) {
@@ -478,10 +481,17 @@ public class SeckillService {
         if (activity == null) {
             throw BizException.notFound("秒杀活动");
         }
-        long orders = countOrders(activityId);
-        if (orders > 0) {
-            throw BizException.businessRule("该活动已产生 " + orders + " 笔秒杀订单，不能删除（订单要留档）；"
-                    + "如果只是不想再卖，请改为「下架」");
+        long live = countLiveOrders(activityId);
+        if (live > 0) {
+            throw BizException.businessRule("该活动还有 " + live + " 笔订单未关闭（待付款 / 已付款 / 已发货 / 已完成），"
+                    + "不能删除（订单要留档）；如果只是不想再卖，请改为「下架」");
+        }
+        List<SeckillOrderEntity> links = seckillOrderMapper.selectList(
+                new LambdaQueryWrapper<SeckillOrderEntity>().eq(SeckillOrderEntity::getActivityId, activityId));
+        if (!links.isEmpty()) {
+            seckillOrderMapper.delete(new LambdaQueryWrapper<SeckillOrderEntity>()
+                    .eq(SeckillOrderEntity::getActivityId, activityId));
+            log.info("删除活动 {} 时连带清理 {} 笔已关闭订单的秒杀链接行（t_order 留档）", activityId, links.size());
         }
         List<SeckillSkuEntity> skus = seckillSkuMapper.selectList(
                 new LambdaQueryWrapper<SeckillSkuEntity>().eq(SeckillSkuEntity::getActivityId, activityId));
@@ -493,10 +503,23 @@ public class SeckillService {
         log.info("删除秒杀活动：id={} title={} 连带清理秒杀 SKU {} 行", activityId, activity.getTitle(), skus.size());
     }
 
-    /** 该活动下的秒杀订单数（t_seckill_order 的 activity_id 即归属，删除与编辑共用的守卫） */
+    /** 该活动下的秒杀订单数（编辑侧的守卫：有成交就不许把开始时间推到未来） */
     private long countOrders(Long activityId) {
         return seckillOrderMapper.selectCount(
                 new LambdaQueryWrapper<SeckillOrderEntity>().eq(SeckillOrderEntity::getActivityId, activityId));
+    }
+
+    /** 该活动下**尚未关闭**的订单数（必须到 t_order 取状态：链接表只存 order_no，不存状态） */
+    private long countLiveOrders(Long activityId) {
+        List<SeckillOrderEntity> links = seckillOrderMapper.selectList(
+                new LambdaQueryWrapper<SeckillOrderEntity>().eq(SeckillOrderEntity::getActivityId, activityId));
+        if (links.isEmpty()) {
+            return 0;
+        }
+        List<String> orderNos = links.stream().map(SeckillOrderEntity::getOrderNo).toList();
+        return orderMapper.selectCount(new LambdaQueryWrapper<OrderEntity>()
+                .in(OrderEntity::getOrderNo, orderNos)
+                .ne(OrderEntity::getStatus, OrderStatus.CLOSED.name()));
     }
 
     // ---------------- 关单回补（OrderService 超时关单 / 取消 / 强关时回调） ----------------

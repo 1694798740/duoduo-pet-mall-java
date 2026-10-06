@@ -309,22 +309,11 @@ step('幂等：同一 idempotentKey 重复提交');
   }
 }
 
-// ---------------- 6. 收尾：取消订单 → 配额回补 → 活动下架 ----------------
-step('收尾：取消订单与配额回补');
-if (orderNo) {
-  // 断言钉「取消一次就 +1」这条**不变的性质**，而不是钉「现在应该是几」：
-  // 幂等用例的订单在上一节已经取消过一次，写死 2 会在任何一步顺序调整后假红
-  // （本文件初版就写死了 2，而正确答案是 3 —— 配额其实一分不差）。
-  const before = await call('GET', `/api/seckill/activities/${ACT_ID}`);
-  const stockBeforeCancel = before.data?.skus?.[0]?.availableStock;
-  const cancelled = await call('POST', `/api/orders/${orderNo}/cancel`, { reason: 'UI 自测收尾' }, buyerJar);
-  check('取消秒杀订单成功', cancelled.status === 200, cancelled.status);
-  const afterCancel = await call('GET', `/api/seckill/activities/${ACT_ID}`);
-  const restored = afterCancel.data?.skus?.[0]?.availableStock;
-  check(`★ 取消后配额 +1（${stockBeforeCancel} → ${stockBeforeCancel + 1}）`,
-    restored === stockBeforeCancel + 1, { before: stockBeforeCancel, after: restored });
-}
-// ---------------- R74：后台「编辑 / 删除」----------------
+// ---------------- R74：后台「编辑 / 删除」（★ 必须排在「收尾取消订单」之前）----------------
+// 为什么顺序重要：删活动被拒的判据是「还有未关闭订单」。收尾会把抢购订单取消掉，
+// 那之后活动就**真的可以删**了 —— 若把本段排在收尾之后，「应当被拒」的断言会变成假红
+// （而且删除会真的成功、弹窗立即关闭，后续按弹窗定位的断言会连片超时）。
+// 这一段与结尾的「自清理删除」正好构成同一个守卫的两面。
 step('UI：后台秒杀管理页 · 编辑与删除（R74）');
 {
   const { page, consoleErrors, httpErrors } = await newPage();
@@ -365,17 +354,17 @@ step('UI：后台秒杀管理页 · 编辑与删除（R74）');
   await page.waitForTimeout(500);
   const delModal = page.locator('.modal').last();
   const delText0 = await delModal.innerText();
-  check('★ 删除弹窗默认不做危险动作（主按钮是「取消」）',
+  check('★ 删除弹窗默认不做危险动作（主按钮是「取消」，且可用 Esc 关掉）',
     (await delModal.locator('.modal-foot button').first().innerText()).includes('取消'), delText0.slice(0, 200));
-  check('删除弹窗说明只删「从未成交」的活动', delText0.includes('从未成交'), delText0.slice(0, 300));
+  check('删除弹窗说明只删「没有未关闭订单」的活动', delText0.includes('没有未关闭订单'), delText0.slice(0, 300));
   await delModal.getByRole('button', { name: '确认删除' }).click();
   await page.waitForTimeout(1600);
   const delText1 = await delModal.innerText();
-  check('★ 有秒杀订单的活动删除被拒，页面把原因显示出来（不静默失败）',
-    delText1.includes('不能删除') || delText1.includes('下架'), delText1.slice(0, 300));
+  check('★ 有「未关闭订单」的活动删除被拒，页面把原因显示出来（不静默失败）',
+    delText1.includes('不能删除') && delText1.includes('下架'), delText1.slice(0, 300));
   check('★ 被拒后活动仍在列表里（没有半删）',
     (await page.locator('tr', { hasText: EDITED }).count()) === 1, '活动行消失');
-  await delModal.getByRole('button', { name: '取消' }).click();
+  await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 
   // ---- 删除：无订单的活动必须真能删掉（同端点的另一面，证明守卫不是无条件拒绝） ----
@@ -410,9 +399,35 @@ step('UI：后台秒杀管理页 · 编辑与删除（R74）');
     consoleErrors.filter((e) => !/favicon|status of (401|403|404|422)/i.test(e)).length === 0, consoleErrors.slice(0, 5));
 }
 
+// ---------------- 6. 收尾：取消订单 → 配额回补 → 活动下架 ----------------
+step('收尾：取消订单与配额回补');
+if (orderNo) {
+  // 断言钉「取消一次就 +1」这条**不变的性质**，而不是钉「现在应该是几」：
+  // 幂等用例的订单在上一节已经取消过一次，写死 2 会在任何一步顺序调整后假红
+  // （本文件初版就写死了 2，而正确答案是 3 —— 配额其实一分不差）。
+  const before = await call('GET', `/api/seckill/activities/${ACT_ID}`);
+  const stockBeforeCancel = before.data?.skus?.[0]?.availableStock;
+  const cancelled = await call('POST', `/api/orders/${orderNo}/cancel`, { reason: 'UI 自测收尾' }, buyerJar);
+  check('取消秒杀订单成功', cancelled.status === 200, cancelled.status);
+  const afterCancel = await call('GET', `/api/seckill/activities/${ACT_ID}`);
+  const restored = afterCancel.data?.skus?.[0]?.availableStock;
+  check(`★ 取消后配额 +1（${stockBeforeCancel} → ${stockBeforeCancel + 1}）`,
+    restored === stockBeforeCancel + 1, { before: stockBeforeCancel, after: restored });
+}
+
 // 活动下架：C 端列表不留自测痕迹（运营列表仍保留，便于人工复查）
 const off = await call('POST', `/api/admin/seckill/activities/${ACT_ID}/status`, { enabled: false }, op.jar);
 check('收尾：活动已下架，C 端不再展示', off.status === 200 && off.data?.enabled === false, off.data?.enabled);
+
+// R74：订单全部已关闭之后，活动应当**可以删除** —— 本套件因此不留任何活动残留。
+// （此前只能下架，导致「每跑一次自测就多一场永远清不掉的活动」，正是 R74 要解决的那个问题本身。）
+const delSelf = await call('DELETE', `/api/admin/seckill/activities/${ACT_ID}`, undefined, op.jar);
+check('★ 收尾：订单全已关闭 → 活动可删除（自测不留活动残留）', delSelf.status === 200,
+  `${delSelf.status} ${delSelf.raw?.slice(0, 160)}`);
+const afterSelfClean = await call('GET', '/api/admin/seckill/activities', undefined, op.jar);
+check('★ 收尾：活动确已从运营列表消失',
+  !(afterSelfClean.data ?? []).some((a) => String(a.id) === String(ACT_ID)),
+  (afterSelfClean.data ?? []).map((a) => a.id));
 
 await browser.close();
 

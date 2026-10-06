@@ -213,12 +213,13 @@ Check "取消后余量回补为 1" ([int]$r.body.data.skus[0].availableStock -eq
 $r = Call 'Post' "$Gateway/api/seckill/orders" $u3.session @{
     activityId = $actId; skuId = $SKU; addressId = $addr3; idempotentKey = (NewKey) }
 Check "买家丙用回补的配额再抢成功" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$orderNo3 = "$($r.body.data.orderNo)"
 Check "最终 DB 配额=0（全部售出）" ((Sql 'duoduo_trade' "SELECT available_stock FROM t_seckill_sku WHERE activity_id=$actId AND sku_id=$SKU;") -eq '0')
 
 # ---------- 7. 运营编辑 / 删除（R74） ----------
 Write-Host ""
 Write-Host "> R74：活动编辑与删除"
-# 口径：编辑只开「标题 + 时间」；删除只允许「从未成交」的活动（有订单必须走 下架）。
+# 口径：编辑只开「标题 + 时间」；删除只允许「没有未关闭订单」的活动（还有待付款/已付款等订单时必须走 下架）。
 $editedTitle = 'smoke-seckill-edited'   # 刻意用 ASCII：docker exec 读库输出中文会被转成 ?
 $newEnd = (Get-Date).ToUniversalTime().AddMinutes(45).ToString('yyyy-MM-ddTHH:mm:ss')
 $editBody = @{ title = $editedTitle; startAt = $start; endAt = $newEnd }
@@ -246,9 +247,9 @@ $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $u1.session $n
 Check "普通用户删除活动 403" ($r.status -eq 403) $r.status
 # 本场活动此刻已有 3 笔秒杀订单 → 必须被拒，且给出「改用下架」的可执行指引
 $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $sessOp $null
-Check "有秒杀订单的活动删除 → 422" ($r.status -eq 422) "$($r.status)/$($r.raw)"
-Check "拒绝原因指向「下架」而非一句空话" (
-    "$($r.body.message)" -like '*下架*') $r.body.message
+Check "有「未关闭订单」的活动删除 → 422" ($r.status -eq 422) "$($r.status)/$($r.raw)"
+Check "拒绝原因指明「未关闭订单」并指向「下架」" (
+    "$($r.body.message)" -like '*未关闭*' -and "$($r.body.message)" -like '*下架*') $r.body.message
 Check "被拒后活动仍在（未发生半删）" (
     [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_activity WHERE id=$actId;") -eq 1) '活动行数异常'
 
@@ -270,7 +271,23 @@ Check "连带秒杀 SKU 行已清理（不留孤儿行）" (
 $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$throwId" $sessOp $null
 Check "重复删除 → 404（明确报不存在，不静默成功）" ($r.status -eq 404) "$($r.status)/$($r.raw)"
 
-# ---------- 8. 收尾 ----------
+# ---------- 8. 自我清理：取消未关闭订单 → 活动变为可删 → 删掉活动（不再留只增不减的自测活动） ----------
+Write-Host ""
+Write-Host "> R74：套件自我清理（订单全关闭后活动可删）"
+$r = Call 'Post' "$Gateway/api/orders/$orderNo1/cancel" $u1.session @{ reason = '冒烟-收尾清理' }
+Check "买家甲取消未付款订单" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$r = Call 'Post' "$Gateway/api/orders/$orderNo3/cancel" $u3.session @{ reason = '冒烟-收尾清理' }
+Check "买家丙取消未付款订单" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $sessOp $null
+Check "★ 订单全部关闭后活动可删除（不留自测活动）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+Check "活动行已删" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_activity WHERE id=$actId;") -eq 0) '活动仍在'
+Check "秒杀链接行已连带清理" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_order WHERE activity_id=$actId;") -eq 0) '链接行仍在'
+Check "★ 订单留档未受牵连（t_order 仍在）" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE order_no IN ('$orderNo1','$orderNo2','$orderNo3');") -eq 3) '订单被误删'
+
+# ---------- 9. 收尾 ----------
 Write-Host ""
 Write-Host "=== 结果：$pass 通过 / $fail 失败 ==="
 if ($fail -gt 0) {
@@ -278,8 +295,8 @@ if ($fail -gt 0) {
     $failures | ForEach-Object { Write-Host "  - $_" }
     exit 1
 }
-Write-Host "夹具说明：测试活动 id=$actId（标题「$editedTitle」，已产生 3 笔订单，**按设计不可删除**，"
-Write-Host "  运营 $phoneOp 可在管理端「下架」它）；本脚本自建的「待删活动」已自行删除，不留脏数据；"
+Write-Host "夹具说明：本脚本建的测试活动 id=$actId 已在第 8 段**自行删除**（订单全关闭后即可删），"
+Write-Host "  不再留下只增不减的自测活动；t_order 里的 3 笔订单按留档口径保留；"
 Write-Host "  测试账号 $phoneU1/$phoneU2/$phoneU3/$phoneOp 保留。"
-Write-Host "  清理历史自测活动请用后台管理页的「删除」（仅从未成交的活动可删）。"
+Write-Host "  清理历史自测活动请用后台管理页的「删除」（无未关闭订单的活动即可删，否则改用「下架」）。"
 exit 0
