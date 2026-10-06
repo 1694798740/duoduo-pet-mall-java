@@ -75,6 +75,8 @@ public class MessageService {
     private final int maxLength;
     private final int rateWindowSeconds;
     private final int rateLimit;
+    /** 自营商品的咨询收件人（官方客服账号，R48 建号；第七十三轮起由本域配置持有） */
+    private final Long officialCsUserId;
 
     public MessageService(SocialMessageMapper messageMapper,
                           FollowService followService,
@@ -85,7 +87,8 @@ public class MessageService {
                           NoticeService noticeService,
                           @Value("${duoduo.social.message.max-length:1000}") int maxLength,
                           @Value("${duoduo.social.message.rate-window-seconds:60}") int rateWindowSeconds,
-                          @Value("${duoduo.social.message.rate-limit:10}") int rateLimit) {
+                          @Value("${duoduo.social.message.rate-limit:10}") int rateLimit,
+                          @Value("${duoduo.social.official-cs-user-id:710000000000000001}") Long officialCsUserId) {
         this.messageMapper = messageMapper;
         this.followService = followService;
         this.userClient = userClient;
@@ -96,6 +99,7 @@ public class MessageService {
         this.maxLength = maxLength;
         this.rateWindowSeconds = rateWindowSeconds;
         this.rateLimit = rateLimit;
+        this.officialCsUserId = officialCsUserId;
     }
 
     // ---------------- 写：发消息（需登录） ----------------
@@ -131,8 +135,9 @@ public class MessageService {
             }
             product = requireProductCard(bizId);
             if (SocialDtos.BIZ_ASK.equals(bizType)) {
-                // 收件人 = 商品归属卖家（服务端定人，不信前端）
-                receiverId = product.sellerId();
+                // 收件人由服务端定人（不信前端）：入驻商品 → 归属卖家；自营商品（sellerId=0，
+                // 第七十三轮起卖家归属只表交易口径）→ 官方客服账号。
+                receiverId = "self".equals(product.supplyType()) ? officialCsUserId : product.sellerId();
                 if (receiverId == null || receiverId == 0L) {
                     throw BizException.businessRule("该商品暂无卖家，无法咨询");
                 }

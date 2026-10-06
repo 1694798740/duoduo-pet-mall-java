@@ -29,6 +29,11 @@
   border-color: var(--brand);
 }
 
+/* 供货身份标签（第七十三轮）：自营=暖橙实底、入驻=灰底描边，与 Web 端 .tag/.tag-self 同语言 */
+.p-supply { margin-bottom: 10rpx; }
+.tag-self { background: #fff3ec; color: #d9640f; }
+.tag-merchant { background: #f3f4f6; color: var(--text-3); border: 1rpx solid var(--border); }
+
 .p-title { font-size: 34rpx; font-weight: 700; margin-bottom: 12rpx; }
 .p-price-row { display: flex; align-items: center; justify-content: space-between; }
 .p-price { font-size: 40rpx; }

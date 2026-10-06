@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十五套真实浏览器 UI 断言 560 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十六套真实浏览器 UI 断言 582 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -1411,8 +1411,18 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 - **降级而非硬失败**：用户服务不可用时评价仍可看（昵称兜底为「用户 1234」）；
   图片 JSON 脏数据按无图处理，不让整页 500。
 
-自测记录：`scripts/review-smoke.ps1` **59 项断言全绿**；
-真实浏览器 `scripts/e2e/review-ui-check.mjs` **20 项断言全绿**（截图 `frontend/docs/screenshots/rev_*.png`）：
+**评分是真实数据驱动的（第七十三轮）**：SPU 的 `rating` / `rating_count` 不再是种子假数据——
+评价创建（仅**已收货/已完成**订单的本人可评，服务端逐单校验）后经 `ReviewCreated` 事件
+（`@TransactionalEventListener(AFTER_COMMIT)`）→ `ReviewMapper.ratingAggregatesBySpu` 聚合 →
+Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 签名保护）→
+回写 `t_spu`，best-effort 不阻断评价主流程；详情页头部评分改读评价域实时聚合
+`/api/reviews/product/:id/summary`，**没有真实评价就如实显示「暂无评分」**；
+商品卡评分行 `ratingCount > 0` 才渲染。反向护栏：`product-detail-ui-check.mjs`
+断言「页面评分区必须与聚合接口逐字一致」，种子假数据（如 4.7/3240 条）无法回归。
+
+自测记录：`scripts/review-smoke.ps1` **59 项断言全绿**（R73 起结尾自动把夹具 SPU 评分
+用内部 recompute 写回原值，夹具不再污染 `t_spu`）；
+真实浏览器 `scripts/e2e/review-ui-check.mjs` **21 项断言全绿**（截图 `frontend/docs/screenshots/rev_*.png`）：
 备一笔已完成订单 → 订单列表看到「去评价」→ 评价页打分提交 → 我的评价看到内容与匿名标记 → 商品详情公开评价区看到该条。
 
 ---

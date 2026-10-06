@@ -18,10 +18,12 @@ import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.ImageUrls;
 import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.OrderRefs;
+import com.duoduo.fulfilment.support.ProductRatingSyncer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,6 +77,7 @@ public class ReviewService {
     private final UserClient userClient;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
     private final int maxContentLength;
     private final int maxImages;
     private final int appendWindowDays;
@@ -84,6 +87,7 @@ public class ReviewService {
                          UserClient userClient,
                          SnowflakeIdGenerator idGenerator,
                          ObjectMapper objectMapper,
+                         ApplicationEventPublisher eventPublisher,
                          @Value("${duoduo.review.max-content-length:1000}") int maxContentLength,
                          @Value("${duoduo.review.max-images:9}") int maxImages,
                          @Value("${duoduo.review.append-window-days:30}") int appendWindowDays) {
@@ -92,6 +96,7 @@ public class ReviewService {
         this.userClient = userClient;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
         this.maxContentLength = maxContentLength;
         this.maxImages = maxImages;
         this.appendWindowDays = appendWindowDays;
@@ -176,6 +181,11 @@ public class ReviewService {
             // 这里如实转成 409 而不是 500 —— 撞键是**预期内的业务结果**，不是服务故障。
             throw BizException.conflict("该商品已评价过，请勿重复提交");
         }
+
+        // 评分回写（第七十三轮）：AFTER_COMMIT 触发 —— 事务内发布、提交后才执行，
+        // 保证商品域拿到的聚合一定是「已提交」的评价；同步失败只告警，不拖垮主流程
+        eventPublisher.publishEvent(new ProductRatingSyncer.ReviewCreated(
+                toInsert.stream().map(ReviewEntity::getSpuId).toList()));
 
         // 昵称统一在本批插入后补一次，避免逐条查用户服务
         Map<Long, UserBrief> briefs = loadBriefs(List.of(userId));

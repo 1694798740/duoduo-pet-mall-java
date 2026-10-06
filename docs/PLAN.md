@@ -203,6 +203,59 @@
 ---
 
 ## 6. 本轮变更记录
+### 2026-10-06（第七十三轮 · 五项修复：两端商品详情对齐 + 评价真数据化 + 自营订单归属 + 脏数据清理）
+
+> 用户六截图报障五项：① 小程序缺自营/入驻标识；② 两端详情页三处不一致（介绍图 / 主图交互 / 规格参数）；
+> ③ 评价体系疑似假数据 + 资格门禁；④（严重）5555 的自营订单运营商家端待发货查不到；⑤ 清理测试订单脏数据。
+
+**① 小程序身份标识**：`miniprogram/pages/product` 标题上方补 badge 行（`supplyType === 'merchant' ? 品牌入驻 : 多多自营`），
+判定规则与样式语义与 Web `SupplyTag` 一致；详情数据补 `supplyType` 透传。
+
+**② 两端详情对齐**：Web `ProductDetail.tsx` 补「商品介绍」图片（与小程序共用 `detailImages` 池，同池同序）、
+主图点击放大 Lightbox（`Modal` 组件：Esc + 关闭按钮双路径、缩略图切换、计数器）、
+新增「包装规格」卡（spec 键值对 / SKU 编码 / 当前库存，与小程序 `refreshSkuInfo` 逐行同构同序）。
+
+**③ 评价真数据化（本轮最重的链路）**：
+- **根因**：`t_spu.rating`/`rating_count` 是种子假列（18 行全带 4.x 分/几千条），全仓**没有任何写入链**——
+  Web 头部「4.7 / 3240 条评价」是种子数据，而评价区只有 1 行探针，「评分与列表对不上」。
+- **修复链**：`ReviewService.create` → 发布 `ReviewCreated` 事件 → `ProductRatingSyncer`
+  （`@TransactionalEventListener(AFTER_COMMIT)`）→ `ReviewMapper.ratingAggregatesBySpu` 聚合 →
+  Feign `POST /api/products/internal/ratings/recompute`（product 域新端点，`X-Internal-Token` 保护，
+  防御性校验：空/负/>5 跳过）→ 回写 `t_spu`；best-effort，不阻断评价主流程。
+- **展示侧**：详情页头部评分改读评价域实时聚合 `summary`（total=0 → 如实「暂无评分」）；
+  商品卡评分行 `ratingCount>0` 才渲染。
+- **资格门禁**（服务端本就齐备，本轮运行时验证）：仅本人 + 仅已完成 + 商品须在单内 + 一单一商品一评（409）+ 追评一次；
+  探针实测未登录 401 / 他人订单 403「只能评价自己的订单」。
+- **数据修复**：`t_spu` 18 行假评分清零 + ES 全量重建同步；**探针实测 recompute 端点**（403 反向 + 签名正向 applied=1）。
+
+**④ 自营订单不进运营待发货（严重）**：
+- **根因（DB 实证）**：`t_spu.seller_id` 承载的是**咨询归属**（R48 把自营 SPU 回填成官方客服 `710000000000000001`），
+  而 `purchaseViews()` 把它当**交易归属**透传给下单分组 → 订单 `seller_id=710...`；
+  运营可见范围是 `{自己 userId, PLATFORM_SELLER_ID=0}` → 永远看不见。
+- **修复**：`purchaseViews()` 对 `supplyType='self'` **恒返 0**（交易归属口径；`t_spu.seller_id` 不动，
+  问一问 `peerId` 依赖它指向官方客服）；social 域 ASK 路由改按 `supplyType` 定官方客服（防御性双保险，结果不变）。
+- **数据修复**：5555 订单 `seller_id` → 0。**运行时验证**：运营登录 `GET /api/seller/orders?status=PAID`，
+  订单 `202610061003140475574` 命中（sellerId=0）；`/api/seller/summary` `pendingShipCount=1`。
+
+**⑤ 脏数据清理**（备份先行：`scripts/backup/r73_*.sql` 三份，trade 8 表 + t_review + t_social_notice）：
+- 删除：测试/压测订单 **5770**（仅保留真实用户宠友5555 一单）+ 从属 `t_order_item` 5860 / 状态日志 12453 /
+  支付 1984 / 结算 702 / 库存冻结 5830 / 秒杀单 30 / 探针评价 1 / 测试用户 ORDER_* 通知 5645 + **孤儿状态日志 52**
+  （订单早已被删但日志残留的历史脏数据）；删除后从属表与幸存订单严格对齐。
+- 复核：5555 的「我的订单」与其 2 条订单通知完好；通知表其余类型（私信/售后/分享）**不属于订单关联，未动**。
+
+**验证**：后端单测 228/0；`mvn clean package` + 容器 jar md5 逐模块 MATCH（product/social/fulfilment）；
+小程序静态 0 错 0 警 + mp-harness 72 项；`tsc` 干净；**新增 `product-detail-ui-check.mjs` 20 项全绿**
+（badge / 介绍图 / Lightbox 双关闭 / 缩略图切换 / 包装规格 / 评分区与聚合接口逐字一致 / 裂图 / console）；
+**全量十六套 582 项全绿**。
+
+**★ 本轮教训两条**：
+1. **「测试脚本自毁」必须覆盖所有写入点**：review-smoke 自建夹具评价后只删 `t_review`，
+   R73 新回写链会把聚合值留在 `t_spu` —— 脚本已补「夹具前记录原值 → 结尾内部 recompute 写回」，
+   自毁承诺重新闭合（本次因意外执行发现：PowerShell stdout 故障时脚本**实际在跑**，输出丢失≠没执行）。
+2. **归属语义拆开后要全线对齐**：「咨询归属」（`t_spu.seller_id`→官方客服）与「交易归属」（采购视图→0）
+   是两个正交概念，混用一处就会造出「运营看不见自营订单」这类隐蔽缺陷；改动前先 DB 实证归属链，
+   改动时保留 chat peerId 的依赖不被破坏。
+
 ### 2026-10-06（第七十二轮 · 缺陷修复：分享圈 Web 入口对匿名访客不可见）
 
 > 用户报障：Web 端找不到「分享圈」入口。功能本体（R71）完好，是**入口可发现性缺陷**。

@@ -10,7 +10,7 @@
 const api = require('../../utils/api');
 const images = require('../../utils/images');
 
-const SPECIES_TEXT = { cat: '猫', dog: '犬', bird: '鸟类', small: '小宠', fish: '水族', reptile: '爬宠' };
+const SPECIES_TEXT = { cat: '猫', dog: '狗', other: '其他', bird: '鸟类', small: '小宠', fish: '水族', reptile: '爬宠' };
 const LIFE_TEXT = { BABY: '幼年', ADULT: '成年', SENIOR: '老年', ALL: '全阶段' };
 
 function specTextOf(sku) {
@@ -20,18 +20,6 @@ function specTextOf(sku) {
     if (text) return text;
   }
   return sku.skuCode || '默认规格';
-}
-
-function speciesText(list) {
-  const arr = list || [];
-  if (!arr.length) return '';
-  return arr.map((s) => SPECIES_TEXT[s] || s).join(' / ');
-}
-
-function lifeText(list) {
-  const arr = list || [];
-  if (!arr.length) return '';
-  return arr.map((s) => LIFE_TEXT[s] || s).join(' / ');
 }
 
 Page({
@@ -96,8 +84,12 @@ Page({
           inStock: card.inStock !== false,
           brandName: card.brandName || '',
           categoryName: card.categoryName || '',
-          // 卖家归属（0 = 平台自营）：「问一问」据此决定能不能咨询
+          // 卖家归属：自营商品（self）该值是官方客服账号（咨询归属），入驻商品是归属卖家；
+          // 「问一问」跳聊天页要用它做 peerId —— 与服务端定人结果一致（第七十三轮）
           sellerId: card.sellerId || 0,
+          // 供货类型（self 自营 / merchant 品牌入驻）：详情页身份标签的判定依据，
+          // 与 Web 端 SupplyTag 同一字段同一口径（第七十三轮补齐两端一致）
+          supplyType: card.supplyType || 'self',
           // 后端的 detail 是介绍长文本
           description: raw.detail || '',
           skus,
@@ -107,6 +99,8 @@ Page({
             detail,
             loading: false,
             detailImages: images.detailImages(this.data.id),
+            // 规格参数的 SPU 级事实源（与 Web 端同一来源）：物种/阶段/过敏原/食品类
+            suitability: raw.suitability || {},
           },
           () => this.refreshSkuInfo()
         );
@@ -125,7 +119,14 @@ Page({
       });
   },
 
-  /** 规格参数 + 包装规格：只展示后端真实下发的字段，没有的行不出（不编造） */
+  /**
+   * 规格参数 + 包装规格：与 Web 端详情页逐字段对齐（第七十三轮）。
+   *
+   * 基础参数取 SPU 级 suitability（品牌/分类/适用宠物/适用阶段/过敏原/食品类），
+   * 缺省值与 Web 完全一致（通用/全阶段/未标注/是·否）；之前从 SKU 取物种阶段，
+   * 与 Web 的 suitability 口径不同，会 出现「两端同字段不同值」。
+   * 包装规格随选中 SKU 变化：spec 键值对 + SKU 编码 + 当前库存。没有的行不编造。
+   */
   refreshSkuInfo() {
     const detail = this.data.detail;
     const sku = detail && detail.skus && detail.skus[this.data.selectedSkuIndex];
@@ -133,14 +134,25 @@ Page({
       this.setData({ params: [], packageRows: [] });
       return;
     }
-    const params = [];
-    if (detail.brandName) params.push({ k: '品牌', v: detail.brandName });
-    if (detail.categoryName) params.push({ k: '分类', v: detail.categoryName });
-    const sp = speciesText(sku.species);
-    if (sp) params.push({ k: '适用宠物', v: sp });
-    const lf = lifeText(sku.lifeStages);
-    if (lf) params.push({ k: '适用阶段', v: lf });
-    if (sku.allergens) params.push({ k: '过敏原提示', v: sku.allergens });
+    const suit = this.data.suitability || {};
+    const species = Array.isArray(suit.species) ? suit.species : [];
+    const lifeStages = Array.isArray(suit.lifeStages) ? suit.lifeStages : [];
+    const allergens = Array.isArray(suit.allergens) ? suit.allergens : [];
+
+    const params = [
+      { k: '品牌', v: detail.brandName || '—' },
+      { k: '分类', v: detail.categoryName || '—' },
+      {
+        k: '适用宠物',
+        v: species.length ? species.map((s) => SPECIES_TEXT[s] || s).join(' / ') : '通用',
+      },
+      {
+        k: '适用阶段',
+        v: lifeStages.length ? lifeStages.map((l) => LIFE_TEXT[l] || l).join(' / ') : '全阶段',
+      },
+      { k: '过敏原', v: allergens.length ? allergens.join('、') : '未标注' },
+      { k: '食品类', v: suit.food ? '是（不适用 7 天无理由）' : '否（支持 7 天无理由）' },
+    ];
 
     const packageRows = [];
     const spec = sku.spec && typeof sku.spec === 'object' ? sku.spec : null;

@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 15 套 560 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 16 套 582 项（首页 / **商品详情页** / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | 228 项 |
@@ -290,12 +290,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：15 套全 PASS，合计 560 项。判定同样看退出码。
+**预期**：16 套全 PASS，合计 582 项。判定同样看退出码。
 
-其中 8 套是**自包含**的（不需要外部夹具，可单独跑）：
-`home`（7）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
+其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
+`home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
 `admin-charts`（28）、`my-listings`（47）、`seckill`（45）、`address`（64）；
 其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
+
+**商品详情页套件**（`scripts/e2e/product-detail-ui-check.mjs`，20 项，第七十三轮）单独跑：
+
+```powershell
+cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
+cd .. && node scripts/e2e/product-detail-ui-check.mjs
+```
+
+覆盖：身份标签（多多自营/品牌入驻，与小程序同规则 supplyType）、「商品介绍」图片、
+主图点击放大（弹层 / Esc / 关闭按钮）、缩略图切换、「包装规格」行、
+**评分真实数据驱动**（页面评分区与评价域聚合接口逐字一致，种子假数据无法回归）、裂图与 console 健康。
 
 **后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，32 项）单独跑：
 

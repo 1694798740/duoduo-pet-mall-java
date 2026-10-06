@@ -41,6 +41,12 @@
   </view>
 
   <view class="card">
+    <!-- 供货身份标签（第七十三轮补齐）：判定与 Web 端同一字段（card.supplyType），文案一致 -->
+    <view class="p-supply">
+      <text class="tag {{detail.supplyType === 'merchant' ? 'tag-merchant' : 'tag-self'}}">
+        {{detail.supplyType === 'merchant' ? '品牌入驻' : '多多自营'}}
+      </text>
+    </view>
     <view class="p-title">{{detail.title}}</view>
     <view wx:if="{{detail.subtitle}}" class="t3">{{detail.subtitle}}</view>
     <view class="p-price-row">

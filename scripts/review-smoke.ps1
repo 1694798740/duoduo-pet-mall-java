@@ -13,7 +13,8 @@
 #   7. 匿名展示：昵称脱敏为「匿名用户」，真实昵称不出现；
 #   8. 追评：一次成功、二次 409；
 #   9. 聚合口径：平均分 / 好评率 / 星级分布与写入值一致；
-#  10. 夹具自建自毁：结尾删除本次评价并自证库内复原。
+#  10. 夹具自建自毁：结尾删除本次评价并自证库内复原；
+#      R73 起评价会回写 t_spu 评分，结尾另用内部 recompute 把评分写回夹具前原值（不残留）。
 #
 # 设计原则（沿用前几套脚本的教训）：
 #   1. 夹具从接口动态取（SKU 与价格不硬编码）；
@@ -24,6 +25,7 @@ param(
     [string]$Trade = 'http://127.0.0.1:8083',
     [string]$Fulfilment = 'http://127.0.0.1:8084',
     [string]$User = 'http://127.0.0.1:8081',
+    [string]$Product = 'http://127.0.0.1:8082',
     [string]$Password = 'duoduo123',
     [string]$InternalToken = 'duoduo-local-dev-internal-token',
     [int]$SKU = 2001
@@ -149,6 +151,11 @@ $batch = Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU" $null $
 $snap = @($batch.body.data)[0]
 Check "取到 SKU $SKU 快照" ($null -ne $snap -and $snap.skuId -eq $SKU) ($batch.body | ConvertTo-Json -Compress)
 $SPU = [long]$snap.spuId
+# 第七十三轮：R73 给评价加了「评分回写链」—— 评价创建后经事件 → recompute 把平均分/条数
+# 回写到 t_spu。于是删掉夹具评价**不会**自动复原 t_spu（旧版清理段不知道这条链）。
+# 这里先记下夹具前的评分原值，结尾用内部 recompute 精确写回，保证「夹具自建自毁」仍然成立。
+$spuRating0 = Sql 'duoduo_product' "SELECT IFNULL(rating,0) FROM t_spu WHERE id = $SPU;"
+$spuCount0 = Sql 'duoduo_product' "SELECT IFNULL(rating_count,0) FROM t_spu WHERE id = $SPU;"
 $PRICE = [long]$snap.price
 $STOCK0 = [int]$snap.availableStock
 Write-Host "  SKU $SKU 属 SPU $SPU，单价 $PRICE，可售 $STOCK0"
@@ -344,6 +351,17 @@ Write-Host "> 清理夹具"
 Sql 'duoduo_fulfilment' "DELETE FROM t_review WHERE order_no = '$orderNo';" | Out-Null
 $left = Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_review WHERE order_no = '$orderNo';"
 Check "评价夹具已删除（库内复原）" ($left -eq '0') $left
+
+# R73 回写链复原：评价删了，t_spu 上的评分还停在夹具评价的聚合值 —— 用内部 recompute
+# 把夹具前记录的原值显式写回（recompute 是「信任补丁」语义，传什么写什么）。
+$recomp = Call 'Post' "$Product/api/products/internal/ratings/recompute" $null `
+    @(@{ spuId = $SPU; avgRating = [double]$spuRating0; ratingCount = [int]$spuCount0 }) `
+    @{ 'X-Internal-Token' = 'internal' }
+Check "内部 recompute 接受复原补丁（applied >= 1）" ($recomp.status -eq 200 -and [long]$recomp.body.data -ge 1) "$($recomp.status) $($recomp.body.data)"
+$nowRating = Sql 'duoduo_product' "SELECT rating FROM t_spu WHERE id = $SPU;"
+$nowCount = Sql 'duoduo_product' "SELECT rating_count FROM t_spu WHERE id = $SPU;"
+Check "t_spu 评分复原（R73 回写链不残留）" ("$nowRating" -eq "$spuRating0" -and "$nowCount" -eq "$spuCount0") "$spuRating0/$spuCount0 -> $nowRating/$nowCount"
+
 $r = Call 'Get' "$Gateway/api/reviews/product/$SPU/summary" $anon $null $null
 Check "汇总回到测试前水平" ([long]$r.body.data.total -eq $before) "$before -> $($r.body.data.total)"
 

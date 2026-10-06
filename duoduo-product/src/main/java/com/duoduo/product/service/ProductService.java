@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -477,12 +478,50 @@ public class ProductService {
                         spu.getMainImage(),
                         nz(spu.getMinPrice()),
                         // 第四十七轮：社交域「问一问」在服务端定位收件人（SPU 归属卖家）
-                        spu.getSellerId()))
+                        spu.getSellerId(),
+                        // 第七十三轮：自营/入驻判定随卡下发 —— 自营商品的 sellerId 归零后，
+                        // 「问一问」改按 supplyType 把自营咨询定到官方客服
+                        spu.getSupplyType()))
                 .toList();
     }
 
-    // ---------------- 供交易服务调用（内部接口） ----------------
+    /**
+     * 评分回写（第七十三轮）：履约域评价落库后推送的真实聚合结果落列。
+     *
+     * <p>为什么由评价域算、本域只落列：聚合口径（平均分、条数、是否含未审核）只在评价域
+     * 有一份事实，两边各算一遍迟早漂移。本域对补丁做防御性校验（spuId 必须存在、
+     * 数值必须合法），坏补丁跳过并计数，不让一条脏数据拖垮整批。
+     *
+     * <p>历史包袱清理：t_spu.rating / rating_count 原是种子假数据（与真实评价无关），
+     * 本链路上线后该两列的唯一写入口就是这里 —— 展示层据此做到「有真实评价才显示评分」。
+     */
+    public int recomputeRatings(List<ProductDtos.RatingPatch> patches) {
+        if (patches == null || patches.isEmpty()) {
+            return 0;
+        }
+        int applied = 0;
+        for (ProductDtos.RatingPatch patch : patches) {
+            if (patch == null || patch.spuId() == null
+                    || patch.avgRating() == null || patch.ratingCount() == null
+                    || patch.ratingCount() < 0
+                    || patch.avgRating() < 0 || patch.avgRating() > 5) {
+                log.warn("忽略非法评分补丁: {}", patch);
+                continue;
+            }
+            SpuEntity spu = spuMapper.selectById(patch.spuId());
+            if (spu == null) {
+                log.warn("评分补丁指向不存在的 SPU {}: 跳过", patch.spuId());
+                continue;
+            }
+            spu.setRating(BigDecimal.valueOf(patch.avgRating()).setScale(1, RoundingMode.HALF_UP));
+            spu.setRatingCount(patch.ratingCount());
+            spuMapper.updateById(spu);
+            applied++;
+        }
+        return applied;
+    }
 
+    // ---------------- 供交易服务调用（内部接口） ----------------
     /**
      * 批量取 SKU 采购视图。
      *
@@ -534,7 +573,14 @@ public class ProductService {
                     sellable,
                     spuStatus,
                     sku.getStatus(),
-                    spu == null ? 0L : (spu.getSellerId() == null ? 0L : spu.getSellerId()));
+                    // 采购视图的 sellerId 是**交易归属**口径（第七十三轮）：
+                    // 自营商品（self）恒为 0（平台自营）—— 运营的商家端按 {自己, 0} 查单，
+                    // 之前透传 t_spu.seller_id（自营=官方客服账号，那是「咨询归属」），
+                    // 导致用户买自营商品生成的订单落在一个运营看不见的卖家头上，待发货查不到。
+                    // 入驻（merchant）商品仍透传归属卖家，订单进卖家自己的商家端。
+                    spu == null ? 0L
+                            : ("self".equals(spu.getSupplyType()) ? 0L
+                                : (spu.getSellerId() == null ? 0L : spu.getSellerId())));
         }).toList();
     }
 

@@ -445,7 +445,29 @@ public final class ProductDtos {
             String title,
             String mainImage,
             Long minPrice,
-            Long sellerId
+            Long sellerId,
+            /**
+             * 供货类型（self 自营 / merchant 品牌入驻，第七十三轮）。
+             *
+             * <p>「问一问」的自营路由依据：自营商品（self）的 {@code sellerId} 一律为 0
+             * （平台自营，参与交易拆单与商家端可见口径），咨询收件人由社交域改按本字段
+             * 定到官方客服账号 —— 「卖家归属」与「咨询归属」自此分离，不再共用一个字段。
+             */
+            String supplyType
+    ) {
+    }
+
+    /**
+     * 评分回写补丁（第七十三轮）：履约域在评价落库后，把该 SPU 的真实聚合结果推过来，
+     * 商品域只负责落列 —— 聚合口径（平均分、条数）以评价域为准，本域不重复实现。
+     *
+     * <p>为什么是「补丁列表」而不是逐个调用：一次批量下单评价可能覆盖多件商品，
+     * 一把推完把跨服务调用从 N 次压成 1 次。
+     */
+    public record RatingPatch(
+            Long spuId,
+            Double avgRating,
+            Integer ratingCount
     ) {
     }
 }

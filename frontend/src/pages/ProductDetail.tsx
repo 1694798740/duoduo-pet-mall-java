@@ -13,17 +13,18 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { gallery } from '../api/images';
+import { detailImages, gallery } from '../api/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toFriendlyMessage } from '../api/client';
-import { cartApi, productApi } from '../api/endpoints';
-import type { ProductDetail } from '../api/types';
+import { cartApi, productApi, reviewApi } from '../api/endpoints';
+import type { ProductDetail, ReviewSummary } from '../api/types';
 import { useAsync } from '../components/hooks';
 import { CreditBadge } from '../components/CreditBadge';
 import { ReviewSection } from '../components/ReviewSection';
 import {
   Alert,
   LoadingBlock,
+  Modal,
   ProductGrid,
   Stars,
   SupplyTag,
@@ -65,9 +66,21 @@ export const ProductDetailPage: React.FC = () => {
   const [skuId, setSkuId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [adding, setAdding] = useState(false);
+  /** 主图轮播的当前下标 + 放大预览开关（第七十三轮：对齐小程序端的「点击看大图」交互） */
+  const [imgIndex, setImgIndex] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
 
   const fetcher = useCallback(() => productApi.detail(spuId), [spuId]);
   const { data, loading, error, reload } = useAsync<ProductDetail>(fetcher, hasSpuId, [spuId]);
+
+  // 头部评分改由评价域实时聚合驱动（第七十三轮）：t_spu.rating 原是种子假数据，
+  // 与「商品评价」区的真实列表互相矛盾（头部 4.7 分、评价区「暂无评价」）。
+  // 与 ReviewSection 各自请求一次 summary —— 接口是轻量聚合查询，重复一次换取组件独立。
+  const summaryState = useAsync<ReviewSummary>(
+    useCallback(() => reviewApi.summary(spuId), [spuId]),
+    hasSpuId,
+    [spuId],
+  );
 
   const skus = data?.skus ?? [];
 
@@ -90,6 +103,11 @@ export const ProductDetailPage: React.FC = () => {
   useEffect(() => {
     if (selectedSku) setQuantity((q) => Math.min(Math.max(1, q), Math.max(1, selectedSku.stock)));
   }, [selectedSku]);
+
+  // 切商品时把轮播归位（选中规格由上方 effect 按新 SKU 列表自动收敛）
+  useEffect(() => {
+    setImgIndex(0);
+  }, [spuId]);
 
   if (!hasSpuId) {
     return <Alert kind="error">商品编号不合法</Alert>;
@@ -154,7 +172,14 @@ export const ProductDetailPage: React.FC = () => {
       <div className="pd-layout">
         <div>
           <div className="pd-gallery-main">
-            {images[0] ? <img src={images[0]} alt={card.title} /> : null}
+            {images[imgIndex] ? (
+              <img
+                src={images[imgIndex]}
+                alt={card.title}
+                style={{ cursor: 'zoom-in' }}
+                onClick={() => setPreviewing(true)}
+              />
+            ) : null}
           </div>
           {images.length > 1 ? (
             <div className="row row-wrap" style={{ marginTop: 10 }}>
@@ -168,8 +193,11 @@ export const ProductDetailPage: React.FC = () => {
                     height: 64,
                     objectFit: 'cover',
                     borderRadius: 10,
-                    border: '1px solid var(--border)',
+                    border:
+                      index === imgIndex ? '2px solid var(--brand)' : '1px solid var(--border)',
+                    cursor: 'pointer',
                   }}
+                  onClick={() => setImgIndex(index)}
                 />
               ))}
             </div>
@@ -181,6 +209,21 @@ export const ProductDetailPage: React.FC = () => {
               <p className="muted-2" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                 {data.detail}
               </p>
+              {/* 图文配图（第七十三轮）：与小程序端同一映射池（base=seed+2 取 3 张），
+                  两端「商品介绍」从此是同一批图；后端将来下发真实图时原样放行 */}
+              {detailImages(card.id).map((img, index) => (
+                <img
+                  key={`${img}-${index}`}
+                  src={img}
+                  alt={`${card.title} 介绍图 ${index + 1}`}
+                  style={{
+                    width: '100%',
+                    borderRadius: 12,
+                    marginTop: index === 0 ? 12 : 10,
+                    display: 'block',
+                  }}
+                />
+              ))}
             </div>
           ) : null}
 
@@ -217,6 +260,39 @@ export const ProductDetailPage: React.FC = () => {
               </div>
             ) : null}
           </div>
+
+          {/* 包装规格（第七十三轮）：与小程序端逐行同构 —— spec 键值对 + SKU 编码 + 当前库存。
+              之前只有小程序有这一块，两端详情页信息不对称 */}
+          {selectedSku ? (
+            <div className="card card-pad" style={{ marginTop: 16 }}>
+              <h3 style={{ marginBottom: 10 }}>包装规格</h3>
+              <dl className="spec-list">
+                {Object.keys(selectedSku.spec).length ? (
+                  Object.entries(selectedSku.spec)
+                    .filter(([, v]) => v)
+                    .map(([k, v]) => (
+                      <React.Fragment key={k}>
+                        <dt>{k}</dt>
+                        <dd>{v}</dd>
+                      </React.Fragment>
+                    ))
+                ) : (
+                  <>
+                    <dt>规格</dt>
+                    <dd>默认规格</dd>
+                  </>
+                )}
+                {selectedSku.skuCode ? (
+                  <>
+                    <dt>SKU 编码</dt>
+                    <dd>{selectedSku.skuCode}</dd>
+                  </>
+                ) : null}
+                <dt>当前库存</dt>
+                <dd>{selectedSku.stock > 0 ? `${selectedSku.stock} 件` : '补货中'}</dd>
+              </dl>
+            </div>
+          ) : null}
         </div>
 
         <div>
@@ -224,13 +300,10 @@ export const ProductDetailPage: React.FC = () => {
             <div className="row-between row-wrap">
               <span className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
                 <SupplyTag supplyType={card.supplyType} />
-                {/* 信用分是「卖家」的可信度：放在下单决策最显眼的位置（价格区），而不是塞进规格表底部。
-                    supplyType=self 的商品归属平台自营（sellerId=0），标签随之改成「平台自营信用」。 */}
-                {card.sellerId != null && card.sellerId !== '' ? (
-                  <CreditBadge
-                    sellerId={card.sellerId}
-                    label={card.supplyType === 'self' ? '平台自营信用' : '卖家信用'}
-                  />
+                {/* 信用分是「卖家」的可信度：只对入驻商品展示（第七十三轮起自营商品 sellerId=0，
+                    平台自营没有单一卖家，不再挂官方客服账号的信用徽章） */}
+                {card.supplyType !== 'self' && card.sellerId != null && card.sellerId !== '' ? (
+                  <CreditBadge sellerId={card.sellerId} label="卖家信用" />
                 ) : null}
               </span>
               <span className="small muted">
@@ -255,10 +328,18 @@ export const ProductDetailPage: React.FC = () => {
                 </span>
               ) : null}
               <span style={{ marginLeft: 'auto' }}>
-                <Stars value={card.rating} showValue />
-                <span className="small muted" style={{ marginLeft: 6 }}>
-                  {card.ratingCount} 条评价
-                </span>
+                {/* 评分与评价区同源（评价域实时聚合）：没有真实评价就如实显示「暂无评分」，
+                    不再展示种子假分数 —— 与下方「商品评价」列表永远一致 */}
+                {summaryState.data && summaryState.data.total > 0 ? (
+                  <>
+                    <Stars value={Number(summaryState.data.avgRating) || 0} showValue />
+                    <span className="small muted" style={{ marginLeft: 6 }}>
+                      {summaryState.data.total} 条评价
+                    </span>
+                  </>
+                ) : (
+                  <span className="small muted">暂无评分</span>
+                )}
               </span>
             </div>
           </div>
@@ -387,6 +468,40 @@ export const ProductDetailPage: React.FC = () => {
           <ProductGrid items={data.alsoViewed} />
         </section>
       ) : null}
+
+      {/* 主图放大预览（第七十三轮）：点击主图打开，Esc / 点遮罩 / 关闭键退出，支持左右切换 */}
+      <Modal open={previewing} title={card.title} onClose={() => setPreviewing(false)}>
+        <div style={{ textAlign: 'center' }}>
+          {images[imgIndex] ? (
+            <img
+              src={images[imgIndex]}
+              alt={`${card.title} 放大图`}
+              style={{ maxWidth: '100%', maxHeight: '70vh', borderRadius: 12 }}
+            />
+          ) : null}
+          {images.length > 1 ? (
+            <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setImgIndex((i) => (i - 1 + images.length) % images.length)}
+              >
+                ← 上一张
+              </button>
+              <span className="small muted">
+                {imgIndex + 1} / {images.length}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setImgIndex((i) => (i + 1) % images.length)}
+              >
+                下一张 →
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </Modal>
     </div>
   );
 };

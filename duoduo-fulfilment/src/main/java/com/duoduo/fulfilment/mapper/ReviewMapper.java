@@ -34,6 +34,21 @@ public interface ReviewMapper extends BaseMapper<ReviewEntity> {
     List<Map<String, Object>> starDistribution(@Param("spuId") Long spuId);
 
     /**
+     * 按 SPU 批量聚合真实评分（第七十三轮）：条数 + 平均分，只统计审核通过的。
+     *
+     * <p>评价落库后推给商品域回写 t_spu.rating / rating_count 的数据源 ——
+     * 聚合口径只在这里有一份，商品域不重复实现（两边各算迟早漂移）。
+     * 批量：一次批量评价可能覆盖多件商品，逐个调 {@link #aggregateBySpu} 是 N 次查询。
+     */
+    @Select("<script>"
+            + "SELECT spu_id AS spuId, COUNT(*) AS cnt, COALESCE(AVG(rating), 0) AS avgRating "
+            + "FROM t_review WHERE audit_status = 'APPROVED' AND spu_id IN "
+            + "<foreach collection='spuIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + " GROUP BY spu_id"
+            + "</script>")
+    List<Map<String, Object>> ratingAggregatesBySpu(@Param("spuIds") Collection<Long> spuIds);
+
+    /**
      * 我在这些订单里已评价过的订单号（去重）。
      *
      * <p>订单列表页要给「已完成」订单显示「去评价 / 已评价」，若逐单调
