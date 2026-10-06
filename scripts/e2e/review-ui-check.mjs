@@ -125,6 +125,22 @@ if (!snap?.spuId) throw new Error(`取 SKU 快照失败：${snapRes.status} ${sn
 const SPU = snap.spuId;
 check(`取到 SKU ${SKU} 快照（SPU ${SPU}）`, Boolean(snap.spuId), snap);
 
+/**
+ * 夹具前记录 t_spu 的评分原值（R74 补）。
+ *
+ * 为什么必须记：R73 起「评价 → 商品评分」是**真实回写链**（评价落库 → AFTER_COMMIT 事件 →
+ * Feign recompute → 写 t_spu.rating / rating_count）。本套件收尾只删了评价行，**回写结果留在商品上** ——
+ * 于是「1 条评价」的文案会出现在别的套件（如 product-detail：断言全站无「N 条评价」）里，
+ * 表现为**隔轮假红**（本轮绿、下轮红），排查方向会被带偏到代码回归上。
+ * 这与 R73 在 `scripts/review-smoke.ps1` 补的是同一个盲区 —— 当时**漏了这个浏览器套件**。
+ */
+const spuPre = (await sql('duoduo_product',
+  `SELECT IFNULL(rating,0), IFNULL(rating_count,0) FROM t_spu WHERE id=${SPU};`)).trim().split(/\s+/);
+const preRating = Number(spuPre[0] ?? 0);
+const preCount = Number(spuPre[1] ?? 0);
+check(`夹具前已记录 SPU ${SPU} 评分原值（rating=${preRating} / count=${preCount}）`,
+  Number.isFinite(preRating) && Number.isFinite(preCount), spuPre);
+
 step('夹具：买家 + 一笔已完成订单');
 const phone = `135${String(Math.floor(1e7 + Math.random() * 8e7))}`;
 const jar = new Map();
@@ -252,6 +268,19 @@ await browser.close();
 if (!process.env.KEEP_FIXTURE) {
   await sql('duoduo_fulfilment', `DELETE FROM t_review WHERE order_no = '${orderNo}';`);
   console.log(`  （夹具已复原）评价已删除，订单号 ${orderNo} 留档`);
+
+  // R74：评价删了，**回写结果还在** —— 必须把评分改回夹具前的原值，否则本套件会给下一个套件留下脏数据。
+  // 走的是与生产同一条内部接口（HMAC 签名），不是直接 UPDATE：这样顺带验证了回写端点仍然可用。
+  const restore = await call('POST', '/api/products/internal/ratings/recompute',
+    [{ spuId: Number(SPU), avgRating: preRating, ratingCount: preCount }],
+    null, internalHeaders('POST'));
+  check('★ 内部 recompute 接受复原补丁（applied ≥ 1）',
+    restore.status === 200 && Number(restore.data ?? 0) >= 1, `${restore.status}/${restore.raw?.slice(0, 160)}`);
+  const after = (await sql('duoduo_product',
+    `SELECT IFNULL(rating,0), IFNULL(rating_count,0) FROM t_spu WHERE id=${SPU};`)).trim().split(/\s+/);
+  check(`★ t_spu 评分已复原为原值（${after[0]} / ${after[1]}，期望 ${preRating} / ${preCount}）`,
+    Number(after[0]) === preRating && Number(after[1]) === preCount, after);
+  console.log(`  （回写已复原）SPU ${SPU} 评分回到 ${preRating} / ${preCount}`);
 }
 
 console.log(`\n=== UI 自测结果：通过 ${pass} 项，失败 ${failures.length} 项 ===`);

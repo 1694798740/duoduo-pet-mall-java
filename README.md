@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十六套真实浏览器 UI 断言 582 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十六套真实浏览器 UI 断言 601 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -646,7 +646,7 @@ cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --hos
 # 注意必须走 localhost，不能是 127.0.0.1（不在 CORS 白名单）
 cd .. && node scripts/e2e/home-ui-check.mjs           # 首页 7 项：非白屏 / 可点击 / 真点进详情 / 无非预期接口错误
 node scripts/e2e/seller-ui-check.mjs                 # 商家端 29 项
-node scripts/e2e/review-ui-check.mjs                 # 评价与晒单 21 项
+node scripts/e2e/review-ui-check.mjs                 # 评价与晒单 24 项（含夹具后把商品评分**回写复原**，否则会给下一套留下「N 条评价」脏数据）
 node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买家→卖家→运营整条链）
 node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
@@ -1422,7 +1422,7 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 自测记录：`scripts/review-smoke.ps1` **59 项断言全绿**（R73 起结尾自动把夹具 SPU 评分
 用内部 recompute 写回原值，夹具不再污染 `t_spu`）；
-真实浏览器 `scripts/e2e/review-ui-check.mjs` **21 项断言全绿**（截图 `frontend/docs/screenshots/rev_*.png`）：
+真实浏览器 `scripts/e2e/review-ui-check.mjs` **24 项断言全绿**（截图 `frontend/docs/screenshots/rev_*.png`）：
 备一笔已完成订单 → 订单列表看到「去评价」→ 评价页打分提交 → 我的评价看到内容与匿名标记 → 商品详情公开评价区看到该条。
 
 ---
