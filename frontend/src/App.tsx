@@ -35,6 +35,9 @@ import { ListingsPage } from './pages/Listings';
 import { MyListingsPage } from './pages/MyListings';
 import { NotificationsPage } from './pages/Notifications';
 import { FollowPage } from './pages/Follow';
+import { ShareCirclePage } from './pages/ShareCircle';
+import { ShareDetailPage } from './pages/ShareDetail';
+import { ShareMinePage } from './pages/ShareMine';
 import { ListingFormPage } from './pages/ListingForm';
 import { LoginPage } from './pages/Login';
 import { MePage } from './pages/Me';
@@ -162,6 +165,20 @@ export const App: React.FC = () => (
           </RequireAuth>
         }
       />
+      {/* ---------- 分享圈（第七十一轮功能对齐 P1） ----------
+          信息流/话题公开可逛；字面量路由（mine / topic）必须先于 :id 注册意图上更清晰，
+          React Router v6 按特异性排序本身也能正确匹配。 */}
+      <Route path="/share" element={<ShareCirclePage />} />
+      <Route path="/share/topic/:name" element={<ShareCirclePage />} />
+      <Route
+        path="/share/mine"
+        element={
+          <RequireAuth>
+            <ShareMinePage />
+          </RequireAuth>
+        }
+      />
+      <Route path="/share/:id" element={<ShareDetailPage />} />
       <Route
         path="/notifications"
         element={

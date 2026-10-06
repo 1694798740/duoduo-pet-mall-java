@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 14 套 539 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 15 套 557 项（首页 / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈**） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | 228 项 |
@@ -285,12 +285,12 @@ node scripts/mp-harness/behavior.test.js               # 页面行为（31 项�
 ### 4.6 前端真实浏览器 e2e
 
 ```powershell
-# 一键：起 dev server → 跑 14 套 → 建/拆券夹具 → 收尾
+# 一键：起 dev server → 跑 15 套 → 建/拆券夹具 → 收尾
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：14 套全 PASS，合计 539 项。判定同样看退出码。
+**预期**：15 套全 PASS，合计 557 项。判定同样看退出码。
 
 其中 8 套是**自包含**的（不需要外部夹具，可单独跑）：
 `home`（7）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
@@ -447,7 +447,7 @@ done
 - [ ] `scripts\run-all-smoke.ps1` → 23 套全通过，0 失败
 - [ ] `python scripts/extract-api-contract.py --check` → PASS
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
-- [ ] `scripts\e2e\run-ui-checks.ps1` → 14 套全 PASS
+- [ ] `scripts\e2e\run-ui-checks.ps1` → 15 套全 PASS
 - [ ] `python scripts/perf/bench.py --check` → 全部达标
 - [ ] 8 个模块容器内 jar md5 与宿主机一致
 - [ ] 跑完做一次数据体检：FROZEN = 0

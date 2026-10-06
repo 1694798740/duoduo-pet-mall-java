@@ -77,7 +77,13 @@ import type {
   FollowState,
   FollowView,
   NoticePageData,
+  EngagementState,
   SellerAnalytics,
+  ShareCommentView,
+  ShareCreateRequest,
+  ShareEditRequest,
+  ShareTopicView,
+  ShareView,
   UnreadCount,
   SellerSummary,
   SettlementPage,
@@ -743,4 +749,39 @@ export const followApi = {
   followers: (query?: { page?: number; pageSize?: number }) =>
     api.get<PageResult<FollowView>>('/api/socials/follows/followers', { query }),
   counts: (userId: string) => api.get<FollowCounts>(`/api/socials/follows/${userId}/counts`),
+};
+
+// ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1） ----------
+//
+// 信息流 / 详情 / 话题 / 评论列表公开可逛（匿名标记恒 false）；写操作一律 POST 两段路径
+// （/{id}/like、/{id}/repost…），网关白名单只放行公开读那几条。
+export const shareApi = {
+  /** 信息流：scope = RECOMMEND（默认全站）| FOLLOWING（关注流，需登录） */
+  feed: (query?: { page?: number; pageSize?: number; scope?: string }) =>
+    api.get<PageResult<ShareView>>('/api/shares/feed', { query }),
+  hotTopics: (limit = 10) => api.get<ShareTopicView[]>('/api/shares/topics', { query: { limit } }),
+  topicFeed: (name: string, query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<ShareView>>(`/api/shares/topics/${encodeURIComponent(name)}`, { query }),
+  detail: (id: string) => api.get<ShareView>(`/api/shares/${id}`),
+  /** 发布（需登录）：spuId 必填 */
+  create: (body: ShareCreateRequest) => api.post<ShareView>('/api/shares', body),
+  repost: (id: string, content: string | null) =>
+    api.post<ShareView>(`/api/shares/${id}/repost`, { content }),
+  /** 编辑：topics 传 null = 不改，[] = 清空 */
+  edit: (id: string, body: ShareEditRequest) => api.post<ShareView>(`/api/shares/${id}/edit`, body),
+  /** 删除（软删：别人转发单的引用块会显示「原内容已被作者删除」） */
+  remove: (id: string) => api.post<void>(`/api/shares/${id}/delete`),
+  toggleLike: (id: string) => api.post<EngagementState>(`/api/shares/${id}/like`),
+  toggleFavorite: (id: string) => api.post<EngagementState>(`/api/shares/${id}/favorite`),
+  mine: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<ShareView>>('/api/shares/mine/list', { query }),
+};
+
+export const shareCommentApi = {
+  /** 评论列表：parentId 为空 = 一级评论分页；非空 = 该评论下的回复分页 */
+  list: (shareId: string, query?: { parentId?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ShareCommentView>>('/api/shares/comments', { query: { shareId, ...query } }),
+  create: (shareId: string, content: string, parentCommentId?: string | null) =>
+    api.post<ShareCommentView>(`/api/shares/${shareId}/comments`, { content, parentCommentId: parentCommentId ?? null }),
+  toggleLike: (commentId: string) => api.post<EngagementState>(`/api/shares/comments/${commentId}/like`),
 };

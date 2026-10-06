@@ -594,7 +594,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十四套真实浏览器 UI 断言 539 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（二十三套 1551 项接口断言 + 十五套真实浏览器 UI 断言 557 项 + 小程序无浏览器 72 项）
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -635,8 +635,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（14 套） =================
-# 一键跑：起 dev server → 跑 14 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（15 套） =================
+# 一键跑：起 dev server → 跑 15 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
@@ -656,6 +656,7 @@ node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 80 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达）
 node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
 node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 28 项（**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403）
+node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 18 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 

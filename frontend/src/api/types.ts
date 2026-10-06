@@ -1225,3 +1225,79 @@ export interface FollowCounts {
   followers: number;
   following: number;
 }
+
+// ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1，duoduo-fulfilment） ----------
+
+/** 分享条目：原创与转发共用（转发多出 parent* 引用字段） */
+export interface ShareView {
+  id: string;
+  /** 作者：原创 = 发帖人，转发 = 转发人（服务端口径） */
+  userId: string;
+  spuId: string;
+  productTitle: string;
+  productImage: string | null;
+  minPrice: number;
+  content: string;
+  nickname: string;
+  avatar: string | null;
+  createdAt: string;
+  likeCount: number;
+  favoriteCount: number;
+  commentCount: number;
+  liked: boolean;
+  favorited: boolean;
+  /** ORIGINAL | REPOST */
+  shareType: string;
+  parentId: string | null;
+  parentNickname: string | null;
+  /** 原帖被作者删除时为 null（删除意图必须被尊重） */
+  parentContent: string | null;
+  parentDeleted: boolean;
+  edited: boolean;
+  /** 话题名（不含 #，最多 2 个） */
+  topics: string[];
+  /** 服务端判定（前端拿不到自己的雪花 id，能不算就不算） */
+  mine: boolean;
+}
+
+/** 评论条目：一级评论与回复共用（回复多 replyToNickname） */
+export interface ShareCommentView {
+  id: string;
+  shareId: string;
+  userId: string;
+  nickname: string;
+  avatar: string | null;
+  content: string;
+  createdAt: string;
+  likeCount: number;
+  liked: boolean;
+  mine: boolean;
+  replyToNickname: string | null;
+  /** 仅一级评论有意义 */
+  replyCount: number;
+}
+
+/** 话题：名称 + 被使用次数 */
+export interface ShareTopicView {
+  name: string;
+  shareCount: number;
+}
+
+/** 点赞/收藏 toggle 后的状态：active = 现在是否生效，count = 新总数 */
+export interface EngagementState {
+  active: boolean;
+  count: number;
+}
+
+/** 发布：商品必填，内容 ≤500 字，话题最多 2 个 */
+export interface ShareCreateRequest {
+  spuId: string;
+  content?: string | null;
+  topics?: string[] | null;
+}
+
+/** 编辑：只改文字与话题；topics 传 null = 不改，传 [] = 清空 */
+export interface ShareEditRequest {
+  content?: string | null;
+  topics?: string[] | null;
+}

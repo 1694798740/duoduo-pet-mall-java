@@ -165,6 +165,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/listings/mine" style={{ display: 'block' }}>
                       我的闲置
                     </Link>
+                    {/* 「分享圈」进下拉而不进顶栏：顶栏 6 项是 R64 实测的截断红线
+                        （运营账号 6+2 项 ≈ 584px 已贴近 594px 上限），再加一项运营必截断 */}
+                    <Link className="nav-link" to="/share" style={{ display: 'block' }}>
+                      分享圈
+                    </Link>
+                    <Link className="nav-link" to="/share/mine" style={{ display: 'block' }}>
+                      我的分享
+                    </Link>
                     <Link className="nav-link" to="/notifications" style={{ display: 'block' }}>
                       通知中心
                     </Link>
