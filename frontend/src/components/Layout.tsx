@@ -26,7 +26,7 @@
  * 判定共用 isOperator()，不存在两套口径。
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole } from '../pages/seller/shared';
 import { isOperator } from '../pages/admin/shared';
@@ -62,6 +62,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const { cartCount, refreshCart } = useApp();
   const [keyword, setKeyword] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  // 头像下拉的容器与触发按钮（R74-2：Esc / 点外部关闭、关掉后把焦点还给按钮）
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -73,6 +76,42 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
+
+  /**
+   * 头像下拉的关闭行为（R74-2）。
+   *
+   * 此前只有「切换路由时自动收起」一条出口，于是：按 Esc 关不掉、点菜单外面也关不掉 ——
+   * 而菜单固定在右上角且 zIndex 高于页面，**正好压住页面右上角的按钮**，
+   * 用户只能靠「点一个别的链接跳走」或刷新页面才能把它弄掉。
+   *
+   * 两条约定（与 `components/ui.tsx` 的 Modal 同姿势，改一处别忘另一处）：
+   *  1. **Esc 关闭并把焦点还给触发按钮**（键盘用户关掉菜单后不该丢掉位置）；
+   *  2. **点击菜单外部关闭**：监听要挂在 document 上，且用 `mousedown`
+   *     （click 在“按下与抬起之间鼠标移出”时会丢事件）；判定用「目标是否在菜单容器内」，
+   *     容器**把触发按钮一起包住** —— 否则点按钮会先被判成“外部点击”关掉、再被 onClick 打开，
+   *     表现为「点一下没反应」。
+   */
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (target && menuRef.current && !menuRef.current.contains(target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [menuOpen]);
 
   // 商家端入口只在「真的是卖家」时出现；角色判定与后端同源（忽略大小写）
   // 管理后台入口同理：只对运营 / 管理员显示（M10）
@@ -134,8 +173,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             </Link>
 
             {user ? (
-              <div style={{ position: 'relative' }}>
-                <button className="icon-btn" onClick={() => setMenuOpen((v) => !v)}>
+              <div ref={menuRef} style={{ position: 'relative' }}>
+                <button
+                  ref={menuButtonRef}
+                  className="icon-btn"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((v) => !v)}
+                >
                   👤 <span className="small">{user.nickname}</span>
                 </button>
                 {menuOpen ? (

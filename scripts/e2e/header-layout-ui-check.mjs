@@ -262,6 +262,62 @@ step('③ 工作台入口不回归（商家端 / 管理后台）');
     (await buyerPage.locator('.app-header .nav-links').getByRole('link', { name: '管理后台', exact: true }).count()) === 0);
 }
 
+// ---------------- ⑤ 头像下拉的关闭行为（R74-2） ----------------
+step('⑤ 头像下拉：Esc 可关、点外部可关（此前只能靠「切换到别的页面」）');
+{
+  const { page } = contexts['买家'];
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+
+  const menu = page.locator('.app-header .user-menu');
+  const toggle = page.locator('.app-header button.icon-btn[aria-haspopup="menu"]');
+
+  /**
+   * 每个用例都**自建前置**（回首页 → 打开菜单 → 断言确已打开）再验证关闭行为。
+   *
+   * 为什么要这么啰嗦：首版是一条龙顺序写下来的，反向验证（临时停用关闭逻辑）时发现
+   * 「点外部关闭」那条**依然通过** —— 因为前一条 Esc 用例失败后菜单还开着，
+   * 下一个 click 把 toggle 又切回了关闭态，于是「点外部前菜单已关」→ 断言空转。
+   * 失败用例的**残留状态**会让后续断言变得不可信，这正是「断言必须自证不级联」的由来。
+   */
+  const openMenu = async () => {
+    await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    await toggle.click();
+    await page.waitForTimeout(250);
+    check('  前置：头像下拉已打开', (await menu.count()) === 1 && (await toggle.getAttribute('aria-expanded')) === 'true',
+      `menu=${await menu.count()} aria-expanded=${await toggle.getAttribute('aria-expanded')}`);
+  };
+
+  // ---- ① Esc ----
+  await openMenu();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check('★ Esc 能关掉头像下拉（此前关不掉，菜单一直压着页面右上角）', (await menu.count()) === 0,
+    await menu.count());
+  check('Esc 关闭后 aria-expanded 复位为 false', (await toggle.getAttribute('aria-expanded')) === 'false');
+  check('★ Esc 关闭后焦点回到触发按钮（键盘用户不丢位置）',
+    await page.evaluate(() => document.activeElement?.getAttribute('aria-haspopup') === 'menu'));
+
+  // ---- ② 点菜单外部 ----
+  // ★ 必须点「不跳转」的元素：首版点的是 brand（一个 Link），而路由变化本来就会收起菜单 ——
+  // 那条断言在停用新逻辑后依然通过（反向验证抓出来的假通过）。这里点顶栏搜索框的放大镜（纯 span）。
+  await openMenu();
+  await page.locator('.app-header .search-inline span').first().click();
+  await page.waitForTimeout(300);
+  check('★ 点击菜单外部能关掉下拉（点的是不跳转元素，排除「路由切换顺带收起」）',
+    (await menu.count()) === 0, await menu.count());
+
+  // ---- ③ 反向：点菜单内部不能被误判成外部点击（否则用户根本点不到里面的入口） ----
+  await openMenu();
+  await menu.getByRole('link', { name: '个人中心', exact: true }).click();
+  await page.waitForURL((u) => u.pathname === '/me', { timeout: 10000 });
+  await page.waitForTimeout(300);
+  check('★ 点菜单内部条目照常跳转（内部点击不被当成外部点击）',
+    new URL(page.url()).pathname === '/me' && (await menu.count()) === 0, page.url());
+}
+
 // ---------------- ④ console ----------------
 step('④ 控制台无真错误（401 系设计内，页面各自兜底）');
 for (const [role, { consoleErrors }] of Object.entries(contexts)) {
