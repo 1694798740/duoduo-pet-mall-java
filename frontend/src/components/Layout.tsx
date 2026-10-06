@@ -222,9 +222,15 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 ) : null}
               </div>
             ) : (
-              <Link className="btn btn-primary btn-sm" to="/login">
-                登录 / 注册
-              </Link>
+              <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+                {/* 未登录也要有分享圈入口：信息流本身公开可逛（匿名可看），
+                    此前入口只在登录后的头像下拉里 —— 匿名访客在整个页面找不到它，
+                    这是可发现性缺陷（2026-10-06 用户报障）。仍未放顶栏：R64 截断红线。 */}
+                <Link className="nav-link" to="/share">分享圈</Link>
+                <Link className="btn btn-primary btn-sm" to="/login">
+                  登录 / 注册
+                </Link>
+              </div>
             )}
           </div>
         </div>

@@ -216,6 +216,20 @@ step('⑥ 话题聚合路由');
   await ctx.close();
 }
 
+// ---------------- ⑦ 未登录入口可发现性（R72） ----------------
+step('⑦ 未登录入口可发现性');
+{
+  const { ctx, page, consoleErrors } = await newPage(null);
+  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  const header = await page.locator('.app-header').innerText();
+  check('⑦ 未登录页头有「分享圈」入口（可发现性）', header.includes('分享圈'), header.slice(0, 150));
+  await page.locator('.app-header').getByRole('link', { name: '分享圈', exact: true }).click();
+  await page.waitForTimeout(1200);
+  check('⑦ 点击入口到达信息流', page.url().replace(/\/$/, '').endsWith('/share'), page.url());
+  check('⑦ 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
+  await ctx.close();
+}
+
 await browser.close();
 
 console.log(`\n=== 分享圈 UI 断言：通过 ${pass} 项，失败 ${failures.length} 项 ===`);

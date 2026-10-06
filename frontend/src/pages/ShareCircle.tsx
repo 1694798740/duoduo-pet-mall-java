@@ -55,7 +55,6 @@ export const ShareCirclePage: React.FC = () => {
   const topicsFetcher = useCallback(() => shareApi.hotTopics(8), []);
   const hot = useAsync(topicsFetcher, true, [tick]);
 
-  const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
