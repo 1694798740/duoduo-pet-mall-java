@@ -94,6 +94,7 @@ import type {
   UserView,
   PlaceSeckillResult,
   SeckillActivityCreateRequest,
+  SeckillActivityEditRequest,
   SeckillActivityView,
   ShareReportHandleRequest,
   ShareReportView,
@@ -452,6 +453,20 @@ export const adminApi = {
   /** 上下架；enabled=false 即对 C 端隐藏 */
   setSeckillActivityStatus: (id: string, enabled: boolean) =>
     api.post<SeckillActivityView>(`/api/admin/seckill/activities/${id}/status`, { enabled }),
+
+  /**
+   * 编辑活动（R74）：只传标题与时间 —— 商品 / 价格 / 配额由服务端刻意不开。
+   * 已成交的活动把开始时间改到未来会被服务端拒（422）。
+   */
+  updateSeckillActivity: (id: string, body: SeckillActivityEditRequest) =>
+    api.put<SeckillActivityView>(`/api/admin/seckill/activities/${id}`, body),
+
+  /**
+   * 删除活动（R74）：**只能删从未成交的活动**。
+   * 已有秒杀订单时服务端返回 422 并提示改用「下架」—— 订单是资金事实，不能连根拔掉。
+   */
+  deleteSeckillActivity: (id: string) =>
+    api.del<void>(`/api/admin/seckill/activities/${id}`),
 };
 
 // ---------- 支付（/api/payments） ----------

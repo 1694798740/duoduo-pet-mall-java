@@ -400,7 +400,7 @@
 ① **小程序重构**：TabBar 五页（首页/分类/购物车/订单/我的）默认进首页；统一请求层（错误映射 / 401 跳登录）+ 设计 token；补齐**领券中心 / AI 导购 / 限时秒杀**三特色页；详情页「服务器内部异常」根因=旧页面请求不存在的子路径（被兜底成 500），新页面已按真实字段对接。
 ② **限时秒杀后端（交易域）**：三表 + Redis Lua 预扣（**软依赖可降级**）+ `UPDATE ... WHERE available_stock > 0` 行锁兜底**绝不超卖**；活动配额独立于商品库存，关单/取消回补；C 端 3 端点 + 运营端 2 端点；网关路由 + activities 精确只读白名单。
 ③ **网页端**：`/seckill` 页（浏览公开、抢购需登录 → 默认地址下单 → 订单详情付款）+ 导航入口。
-**自测**：`scripts/seckill-smoke.ps1` **26/0 全绿**（幂等 replay / 限购 / 售罄 / 取消回补闭环）；Web `tsc` + `vite build` 通过；冒烟口径 20 → **21 套 1505 项**。
+**自测**：`scripts/seckill-smoke.ps1` **45/0 全绿**（幂等 replay / 限购 / 售罄 / 取消回补闭环 + **R74 运营编辑·删除 19 项**）；Web `tsc` + `vite build` 通过；冒烟口径 20 → **21 套 1505 项**。
 
 **第十八轮（2026-09-24）** — **A11 RocketMQ 削峰 + Sentinel 限流 已交付**。
 ① **削峰通道（交易域）**：`POST /api/orders/queued`（受理即入队，返回任务视图 PENDING）+ `GET /api/orders/placement/{idempotentKey}`（任务查询）；**同步下单 `POST /api/orders` 一行未动** —— 前端与既有断言零破坏。消费者与控制器**共用同一份** `placeOrder(userId, request)`：削峰**不换**幂等与状态机语义，靠代码级复用而不是"两处写一致"。
@@ -628,7 +628,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 37 项：AI 导购（形态自适应/推荐真实性/多轮追问/预算硬过滤与区间/极小预算空结果/预算未解析告知/出口预判/澄清反问/推荐上限/伪造 XFF 不能绕过限流/429）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 26 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 45 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄 STOCK_INSUFFICIENT/DB 不负数/取消回补/运营编辑·删除与守卫）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\upload-smoke.ps1      # 8 项：图片上传（白名单只放 GET/匿名上传 401/上传→回读 roundtrip/扩展名白名单）
 python scripts/r58-restock-idempotent-smoke.py     # 10 项：退货入库幂等（同 refNo 三次只加一次 / 换 refNo 正常加 / 缺 refNo 400）
 python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖家追偿（闭环 / 重复 409 / 未放款拒 / 垫付**不回补库存** / 收回核销二次 409 / 非运营 401）
@@ -651,7 +651,7 @@ node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买
 node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
-node scripts/e2e/seckill-ui-check.mjs                # 秒杀 45 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补）
+node scripts/e2e/seckill-ui-check.mjs                # 秒杀 61 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 / **后台编辑落库** / **有订单的活动删除被拒且行仍在** / **无订单的活动删除成功**）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 32 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 80 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达）
 node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
@@ -1669,7 +1669,7 @@ ES 索引 `duoduo-search` 里有 **124 条 LISTING 文档、0 条 SPU**，
 - **反向验证**：把下拉入口的判定改成恒假 `false`（等价于误用那个永远是 false 的 `isAdmin`）→
   断言精确报红 2 条、且**只红这 2 条**（其余 30 条仍绿，证明没有级联假红）；还原后 32/0。
 - **回归**：`npm run build`（tsc + vite）通过；`run-ui-checks.ps1 -Only home` **7/0 PASS**；
-  `seckill-ui-check.mjs` **45/0**（改的是全局 Layout，故必须验后台页仍正常）。
+  `seckill-ui-check.mjs` **61/0**（改的是全局 Layout，故必须验后台页仍正常）。
 - **踩坑**：首版断言「无 console 报错」把 `status of 401` 也算失败 → 5 条假红。
   401 是**设计内状态**（未登录时 `/api/users/me`、`/api/cart/count` 必然 401，页面各自兜底；
   「只带 dd_rt」场景更是靠一次 401 触发单飞刷新再重放），

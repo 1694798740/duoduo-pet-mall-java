@@ -324,6 +324,92 @@ if (orderNo) {
   check(`★ 取消后配额 +1（${stockBeforeCancel} → ${stockBeforeCancel + 1}）`,
     restored === stockBeforeCancel + 1, { before: stockBeforeCancel, after: restored });
 }
+// ---------------- R74：后台「编辑 / 删除」----------------
+step('UI：后台秒杀管理页 · 编辑与删除（R74）');
+{
+  const { page, consoleErrors, httpErrors } = await newPage();
+  await login(page, op.phone);
+  await page.goto(`${UI}/admin/seckill`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
+
+  const EDITED = `【UI自测】已改名 ${Date.now() % 1000000}`;
+
+  // ---- 编辑：只改标题与时间（商品/价格/配额刻意不开） ----
+  const row = page.locator('tr', { hasText: TITLE }).first();
+  check('★ 行内有「编辑」按钮（此前只有上下架）', (await row.getByRole('button', { name: '编辑' }).count()) === 1,
+    await row.innerText());
+  await row.getByRole('button', { name: '编辑' }).click();
+  await page.waitForTimeout(500);
+  const modal = page.locator('.modal').last();
+  check('编辑弹窗标题为「编辑秒杀活动」',
+    (await modal.locator('.modal-title').innerText()).includes('编辑秒杀活动'),
+    await modal.locator('.modal-title').innerText());
+  check('弹窗里显式说明商品/价格/配额不可改（避免运营找不到入口反复点）',
+    (await modal.innerText()).includes('不可改'), (await modal.innerText()).slice(0, 300));
+  check('★ 弹窗不给「改秒杀价 / 改配额」的输入框（只开标题与两个时间）',
+    (await modal.locator('.modal-body input').count()) === 3,
+    await modal.locator('.modal-body input').count());
+  await modal.locator('.modal-body input.input').first().fill(EDITED);
+  await modal.getByRole('button', { name: '保存' }).click();
+  await page.waitForTimeout(1600);
+  check('★ 编辑后列表显示新标题', (await page.locator('tr', { hasText: EDITED }).count()) === 1,
+    await page.locator('tr', { hasText: EDITED }).count());
+  const afterEditApi = await call('GET', '/api/admin/seckill/activities', undefined, op.jar);
+  const editedView = (afterEditApi.data ?? []).find((a) => String(a.id) === String(ACT_ID));
+  check('★ 编辑已真的落库（接口回读一致，不是只改了页面）', editedView?.title === EDITED, editedView?.title);
+  await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_edited.png'), fullPage: true });
+
+  // ---- 删除：已有订单的活动必须被拒，且把「改用下架」说清楚 ----
+  const row2 = page.locator('tr', { hasText: EDITED }).first();
+  await row2.getByRole('button', { name: '删除' }).click();
+  await page.waitForTimeout(500);
+  const delModal = page.locator('.modal').last();
+  const delText0 = await delModal.innerText();
+  check('★ 删除弹窗默认不做危险动作（主按钮是「取消」）',
+    (await delModal.locator('.modal-foot button').first().innerText()).includes('取消'), delText0.slice(0, 200));
+  check('删除弹窗说明只删「从未成交」的活动', delText0.includes('从未成交'), delText0.slice(0, 300));
+  await delModal.getByRole('button', { name: '确认删除' }).click();
+  await page.waitForTimeout(1600);
+  const delText1 = await delModal.innerText();
+  check('★ 有秒杀订单的活动删除被拒，页面把原因显示出来（不静默失败）',
+    delText1.includes('不能删除') || delText1.includes('下架'), delText1.slice(0, 300));
+  check('★ 被拒后活动仍在列表里（没有半删）',
+    (await page.locator('tr', { hasText: EDITED }).count()) === 1, '活动行消失');
+  await delModal.getByRole('button', { name: '取消' }).click();
+  await page.waitForTimeout(400);
+
+  // ---- 删除：无订单的活动必须真能删掉（同端点的另一面，证明守卫不是无条件拒绝） ----
+  const THROW = `【UI自测】待删 ${Date.now() % 1000000}`;
+  const madeThrow = await call('POST', '/api/admin/seckill/activities', {
+    title: THROW,
+    startAt: utc(-5),
+    endAt: utc(120),
+    skus: [{ skuId: SKU, seckillPrice: SECKILL_PRICE, totalStock: 1, perLimit: 1 }],
+  }, op.jar);
+  check('建一场「无人下单」的待删活动', madeThrow.status === 200 && Boolean(madeThrow.data?.id), madeThrow.status);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1000);
+  const throwRow = page.locator('tr', { hasText: THROW }).first();
+  check('待删活动出现在列表里', (await throwRow.count()) === 1, await throwRow.count());
+  await throwRow.getByRole('button', { name: '删除' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('.modal').last().getByRole('button', { name: '确认删除' }).click();
+  await page.waitForTimeout(1600);
+  check('★ 无订单的活动删除成功，行从列表消失',
+    (await page.locator('tr', { hasText: THROW }).count()) === 0, '行仍在');
+  const afterDelApi = await call('GET', '/api/admin/seckill/activities', undefined, op.jar);
+  check('★ 接口回读确认已删除（不残留）',
+    !(afterDelApi.data ?? []).some((a) => String(a.title) === THROW),
+    (afterDelApi.data ?? []).map((a) => a.title).filter((t) => t.includes('待删')));
+  await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_deleted.png'), fullPage: true });
+
+  const noisy = httpErrors.filter((e) => !/favicon/i.test(e) && !/(^|\s)(401|403|404|422)\s/.test(e));
+  check('R74 段落无非预期 4xx/5xx（401/403/404/422 是本段刻意触发的拒绝路径 + 未登录态首屏拉资料）',
+    noisy.length === 0, noisy.slice(0, 5));
+  check('R74 段落无 console / pageerror（401 属设计内，按本仓既有口径过滤）',
+    consoleErrors.filter((e) => !/favicon|status of (401|403|404|422)/i.test(e)).length === 0, consoleErrors.slice(0, 5));
+}
+
 // 活动下架：C 端列表不留自测痕迹（运营列表仍保留，便于人工复查）
 const off = await call('POST', `/api/admin/seckill/activities/${ACT_ID}/status`, { enabled: false }, op.jar);
 check('收尾：活动已下架，C 端不再展示', off.status === 200 && off.data?.enabled === false, off.data?.enabled);

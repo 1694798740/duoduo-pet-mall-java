@@ -1,8 +1,8 @@
 /**
  * 平台管理后台 · 秒杀活动管理（A14 遗留补齐）。
  *
- * 后端三个端点早已齐备（AdminSeckillController），但此前后台**没有页面** ——
- * 运营只能靠 curl 或直连数据库建活动，等于「功能存在但不可用」。本页把它们接到界面上。
+ * 后端端点齐备（AdminSeckillController：列表 / 新建 / 上下架 / **编辑 / 删除**），
+ * 此前后台**没有页面** —— 运营只能靠 curl 或直连数据库建活动，等于「功能存在但不可用」。本页把它们接到界面上。
  *
  * 两条容易踩的口径，页面里必须显式表达出来：
  *  1. 「进行中 / 未开始 / 已结束」（phase）与「上架 / 下架」（enabled）是<b>两个正交维度</b>：
@@ -13,6 +13,10 @@
  *
  * 另：列表**会显示已下架的活动**（后端 /api/admin/seckill/activities 全量下发）——
  * 否则「下架」就成了不可逆操作，活动消失后没有任何入口能把它放回来。
+ *
+ * R74 补的两件事（此前只有「新建 / 上下架」，历史自测活动永远清不掉）：
+ *  · **编辑**：只开标题与时间；商品 / 价格 / 配额不可改（余量已扣、订单已存价格快照）；
+ *  · **删除**：只删「从未成交」的活动；有秒杀订单的活动服务端 422，页面把原因原样展示并引导去「下架」。
  */
 
 import React, { useCallback, useState } from 'react';
@@ -20,6 +24,7 @@ import { adminApi, productApi } from '../../api/endpoints';
 import type {
   ProductCard,
   SeckillActivityCreateRequest,
+  SeckillActivityEditRequest,
   SeckillActivityView,
   SkuView,
 } from '../../api/types';
@@ -72,6 +77,21 @@ export const AdminSeckillPage: React.FC = () => {
   const [rows, setRows] = useState<SkuRow[]>([emptyRow()]);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // ---- 编辑（R74）：只改标题与时间；商品 / 价格 / 配额刻意不开（会让配置与已成交事实对不上） ----
+  const [editing, setEditing] = useState<SeckillActivityView | null>(null);
+  const [editForm, setEditForm] = useState<{ title: string; startAt: string; endAt: string }>({
+    title: '',
+    startAt: '',
+    endAt: '',
+  });
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // ---- 删除（R74）：默认不动手（弹窗默认焦点在「取消」），且服务端还会拦「已有订单」的活动 ----
+  const [deleting, setDeleting] = useState<SeckillActivityView | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // ---- 选商品助手：关键词 → SPU → SKU（运营不可能手背 19 位 skuId） ----
   const [pickKeyword, setPickKeyword] = useState('');
@@ -215,6 +235,66 @@ export const AdminSeckillPage: React.FC = () => {
     }
   };
 
+  const openEdit = (item: SeckillActivityView) => {
+    setEditing(item);
+    setEditError(null);
+    setEditForm({
+      title: item.title,
+      startAt: toLocalInput(item.startAt),
+      endAt: toLocalInput(item.endAt),
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setEditError(null);
+    if (!editForm.title.trim()) {
+      setEditError('请填写活动标题');
+      return;
+    }
+    if (!editForm.startAt || !editForm.endAt) {
+      setEditError('请填写开始与结束时间');
+      return;
+    }
+    if (fromLocalInput(editForm.endAt) <= fromLocalInput(editForm.startAt)) {
+      setEditError('结束时间必须晚于开始时间');
+      return;
+    }
+    const body: SeckillActivityEditRequest = {
+      title: editForm.title.trim(),
+      startAt: fromLocalInput(editForm.startAt),
+      endAt: fromLocalInput(editForm.endAt),
+    };
+    setEditBusy(true);
+    try {
+      await adminApi.updateSeckillActivity(editing.id, body);
+      push('活动已更新', 'success');
+      setEditing(null);
+      reload();
+    } catch (err) {
+      setEditError(toFriendlyMessage(err));
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!deleting) return;
+    setDeleteError(null);
+    setDeleteBusy(true);
+    try {
+      await adminApi.deleteSeckillActivity(deleting.id);
+      push('活动已删除', 'success');
+      setDeleting(null);
+      reload();
+    } catch (err) {
+      // 服务端会拒「已有秒杀订单」的活动（422），原因原样展示，不吞
+      setDeleteError(toFriendlyMessage(err));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   return (
     <div>
       <h2 className="section-title">平台管理后台 · 秒杀活动</h2>
@@ -242,7 +322,7 @@ export const AdminSeckillPage: React.FC = () => {
                 <th>阶段</th>
                 <th>开关</th>
                 <th>秒杀商品与余量</th>
-                <th style={{ width: 120 }}>操作</th>
+                <th style={{ width: 200 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -283,11 +363,17 @@ export const AdminSeckillPage: React.FC = () => {
                       )}
                     </td>
                     <td>
-                      {item.enabled ? (
-                        <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, false)}>下架</button>
-                      ) : (
-                        <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, true)}>上架</button>
-                      )}
+                      <div className="row row-wrap" style={{ gap: 6 }}>
+                        {item.enabled ? (
+                          <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, false)}>下架</button>
+                        ) : (
+                          <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, true)}>上架</button>
+                        )}
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>编辑</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => { setDeleteError(null); setDeleting(item); }}>
+                          删除
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -472,6 +558,90 @@ export const AdminSeckillPage: React.FC = () => {
               </ul>
             )}
           </div>
+        ) : null}
+      </Modal>
+
+      {/* 编辑：只改标题与时间 —— 商品/价格/配额不在这里，理由是「已扣的余量」与「已下单的价格快照」不能改 */}
+      <Modal
+        open={editing !== null}
+        title="编辑秒杀活动"
+        onClose={() => { setEditing(null); setEditError(null); }}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => { setEditing(null); setEditError(null); }}>取消</button>
+            <button className="btn btn-primary" disabled={editBusy || !editForm.title.trim()} onClick={saveEdit}>
+              {editBusy ? '保存中…' : '保存'}
+            </button>
+          </>
+        }
+      >
+        {editing ? (
+          <>
+            <p className="small muted mono">活动 ID：{editing.id}</p>
+            <Field label="活动标题" required>
+              <input
+                className="input"
+                value={editForm.title}
+                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                maxLength={100}
+              />
+            </Field>
+            <div className="row row-wrap" style={{ gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <Field label="开始时间（UTC）" required>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={editForm.startAt}
+                    onChange={(e) => setEditForm({ ...editForm, startAt: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <Field label="结束时间（UTC）" required>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={editForm.endAt}
+                    onChange={(e) => setEditForm({ ...editForm, endAt: e.target.value })}
+                  />
+                </Field>
+              </div>
+            </div>
+            <p className="small muted">
+              商品、秒杀价与配额<b>不可改</b>：余量已经扣过、订单里也已存了价格快照，改了会让配置与既成事实对不上。
+              要换商品请<b>新建</b>一场活动，再把这一场下架。
+            </p>
+            {editError ? <Alert kind="error">{editError}</Alert> : null}
+          </>
+        ) : null}
+      </Modal>
+
+      {/* 删除：只用于清理「从未成交」的活动；有订单时服务端会拒并把原因带回来 */}
+      <Modal
+        open={deleting !== null}
+        title="删除秒杀活动"
+        onClose={() => { setDeleting(null); setDeleteError(null); }}
+        footer={
+          <>
+            <button className="btn btn-primary" onClick={() => { setDeleting(null); setDeleteError(null); }}>取消</button>
+            <button className="btn btn-ghost" disabled={deleteBusy} onClick={doDelete}>
+              {deleteBusy ? '删除中…' : '确认删除'}
+            </button>
+          </>
+        }
+      >
+        {deleting ? (
+          <>
+            <p>
+              即将删除活动 <b>{deleting.title}</b>（<span className="mono small">{deleting.id}</span>）。
+            </p>
+            <p className="small muted">
+              只能删除<b>从未成交</b>的活动（自测残留、建错的草稿）。如果它已经有秒杀订单，
+              服务端会拒绝并提示——那时请改用「下架」：C 端不再展示，但订单与资金记录的来源链保持完整。
+            </p>
+            {deleteError ? <Alert kind="error">{deleteError}</Alert> : null}
+          </>
         ) : null}
       </Modal>
     </div>

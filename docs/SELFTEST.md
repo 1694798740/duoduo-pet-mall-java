@@ -200,7 +200,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 19 | 微信绑定 | `wechat-bind-smoke.ps1` | 24 |
 | 20 | AI 导购 | `ai-smoke.ps1` | 37 |
 | 21 | ES 商品检索（**需 ES 在跑**） | `search-smoke.ps1` | 40 |
-| 22 | 限时秒杀 | `seckill-smoke.ps1` | 26 |
+| 22 | 限时秒杀 | `seckill-smoke.ps1` | 45 |
 | 23 | 消息队列 | `mq-smoke.ps1` | 47 |
 | 24 | Python 探针（不进上面的一键运行器） | `r58-restock-idempotent-smoke.py` 10 / `r58-compensate-smoke.py` 22 / `r58-listing-edit-delete-smoke.py` 33 | 65 |
 

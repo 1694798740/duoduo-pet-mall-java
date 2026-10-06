@@ -1014,6 +1014,14 @@ export interface SeckillActivityCreateRequest {
   }>;
 }
 
+/** 秒杀活动编辑（R74）：**只开放标题与时间** —— 商品 / 价格 / 配额改动会让配置与已成交事实对不上 */
+export interface SeckillActivityEditRequest {
+  title: string;
+  /** ISO 字符串（不带时区后缀，服务端按 UTC 挂钟解析） */
+  startAt: string;
+  endAt: string;
+}
+
 /** 秒杀下单结果：拿 orderNo 去订单详情走沙箱支付 */
 export interface PlaceSeckillResult {
   orderNo: string;

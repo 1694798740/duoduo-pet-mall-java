@@ -65,6 +65,20 @@ public final class SeckillDtos {
         }
     }
 
+    /**
+     * 运营端编辑活动（R74）。
+     *
+     * <p><b>刻意只开「标题 + 时间」两项</b>，不开 SKU / 价格 / 配额：
+     * 那些字段背后是已经扣掉的余量与已成交的订单快照，改动会让「活动配置」与
+     * 「已卖出去的事实」对不上（例如把配额从 10 调到 5，而已经卖出了 8 件）。
+     * 要换商品请新建活动、把旧活动下架。
+     */
+    public record EditActivityRequest(
+            @NotBlank(message = "活动标题不能为空") @Size(max = 100, message = "活动标题过长") String title,
+            @NotNull(message = "开始时间不能为空") LocalDateTime startAt,
+            @NotNull(message = "结束时间不能为空") LocalDateTime endAt) {
+    }
+
     /** 运营端上下架 */
     public record ToggleRequest(@NotNull(message = "enabled 不能为空") Boolean enabled) {
     }

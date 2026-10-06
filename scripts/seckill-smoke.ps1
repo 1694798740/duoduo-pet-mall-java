@@ -215,7 +215,62 @@ $r = Call 'Post' "$Gateway/api/seckill/orders" $u3.session @{
 Check "买家丙用回补的配额再抢成功" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 Check "最终 DB 配额=0（全部售出）" ((Sql 'duoduo_trade' "SELECT available_stock FROM t_seckill_sku WHERE activity_id=$actId AND sku_id=$SKU;") -eq '0')
 
-# ---------- 7. 收尾 ----------
+# ---------- 7. 运营编辑 / 删除（R74） ----------
+Write-Host ""
+Write-Host "> R74：活动编辑与删除"
+# 口径：编辑只开「标题 + 时间」；删除只允许「从未成交」的活动（有订单必须走 下架）。
+$editedTitle = 'smoke-seckill-edited'   # 刻意用 ASCII：docker exec 读库输出中文会被转成 ?
+$newEnd = (Get-Date).ToUniversalTime().AddMinutes(45).ToString('yyyy-MM-ddTHH:mm:ss')
+$editBody = @{ title = $editedTitle; startAt = $start; endAt = $newEnd }
+
+$r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $null $editBody
+Check "匿名编辑活动 401" ($r.status -eq 401) $r.status
+$r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $u1.session $editBody
+Check "普通用户编辑活动 403" ($r.status -eq 403) $r.status
+$r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $sessOp $editBody
+Check "运营编辑活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+Check "编辑后标题已改" ($r.body.data.title -eq $editedTitle) $r.body.data.title
+Check "编辑后结束时间已改" ("$($r.body.data.endAt)" -like "$($newEnd.Substring(0,16))*") $r.body.data.endAt
+Check "编辑已落库（不是只改了响应体）" (
+    (Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;") -eq $editedTitle) "DB 实得：$(Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;")"
+
+$r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $sessOp @{
+    title = $editedTitle; startAt = $newEnd; endAt = $start }
+Check "结束早于开始 → 400（校验类错误，不是 422）" ($r.status -eq 400) "$($r.status)/$($r.raw)"
+$r = Call 'Put' "$Gateway/api/admin/seckill/activities/999999999" $sessOp $editBody
+Check "编辑不存在的活动 → 404" ($r.status -eq 404) "$($r.status)/$($r.raw)"
+
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $null $null
+Check "匿名删除活动 401" ($r.status -eq 401) $r.status
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $u1.session $null
+Check "普通用户删除活动 403" ($r.status -eq 403) $r.status
+# 本场活动此刻已有 3 笔秒杀订单 → 必须被拒，且给出「改用下架」的可执行指引
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actId" $sessOp $null
+Check "有秒杀订单的活动删除 → 422" ($r.status -eq 422) "$($r.status)/$($r.raw)"
+Check "拒绝原因指向「下架」而非一句空话" (
+    "$($r.body.message)" -like '*下架*') $r.body.message
+Check "被拒后活动仍在（未发生半删）" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_activity WHERE id=$actId;") -eq 1) '活动行数异常'
+
+# 反向面：同一端点对「无订单」的活动必须真能删掉（证明守卫不是无条件拒绝）
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-throwaway'; startAt = $start; endAt = $newEnd
+    skus = @( @{ skuId = $SKU; seckillPrice = 100; totalStock = 1; perLimit = 1 } ) }
+Check "新建一场「无人下单」的待删活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$throwId = "$($r.body.data.id)"
+$before = (Call 'Get' "$Gateway/api/admin/seckill/activities" $sessOp $null).body.data.Count
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$throwId" $sessOp $null
+Check "删除无订单的活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$after = (Call 'Get' "$Gateway/api/admin/seckill/activities" $sessOp $null).body.data.Count
+Check "列表条数减 1（$before → $after）" ($after -eq $before - 1) "$before/$after"
+Check "活动行已删" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_activity WHERE id=$throwId;") -eq 0) '活动行仍在'
+Check "连带秒杀 SKU 行已清理（不留孤儿行）" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_sku WHERE activity_id=$throwId;") -eq 0) 'SKU 行仍在'
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$throwId" $sessOp $null
+Check "重复删除 → 404（明确报不存在，不静默成功）" ($r.status -eq 404) "$($r.status)/$($r.raw)"
+
+# ---------- 8. 收尾 ----------
 Write-Host ""
 Write-Host "=== 结果：$pass 通过 / $fail 失败 ==="
 if ($fail -gt 0) {
@@ -223,5 +278,8 @@ if ($fail -gt 0) {
     $failures | ForEach-Object { Write-Host "  - $_" }
     exit 1
 }
-Write-Host "夹具说明：测试活动 id=$actId（标题「冒烟-宠物零食疯抢」，运营 $phoneOp 可在管理端下架）；测试账号 $phoneU1/$phoneU2/$phoneU3/$phoneOp 保留。"
+Write-Host "夹具说明：测试活动 id=$actId（标题「$editedTitle」，已产生 3 笔订单，**按设计不可删除**，"
+Write-Host "  运营 $phoneOp 可在管理端「下架」它）；本脚本自建的「待删活动」已自行删除，不留脏数据；"
+Write-Host "  测试账号 $phoneU1/$phoneU2/$phoneU3/$phoneOp 保留。"
+Write-Host "  清理历史自测活动请用后台管理页的「删除」（仅从未成交的活动可删）。"
 exit 0

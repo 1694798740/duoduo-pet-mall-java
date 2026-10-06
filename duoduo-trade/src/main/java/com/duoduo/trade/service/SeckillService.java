@@ -10,6 +10,7 @@ import com.duoduo.trade.client.dto.AddressCallDtos.ReceiverSnapshot;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.dto.SeckillDtos.ActivityView;
 import com.duoduo.trade.dto.SeckillDtos.CreateActivityRequest;
+import com.duoduo.trade.dto.SeckillDtos.EditActivityRequest;
 import com.duoduo.trade.dto.SeckillDtos.PlaceSeckillRequest;
 import com.duoduo.trade.dto.SeckillDtos.PlaceSeckillResult;
 import com.duoduo.trade.dto.SeckillDtos.SkuView;
@@ -421,8 +422,84 @@ public class SeckillService {
         return toView(activity, skus);
     }
 
-    // ---------------- 关单回补（OrderService 超时关单 / 取消 / 强关时回调） ----------------
+    /**
+     * 编辑活动（R74）：**只改标题与时间**。
+     *
+     * <p>为什么不改 SKU / 价格 / 配额：那些值背后是「已经扣掉的余量」与「已成交订单里的价格快照」，
+     * 改了会让活动配置与既成事实对不上，且没有任何办法回溯修正已下单的人。
+     * 要换商品就新建活动，把旧的**下架**（而不是改）。
+     *
+     * <p>时间可以改**任何方向**（含把已结束的活动延后、把进行中的活动提前收尾）——
+     * 这是运营的正常诉求；但若活动已有成交，把开始时间推到未来会让「已卖出的活动」显示成「未开始」，
+     * 语义上自相矛盾，故该情形显式拒绝。
+     */
+    @Transactional
+    public ActivityView editActivity(Long activityId, EditActivityRequest request) {
+        SeckillActivityEntity activity = activityMapper.selectById(activityId);
+        if (activity == null) {
+            throw BizException.notFound("秒杀活动");
+        }
+        if (!request.endAt().isAfter(request.startAt())) {
+            throw BizException.validation("活动结束时间必须晚于开始时间");
+        }
+        long orders = countOrders(activityId);
+        if (orders > 0 && request.startAt().isAfter(nowUtc())) {
+            throw BizException.businessRule("该活动已产生 " + orders + " 笔秒杀订单，开始时间不能改到未来"
+                    + "（否则已成交的活动会显示成「未开始」）");
+        }
+        activity.setTitle(request.title().trim());
+        activity.setStartAt(request.startAt());
+        activity.setEndAt(request.endAt());
+        activity.setUpdatedAt(nowUtc());
+        activityMapper.updateById(activity);
 
+        List<SeckillSkuEntity> skus = seckillSkuMapper.selectList(
+                new LambdaQueryWrapper<SeckillSkuEntity>().eq(SeckillSkuEntity::getActivityId, activityId));
+        log.info("编辑秒杀活动：id={} title={} 时间 {} ~ {}", activityId, activity.getTitle(),
+                activity.getStartAt(), activity.getEndAt());
+        return toView(activity, skus);
+    }
+
+    /**
+     * 删除活动（R74）：**已有秒杀订单的活动一律拒绝**（改提示去下架）。
+     *
+     * <p>为什么不做「连带删除订单」：秒杀订单是真实的成交与资金事实（t_order / t_seckill_order
+     * 里挂着订单号、配额台账），删活动就把这条链的根拔掉了 —— 订单详情查不到来源、
+     * 配额回补找不到活动，属于不可逆的数据破坏。运营真正想要的是「从列表清掉」，
+     * 那用下架即可（C 端不再展示，运营列表仍可见）。
+     *
+     * <p>因此本端点只用于清理**从未成交**的活动（自测残留、建错的草稿）。
+     * 删活动时会一并删掉它的秒杀 SKU 行，并清掉 Redis 余量键（个人已购键是按 `skuId:userId`
+     * 分散的、无 TTL，这里不枚举；SKU 行删除后雪花 id 不会复用，残留键只占内存不影响正确性）。
+     */
+    @Transactional
+    public void deleteActivity(Long activityId) {
+        SeckillActivityEntity activity = activityMapper.selectById(activityId);
+        if (activity == null) {
+            throw BizException.notFound("秒杀活动");
+        }
+        long orders = countOrders(activityId);
+        if (orders > 0) {
+            throw BizException.businessRule("该活动已产生 " + orders + " 笔秒杀订单，不能删除（订单要留档）；"
+                    + "如果只是不想再卖，请改为「下架」");
+        }
+        List<SeckillSkuEntity> skus = seckillSkuMapper.selectList(
+                new LambdaQueryWrapper<SeckillSkuEntity>().eq(SeckillSkuEntity::getActivityId, activityId));
+        for (SeckillSkuEntity sku : skus) {
+            seckillSkuMapper.deleteById(sku.getId());
+            clearRedisStock(sku.getId());
+        }
+        activityMapper.deleteById(activityId);
+        log.info("删除秒杀活动：id={} title={} 连带清理秒杀 SKU {} 行", activityId, activity.getTitle(), skus.size());
+    }
+
+    /** 该活动下的秒杀订单数（t_seckill_order 的 activity_id 即归属，删除与编辑共用的守卫） */
+    private long countOrders(Long activityId) {
+        return seckillOrderMapper.selectCount(
+                new LambdaQueryWrapper<SeckillOrderEntity>().eq(SeckillOrderEntity::getActivityId, activityId));
+    }
+
+    // ---------------- 关单回补（OrderService 超时关单 / 取消 / 强关时回调） ----------------
     /**
      * 订单关闭后的配额回补：DB 无条件 +1，Redis 尽力 +1。
      * 供 {@code OrderService} 的超时关单、用户取消、运营强关三条路径调用；
@@ -495,8 +572,16 @@ public class SeckillService {
         }
     }
 
-    /** 把 DB 余量装载进 Redis（覆盖写；竞态无害 —— DB 才是事实，计数偏差只影响限流精度）。 */
-    private void ensureRedisStock(Long seckillSkuId, Integer availableStock) {
+    /** 删除活动时清掉该秒杀 SKU 的余量键（尽力而为；键不存在也无所谓）。 */
+    private void clearRedisStock(Long seckillSkuId) {
+        try {
+            redis.delete(KEY_STOCK + seckillSkuId);
+        } catch (Exception e) {
+            log.warn("秒杀余量键清理失败（活动与 SKU 行已删除，残留键只占内存）：{}", e.getMessage());
+        }
+    }
+
+    /** 把 DB 余量装载进 Redis（覆盖写；竞态无害 —— DB 才是事实，计数偏差只影响限流精度）。 */    private void ensureRedisStock(Long seckillSkuId, Integer availableStock) {
         try {
             redis.opsForValue().set(KEY_STOCK + seckillSkuId, String.valueOf(availableStock),
                     1, TimeUnit.HOURS);
