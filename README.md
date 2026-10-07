@@ -544,6 +544,23 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 
 中间件与业务服务**全部容器化**，一条命令起全套：
 
+### 环境准备（两件一次性配置，各一条命令）
+
+```bash
+# ① Docker 镜像源：解决"拉不到镜像"
+#    （Docker 守护进程默认直连 Docker Hub，在国内网络常被拦；容器里那个 http.docker.internal 代理与它无关）
+#    脚本会：备份 daemon.json → 合并写入 registry-mirrors → 重启 Docker Desktop → 用之前失败的镜像验证
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\docker-mirror.ps1
+
+# ② 代码推送通道：本机到 GitHub 的 HTTPS 通道被拦，改走 SSH（443 端口）
+#    无密钥则生成 → 打印公钥（贴到 https://github.com/settings/ssh/new）→ 再跑一次即自动切换 origin 并验证
+bash scripts/ssh-push-setup.sh
+```
+
+> 来龙去脉与判据见 `docs/agent/08-环境运维与踩坑禁忌.md` 的 **T-65**（镜像源）与 **T-67**（推送通道）。
+> ⚠️ `docker desktop restart` 内部会调用 `wsl.exe`，**在受管沙箱里被安全策略禁止** —— 所以"重启 Docker Desktop"这一步
+> 需要你在本机点一下（脚本会明确提示），助手侧只能完成配置文件与验证命令的准备。
+
 ```bash
 docker compose up -d          # 起 11 个容器（3 中间件 + 7 业务服务 + 1 网页端）
 docker ps                     # 期望：11 个容器全是 healthy
