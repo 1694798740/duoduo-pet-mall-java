@@ -17,6 +17,19 @@ export function isOperator(role: string | null | undefined): boolean {
   return upper === 'OPERATOR' || upper === 'ADMIN';
 }
 
+/**
+ * 是否**管理员**（比 {@link isOperator} 更窄：只认 ADMIN，不含 OPERATOR）。
+ *
+ * 用在「运营账号」页里**只有管理员能做**的动作（给他人改角色）。
+ * 刻意与 {@link isOperator} 放在一起：角色判定**必须同源相邻**，
+ * 各页各写一份就会漂移 —— R74-3 删掉的那个恒为 false 的 `isAdmin`
+ * （走了全小写比较，而库内是大写存储）就是漂移的样本。
+ */
+export function isAdminRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return role.toUpperCase() === 'ADMIN';
+}
+
 /** 后台内部导航：把八个工作台挂到一条标签上 */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },

@@ -199,11 +199,16 @@ const addrInNav = (await page.locator('.app-header .nav-links').getByRole('link'
 check('「收货地址」入口收进头像下拉且顶栏不再重复（收起来 ≠ 删掉）',
   addrInMenu && !addrInNav, { addrInMenu, addrInNav });
 await page.keyboard.press('Escape');
-// 注意：菜单**没有** Esc 关闭行为（Layout 只在路由变化时 setMenuOpen(false)），
-// 所以上面那句 Escape 收不起来 —— 必须再点一次头像把它收掉，
-// 否则这个 176px 宽的浮层会盖住页面右上角的「+ 新增地址」按钮、拦截后续点击。
-await page.locator('.app-header button.icon-btn').first().click();
-await page.waitForTimeout(200);
+await page.waitForTimeout(250);
+// R74-2 起菜单**支持 Esc 关闭**（那是本轮新增的两条关闭出口之一）。
+// 本行此前是「再点一次头像把它收掉」—— 因为旧的 Layout 只在路由变化时 setMenuOpen(false)，
+// Esc 收不起来；而行为变更后，那次多余的点击会**把菜单重新打开**，
+// 176px 宽的浮层随即盖住页面右上角的「+ 新增地址」按钮，导致后续点击被拦截、整套超时。
+// 教训：改共用组件后必须跑全量（本套件就是被全量回归抓出来的），且**过时注释会误导**。
+// 现在改成直接断言「Esc 已收起」，既守住新行为，也不再依赖旧行为。
+check('Esc 能收起头像下拉（R74-2 新增；否则浮层会盖住页面右上角按钮）',
+  (await page.locator('.app-header .user-menu').count()) === 0,
+  await page.locator('.app-header .user-menu').count());
 check('页面渲染出来（标题 + 关联结算的说明）', t.includes('收货地址') && t.includes('结算'), t.slice(0, 240));
 check('空地址簿给出空态文案', t.includes('还没有收货地址'), t.slice(0, 400));
 check('空态提供「立即添加」主按钮', (await page.getByRole('button', { name: '立即添加' }).count()) >= 1, page.url());

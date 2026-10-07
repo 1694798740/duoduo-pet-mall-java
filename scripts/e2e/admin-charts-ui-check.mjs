@@ -212,6 +212,44 @@ step('② 权限边界 · 普通用户看不到后台');
   await ctx.close();
 }
 
+// ---------------- ③ 主题约定（R74-6） ----------------
+step('③ 图表主题：不跟随系统深色（避免与浅色卡片打架）');
+{
+  // 图表配色已集中到 components/chartTheme.ts，且**刻意不读 prefers-color-scheme**：
+  // 应用卡片背景是固定浅色，图表若按系统偏好自行变深，会出现浅底 + 浅字/深轴线的不可读组合。
+  // 本段用**深色系统偏好**的浏览器上下文打开同一个后台页：图表仍应是浅色一套。
+  // 这条断言是防「半修复」的闸门 —— 将来谁只在图表里加个 prefers-color-scheme 分支，这里会红。
+  const ctx = await browser.newContext({
+    viewport: { width: 1440, height: 1200 },
+    locale: 'zh-CN',
+    colorScheme: 'dark',
+  });
+  // 复用运营会话（与①同姿势）
+  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  const page = await ctx.newPage();
+  await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+
+  const themeProbe = await page.evaluate(() => {
+    const root = document.documentElement;
+    const canvas = document.querySelector('canvas');
+    const card = canvas?.closest('.card');
+    const bg = card ? getComputedStyle(card).backgroundColor : '';
+    const m = bg.match(/\d+/g)?.map(Number) ?? [];
+    // 相对亮度（0=黑 1=白）；浅色卡片应显著偏亮
+    const lum = m.length >= 3 ? (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) / 255 : -1;
+    return { dataTheme: root.getAttribute('data-theme'), cardBg: bg, lum, hasCanvas: Boolean(canvas) };
+  });
+
+  check('深色系统偏好下图表仍正常渲染（canvas 存在）', themeProbe.hasCanvas, themeProbe);
+  check('★ 应用未切换深色主题（无 data-theme）——图表主题跟随应用而非系统',
+    !themeProbe.dataTheme, themeProbe.dataTheme);
+  check('★ 图表所在卡片仍是浅色底（亮度 > 0.8），与浅色坐标轴/文字可读组合一致',
+    themeProbe.lum > 0.8, themeProbe);
+  await page.screenshot({ path: path.join(SHOTS, 'admin-charts-darkpref.png'), fullPage: true });
+  await ctx.close();
+}
+
 await browser.close();
 
 console.log(`\n=== 平台后台图表 UI 断言：通过 ${pass} 项，失败 ${failures.length} 项 ===`);

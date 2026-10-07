@@ -19,12 +19,22 @@ import { useAsync } from '../components/hooks';
 
 const PAGE_SIZE = 15;
 
+/**
+ * 分类 chip：**必须与后端白名单一致**（`NoticeService.CATEGORIES` = SYSTEM / ANNOUNCEMENT / FRIEND / MERCHANT / ORDER），
+ * 也与小程序 `pages/notification` 的 chip 保持一致。
+ *
+ * ⚠️ R74-4 修：这里原本写的是 `ORDER / AFTERSALE / SOCIAL / NOTICE` —— 其中**三个键后端根本不存在**：
+ * 选「售后 / 互动」会筛出空列表，选「公告」也筛不到（真正的公告分类是 `ANNOUNCEMENT`）；
+ * 反过来，真实存在的 `FRIEND / MERCHANT` 消息又只能以英文原名显示、无法筛选。
+ * 根因是「前端自己发明了一套分类」而不是照抄服务端白名单 —— 分类是**业务事实**，只能有一处定义。
+ */
 const CATEGORIES: { key: string; label: string }[] = [
   { key: '', label: '全部' },
   { key: 'ORDER', label: '订单' },
-  { key: 'AFTERSALE', label: '售后' },
-  { key: 'SOCIAL', label: '互动' },
-  { key: 'NOTICE', label: '公告' },
+  { key: 'FRIEND', label: '好友' },
+  { key: 'MERCHANT', label: '商家' },
+  { key: 'SYSTEM', label: '系统' },
+  { key: 'ANNOUNCEMENT', label: '公告' },
 ];
 
 export const NotificationsPage: React.FC = () => {

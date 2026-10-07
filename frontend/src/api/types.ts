@@ -1213,6 +1213,62 @@ export interface UnreadCount {
   count: number;
 }
 
+// ---------- 私信（R74-5 · Web 端补齐） ----------
+
+/**
+ * 会话列表项：每会话最新一条 + 未读数 + **我是否还能发**。
+ *
+ * `canSend` 与 `mutual` 必须由前端如实呈现：非互关时每对用户**只能发一条**（咨询会话豁免），
+ * 服务端会拒第二条 —— 若前端不显示原因、只让输入框静默失败，用户会以为「发出去丢了」。
+ */
+export interface ConversationView {
+  peerId: string;
+  nickname: string;
+  avatar: string | null;
+  lastContent: string;
+  lastBizType: string | null;
+  lastBizId: string | null;
+  lastAt: string;
+  /** 未读数（服务端按 NumericLongSerializer 下发为数字） */
+  unread: number;
+  mutual: boolean;
+  canSend: boolean;
+  /** 是否为商品 / 闲置咨询会话（咨询会话豁免「非互关一条」限制） */
+  consulting: boolean;
+  productId: string | null;
+  productTitle: string | null;
+  productImage: string | null;
+  listingId: string | null;
+  listingTitle: string | null;
+  listingImage: string | null;
+}
+
+export interface ChatMessageView {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  senderRole: string;
+  bizType: string;
+  bizId: string | null;
+  content: string;
+  createdAt: string;
+  /** 是否我发的（展示左右分列的依据；前端不再自己比 userId） */
+  mine: boolean;
+  read: boolean;
+}
+
+export interface MessagePageData {
+  items: ChatMessageView[];
+  total: number;
+  page: number;
+  pageSize: number;
+  peerId: string;
+  peerNickname: string;
+  peerAvatar: string | null;
+  mutual: boolean;
+  canSend: boolean;
+}
+
 /** 关注/粉丝条目 */
 export interface FollowView {
   userId: string;

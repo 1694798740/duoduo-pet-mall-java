@@ -76,6 +76,9 @@ import type {
   FollowCounts,
   FollowState,
   FollowView,
+  ChatMessageView,
+  ConversationView,
+  MessagePageData,
   NoticePageData,
   EngagementState,
   SellerAnalytics,
@@ -765,6 +768,35 @@ export const followApi = {
   followers: (query?: { page?: number; pageSize?: number }) =>
     api.get<PageResult<FollowView>>('/api/socials/follows/followers', { query }),
   counts: (userId: string) => api.get<FollowCounts>(`/api/socials/follows/${userId}/counts`),
+};
+
+// ---------- 私信（R74-5 · Web 端补齐；此前只有小程序有） ----------
+export const messageApi = {
+  /** 会话列表：每会话最新一条 + 未读数 + 我是否还能发 */
+  conversations: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<ConversationView>>('/api/socials/messages/conversations', { query }),
+
+  /**
+   * 与某人的双向消息（时间正序，取最新一页）。
+   *
+   * `productId` / `listingId` 可选：会话键**带上下文段**（同一对用户的多类会话互不串线），
+   * 缺省读「主会话」。Web 端 v1 只接主会话与咨询入口透传，不自己拼会话键。
+   */
+  conversation: (
+    peerId: string,
+    query?: { productId?: string; listingId?: string; page?: number; pageSize?: number },
+  ) => api.get<MessagePageData>(`/api/socials/messages/conversations/${peerId}`, { query }),
+
+  /** 打开会话即标记已读（幂等），返回被标记的条数 */
+  markRead: (peerId: string, query?: { productId?: string; listingId?: string }) =>
+    api.post<number>(`/api/socials/messages/conversations/${peerId}/read`, undefined, { query }),
+
+  /** 发消息；非互关每人限发一条（咨询会话豁免），被拒时服务端给人话原因 */
+  send: (body: { receiverId: string; content: string; productId?: string; listingId?: string }) =>
+    api.post<ChatMessageView>('/api/socials/messages', body),
+
+  /** 我的私信未读总数（角标走合并口径 unread-summary；这里用于入口上的独立未读数） */
+  unreadCount: () => api.get<UnreadCount>('/api/socials/messages/unread-count'),
 };
 
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1） ----------

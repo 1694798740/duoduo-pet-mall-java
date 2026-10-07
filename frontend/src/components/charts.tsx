@@ -24,6 +24,7 @@ import { BarChart, LineChart, PieChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { formatPrice } from '../api/client';
+import { chartTheme } from './chartTheme';
 import type { AnalyticsSlice, AnalyticsTrendPoint } from '../api/types';
 
 echarts.use([
@@ -36,26 +37,25 @@ echarts.use([
   CanvasRenderer,
 ]);
 
-/** 配色沿用品牌橙 + 一组能区分但不相冲的辅助色；顺序固定，避免同一维度两次刷新换色 */
-const PALETTE = ['#ff7a45', '#4f6ef7', '#36cfc9', '#f7b84b', '#a855f7', '#f759ab', '#52c41a', '#8c8c8c'];
-
-const AXIS_LABEL = { color: '#8b8b94', fontSize: 11 } as const;
-const SPLIT_LINE = { lineStyle: { color: 'rgba(0,0,0,.06)' } } as const;
-
 /**
- * tooltip 公共配置。
+ * 配色与轴线/提示框样式**全部来自 `chartTheme.ts`**（R74-6：图表主题的唯一来源）。
+ * 本文件不再出现任何硬编码色值 —— 将来接深色主题只需改 `currentChartThemeMode()` 一处。
  *
  * <p>{@code transitionDuration: 0} 是关键：ECharts 的浮层默认自带一段淡入，
  * 鼠标快速划过多个柱子时会出现「提示框还在追鼠标」的滞后感。设为 0 后它跟着指针就位。
  */
+const T = chartTheme();
+const PALETTE = T.palette;
+const AXIS_LABEL = T.axisLabel;
+const SPLIT_LINE = { lineStyle: { color: T.splitLine } } as const;
 const TOOLTIP = {
   transitionDuration: 0,
-  backgroundColor: 'rgba(255,255,255,.98)',
-  borderColor: '#e9e9ef',
+  backgroundColor: T.tooltip.backgroundColor,
+  borderColor: T.tooltip.borderColor,
   borderWidth: 1,
   padding: [8, 12],
-  textStyle: { color: '#2b2b33', fontSize: 12 },
-  extraCssText: 'border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08);',
+  textStyle: { color: T.tooltip.textColor, fontSize: 12 },
+  extraCssText: T.tooltip.extraCssText,
 } as const;
 
 type Slice = AnalyticsSlice;
@@ -98,13 +98,13 @@ const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) 
         animation: false,
         color: PALETTE,
         tooltip: { ...TOOLTIP, trigger: 'item', formatter: (p: { name: string; value: number; percent: number }) => `${p.name}<br/><b>${fmt(p.value, money, unit)}</b>（${p.percent}%）` },
-        legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8, textStyle: { color: '#6b6b73', fontSize: 11 } },
+        legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8, textStyle: { color: T.legendText, fontSize: 11 } },
         series: [{
           type: 'pie',
           radius: ['46%', '68%'],
           center: ['50%', '44%'],
           avoidLabelOverlap: true,
-          itemStyle: { borderColor: '#fff', borderWidth: 2 },
+          itemStyle: { borderColor: T.pieBorderColor, borderWidth: 2 },
           label: { show: false },
           labelLine: { show: false },
           data: asSlices(data).map((d) => ({ name: d.name, value: d.value })),
@@ -116,11 +116,11 @@ const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) 
       const points = asTrend(data);
       return {
         animation: false,
-        color: ['#4f6ef7', '#ff7a45'],
+        color: T.linePalette,
         tooltip: {
           ...TOOLTIP,
           trigger: 'axis',
-          axisPointer: { type: 'line', lineStyle: { color: 'rgba(79,110,247,.4)' } },
+          axisPointer: { type: 'line', lineStyle: { color: T.pointerLine } },
           formatter: (ps: { seriesName: string; value: number; axisValue: string }[]) => {
             const day = ps[0]?.axisValue ?? '';
             const cnt = ps.find((p) => p.seriesName === '订单数')?.value ?? 0;
@@ -128,14 +128,14 @@ const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) 
             return `${day}<br/>订单数 <b>${cnt} 笔</b><br/>成交额 <b>${formatPrice(gmv)}</b>`;
           },
         },
-        legend: { top: 0, right: 0, icon: 'roundRect', itemWidth: 10, itemHeight: 6, textStyle: { color: '#6b6b73', fontSize: 11 } },
+        legend: { top: 0, right: 0, icon: 'roundRect', itemWidth: 10, itemHeight: 6, textStyle: { color: T.legendText, fontSize: 11 } },
         grid: { left: 4, right: 4, top: 28, bottom: 2, containLabel: true },
         xAxis: {
           type: 'category',
           boundaryGap: false,
           data: points.map((p) => p.date.slice(5)),
           axisLabel: AXIS_LABEL,
-          axisLine: { lineStyle: { color: 'rgba(0,0,0,.1)' } },
+          axisLine: { lineStyle: { color: T.axisLine } },
           axisTick: { show: false },
         },
         yAxis: [
@@ -160,14 +160,14 @@ const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) 
       tooltip: {
         ...TOOLTIP,
         trigger: 'axis',
-        axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(255,122,69,.08)' } },
+        axisPointer: { type: 'shadow', shadowStyle: { color: T.pointerShadow } },
         formatter: (ps: { name: string; value: number }[]) =>
           `${ps[0]?.name ?? ''}<br/><b>${fmt(ps[0]?.value ?? 0, money, unit)}</b>`,
       },
       grid: { left: 4, right: 12, top: 16, bottom: 2, containLabel: true },
       xAxis: horizontal
         ? { type: 'value', axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE }
-        : { type: 'category', data: names, axisLabel: AXIS_LABEL, axisLine: { lineStyle: { color: 'rgba(0,0,0,.1)' } }, axisTick: { show: false } },
+        : { type: 'category', data: names, axisLabel: AXIS_LABEL, axisLine: { lineStyle: { color: T.axisLine } }, axisTick: { show: false } },
       yAxis: horizontal
         ? {
           type: 'category',

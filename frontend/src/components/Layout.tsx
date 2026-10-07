@@ -30,6 +30,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole } from '../pages/seller/shared';
 import { isOperator } from '../pages/admin/shared';
+import { messageApi } from '../api/endpoints';
 import { useApp } from '../store/app';
 import { useAuth } from '../store/auth';
 
@@ -62,6 +63,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const { cartCount, refreshCart } = useApp();
   const [keyword, setKeyword] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  /** 私信未读数（R74-5）：打开头像菜单时现取，不为此加全站轮询 */
+  const [msgUnread, setMsgUnread] = useState(0);
   // 头像下拉的容器与触发按钮（R74-2：Esc / 点外部关闭、关掉后把焦点还给按钮）
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -76,6 +79,16 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
+
+  // 私信未读数：菜单打开时拉一次；失败就当作 0（入口照常可达，不因一个数字挡路）
+  useEffect(() => {
+    if (!menuOpen || !user) return;
+    let alive = true;
+    void messageApi.unreadCount()
+      .then((r) => { if (alive) setMsgUnread(r?.count ?? 0); })
+      .catch(() => { if (alive) setMsgUnread(0); });
+    return () => { alive = false; };
+  }, [menuOpen, user]);
 
   /**
    * 头像下拉的关闭行为（R74-2）。
@@ -221,6 +234,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/notifications" style={{ display: 'block' }}>
                       通知中心
                     </Link>
+                    {/* 私信（R74-5）：未读数在**打开菜单时**现取 —— 不为此加全站轮询：
+                        这个数字只在用户看菜单的那一刻有意义，且角标口径（通知+私信合并）
+                        由小程序 utils/unread.js 统一负责，Web 端不另建一套。 */}
+                    <Link className="nav-link" to="/messages" style={{ display: 'block' }}>
+                      私信{msgUnread > 0 ? `（${msgUnread > 99 ? '99+' : msgUnread}）` : ''}
+                    </Link>
                     <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
                       关注与粉丝
                     </Link>
@@ -233,10 +252,10 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     ) : null}
                     {/* 平台管理后台入口（与顶栏那条同源同判）——
                         只对运营 / 管理员显示，与后端 OperatorGuard 同口径。
-                        ★ 这里必须用 isOperator()，不能用 useAuth().isAdmin：
-                        后者写的是全小写比较（user.role === 'admin'），而库内是大写
-                        存储，它**永远返回 false** —— 用它会让入口静默不出现，
-                        且不报任何错，属于最难归因的一类问题。
+                        ★ 必须用 isOperator()：判定**只有这一处权威实现**（pages/admin/shared.tsx）。
+                        auth store 里曾经有个 `isAdmin` 走了全小写比较（user.role === 'admin'），
+                        而库内是大写存储，它**永远返回 false** —— 入口静默不出现且不报任何错。
+                        该字段已在 R74-3 删除，重新加回会编译失败（见 store/auth.tsx 顶部注释）。
                         刷新后仍在的机制：Layout 包住全部路由，user 由
                         GET /api/users/me 重取（Cookie dd_rt 有效期 7 天），
                         因此「关掉页面再打开」入口照样在 —— 见

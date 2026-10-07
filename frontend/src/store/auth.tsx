@@ -35,7 +35,6 @@ interface AuthState {
   refreshMe: () => Promise<void>;
   refreshPets: () => Promise<void>;
   setPets: (pets: PetView[]) => void;
-  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -119,12 +118,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshMe,
     refreshPets,
     setPets: setPetsState,
-    isAdmin: user?.role === 'admin' || user?.role === 'operator',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
+/**
+ * ⚠️ **这里刻意没有 `isAdmin`**（R74-3 删除）。
+ *
+ * 曾经有过一个 `isAdmin: user?.role === 'admin' || user?.role === 'operator'`：
+ * 库内角色是**大写**存储（`ADMIN` / `OPERATOR`），全小写比较**恒为 false**，
+ * 而且它不报任何错 —— 用它做入口显隐，入口会静默不出现，是极难归因的一类问题。
+ * 它当时没有任何消费者，属于「埋着的坑」，因此直接删除而不是改成正确实现：
+ * 运营 / 管理员判定**只有一处权威实现** `pages/admin/shared.tsx` 的 `isOperator()`，
+ * 需要判定就从那里 import（前后端同口径）。**删掉字段本身即是防线** ——
+ * 若将来有人再写 `useAuth().isAdmin`，`tsc` 会直接编译失败，不会再静默失效。
+ */
 export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth 必须在 AuthProvider 内使用');

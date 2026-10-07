@@ -20,7 +20,7 @@ import {
 import { useAsync } from '../../components/hooks';
 import { toFriendlyMessage } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { AdminDenied, AdminTabs, isOperator } from './shared';
+import { AdminDenied, AdminTabs, isAdminRole, isOperator } from './shared';
 
 const PAGE_SIZE = 10;
 const ROLE_OPTIONS = ['USER', 'SELLER', 'OPERATOR', 'ADMIN'];
@@ -36,7 +36,8 @@ const ROLE_LABELS: Record<string, string> = {
 export const AdminOperatorsPage: React.FC = () => {
   const { user } = useAuth();
   const operator = isOperator(user?.role);
-  const isAdmin = (user?.role ?? '').toUpperCase() === 'ADMIN';
+  // 改他人角色只有管理员能做；判定收敛到 shared（前后端同口径，忽略大小写）—— R74-3
+  const isAdmin = isAdminRole(user?.role);
   const { push } = useToast();
 
   const [kwInput, setKwInput] = useState('');

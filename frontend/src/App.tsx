@@ -35,6 +35,8 @@ import { ListingsPage } from './pages/Listings';
 import { MyListingsPage } from './pages/MyListings';
 import { NotificationsPage } from './pages/Notifications';
 import { FollowPage } from './pages/Follow';
+import { MessagesPage } from './pages/Messages';
+import { ChatPage } from './pages/Chat';
 import { ShareCirclePage } from './pages/ShareCircle';
 import { ShareDetailPage } from './pages/ShareDetail';
 import { ShareMinePage } from './pages/ShareMine';
@@ -192,6 +194,24 @@ export const App: React.FC = () => (
         element={
           <RequireAuth>
             <FollowPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* 私信（R74-5）：会话列表与详情都需登录 —— 私信本身承载身份，不像分享圈可匿名浏览 */}
+      <Route
+        path="/messages"
+        element={
+          <RequireAuth>
+            <MessagesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/messages/:peerId"
+        element={
+          <RequireAuth>
+            <ChatPage />
           </RequireAuth>
         }
       />
