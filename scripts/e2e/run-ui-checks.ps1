@@ -10,7 +10,11 @@
 #   powershell ... -File scripts\e2e\run-ui-checks.ps1 -KeepServer            # 跑完保留 dev server
 param(
     [string]$Only = '',          # 只跑某一套（文件名去掉 -ui-check，如 home / coupon）
-    [switch]$KeepServer
+    [switch]$KeepServer,
+    # S2 新增：直接指定被测入口（如正式版容器 http://localhost:8088）。
+    # 给了它就**不再启动/管理 dev server**，并把 UI_BASE 传给每套脚本 ——
+    # 这样「一键自检」打的就是用户实际在用的入口（真应用），而不是开发态。
+    [string]$UiBase = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,9 +33,20 @@ function Test-Port([int]$port) {
     return $null -ne $c
 }
 
-# 1) 保证 dev server 在跑
+# 1) 保证被测入口可用
 $serverStarted = $false
-if (Test-Port $uiPort) {
+if ($UiBase) {
+    try {
+        $r = Invoke-WebRequest -Uri "$UiBase/" -UseBasicParsing -TimeoutSec 10
+        if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
+        $env:UI_BASE = $UiBase   # 套件读 process.env.UI_BASE，子进程继承
+        Write-Host "被测入口：$UiBase（复用；不启动 dev server）"
+    } catch {
+        Write-Host "被测入口不可达：$UiBase —— $($_.Exception.Message)"
+        Write-Host "提示：先起网页容器（bash scripts/web-up.sh）或不带 -UiBase 改用 dev server"
+        exit 2
+    }
+} elseif (Test-Port $uiPort) {
     Write-Host "dev server 已在 :$uiPort 监听，复用"
 } else {
     Write-Host "启动 frontend dev server（:$uiPort）..."
