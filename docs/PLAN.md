@@ -203,6 +203,49 @@
 ---
 
 ## 6. 本轮变更记录
+### 2026-10-07（S1：网页端「正式版」容器 —— 不再依赖开发服务器）
+
+> 来源：《优化建议与待确认事项》**S1**。目标：网页**一条命令长期可用**，不再需要命令行窗口，
+> 消除"开发服务器随会话被回收 → 用户点开链接打不开"（上一轮真实发生过的交付失误）。
+
+**方案对比（为什么选 A′）**
+
+| 方案 | 做法 | 优点 | 缺点 | 结论 |
+|---|---|---|---|---|
+| A 容器内多阶段构建 | node 构建 + nginx 托管 | 镜像自包含、CI 友好 | **本机拉不到 `node:22-alpine`**（Docker Hub 不可达）、`npm ci` 数分钟 | ✗ 本机不可行 |
+| **A′ 宿主构建 + COPY dist** | 宿主 `npm run build` → 镜像只含 nginx + dist | **与项目既有约定一致**（各服务镜像都是"宿主产 jar → COPY"）；构建秒级；离线可用 | 需宿主 Node（本机已有）；改前端后要重跑一次脚本 | ✅ **采用** |
+| B 把 dist 挂载进 nginx 容器 | volume 挂宿主目录 | 改前端免重建镜像 | 依赖宿主路径、可移植性差、与既有约定不符 | 备选 |
+| C 守护化开发服务器 / `vite preview` | 继续用开发态服务 | 改动最小 | 仍是开发态（性能/稳定性差），不解决诉求 | ✗ |
+
+**实现（5 处）**：`frontend/Dockerfile`（nginx:1.27-alpine + COPY dist + HEALTHCHECK）、
+`frontend/nginx.conf`（SPA 兜底 + `/api`、`/sandbox` 同源反代 + `client_max_body_size 16m` + 静态长缓存 + index 不缓存）、
+`frontend/.dockerignore`、`docker-compose.yml` 新增 `duoduo-web-app`（8088→80，`restart: unless-stopped`，依赖网关）、
+`scripts/web-up.sh`（一条命令：构建 → 打镜像 → 起容器 → 自检）。
+
+**为什么不改后端**：前端构建时 `VITE_API_BASE` 留空即**同源**，由 nginx 反代 `/api` 到网关 →
+浏览器始终同源 → httpOnly Cookie 正常携带、无跨域预检、**CORS 白名单一个字都不用改**。
+
+**三个坑（都已写进源码注释）**
+1. **`.dockerignore` 把 `dist` 排除了** → 构建报 `"/dist": not found`。dist 正是要被托管的产物，不能排除。
+2. **`proxy_set_header Host $host` 导致 403**：`$host` **不带端口**，而浏览器发的 `Origin` 是 `http://localhost:8088`；
+   网关据此判定"Origin 与 Host 不同源"→ 按跨域处理 → 8088 不在白名单 → 匿名访问 `/api/auth/refresh` 返回 **403**。
+   同一份代码在开发态不出现（vite proxy 用 `changeOrigin` 转发成 `localhost:8080`）→ 属**"换了入口才暴露"**的问题，
+   也再次说明「换入口/改共用件必须重跑既有套件」。改用 **`$http_host`**（带端口）后恢复 401。
+3. **本机 Docker Hub 不可达**（`registry-1.docker.io` 与多个常见镜像源均 000），只有 `docker.1panel.live` 可达 →
+   经该源拉取 `nginx:1.27-alpine` 并 retag 成本地标准名。**属一次性应急手段**，长期应给 Docker Desktop 配代理或镜像源。
+
+**验证（可核验）**
+- 容器：`duoduo-app-web` **Up (healthy)**、`0.0.0.0:8088->80`；`docker compose up -d` **全栈 11 容器全 healthy**。
+- 接口层：首页 200 + `Server: nginx/1.27.5` + index `no-store`；`/assets/*` 30 天 `immutable`；
+  **同源** `/api/products` → 200 真实 JSON；SPA 路由 `/messages/123456` → 200（不是 404）；
+  `nginx -T` 确认 `client_max_body_size 16m` 与 3 处反代指向网关。
+- 浏览器层：**对 8088 跑既有套件（不新写测试）** —— home 9/0、header-layout 88/0、notice-chat-follow 42/0
+  → 证明容器承载的是**真应用**（含登录 Cookie、写操作、角色界面）。
+- 无回归：开发态（5173）home 9/0、header-layout 88/0 仍全绿。
+
+**遗留**：① 改前端后需重跑 `scripts/web-up.sh`（刻意不做热更新——正式版不该带开发态特性）；
+② 首次构建依赖本地已有 `nginx:1.27-alpine`（见坑 3）；③ 未做 HTTPS/域名/对外暴露（本机自用；对外部署见 D10）。
+
 ### 2026-10-07（第七十四轮续 · R74-3~R74-6：恒 false 的 isAdmin / 通知·私信·关注 e2e / Web 私信页 / 图表主题）
 
 > 用户指令：按既定计划依次推进剩余待办，每项说明改动、涉及文件与注意点。**顺序按依赖做了一处调整**：

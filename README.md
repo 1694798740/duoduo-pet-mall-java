@@ -545,8 +545,8 @@ real（jscode2session）/ 未配置（503）；secret 只走环境变量，日�
 中间件与业务服务**全部容器化**，一条命令起全套：
 
 ```bash
-docker compose up -d          # 起 10 个容器（3 中间件 + 7 业务服务）
-docker ps                     # 期望：10 个容器全是 healthy
+docker compose up -d          # 起 11 个容器（3 中间件 + 7 业务服务 + 1 网页端）
+docker ps                     # 期望：11 个容器全是 healthy
 
 # 可选：检索加速层（A10）。刻意挂 profile，默认不起 —— 不起时检索自动走 MySQL
 docker compose --profile search up -d duoduo-es
@@ -557,12 +557,28 @@ docker compose --profile mq up -d rocketmq-namesrv rocketmq-broker
 DUODUO_TRADE_ORDER_MODE=queue docker compose up -d --force-recreate duoduo-trade-app
 ```
 
+### 网页端（正式版）：一条命令，不必常开命令行窗口（S1）
+
+```bash
+bash scripts/web-up.sh        # ① 构建前端产物 ② 打镜像 ③ 起容器（对外 8088）
+```
+
+打开 **http://localhost:8088/** 即可（运营账号 `13684295254` / `duoduo12345`）。
+容器内部：nginx 托管打包后的静态文件，并**同源反代** `/api` 与 `/sandbox` 到网关 ——
+浏览器始终同源，httpOnly Cookie 正常携带、无跨域预检、**后端 CORS 白名单无需改动**。
+
+> **为什么不再用开发服务器**：`npm run dev` 起的服务**随终端/会话关闭就被回收**（曾导致"点开链接打不开"）；
+> 正式版容器带 `restart: unless-stopped`，长期可用、开机自启，也不需要任何命令行窗口。
+> 改了前端代码后重跑一次 `bash scripts/web-up.sh` 即可（约 30 秒）。
+> 手动等价三步：`cd frontend && npm run build` → `docker compose build duoduo-web-app` → `docker compose up -d duoduo-web-app`。
+
 | 容器 | 镜像 | 端口 | 说明 |
 |---|---|---|---|
 | `duoduo-mysql` | mysql:8.0.36 | 3306 | **五个库**：`duoduo_user` / `duoduo_product` / `duoduo_trade` / `duoduo_fulfilment` / `duoduo_marketing`（`nacos` 库由 Nacos 自建） |
 | `duoduo-redis` | redis:7.2-alpine | 6379 | 缓存与分布式能力预留 |
 | `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 8 个服务**（网关 + 7 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
+| `duoduo-app-web` | duoduo/duoduo-web:1.0.0 | 8088 | **网页端（S1）**：nginx 托管前端产物 + 同源反代 `/api`、`/sandbox` 到网关；起法 `bash scripts/web-up.sh` |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
@@ -659,6 +675,7 @@ node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项�
 node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 28 项（**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403）
 node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 21 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 未登录入口可发现性 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
+UI_BASE=http://localhost:8088 node scripts/e2e/home-ui-check.mjs   # 网页容器验收（S1）：同一套测试换个入口跑，证明容器承载的是**真应用**（另可跑 header-layout / notice-chat-follow）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
 # ================= 小程序「无浏览器」自动化测试 =================

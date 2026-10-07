@@ -1,0 +1,18 @@
+# 构建上下文排除项（S1）
+#
+# 为什么需要：frontend 目录里有 node_modules（数百 MB、几万个文件）。
+# 若把它一起送进构建上下文，镜像构建会明显变慢，而且宿主机的依赖可能与镜像内结构不一致，
+# 出现莫名其妙的构建失败。
+node_modules
+
+# ⚠️ 注意：**不能排除 dist** —— 它是本镜像要托管的构建产物（`COPY dist /usr/share/nginx/html`）。
+#    第一版这里误排除了 dist，构建报 `"/dist": not found`；dist 体积很小（约 1MB），无所谓。
+
+# 截图等与构建产物无关的大目录
+docs/screenshots
+
+# 其它无需进镜像的东西
+.git
+.gitignore
+.DS_Store
+*.log

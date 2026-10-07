@@ -70,7 +70,8 @@
 ```
 
 > **落地现状（2026-09-24）**：图中 8 个业务服务里，`gateway` / `user` / `product` / `trade` / `fulfilment` /
-> `marketing` / `ai` **7 个已落地并容器化**（共 **10 个容器** = mysql + redis + nacos 3 个中间件 + 7 个业务服务；
+> `marketing` / `ai` **7 个已落地并容器化**（共 **11 个容器** = mysql + redis + nacos 3 个中间件 + 7 个业务服务
+> + **1 个网页端** `duoduo-app-web`（S1：nginx 托管前端产物并同源反代 `/api` 到网关，对外 8088）；
 > 另有**可选容器 `duoduo-es`**，compose `profile=search` 默认不起）；
 > 图中**营销块的「优惠券」已落地**（活动 / 会员 / 积分仍未做）；`duoduo-admin`（8087）
 > 未落地（平台后台能力目前由交易 / 商品 / 用户域的 `/api/admin/**` 提供）。

@@ -465,6 +465,27 @@ services:
       duoduo-ai-app:
         condition: service_healthy
 
+  # ---------- 网页端「正式版」容器（S1） ----------
+  #
+  # 为什么要它：此前网页只能靠开发模式（vite dev server）访问，需要开命令行窗口，
+  # 且那种服务随会话关闭就被回收（用户点开链接看到"无法访问"）。
+  # 本服务把打包好的静态页交给 nginx，并**同源反代** /api 与 /sandbox 到网关：
+  #   · 一条 `docker compose up -d` 即可长期使用，不再依赖任何命令行窗口；
+  #   · 浏览器始终同源 → httpOnly Cookie 正常、无跨域预检、**后端 CORS 白名单无需改动**。
+  duoduo-web-app:
+    container_name: duoduo-app-web
+    image: duoduo/duoduo-web:1.0.0
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '8088:80'
+    # 网关没有定义 healthcheck，所以这里用 service_started（用 service_healthy 会直接报错）
+    depends_on:
+      duoduo-gateway-app:
+        condition: service_started
+
 volumes:
   mysql-data:
   redis-data:
