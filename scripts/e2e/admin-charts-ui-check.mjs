@@ -7,6 +7,11 @@
  * 图表**不阻塞**报表卡（图慢的时候数字要能先看到）、权限边界。
  *
  * 用法：node scripts/e2e/admin-charts-ui-check.mjs
+ *
+ * **E6b 改动**：后台页此前由**商城入口**的 `${UI}/admin` 驱动；E5 把后台从商城摘除后，
+ * 商城站点已无 `/admin` 路由，故改指后台**独立站点**（`ADMIN_UI`）。
+ * Cookie 注入的 domain 也必须随之改成后台主机名 —— Cookie 是**主机级**作用域，
+ * 注入到 `localhost` 后浏览器在 `admin.localhost` 上根本不会带上它（表现是"会话丢了、停在登录页"）。
  */
 
 import path from 'node:path';
@@ -16,7 +21,10 @@ import { mysql } from '../lib/docker-exec.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
+/** 商城站点：本套件只在改造说明里提及，实际断言全部在后台站点 */
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 平台管理后台**独立站点**（图表页在这里） */
+const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
 const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const PW_CORE =
   process.env.PW_CORE ??
@@ -70,7 +78,7 @@ async function newOperator(nickname) {
     if (role === 'OPERATOR') break;
   }
   await call('POST', '/api/auth/login', { phone, password: PWD }, jar);
-  return { jar, role };
+  return { jar, role, phone };
 }
 
 // ---------------- 夹具 ----------------
@@ -148,13 +156,13 @@ const RING_POINTS = (() => {
 step('① 运营视角 · 四类图与即时 tooltip');
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1200 }, locale: 'zh-CN' });
-  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'admin.localhost', path: '/' })));
   const page = await ctx.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
 
-  await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
+  await page.goto(`${ADMIN_UI}/admin`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2800);
 
   const body = await page.locator('body').innerText();
@@ -202,9 +210,9 @@ step('① 运营视角 · 四类图与即时 tooltip');
 step('② 权限边界 · 普通用户看不到后台');
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN' });
-  await ctx.addCookies([...buyerJar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  await ctx.addCookies([...buyerJar].map(([name, value]) => ({ name, value, domain: 'admin.localhost', path: '/' })));
   const page = await ctx.newPage();
-  await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
+  await page.goto(`${ADMIN_UI}/admin`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
   const body = await page.locator('body').innerText();
   check('普通用户访问 /admin 看到拦截页（不是白屏）', body.includes('需要运营或管理员身份'), body.slice(0, 150));
@@ -225,9 +233,9 @@ step('③ 图表主题：不跟随系统深色（避免与浅色卡片打架）'
     colorScheme: 'dark',
   });
   // 复用运营会话（与①同姿势）
-  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'admin.localhost', path: '/' })));
   const page = await ctx.newPage();
-  await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
+  await page.goto(`${ADMIN_UI}/admin`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1500);
 
   const themeProbe = await page.evaluate(() => {
@@ -249,6 +257,13 @@ step('③ 图表主题：不跟随系统深色（避免与浅色卡片打架）'
   await page.screenshot({ path: path.join(SHOTS, 'admin-charts-darkpref.png'), fullPage: true });
   await ctx.close();
 }
+
+// ---------------- 收尾：运营夹具降权（不留多余后台入口） ----------------
+// 与 seckill / share-report 同一处置：e2e 用「随机手机号 + 库提权」建的 OPERATOR
+// 必须收尾降权，否则每跑一次就在库里多留一个**能登录平台后台**的账号。
+await mysql('duoduo_user', `UPDATE t_user SET role='USER' WHERE phone='${op.phone}';`);
+const opRoleAfter = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE phone='${op.phone}';`)).trim();
+check('★ 收尾：运营夹具已降权回 USER（不留多余后台入口）', opRoleAfter === 'USER', opRoleAfter);
 
 await browser.close();
 

@@ -25,7 +25,11 @@
  *   运营要看轨迹，应在运营工作台里单独开入口，那是另一个增量。
  *   把「运营在买家页看不到轨迹」写成断言，等于把设计记录成缺陷。
  *
- * 前置：后端 8 容器在跑（网关 :8080）、frontend dev server 在跑（见下方端口说明）
+ * 前置：后端 9 容器在跑（网关 :8080）、三站点容器（商城 8088 / 平台后台 8090 / 商家 8091）
+ *
+ * **E6b 改动**：卖家的订单详情页（`/seller/orders/:no`）此前由**商城入口**驱动；
+ * E6 把商家从商城摘除后，商城站点上已无 `/seller/*` 路径，故改为**商家独立站点**（`MERCHANT`），
+ * 卖家登录也改在商家站点自己的登录页 —— 三端会话互不共享（Cookie 是主机级作用域）。
  *
  * ⚠️ 必须用 http://localhost:<port>，不能用 http://127.0.0.1:<port>：
  *    网关 CORS_ORIGINS 白名单只认 `localhost`，带 127.0.0.1 的 Origin 会被判非法跨域（403）。
@@ -55,6 +59,8 @@ const FUL = process.env.FULFILMENT ?? 'http://127.0.0.1:8084';
 const INTERNAL_TOKEN_HEADER = () => ({ 'X-Internal-Token': newInternalToken('POST') });
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 第三方商家**独立站点**（卖家订单详情页在这里）。E6b：商家已从商城站点摘除。 */
+const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
@@ -164,12 +170,20 @@ async function newUser(prefix) {
   return { phone, jar };
 }
 
-const loginUi = async (p, phone) => {
-  await p.goto(`${UI}/login`, { waitUntil: 'networkidle' });
+/**
+ * 登录到**指定站点**。E6b：三端独立部署后会话**不跨站点**（Cookie 是主机级作用域、不区分端口），
+ * 卖家的订单详情页在商家独立站点上，所以卖家必须在**商家站点自己的登录页**登录，
+ * 否则会停在登录页（表现是后续断言连片超时，很容易被误读成"页面挂了"）。
+ *   · 默认 'mall'：商城站点（买家 / 他人视角）
+ *   · 'merchant'：商家站点（卖家视角）
+ */
+const loginUi = async (p, phone, site = 'mall') => {
+  const base = site === 'merchant' ? MERCHANT : UI;
+  await p.goto(`${base}/login`, { waitUntil: 'networkidle' });
   await p.getByPlaceholder('11 位手机号').fill(phone);
   await p.getByPlaceholder('请输入密码').fill(PWD);
   await p.getByRole('button', { name: /^登录$/ }).click();
-  await p.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 });
+  await p.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 20000 });
 };
 
 // ---------------- 1. 夹具 ----------------
@@ -362,8 +376,8 @@ await shot(pb, 'lg_buyer_not_shipped.png');
 // ---- 卖家：看到同一份轨迹 ----
 step('UI：卖家订单详情页看到与买家一致的轨迹');
 const ps = await openCtx();
-await loginUi(ps, seller.phone);
-await ps.goto(`${UI}/seller/orders/${orderNo}`, { waitUntil: 'networkidle' });
+await loginUi(ps, seller.phone, 'merchant');
+await ps.goto(`${MERCHANT}/seller/orders/${orderNo}`, { waitUntil: 'networkidle' });
 await ps.waitForTimeout(1200);
 t = await bodyText(ps);
 check('卖家订单详情页出现「物流轨迹」', t.includes('物流轨迹'), t.slice(0, 120));
@@ -404,7 +418,7 @@ check('已完成订单页仍渲染 4 条轨迹节点', (await rows(pb).count()) 
 check('已完成订单页仍是同一个顺序（轨迹不被终结流程重排）', JSON.stringify(await nodeCodes(pb)) === JSON.stringify(EXPECTED_SEQ), await nodeCodes(pb));
 await shot(pb, 'lg_buyer_completed.png');
 
-await ps.goto(`${UI}/seller/orders/${orderNo}`, { waitUntil: 'networkidle' });
+await ps.goto(`${MERCHANT}/seller/orders/${orderNo}`, { waitUntil: 'networkidle' });
 await ps.waitForTimeout(1200);
 check('卖家端在已完成订单上同样看得到轨迹（售后举证要用）', (await rows(ps).count()) === 4, await rows(ps).count());
 

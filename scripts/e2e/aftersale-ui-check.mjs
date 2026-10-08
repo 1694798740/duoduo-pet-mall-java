@@ -11,7 +11,12 @@
  *   买家下单 → 申请售后 → 卖家拒绝（必填原因）→ 买家申请平台仲裁 → 运营裁定支持退款
  * 并断言每一步在**页面上**真的能看到对应状态，最后回接口层确认钱真的退了。
  *
- * 前置：后端 8 容器在跑（网关 :8080）、frontend dev server 在跑（见下方端口说明）
+ * 前置：后端 9 容器在跑（网关 :8080）、三站点容器（商城 8088 / 平台后台 8090 / 商家 8091）
+ *
+ * **E6b 改动**：卖家页（`/seller/after-sales`）与运营页（`/admin/after-sales`）此前都由
+ * **商城入口**驱动；E5/E6 把后台与商家从商城摘除后，商城站点上已无这两条路径，
+ * 故改为各自的**独立站点**（商家 `MERCHANT` / 后台 `ADMIN_UI`），登录也按站点拆分 ——
+ * 三端会话互不共享（Cookie 主机级作用域），在哪个站点操作就必须在那个站点登录。
  *
  * ⚠️ 必须用 http://localhost:<port>，不能用 http://127.0.0.1:<port>：
  *    网关 CORS_ORIGINS 白名单只认 `localhost`，带 127.0.0.1 的 Origin 会被判非法跨域（403）。
@@ -36,6 +41,10 @@ import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 平台管理后台**独立站点**（运营仲裁页在这里） */
+const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
+/** 第三方商家**独立站点**（店铺售后页在这里） */
+const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
@@ -115,12 +124,21 @@ async function newUser(prefix) {
   return { phone, jar };
 }
 
-const loginUi = async (p, phone) => {
-  await p.goto(`${UI}/login`, { waitUntil: 'networkidle' });
-  await p.getByPlaceholder('11 位手机号').fill(phone);
+/**
+ * 登录到**指定站点**。E6b：三端独立部署后会话**不跨站点**（Cookie 是主机级作用域、不区分端口），
+ * 所以在哪个站点上操作，就必须在**那个站点自己的登录页**登录 —— 这正是本次要修的东西。
+ *   · 默认 'mall'：商城站点（买家视角），placeholder「11 位手机号」
+ *   · 'admin'：平台后台站点，placeholder「请输入平台账号手机号」，登录后落在 /admin
+ *   · 'merchant'：商家站点，placeholder 与商城一致，登录后落在 /seller（或入驻引导）
+ */
+const loginUi = async (p, phone, site = 'mall') => {
+  const base = site === 'admin' ? ADMIN_UI : site === 'merchant' ? MERCHANT : UI;
+  // 后台入口取 /admin.html（真入口），未登录时后台外壳会落到自有登录页；另两个站点直接进 /login
+  await p.goto(site === 'admin' ? `${base}/admin.html` : `${base}/login`, { waitUntil: 'networkidle' });
+  await p.getByPlaceholder(site === 'admin' ? '请输入平台账号手机号' : '11 位手机号').fill(phone);
   await p.getByPlaceholder('请输入密码').fill(PWD);
   await p.getByRole('button', { name: /^登录$/ }).click();
-  await p.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 });
+  await p.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 20000 });
 };
 
 step('准备夹具：买家 / 卖家 / 运营 三个账号');
@@ -242,9 +260,9 @@ await shot(pb, 'as_buyer_detail_pending.png');
 // ---- 卖家：拒绝（必填原因） ----
 step('UI：卖家在店铺售后页拒绝，且拒绝原因必填');
 const ps = await openCtx();
-await loginUi(ps, seller.phone);
+await loginUi(ps, seller.phone, 'merchant');
 
-await ps.goto(`${UI}/seller/after-sales`, { waitUntil: 'networkidle' });
+await ps.goto(`${MERCHANT}/seller/after-sales`, { waitUntil: 'networkidle' });
 await ps.waitForTimeout(1000);
 t = await bodyText(ps);
 check('卖家售后页出现「商家端 · 售后服务」', t.includes('售后服务'), t.slice(0, 80));
@@ -299,9 +317,9 @@ await shot(pb, 'as_buyer_arbitrating.png');
 // ---- 运营：裁定支持退款 ----
 step('UI：运营在后台裁定支持退款');
 const po = await openCtx();
-await loginUi(po, operator.phone);
+await loginUi(po, operator.phone, 'admin');
 
-await po.goto(`${UI}/admin/after-sales`, { waitUntil: 'networkidle' });
+await po.goto(`${ADMIN_UI}/admin/after-sales`, { waitUntil: 'networkidle' });
 await po.waitForTimeout(1000);
 t = await bodyText(po);
 check('运营后台出现「售后仲裁」', t.includes('售后仲裁'), t.slice(0, 80));

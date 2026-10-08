@@ -506,6 +506,22 @@ services:
       duoduo-gateway-app:
         condition: service_started
 
+  # ---------- 第三方商家平台站点（E6：独立端口 + 独立主机名 + 独立登录） ----------
+  duoduo-merchant-web-app:
+    container_name: duoduo-app-merchant-web
+    image: duoduo/duoduo-web:1.0.0-merchant
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NGINX_CONF: nginx-merchant.conf
+    restart: unless-stopped
+    ports:
+      - '8091:80'
+    depends_on:
+      duoduo-gateway-app:
+        condition: service_started
+
 volumes:
   mysql-data:
   redis-data:

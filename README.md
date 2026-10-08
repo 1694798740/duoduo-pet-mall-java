@@ -4,6 +4,21 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**E6 / E6b（2026-10-08，用户要求：三平台**完全独立部署**）** — **商城 / 平台管理后台 / 第三方商家平台各自独立站点、独立端口、独立登录，互不共享会话；顺带修掉门禁「假通过」缺陷**。
+
+**① 三站点落地（E5 后台 + E6 商家）**。单应用**多入口**构建：Vite `rollupOptions.input = { main: index.html, admin: admin.html, merchant: merchant.html }`，同一份源码产出三个 HTML 入口，各挂各自的 Root（`AdminRoot` / `MerchantRoot`）。compose 新增 `duoduo-admin-web-app`（**8090**）与 `duoduo-merchant-web-app`（**8091**）；商城站点删掉 9 个后台页面 + 6 个商家页面的导入与路由。
+- **隔离必须换主机名，不能只换端口**：Cookie 是**主机级**作用域（不带 `Domain` 时 host-only）且**不区分端口** —— `localhost:8088` 与 `localhost:8090` 是同一个 Cookie 域，端口隔离等于没隔离。故后台走 `admin.localhost:8090`、商家走 `merchant.localhost:8091`（浏览器按 RFC 6761 把 `*.localhost` 解析到本机）。
+- **后台 / 商家各有自己的登录页**：此前未登录时提示「去商城登录」，那是**平台依赖商城**的耦合点；现在入口、页面、运行站点都在各自那一侧，商城下线不影响另两端。后端账号体系仍是同一套（一个账号中心），但**入口与会话分开**。
+- **角色判定抽到中立模块** `frontend/src/lib/roles.ts`（`isOperator` / `isAdminRole` / `canAccessSellerConsole`）：原先商城只要引用一个判定函数，就会把整个后台 / 商家 UI 打进商城产物 —— 抽出来后才真正「摘干净」，并用**产物闭包扫描**（跟随 entry HTML 的静态导入闭包逐 chunk 搜特征串）验证。
+
+**② E6b：五套 e2e 改指向独立站点**。后台与商家从商城摘除后，仍通过**商城入口**驱动后台 / 商家页面的套件会红 —— 那是**预期变化**，不是回归。逐套改为各站点的**独立地址 + 独立登录页**（引入 `ADMIN_UI_BASE` / `MERCHANT_UI_BASE`）：
+- `seckill`（65 项）、`share-report`（32 项）、`admin-charts`（32 项）→ 后台站点 `admin.localhost:8090`；`aftersale`（44 项，卖家页 + 运营页**分别**指向两个站点）、`logistics`（44 项）→ 商家站点 `merchant.localhost:8091`。
+- **Cookie 注入的 domain 也必须一起改**：注入到 `localhost` 后浏览器在 `admin.localhost` 上根本不会带上它（表现是「会话丢了、停在登录页」），很容易被误读成页面坏了。
+- **顺手修掉两处测试脆弱性**：`share-report` 原先依赖**硬编码的历史运营账号** `13688774031`，而该账号已被 T2b 清库删除 → 改为**随机手机号 + 库提权**自建夹具（符合本仓「每个用例自建前置」的纪律）；`seckill` / `share-report` / `admin-charts` 的运营夹具**收尾降权回 USER** —— 此前每跑一次就在库里留一个**永久 OPERATOR**，而 OPERATOR 正是能登录平台后台的角色，等于每个测试账号都是一个多余的后台入口。
+- `web-up.sh` 从「起 1 个站点」改为「**起 3 个站点并逐个自检**」（一条命令 = 三端就绪）。
+
+**③ 修掉门禁「假通过」缺陷**。`scripts/e2e/run-ui-checks.ps1` 此前**没有退出码**（恒以 0 结束），而上层 `check-all.ps1` 只看子进程退出码 → **套件已经红了、门禁却报通过**。这种假通过比红灯更危险：红灯会被修，假通过会被信。已补 `exit 1` 并用**反向验证**确认（停用新逻辑应恰好红掉对应几条）。
+
 **R59（2026-09-30，用户要求：按《未完成项清单》优先级全量开工）** — **券口径固化 / 调度选主 / 内部凭据升级 / 角色升级即时生效 / 发布限流 / 路径消歧 / 零单测模块补测 / 文档同步 / AI 加强 6 项**。
 
 **① P0-2 定时任务选主（多实例去重跑）**。新增 `common-web` 的 `SchedLeaderLock` + 表 `docs/sql/incremental/23-r58-sched-leader.sql`（主键即锁名，`expire_at` 自动过期，崩溃/被杀无需显式释放）。
@@ -581,6 +596,8 @@ bash scripts/web-up.sh        # ① 构建前端产物 ② 打镜像 ③ 起容�
 ```
 
 打开 **http://localhost:8088/** 即可（运营账号 `13684295254` / `duoduo12345`）。
+**三端各自独立**（E6）：平台管理后台 **http://admin.localhost:8090/console**、第三方商家平台 **http://merchant.localhost:8091/workspace** ——
+三个站点**会话互不共享**（Cookie 是主机级作用域且不区分端口，所以隔离靠的是**主机名**而不是端口）。
 容器内部：nginx 托管打包后的静态文件，并**同源反代** `/api` 与 `/sandbox` 到网关 ——
 浏览器始终同源，httpOnly Cookie 正常携带、无跨域预检、**后端 CORS 白名单无需改动**。
 
@@ -596,6 +613,8 @@ bash scripts/web-up.sh        # ① 构建前端产物 ② 打镜像 ③ 起容�
 | `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 8 个服务**（网关 + 7 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-web` | duoduo/duoduo-web:1.0.0 | 8088 | **网页端（S1）**：nginx 托管前端产物 + 同源反代 `/api`、`/sandbox` 到网关；起法 `bash scripts/web-up.sh` |
+| `duoduo-app-admin-web` | duoduo/duoduo-web:1.0.0-admin | 8090 | **平台管理后台（E5）**：同一份产物 + `nginx-admin.conf` 独立主机名 `admin.localhost`（短地址 `/console`）；入口 `admin.html`，**自有登录页**，会话与商城**完全隔离** |
+| `duoduo-app-merchant-web` | duoduo/duoduo-web:1.0.0-merchant | 8091 | **第三方商家平台（E6）**：同一份产物 + `nginx-merchant.conf` 独立主机名 `merchant.localhost`（短地址 `/workspace`）；入口 `merchant.html`，**自有登录页**，会话与商城、后台**互不共享** |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |
@@ -668,11 +687,15 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（15 套） =================
-# 一键跑：起 dev server → 跑 15 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（17 套） =================
+# 一键跑：起 dev server → 跑 17 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
+# 打**容器入口**（真应用，而不是开发态）：给了 -UiBase 就不再启 dev server
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -UiBase http://localhost:8088
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
+# 三端分离后，涉及后台 / 商家页面的套件通过站点常量定位，可单独覆盖：
+#   ADMIN_UI_BASE=http://admin.localhost:8090   MERCHANT_UI_BASE=http://merchant.localhost:8091
 
 # 也可手工跑（默认 UI_BASE=http://localhost:5173）：
 cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
@@ -680,16 +703,16 @@ cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --hos
 cd .. && node scripts/e2e/home-ui-check.mjs           # 首页 7 项：非白屏 / 可点击 / 真点进详情 / 无非预期接口错误
 node scripts/e2e/seller-ui-check.mjs                 # 商家端 29 项
 node scripts/e2e/review-ui-check.mjs                 # 评价与晒单 24 项（含夹具后把商品评分**回写复原**，否则会给下一套留下「N 条评价」脏数据）
-node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买家→卖家→运营整条链）
-node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在）
+node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买家[商城]→卖家[商家站点]→运营[后台站点]整条链，**三端各自登录**）
+node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在；卖家页走**商家独立站点**）
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
-node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 24 项（摘要可见 / 默认不下架 / 驳回不误删 / 非运营拦截）
+node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 32 项（后台独立站点 / 摘要可见 / 默认不下架 / 驳回不误删 / **非运营在后台登录页被拒 + 接口 403 纵深** / 夹具自建与收尾降权）
 node scripts/e2e/notice-chat-follow-ui-check.mjs       # 通知 / 私信 / 关注 42 项（分类 chip **逐个真筛**、私信发送与非互关限一条、关注/粉丝名单、互关后恢复可发；自清理）
-node scripts/e2e/seckill-ui-check.mjs                # 秒杀 63 项（新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 / **后台编辑落库** / **有未关闭订单的活动删除被拒且行仍在** / **无订单活动可删** / **订单全关闭后可删且不留残留**）
+node scripts/e2e/seckill-ui-check.mjs                # 秒杀 65 项（后台独立站点；新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 / **后台编辑落库** / **有未关闭订单的活动删除被拒且行仍在** / **无订单活动可删** / **订单全关闭后可删且不留残留** / 夹具收尾降权）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 39 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 88 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达 + **下拉可用 Esc/点外部关闭**）
 node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
-node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 28 项（**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403）
+node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 32 项（后台独立站点；**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403 + 夹具收尾降权）
 node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 21 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 未登录入口可发现性 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
 UI_BASE=http://localhost:8088 node scripts/e2e/home-ui-check.mjs   # 网页容器验收（S1）：同一套测试换个入口跑，证明容器承载的是**真应用**（另可跑 header-layout / notice-chat-follow）

@@ -19,8 +19,14 @@
  *     一律 EBUSY errno -4082，只有异步 spawn 可用）；
  *   · 运营账号是**随机手机号 + 提权走库**，绝不把既有账号改成 OPERATOR。
  *
- * 前置：9 容器在跑（网关 :8080）；frontend dev server 在 :5173（run-ui-checks.ps1 会托管）。
- * ⚠️ 必须用 http://localhost:5173，不能用 127.0.0.1 —— 网关 CORS 白名单只认 localhost。
+ * 前置：9 容器在跑（网关 :8080）；三个站点容器（商城 8088 / 后台 8090 / 商家 8091）。
+ * ⚠️ 不能用 127.0.0.1 访问站点 —— 网关 CORS 白名单只认 localhost 系主机名。
+ *
+ * **E6b 改动（重要）**：后台页此前是通过**商城入口**的 `/admin/seckill` 驱动的；
+ * E5 把后台从商城摘除后，商城站点已**没有** `/admin/*` 路由，本套件第 3 段与 R74 段
+ * 因此从「红」变成**预期必须改**：现在一律走后台**独立站点** `${ADMIN_UI}/admin/seckill`。
+ * 登录也随之拆开：C 端抢购走商城登录（`loginMall`），后台管理走后台自己的登录页（`loginAdmin`）——
+ * 这正是三端独立部署要验的性质（两边会话互不共享）。
  *
  * 用法：node scripts/e2e/seckill-ui-check.mjs
  */
@@ -32,7 +38,10 @@ import { mysql } from '../lib/docker-exec.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
+/** 商城站点（C 端）：容器化后为 http://localhost:8088；dev server 模式为 5173 */
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 平台管理后台**独立站点**（E5/E6：不同主机名 → 独立会话 + 独立登录页） */
+const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const PW_CORE =
   process.env.PW_CORE ??
@@ -157,7 +166,8 @@ async function newPage() {
   return { page, consoleErrors, httpErrors };
 }
 
-async function login(page, phone) {
+/** 商城站点登录（C 端买家） */
+async function loginMall(page, phone) {
   await page.goto(`${UI}/login`, { waitUntil: 'networkidle' });
   await page.getByPlaceholder('11 位手机号').fill(phone);
   await page.getByPlaceholder('请输入密码').fill(PWD);
@@ -165,13 +175,28 @@ async function login(page, phone) {
   await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 });
 }
 
-step('UI：后台秒杀管理页（运营视角）');
+/**
+ * 平台后台**独立站点**登录（运营视角）。
+ * 入口取 `/admin.html`（真入口）而非直达 `/login`：未登录时后台外壳会自行落到自有登录页，
+ * 这样顺带把「后台有自己的登录页、不依赖商城」这条性质也走了一遍。
+ */
+async function loginAdmin(page, phone) {
+  await page.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+  await page.getByPlaceholder('请输入平台账号手机号').fill(phone);
+  await page.getByPlaceholder('请输入密码').fill(PWD);
+  await page.getByRole('button', { name: /^登录$/ }).click();
+  await page.waitForURL((u) => u.pathname === '/admin', { timeout: 15000 });
+}
+
+step('UI：后台秒杀管理页（运营视角 · 后台独立站点）');
 {
   const { page, consoleErrors, httpErrors } = await newPage();
-  await login(page, op.phone);
-  await page.goto(`${UI}/admin/seckill`, { waitUntil: 'networkidle' });
+  await loginAdmin(page, op.phone);
+  await page.goto(`${ADMIN_UI}/admin/seckill`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
+  check('★ 后台站点已独立：URL 落在 admin.localhost（不再是商城主机名）',
+    new URL(page.url()).hostname === new URL(ADMIN_UI).hostname, page.url());
   const body = await page.locator('body').innerText();
   check('后台秒杀页渲染出「平台管理后台 · 秒杀活动」', body.includes('秒杀活动'), body.slice(0, 200));
   check('顶部页签含「秒杀活动」入口', body.includes('秒杀活动'), body.slice(0, 300));
@@ -226,7 +251,7 @@ step('UI：C 端 /seckill 抢购');
   check('C 端列表含本轮活动', body.includes(TITLE), body.slice(0, 500));
   await page.screenshot({ path: path.join(SHOTS, 'seckill_guest.png'), fullPage: true });
 
-  await login(page, buyerPhone);
+  await loginMall(page, buyerPhone);
   await page.goto(`${UI}/seckill`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
@@ -317,8 +342,8 @@ step('幂等：同一 idempotentKey 重复提交');
 step('UI：后台秒杀管理页 · 编辑与删除（R74）');
 {
   const { page, consoleErrors, httpErrors } = await newPage();
-  await login(page, op.phone);
-  await page.goto(`${UI}/admin/seckill`, { waitUntil: 'networkidle' });
+  await loginAdmin(page, op.phone);
+  await page.goto(`${ADMIN_UI}/admin/seckill`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
   const EDITED = `【UI自测】已改名 ${Date.now() % 1000000}`;
@@ -428,6 +453,15 @@ const afterSelfClean = await call('GET', '/api/admin/seckill/activities', undefi
 check('★ 收尾：活动确已从运营列表消失',
   !(afterSelfClean.data ?? []).some((a) => String(a.id) === String(ACT_ID)),
   (afterSelfClean.data ?? []).map((a) => a.id));
+
+// ---------------- 收尾：运营夹具降权（不留多余后台入口） ----------------
+// 与 share-report-ui-check 同一处置：e2e 用「随机手机号 + 库提权」建运营账号后**必须收尾**，
+// 否则每跑一次就在库里多留一个**永久 OPERATOR** —— 而 OPERATOR 正是能登录平台后台的角色，
+// 等于给系统留了一个多余的后台入口（库内已积压数十个同类账号，本次一并开始收口）。
+const opUserId = (await mysql('duoduo_user', `SELECT id FROM t_user WHERE phone='${op.phone}';`)).trim();
+await mysql('duoduo_user', `UPDATE t_user SET role='USER' WHERE id=${opUserId};`);
+const opRoleAfter = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE id=${opUserId};`)).trim();
+check('★ 收尾：运营夹具已降权回 USER（不留多余后台入口）', opRoleAfter === 'USER', opRoleAfter);
 
 await browser.close();
 

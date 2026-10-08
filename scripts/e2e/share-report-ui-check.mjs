@@ -10,23 +10,34 @@
  *   · 「驳回」必须**不动内容** —— 这是接口能测的，但「页面上仍能看到它」只能在这里验。
  *
  * 前置：
- *   后端 9 容器在跑（网关 :8080）；frontend dev server 在跑（见下方端口说明）
+ *   后端 9 容器在跑（网关 :8080）；三站点容器（商城 8088 / 平台后台 8090 / 商家 8091）
  *
- * ⚠️ 必须用 http://localhost:<port>，不能用 127.0.0.1：网关 CORS_ORIGINS 只认 localhost。
- * 端口：默认与其余 e2e 一致用 5173。此前写死 3000 是因为「5173 落在 Windows 排除端口段」，
- *      但那台机器的结论不能当通用事实 —— 本机 5173 可用，写死 3000 反而让
- *      run-ui-checks.ps1 一键跑的时候这一套必然连不上（其余七套都连 5173）。
- *      真遇到端口被排除的机器，用 UI_BASE=http://localhost:3000 覆盖即可。
- *      cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost
+ * ⚠️ 不能用 127.0.0.1 访问站点：网关 CORS_ORIGINS 只认 localhost 系主机名。
+ * 端口：商城站点默认与其余 e2e 一致（容器 8088 / dev server 5173，可用 UI_BASE 覆盖）；
+ *      举报处理台在**后台独立站点**（admin.localhost:8090，可用 ADMIN_UI_BASE 覆盖）。
+ *      真遇到 5173 被系统排除的机器，用 UI_BASE=http://localhost:3000 覆盖商城侧即可。
+ *
+ * **E6b 改动（两处，都是 E5 摘除后台 + T2b 清库之后的「预期变化」）**：
+ *   ① 举报台页面前由**商城入口** `${UI}/admin/share-reports` 驱动；商城摘除后台后该路径
+ *      在商城站点上是「页面不存在」，故改指后台**独立站点** `${ADMIN_UI}/admin/share-reports`，
+ *      登录也改用后台**自有登录页**（`loginAdmin`）。
+ *   ② 运营账号此前是**硬编码的历史账号 13688774031**，而该账号已被 T2b 清库删除 ——
+ *      套件因此从"能过"变成"必红"。按本仓既定纪律（**每个用例自建前置**，不依赖库内既有数据）
+ *      改为**随机手机号 + 库提权**动态建运营夹具，收尾再降权回 USER ——
+ *      顺带消除「每跑一次就在库里多留一个永久 OPERATOR 账号」这个卫生问题。
  *
  * 用法：node scripts/e2e/share-report-ui-check.mjs
- * 环境变量：GATEWAY / UI_BASE / CHROME_PATH / PW_CORE / KEEP_FIXTURE=1
+ * 环境变量：GATEWAY / UI_BASE / ADMIN_UI_BASE / CHROME_PATH / PW_CORE / KEEP_FIXTURE=1
  */
 
 import path from 'node:path';
+import { mysql } from '../lib/docker-exec.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
+/** 商城站点（C 端 / 分享圈） */
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 平台管理后台**独立站点**（举报处理台在这里） */
+const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
@@ -35,7 +46,6 @@ const PW_CORE =
   'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
 
 const PWD = 'duoduo12345';
-const OPERATOR_PHONE = '13688774031'; // 历史运营账号（role=OPERATOR）
 
 let pass = 0;
 const failures = [];
@@ -80,6 +90,26 @@ async function call(method, p, body, jar) {
 
 const tokenOf = (r) => r.json?.data?.accessToken ?? null;
 const uidOf = (r) => r.json?.data?.id ?? null;
+
+// ---------------- 夹具：平台运营账号（自建，不依赖库内既有账号） ----------------
+
+step('夹具：平台运营账号（随机手机号 + 库提权）');
+
+const opJar = new Map();
+const opPhone = '139' + String(Math.floor(1e7 + Math.random() * 8e7));
+const opReg = await call('POST', '/api/auth/register', { phone: opPhone, password: PWD, nickname: '举报台运营-夹具' }, opJar);
+const opId = uidOf(opReg);
+check('夹具：运营账号已注册', !!opId, { s: opReg.status, body: opReg.json?.code });
+
+// 提权走库（重试 5 次，与 seckill-ui-check 同一套路）：**绝不把库内既有账号改成 OPERATOR**
+for (let i = 0; i < 5; i++) {
+  await mysql('duoduo_user', `UPDATE t_user SET role='OPERATOR' WHERE id=${opId};`);
+  const role = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE id=${opId};`)).trim();
+  if (role === 'OPERATOR') break;
+}
+const opLogin = await call('POST', '/api/auth/login', { phone: opPhone, password: PWD }, opJar);
+const opRole = opLogin.json?.data?.role;
+check('★ 夹具：运营账号提权成功（否则后面全是 403，排查方向会整个跑偏）', opRole === 'OPERATOR', opRole);
 
 step('夹具：作者 + 举报人 + 一条待处理举报');
 
@@ -150,12 +180,17 @@ check('夹具：举报人成功举报（PENDING）', !!reportId && reportBody?.d
 const { chromium } = await import(PW_CORE);
 const browser = await chromium.launch({ executablePath: CHROME ?? undefined, args: ['--no-sandbox'] });
 
-async function login(page, phone) {
-  await page.goto(`${UI}/login`, { waitUntil: 'networkidle' });
-  await page.getByPlaceholder('11 位手机号').fill(phone);
+/**
+ * 平台后台**独立站点**登录（运营视角）。
+ * 入口取 `/admin.html`（真入口）而非直达 `/login`：未登录时后台外壳会落到**自有登录页**，
+ * 顺带把「后台不再依赖商城登录」这条性质走一遍。
+ */
+async function loginAdmin(page, phone) {
+  await page.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+  await page.getByPlaceholder('请输入平台账号手机号').fill(phone);
   await page.getByPlaceholder('请输入密码').fill(PWD);
-  await page.getByRole('button', { name: /登录/ }).first().click();
-  await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 20000 });
+  await page.getByRole('button', { name: /^登录$/ }).click();
+  await page.waitForURL((u) => u.pathname === '/admin', { timeout: 20000 });
 }
 
 async function shot(page, name) {
@@ -163,14 +198,16 @@ async function shot(page, name) {
   console.log(`  [截图] frontend/docs/screenshots/${name}`);
 }
 
-step('运营登录并打开举报处理台');
+step('运营登录并打开举报处理台（后台独立站点）');
 
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });
 const page = await ctx.newPage();
-await login(page, OPERATOR_PHONE);
-check('运营登录成功并离开登录页', !page.url().includes('/login'), page.url());
+await loginAdmin(page, opPhone);
+check('运营登录成功并进入后台工作台（不经过商城登录页）', !page.url().includes('/login'), page.url());
+check('★ 后台站点已独立：URL 落在 admin.localhost（不再是商城主机名）',
+  new URL(page.url()).hostname === new URL(ADMIN_UI).hostname, page.url());
 
-await page.goto(`${UI}/admin/share-reports`, { waitUntil: 'networkidle' });
+await page.goto(`${ADMIN_UI}/admin/share-reports`, { waitUntil: 'networkidle' });
 check(
   'U1 页面标题渲染',
   await page.getByText('平台管理后台 · 举报处理').first().isVisible(),
@@ -229,8 +266,7 @@ check(
 
 step('接口层复核：结论落库，且内容未被误删');
 
-const opJar = new Map();
-const opLogin = await call('POST', '/api/auth/login', { phone: OPERATOR_PHONE, password: PWD }, opJar);
+// 运营会话沿用夹具段建的 opJar（共用同一份 cookie，避免为同一账号重复登录一次）
 check('运营 Web 登录（cookie）成功', opLogin.status === 200, opLogin.status);
 
 const rejected = await call(
@@ -269,17 +305,71 @@ const emptyShown = await page
   .catch(() => false);
 check('U16 「已成立」页签不炸（有列表或空态）', !acceptedText.includes(marker) || emptyShown, acceptedText.slice(0, 120));
 
+step('非运营准入：后台站点的两道防线（E6b 后口径变更）');
+
+/*
+ * ⚠️ 口径变更说明（不是"把红改成绿"）：旧套件让普通买家**登录商城后**访问
+ * `${UI}/admin/share-reports`，断言页面上出现「需要运营或管理员身份」——
+ * 那是"商城承载后台"时代的形态。后台独立后：
+ *   · 商城站点已无 /admin/* 路由（再走那条路径只会得到「页面不存在」）；
+ *   · 后台站点有**自有登录页**，非运营账号在**登录这一步**就被挡下（并主动退出会话）。
+ * 所以 U17/U18 断言的是新形态，并补一条**接口层纵深**断言（U19）：
+ * 入口层拿不到 ≠ 接口层能拿到 —— 两道防线都要钉住，缺一条就只剩"看起来安全"。
+ */
+
+// ① 入口层：非运营在后台自有登录页被明确拒绝，且**不留半登录状态**
 const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: 'zh-CN' });
 const p2 = await ctx2.newPage();
-await login(p2, authorPhone); // 普通买家
-await p2.goto(`${UI}/admin/share-reports`, { waitUntil: 'networkidle' });
-check(
-  'U17 ★ 非运营访问 → 看到准入提示（后端 403 之外还有可读解释）',
-  await p2.getByText('需要运营或管理员身份').first().isVisible().catch(() => false),
-  p2.url(),
-);
+await p2.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+check('非运营访问后台站点 → 落在后台自有登录页（不跳商城）',
+  (await p2.getByPlaceholder('请输入平台账号手机号').count()) === 1, p2.url());
+
+await p2.getByPlaceholder('请输入平台账号手机号').fill(authorPhone);
+await p2.getByPlaceholder('请输入密码').fill(PWD);
+await p2.getByRole('button', { name: /^登录$/ }).click();
+await p2.waitForTimeout(2200);
+const deniedText = await p2.locator('body').innerText();
+check('U17 ★ 非运营账号登录后台 → 被明确拒绝并说明原因（「无平台后台权限」）',
+  /无平台后台权限/.test(deniedText), deniedText.slice(0, 200));
+check('U18 ★ 被拒后仍停在登录页，**不进入**后台工作台（不留半登录状态）',
+  p2.url().includes('/login') && !deniedText.includes('举报处理'), p2.url());
 await p2.screenshot({ path: path.join(SHOTS, 'report_4_denied.png'), fullPage: true });
 console.log('  [截图] frontend/docs/screenshots/report_4_denied.png');
+
+// ② 接口层纵深：拿到**有效会话**、绕过入口直接打后台接口 → 必须 403
+const buyerJar = new Map();
+await call('POST', '/api/auth/login', { phone: authorPhone, password: PWD }, buyerJar);
+const forbidden = await call('GET', '/api/admin/share-reports?status=PENDING&page=1&pageSize=10', undefined, buyerJar);
+check('U19 ★ 纵深：非运营会话直接请求后台接口 → 403（入口层拿不到 ≠ 接口层能拿到）',
+  forbidden.status === 403, { status: forbidden.status, code: forbidden.json?.code });
+
+// ---------------- 收尾：不留运营权限与自测内容痕迹 ----------------
+
+step('收尾：夹具账号降权 + 自测分享软删');
+
+if (process.env.KEEP_FIXTURE === '1') {
+  console.log('  [跳过] KEEP_FIXTURE=1：保留夹具与运营权限，便于人工复查');
+} else {
+  /*
+   * ① 运营夹具**降权回 USER**。这是本次顺带处置的一个真实卫生问题：
+   *    此前各 e2e 用「随机手机号 + 库提权」建运营账号后从不收尾，库里已积压数十个
+   *    **永久 OPERATOR**（"后台入口-运营""闲置自测-运营"…），它们全都能登录进平台后台 ——
+   *    等于每个测试账号都是一个多余的后台入口。
+   */
+  await mysql('duoduo_user', `UPDATE t_user SET role='USER' WHERE id=${opId};`);
+  const opRoleAfter = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE id=${opId};`)).trim();
+  check('★ 收尾：运营夹具已降权回 USER（不留多余后台入口）', opRoleAfter === 'USER', opRoleAfter);
+
+  /*
+   * ② 自测靶子内容**软删**（不物理删 —— t_product_share 的既定口径：
+   *    转发单的原帖引用与举报记录都依赖"这条内容曾经存在"这个事实本身）。
+   *    不软删的话，每跑一次就在分享圈留下一条「UI举报靶子…」的测试内容。
+   */
+  await mysql('duoduo_fulfilment', `UPDATE t_product_share SET deleted_at=NOW() WHERE id=${shareId};`);
+  const delFlag = (await mysql('duoduo_fulfilment',
+    `SELECT deleted_at IS NOT NULL FROM t_product_share WHERE id=${shareId};`)).trim();
+  check('★ 收尾：自测分享已软删（不再出现在分享圈）', delFlag === '1', delFlag);
+}
 
 await browser.close();
 
