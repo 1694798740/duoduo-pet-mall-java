@@ -28,6 +28,12 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 900,
     rollupOptions: {
+      // 多入口（T3）：商城 index.html + 平台管理后台 admin.html。
+      // 后台因此拥有独立产物与独立网址；商城产物不再需要承载后台入口。
+      input: {
+        main: 'index.html',
+        admin: 'admin.html',
+      },
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
