@@ -25,6 +25,8 @@ import { mysql } from '../lib/docker-exec.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 商家工作台独立站点（E6）：商家页面已从商城摘除，本套件的被测页面都在商家站点上。 */
+const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
 const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const PW_CORE =
   process.env.PW_CORE ??
@@ -171,13 +173,15 @@ const RING_POINTS = (() => {
 step('① 运营视角 · 五张图渲染 / 数据一致 / 悬停即时');
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1100 }, locale: 'zh-CN' });
-  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  // ★ 商家页面在**独立主机名**上（E6）：Cookie 必须注入到 merchant.localhost ——
+  //   写死 localhost 会让商家站点看不到会话（表现为停在登录页）。
+  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'merchant.localhost', path: '/' })));
   const page = await ctx.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
 
-  await page.goto(`${UI}/seller`, { waitUntil: 'networkidle' });
+  await page.goto(`${MERCHANT}/seller`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2500);
 
   const bodyText = await page.locator('body').innerText();
@@ -230,7 +234,7 @@ step('① 运营视角 · 五张图渲染 / 数据一致 / 悬停即时');
 step('② 权限边界 · 普通用户');
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN' });
-  await ctx.addCookies([...buyerJar].map(([name, value]) => ({ name, value, domain: 'localhost', path: '/' })));
+  await ctx.addCookies([...buyerJar].map(([name, value]) => ({ name, value, domain: 'merchant.localhost', path: '/' })));
   const page = await ctx.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
@@ -241,7 +245,7 @@ step('② 权限边界 · 普通用户');
   check('普通用户顶栏不出现「商家端」入口',
     (await page.locator('.app-header .nav-links').getByRole('link', { name: '商家端', exact: true }).count()) === 0);
 
-  await page.goto(`${UI}/seller`, { waitUntil: 'networkidle' });
+  await page.goto(`${MERCHANT}/seller`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
   const bodyText = await page.locator('body').innerText();
   check('普通用户进 /seller 看到的是入驻引导（不是空白页、不是报错）',

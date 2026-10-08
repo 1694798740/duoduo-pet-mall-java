@@ -1,9 +1,8 @@
 /**
- * 商家端共享件：角色判定 + 「还不是卖家」引导。
+ * 商家端共享件：角色判定（已抽到 `src/lib/roles.ts`，此处重导出）+ 「还不是卖家」引导。
  *
- * 为什么单独放一个文件：商家端四个页面都要用同一套判定与同一段引导文案。
- * 若各写一份，迟早出现「概览页认、订单页不认」这种不一致，
- * 而这类问题在演示时表现为「页面一会儿能进一会儿不能进」，极难定位。
+ * 为什么判定要单独放中立模块：商城顶栏也要按它显示「商家端」入口，
+ * 若从本文件引会把整个商家 UI 拖进商城产物（E5/E6 各踩过一次）。
  */
 
 import React, { useState } from 'react';
@@ -13,22 +12,8 @@ import { userApi } from '../../api/endpoints';
 import { Alert, useToast } from '../../components/ui';
 import { useAuth } from '../../store/auth';
 
-/**
- * 能否进入商家端。
- *
- * <p>与后端 {@code LoginUser#canAccessSellerConsole()} 保持同一口径：
- * 卖家本人，或运营 / 管理员（代运营与排查）。
- * 角色在库里存的是大写（USER / SELLER / OPERATOR / ADMIN），
- * 这里一律忽略大小写 —— 早期前端曾用 {@code user.role === 'seller'}，
- * 在大写存储下永远为 false，属于「看起来有校验、实际形同虚设」。
- */
-export function canAccessSellerConsole(role: string | null | undefined): boolean {
-  if (!role) return false;
-  const upper = role.toUpperCase();
-  return upper === 'SELLER' || upper === 'OPERATOR' || upper === 'ADMIN';
-}
+export { canAccessSellerConsole } from '../../lib/roles';
 
-/** 「还不是卖家」引导卡：实名前置由后端强制（未实名返回 422），这里提前说清楚 */
 export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const { user, refreshMe } = useAuth();
   const { push } = useToast();

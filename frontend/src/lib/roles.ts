@@ -27,3 +27,16 @@ export function isAdminRole(role: string | null | undefined): boolean {
   if (!role) return false;
   return role.toUpperCase() === 'ADMIN';
 }
+
+/**
+ * 能否进入商家工作台：卖家本人，或运营 / 管理员（后者用于代运营与排障）。
+ *
+ * <p>与后端 `LoginUser#canAccessSellerConsole()` 同口径。放在本中立模块的原因同 {@link isOperator}：
+ * 商城顶栏要按它决定是否显示「商家端」入口，若从 `pages/seller/shared.tsx` 引，
+ * 会把整个商家 UI 模块拖进商城产物（E5 已在后台侧踩过一次）。
+ */
+export function canAccessSellerConsole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const upper = role.toUpperCase();
+  return upper === 'SELLER' || upper === 'OPERATOR' || upper === 'ADMIN';
+}

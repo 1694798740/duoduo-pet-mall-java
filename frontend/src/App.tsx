@@ -52,15 +52,9 @@ import { ProductDetailPage } from './pages/ProductDetail';
 import { ReviewNewPage } from './pages/ReviewNew';
 import { MyReviewsPage } from './pages/MyReviews';
 import { SearchPage } from './pages/Search';
-import { SellerDashboardPage } from './pages/seller/Dashboard';
-import { SellerOrderDetailPage } from './pages/seller/OrderDetail';
-import { SellerOrdersPage } from './pages/seller/Orders';
-import { SellerProductsPage } from './pages/seller/Products';
-import { SellerSettlementsPage } from './pages/seller/Settlements';
 import { AfterSalesPage } from './pages/AfterSales';
 import { AfterSaleNewPage } from './pages/AfterSaleNew';
 import { AfterSaleDetailPage } from './pages/AfterSaleDetail';
-import { SellerAfterSalesPage } from './pages/seller/AfterSales';
 
 export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -78,25 +72,6 @@ export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children 
   return <>{children}</>;
 };
 
-/**
- * 商家端守卫：只保证「已登录」，不拦角色。
- * 角色不对时由页面渲染入驻引导 —— 见文件头注释。
- */
-export const RequireSeller: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
-  const location = useLocation();
-
-  if (loading) return <LoadingBlock text="正在校验登录状态…" />;
-  if (!user) {
-    return (
-      <Navigate
-        to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
-        replace
-      />
-    );
-  }
-  return <>{children}</>;
-};
 
 /**
  * 平台管理后台守卫（M10）：与商家端同一哲学 —— 这里只保证「已登录」，
@@ -326,56 +301,6 @@ export const App: React.FC = () => (
           页面再补一条登录入口 —— 把「能不能问」和「能不能买」分开。 */}
       <Route path="/ai" element={<AiGuruPage />} />
 
-      {/* ---------- 商家端（M5-9 / M9，需登录；非卖家由页面引导入驻） ---------- */}
-      <Route
-        path="/seller"
-        element={
-          <RequireSeller>
-            <SellerDashboardPage />
-          </RequireSeller>
-        }
-      />
-      <Route
-        path="/seller/orders"
-        element={
-          <RequireSeller>
-            <SellerOrdersPage />
-          </RequireSeller>
-        }
-      />
-      <Route
-        path="/seller/orders/:orderNo"
-        element={
-          <RequireSeller>
-            <SellerOrderDetailPage />
-          </RequireSeller>
-        }
-      />
-      <Route
-        path="/seller/settlements"
-        element={
-          <RequireSeller>
-            <SellerSettlementsPage />
-          </RequireSeller>
-        }
-      />
-      {/* 商品管理落在 product 服务（/api/seller/products/**），与订单侧同一套准入 */}
-      <Route
-        path="/seller/products"
-        element={
-          <RequireSeller>
-            <SellerProductsPage />
-          </RequireSeller>
-        }
-      />
-      <Route
-        path="/seller/after-sales"
-        element={
-          <RequireSeller>
-            <SellerAfterSalesPage />
-          </RequireSeller>
-        }
-      />
 
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

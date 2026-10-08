@@ -122,3 +122,15 @@ if ($serverStarted -and -not $KeepServer) {
 
 Write-Host "`n===== 汇总 ====="
 $results | ForEach-Object { Write-Host "  $_" }
+
+# ★ 退出码必须反映失败：此前这里没有 exit，脚本恒以 0 结束 ——
+#   而上层 `check-all.ps1` 只看子进程退出码，于是"套件红了、门禁却报通过"（假通过）。
+#   判据用**退出码/结果串**，不解析中文输出（编码一乱就会静默变 NO-RESULT）。
+$failed = @($results | Where-Object { $_ -match 'FAIL' })
+if ($failed.Count -gt 0) {
+    Write-Host ""
+    Write-Host "存在失败套件 $($failed.Count) 个：" -ForegroundColor Red
+    $failed | ForEach-Object { Write-Host "  $_" }
+    exit 1
+}
+exit 0

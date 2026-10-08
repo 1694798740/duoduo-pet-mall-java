@@ -28,8 +28,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { canAccessSellerConsole } from '../pages/seller/shared';
-import { isOperator } from '../lib/roles';
+import { canAccessSellerConsole, isOperator } from '../lib/roles';
 import { messageApi } from '../api/endpoints';
 import { useApp } from '../store/app';
 import { useAuth } from '../store/auth';
@@ -58,6 +57,10 @@ import { useAuth } from '../store/auth';
  */
 const ADMIN_URL =
   (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'http://admin.localhost:8090/admin.html';
+
+/** 第三方商家平台的独立站点地址（E6）：同样是**跨站点**跳转，故用绝对地址。 */
+const MERCHANT_URL =
+  (import.meta.env.VITE_MERCHANT_URL as string | undefined) ?? 'http://merchant.localhost:8091/merchant.html';
 
 /** 顶部导航项：站内用 `to`（路由），跨站点用 `href`（外部链接） */
 type NavItem = { label: string; to: string } | { label: string; href: string };
@@ -144,7 +147,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const navItems = useMemo<NavItem[]>(() => {
     let items = NAV;
     if (canAccessSellerConsole(user?.role)) {
-      items = [...items, { to: '/seller', label: '商家端' }];
+      // 跨站点入口（商家平台已独立部署）
+      items = [...items, { href: MERCHANT_URL, label: '商家端' }];
     }
     if (isOperator(user?.role)) {
       // 跨站点入口：带 href（外部链接），不再是站内路由

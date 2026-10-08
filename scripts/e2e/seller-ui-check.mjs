@@ -32,6 +32,11 @@ import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 必须是 localhost，不能是 127.0.0.1 —— 见文件头注释（网关 CORS 白名单只认 localhost）
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/**
+ * 商家工作台**独立站点**（E6）：商家页面已从商城摘除，本套件的被测页面全部在商家站点上。
+ * `*.localhost` 只有浏览器能解析（Node 不行），而本套件的访问全部经 Playwright → 可安全使用主机名。
+ */
+const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
 const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
@@ -211,7 +216,7 @@ const shot = async (name) => {
 const textNow = () => page.locator('body').innerText();
 
 step('UI：登录');
-await page.goto(`${UI}/login`, { waitUntil: 'networkidle' });
+await page.goto(`${MERCHANT}/login`, { waitUntil: 'networkidle' });
 await page.getByPlaceholder('11 位手机号').fill(seller.phone);
 await page.getByPlaceholder('请输入密码').fill(PWD);
 await page.getByRole('button', { name: /^登录$/ }).click();
@@ -219,7 +224,7 @@ await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 })
 check('卖家登录成功并离开登录页', !page.url().includes('/login'), page.url());
 
 step('UI：/seller 概览');
-await page.goto(`${UI}/seller`, { waitUntil: 'networkidle' });
+await page.goto(`${MERCHANT}/seller`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 let t = await textNow();
 check('概览页标题出现「商家端」', t.includes('商家端'), t.slice(0, 60));
@@ -229,7 +234,7 @@ check('概览页显示了真实的待发货数（≥1）', /待发货[\s\S]{0,40
 await shot('sel_dashboard.png');
 
 step('UI：/seller/orders 卖出订单');
-await page.goto(`${UI}/seller/orders`, { waitUntil: 'networkidle' });
+await page.goto(`${MERCHANT}/seller/orders`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 t = await textNow();
 check('订单页出现「卖出订单」', t.includes('卖出订单'), t.slice(0, 60));
@@ -258,7 +263,7 @@ check('发货后页面没有被重定向走（仍在订单页）', page.url().in
 await shot('sel_orders_shipped.png');
 
 step('UI：订单详情页');
-await page.goto(`${UI}/seller/orders/${b.orderNo}`, { waitUntil: 'networkidle' });
+await page.goto(`${MERCHANT}/seller/orders/${b.orderNo}`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(900);
 t = await textNow();
 check('详情页出现订单号', t.includes(b.orderNo), b.orderNo);
@@ -267,7 +272,7 @@ check('详情页出现资金区', t.includes('资金') || t.includes('托管'), 
 await shot('sel_order_detail.png');
 
 step('UI：/seller/settlements 资金对账');
-await page.goto(`${UI}/seller/settlements`, { waitUntil: 'networkidle' });
+await page.goto(`${MERCHANT}/seller/settlements`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(900);
 t = await textNow();
 check('对账页出现「资金对账」', t.includes('资金对账'), t.slice(0, 60));
@@ -283,12 +288,12 @@ const p2 = await ctx2.newPage();
 p2.on('response', (r) => {
   if (r.status() >= 400) httpErrors.push(`${r.status()} ${r.request().method()} ${r.url()}`);
 });
-await p2.goto(`${UI}/login`, { waitUntil: 'networkidle' });
+await p2.goto(`${MERCHANT}/login`, { waitUntil: 'networkidle' });
 await p2.getByPlaceholder('11 位手机号').fill(plain.phone);
 await p2.getByPlaceholder('请输入密码').fill(PWD);
 await p2.getByRole('button', { name: /^登录$/ }).click();
 await p2.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 });
-await p2.goto(`${UI}/seller`, { waitUntil: 'networkidle' });
+await p2.goto(`${MERCHANT}/seller`, { waitUntil: 'networkidle' });
 await p2.waitForTimeout(900);
 const t2 = await p2.locator('body').innerText();
 check('非卖家访问商家端看到入驻/无权限提示，而不是空白页', t2.includes('卖家') || t2.includes('403'), t2.slice(0, 120));
