@@ -51,7 +51,7 @@ spring:
             # /api/admin/users/** = 运营账号管理（A7）。同样必须显式列出（漏了只会 404）：
             #   用户与角色数据就在用户库，运营管理视图落回 user 服务；不进白名单（需登录，
             #   operator/admin 角色由服务端 OperatorGuard + 仅 ADMIN 可改角色两层把关）。
-            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**
+            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product

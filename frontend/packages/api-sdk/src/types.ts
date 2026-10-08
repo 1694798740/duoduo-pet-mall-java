@@ -1365,3 +1365,37 @@ export interface ShareEditRequest {
   content?: string | null;
   topics?: string[] | null;
 }
+
+// ---------- 商家入驻申请（E10） ----------
+
+/** 结构化驳回原因：scope 指明驳回对象（GENERAL / STORE_NAME / 材料类型名） */
+export interface MerchantRejectReason {
+  scope: string;
+  code: string;
+  note: string;
+}
+
+/** 入驻申请视图（商家侧与审核台共用） */
+export interface MerchantApplicationView {
+  merchantId: string;
+  storeName: string;
+  status: 'DRAFT' | 'SUBMITTED' | 'REVIEWING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  isolationLevel: string;
+  rejectReasons: MerchantRejectReason[];
+  /** 材料类型名 → 文件 URL（未上传的类不出现在对象里） */
+  materials: Record<string, string>;
+  ownerUserId: string;
+  appliedAt: string | null;
+  reviewedAt: string | null;
+  createdAt: string | null;
+}
+
+/** 入驻材料清单（6 类，提交时必须齐全） */
+export const MERCHANT_MATERIAL_TYPES = [
+  { type: 'BUSINESS_LICENSE', label: '营业执照' },
+  { type: 'LEGAL_ID_FRONT', label: '法人身份证人像面' },
+  { type: 'LEGAL_ID_BACK', label: '法人身份证国徽面' },
+  { type: 'BANK_ACCOUNT', label: '对公银行账户证明' },
+  { type: 'OPERATION_COMMITMENT', label: '经营承诺书' },
+  { type: 'INDUSTRY_PERMIT', label: '行业经营许可证' },
+] as const;

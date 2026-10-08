@@ -5,68 +5,41 @@
  * 若从本文件引会把整个商家 UI 拖进商城产物（E5/E6 各踩过一次）。
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
-import { toFriendlyMessage, refreshSession } from '@duoduo/api-sdk/client';
-import { userApi } from '@duoduo/api-sdk/endpoints';
-import { Alert, useToast } from '@duoduo/shared/components/ui';
+import { Alert } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 export { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
 
 export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) => {
-  const { user, refreshMe } = useAuth();
-  const { push } = useToast();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const verified = Boolean(user?.realNameVerified);
 
-  const apply = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      await userApi.applyMerchant();
-      // ★ 角色写在访问令牌里：入驻成功后**立刻轮转一次令牌**，商家端权限即时生效
-      //   （此前提示「重新登录后生效」，就是边界 B-08 —— 这里把它在网页端正式修掉）。
-      await refreshSession();
-      await refreshMe();
-      push('已成为卖家，商家端已解锁', 'success');
-    } catch (err) {
-      setError(toFriendlyMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // E10：入驻改为「提交材料 → 平台审核 → 开店」，本卡片只负责把人带到申请页；
+  // 旧的「实名即升卖家」一键接口已随旧端点删除（无审核的开店路径必须封死）。
 
   return (
     <div className="card card-pad" style={compact ? undefined : { marginTop: 24 }}>
       <h3 style={{ marginBottom: 10 }}>商家端需要卖家身份</h3>
 
-      {error ? (
-        <div style={{ marginBottom: 12 }}>
-          <Alert kind="error">{error}</Alert>
-        </div>
-      ) : null}
-
       <Alert kind="info">
-        成为卖家需要先完成<b>实名认证</b>：钱是放款给卖家的，放款给一个不可追责的主体，
-        担保交易的信任基础就没了。后端会在入驻接口上强制校验，不认前端是否显示按钮。
+        入驻需要两步：<b>先完成实名认证</b>（钱是放款给卖家的，放款给一个不可追责的主体，
+        担保交易的信任基础就没了），再<b>提交资质材料</b>（营业执照、法人身份证、对公账户等
+        6 类），由平台人工审核。审核通过后即可开通店铺。
       </Alert>
 
       <div className="row row-wrap" style={{ marginTop: 14 }}>
         {verified ? (
-          <button className="btn btn-primary" onClick={apply} disabled={busy}>
-            {busy ? '提交中…' : '申请成为卖家'}
-          </button>
+          <Link className="btn btn-primary" to="/apply">
+            填写入驻申请
+          </Link>
         ) : (
           <Link className="btn btn-primary" to="/me">
             先去实名认证
           </Link>
         )}
-        <Link className="btn btn-ghost" to="/">
-          返回首页
-        </Link>
       </div>
 
       {verified ? null : (
@@ -76,8 +49,7 @@ export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) =>
       )}
 
       <div className="small muted" style={{ marginTop: 10 }}>
-        说明：角色升级后 access token 里的角色仍是旧快照，需<b>重新登录</b>才在商家端全量生效；
-        当前会话内刷新资料后即可进入概览页。
+        说明：审核通过后在申请页领取商家身份，新令牌即时生效，无需重新登录。
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import { SellerProductsPage } from '../seller/Products';
 import { SellerSettlementsPage } from '../seller/Settlements';
 import { SellerAfterSalesPage } from '../seller/AfterSales';
 import { SellerApplyCard } from '../seller/shared';
+import { MerchantApplyPage } from '../seller/Apply';
 
 /** 商家工作台导航（商家页面自身没有导航栏，这份是**唯一**的一份） */
 const TABS = [
@@ -113,6 +114,7 @@ export const MerchantRoot: React.FC = () => (
   <Routes>
     <Route path="/login" element={<MerchantLoginPage />} />
     <Route element={<MerchantShell />}>
+      <Route path="/apply" element={<MerchantApplyPage />} />
       <Route path="/seller" element={<SellerDashboardPage />} />
       <Route path="/seller/orders" element={<SellerOrdersPage />} />
       <Route path="/seller/orders/:orderNo" element={<SellerOrderDetailPage />} />

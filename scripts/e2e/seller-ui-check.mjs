@@ -25,6 +25,7 @@
  */
 
 import fs from 'node:fs';
+import { createSellerFixture } from '../lib/e2e-seller-fixture.mjs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
@@ -148,14 +149,11 @@ const me1 = await call('GET', '/api/users/me', undefined, seller.jar);
 const sellerId = bigId(me1.raw);
 check('卖家账号注册成功（取到雪花 ID，且未被 JSON 精度截断）', /^\d{15,}$/.test(sellerId), sellerId);
 
-check(
-  '未实名申请成为卖家被拒（422）',
-  (await call('POST', '/api/users/me/merchant', {}, seller.jar)).status === 422,
-  (await call('POST', '/api/users/me/merchant', {}, seller.jar)).status,
-);
+// E10：入驻改为「提交材料 → 平台审核 → 开店」状态机；业务夹具在库内直建 APPROVED 店铺
+// （完整入驻链路的 e2e 是 E11 审核台的交付项）。夹具内部先实名（派生字段 realName 必须非空）。
 await call('POST', '/api/users/me/realname', { realName: '李小商', idCard: '310101199005054321' }, seller.jar);
-const apply = await call('POST', '/api/users/me/merchant', {}, seller.jar);
-check('实名后申请成为卖家成功', apply.status === 200, apply.status);
+const fixture = await createSellerFixture({ phone: seller.phone, storeName: '小李宠物用品' });
+check('卖家夹具直建成功（t_merchant APPROVED）', /^\d{15,}$/.test(fixture.merchantId), fixture.merchantId);
 
 // 角色快照在 access token 里，必须重新登录才拿得到 SELLER
 await call('POST', '/api/auth/login', { phone: seller.phone, password: PWD }, seller.jar);

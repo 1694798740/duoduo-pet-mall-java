@@ -101,6 +101,7 @@ import type {
   SeckillActivityView,
   ShareReportHandleRequest,
   ShareReportView,
+  MerchantApplicationView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -138,7 +139,25 @@ export const userApi = {
    * 角色升级后 access token 里的 role 仍是旧快照，因此前端要重新拉一次 me()
    * 并提示用户「下次登录生效」。
    */
-  applyMerchant: () => api.post<UserView>('/api/users/me/merchant'),
+  // 【E10】旧的 applyMerchant（实名即升 SELLER）已随旧端点删除 ——
+  // 入驻走下方 merchantApplication 状态机（提交材料 → 平台审核 → 开店）。
+
+  /** 查看我的入驻申请（首次查看即在服务端创建 DRAFT 草稿） */
+  getMerchantApplication: () =>
+    api.get<MerchantApplicationView>('/api/users/me/merchant-application'),
+
+  /** 保存草稿（店名 + 材料引用）。仅 DRAFT / REJECTED 可改；材料引用来自 uploadImage 的返回 url */
+  saveMerchantApplication: (body: { storeName?: string; materials?: Record<string, string> }) =>
+    api.put<MerchantApplicationView>('/api/users/me/merchant-application', body),
+
+  /** 提交送审（幂等：重复提交返回现状；被驳回后可修改材料重提）。服务端校验实名 + 店名 + 6 类材料 */
+  submitMerchantApplication: () =>
+    api.post<MerchantApplicationView>('/api/users/me/merchant-application/submit'),
+
+  /** 激活（审核通过后）：返回重签的访问令牌（入口固定商家侧）；浏览器通道同时写 Cookie */
+  activateMerchant: () =>
+    api.post<{ accessToken: string; expiresInSeconds: number }>(
+      '/api/users/me/merchant-application/activate'),
 };
 
 // ---------- 宠物档案（/api/pets） ----------

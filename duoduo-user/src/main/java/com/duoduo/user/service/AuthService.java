@@ -472,25 +472,11 @@ public class AuthService {
      * <p>本期不做资质审核（没有人工审核台），实名即开通；真实业务里这里应生成待审核的入驻单。
      * 幂等：已是卖家时直接返回当前资料，不报错 —— 重复点击「成为卖家」不该把人吓一跳。
      */
-    @Transactional
-    public UserView applyMerchant(Long userId) {
-        UserEntity entity = userMapper.selectById(userId);
-        if (entity == null) {
-            throw BizException.notFound("用户");
-        }
-        if (!entity.isRealNameVerified()) {
-            throw BizException.businessRule("请先完成实名认证再申请成为卖家");
-        }
-        if (!"SELLER".equalsIgnoreCase(entity.getRole())) {
-            entity.setRole("SELLER");
-            entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            userMapper.updateById(entity);
-            log.info("用户升级为卖家 userId={}", userId);
-        }
-        return toView(entity);
-    }
-
     // ---------------- 角色变更后的令牌处理（第五十八轮 P1-6） ----------------
+    //
+    // 【E10 删除 applyMerchant】"实名即升 SELLER"的方法已删除：入驻审核（E10）落地后，
+    // 角色升级只发生在 MerchantOnboardingService.approve（审核通过并开店）这一处。
+    // 保留一条无审核的升级路径，等于给审核台旁边留了一扇不锁的门。
 
     /**
      * 重新签发一枚访问令牌（角色变更后让新角色<b>立刻生效</b>用）。

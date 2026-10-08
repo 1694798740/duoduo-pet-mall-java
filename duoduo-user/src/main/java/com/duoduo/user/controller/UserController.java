@@ -55,53 +55,14 @@ public class UserController {
     }
 
     /**
-     * 申请成为卖家（商家入驻）：实名后把 role 升级为 {@code SELLER}。
-     *
-     * <p>幂等：已是卖家时直接返回当前资料。未实名返回 422 —— 钱最终要放款给卖家，
-     * 匿名卖家会让资金流向不可追责。
-     *
-     * <p><b>角色即时生效（第五十八轮 P1-6）</b>：浏览器通道在这里顺手覆盖访问令牌 Cookie，
-     * 因此入驻成功后<b>无需重新登录</b>，下一次请求就带着 SELLER 角色 ——
-     * 旧令牌里写的是 USER 快照，不改 Cookie 就要等它过期（15 分钟）才生效，
-     * 用户视角就是「明明申请成功了，商家端还是进不去」。
-     * 小程序没有 Cookie，请改用 {@link #applyMerchantToken()} 取新令牌覆盖本地存储。
+     * 【E10 废除说明】本控制器原有的 {@code POST /me/merchant} 与 {@code POST /me/merchant/token}
+     * （实名即直接升 SELLER）已删除 —— 那条路径让「平台审核商家」形同虚设：
+     * 任何实名账号调一下接口就拿到卖家身份，审核台还没看到人，店已经开了。
+     * 入驻的正式流程见 {@link MerchantApplicationController}（提交材料 → 平台审核 → 开店）；
+     * 审核通过后的角色升级发生在 {@code MerchantOnboardingService.approve}，
+     * 不在任何商家可达的端点上。E8 的"重签令牌固定商家入口"语义随入口迁移到
+     * {@code MerchantApplicationController.activate}。
      */
-    @PostMapping("/me/merchant")
-    public ApiResponse<UserView> applyMerchant(HttpServletResponse response) {
-        Long userId = UserContext.requireUserId();
-        UserView view = authService.applyMerchant(userId);
-        AuthCookieWriter.writeAccess(response, authService.renewAccessToken(userId, entryAfterMerchantApply()),
-                authService.accessTtlSeconds());
-        return ApiResponse.ok(view);
-    }
-
-    /**
-     * 小程序通道的入驻（纯增量端点）：响应体里带回新访问令牌。
-     *
-     * <p>与 {@code /api/auth/login/token} 同一形态 —— 小程序没有 Cookie 语义，
-     * 令牌必须由端侧自己存。端侧拿到后覆盖本地令牌，新角色即刻生效。
-     */
-    @PostMapping("/me/merchant/token")
-    public ApiResponse<MerchantTokenResponse> applyMerchantToken() {
-        Long userId = UserContext.requireUserId();
-        authService.applyMerchant(userId);
-        return ApiResponse.ok(new MerchantTokenResponse(
-                authService.renewAccessToken(userId, entryAfterMerchantApply()),
-                authService.accessTtlSeconds()));
-    }
-
-    /**
-     * E8 · 入驻成功那一刻，重签令牌该带哪个入口。
-     *
-     * <p><b>固定为商家侧，而不是"从当前请求头取"</b>：入驻是「买家 → 卖家」的身份转换，
-     * 转换完成后用户接下来的动作必然在商家站点。若沿用请求头里的入口（例如从商城入口发起入驻，
-     * 那里也可以是入驻的入口之一），新令牌会带 {@code ent=mall} ——
-     * 结果就是「入驻成功了，但商家端所有接口 403」，而报错信息完全指不到原因。
-     * 把入口写成商家侧，语义与实际用途一致。
-     */
-    private static String entryAfterMerchantApply() {
-        return com.duoduo.common.security.ClientEntry.MERCHANT;
-    }
 
     /** 入驻后的新访问令牌（小程序通道用） */
     public record MerchantTokenResponse(String accessToken, long expiresInSeconds) {

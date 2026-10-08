@@ -5,8 +5,10 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
+import com.duoduo.user.controller.MerchantApplicationController;
 import com.duoduo.user.controller.UserController;
 import com.duoduo.user.dto.UserDtos.UserView;
+import com.duoduo.user.service.MerchantOnboardingService;
 import com.duoduo.user.service.PetProfileService;
 import com.duoduo.user.entity.UserEntity;
 import com.duoduo.user.mapper.RefreshTokenMapper;
@@ -120,50 +122,23 @@ class RoleTokenEffectiveTest {
     }
 
     @Test
-    void 入驻后浏览器通道只覆盖访问令牌_不动刷新令牌() {
+    void 审核通过后激活返回商家入口的新令牌_不动刷新令牌() {
+        // E10：入驻改为「提交 → 审核 → 通过 → 商家自行激活取新令牌」。
+        // 激活端点只重签访问令牌（角色升级已发生在 approve），刷新令牌不轮换 ——
+        // 轮换会吊销旧批次，把用户其它端一起踢下线（与第五十八轮同一取舍）。
         AuthService auth = mock(AuthService.class);
-        when(auth.applyMerchant(any())).thenReturn(mock(UserView.class));
-        // E8：入驻重签的令牌**必须带商家入口**（见 UserController.entryAfterMerchantApply）——
-        // 若沿用请求头里的入口（商城也可以是入驻入口），新令牌会 ent=mall，
-        // 用户随即在商家端全线 403，而且报错完全指不到原因。这里把入口钉死为 merchant
-        when(auth.renewAccessToken(eq(USER_ID), eq("merchant"))).thenReturn("new-access-token");
+        MerchantOnboardingService onboarding = mock(MerchantOnboardingService.class);
+        when(onboarding.activateIfApproved(USER_ID)).thenReturn(user("SELLER", "ACTIVE"));
+        when(auth.renewAccessToken(eq(USER_ID), eq("merchant"))).thenReturn("activated-access-token");
         when(auth.accessTtlSeconds()).thenReturn(900L);
-        UserController controller = new UserController(auth, petProfileService);
+        MerchantApplicationController controller = new MerchantApplicationController(onboarding, auth);
 
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        controller.applyMerchant(response);
+        var result = controller.activate();
 
-        assertThat(response.getCookie(AuthCookieWriter.COOKIE_ACCESS))
-                .isNotNull()
-                .extracting(cookie -> cookie.getValue()).isEqualTo("new-access-token");
-        assertThat(response.getCookie(AuthCookieWriter.COOKIE_ACCESS).isHttpOnly()).isTrue();
-        // 刷新令牌不该被轮换：轮换 = 吊销旧批次 = 把用户其它端踢下线
-        assertThat(response.getCookie(AuthCookieWriter.COOKIE_REFRESH)).isNull();
-        // E8：入口必须被固定为商家侧（不是"传什么都行"）
+        assertThat(result.data().accessToken()).isEqualTo("activated-access-token");
+        assertThat(result.data().expiresInSeconds()).isEqualTo(900L);
+        // E8：激活重签的令牌入口必须固定为商家侧
         verify(auth).renewAccessToken(eq(USER_ID), eq("merchant"));
     }
 
-    @Test
-    void 小程序通道从响应体拿新令牌() {
-        AuthService auth = mock(AuthService.class);
-        when(auth.applyMerchant(any())).thenReturn(mock(UserView.class));
-        when(auth.renewAccessToken(eq(USER_ID), eq("merchant"))).thenReturn("mp-access-token");
-        when(auth.accessTtlSeconds()).thenReturn(900L);
-        UserController controller = new UserController(auth, petProfileService);
-
-        var result = controller.applyMerchantToken();
-
-        assertThat(result.data().accessToken()).isEqualTo("mp-access-token");
-        assertThat(result.data().expiresInSeconds()).isEqualTo(900L);
-    }
-
-    @Test
-    void 入驻会把库内角色提升为卖家() {
-        UserEntity entity = user("USER", "ACTIVE");
-        when(userMapper.selectById(USER_ID)).thenReturn(entity);
-
-        authService.applyMerchant(USER_ID);
-
-        assertThat(entity.getRole()).isEqualTo("SELLER");
-    }
 }

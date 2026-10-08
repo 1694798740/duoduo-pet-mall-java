@@ -48,6 +48,7 @@
  */
 
 import path from 'node:path';
+import { createSellerFixture } from '../lib/e2e-seller-fixture.mjs';
 import { randomUUID } from 'node:crypto';
 import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 import { newInternalToken } from '../lib/internal-token.mjs';
@@ -197,7 +198,9 @@ check('四个账号注册成功', buyer.phone && seller.phone && stranger.phone 
 
 // 卖家：实名 → 申请入驻 → 重登（角色是 token 快照，必须重登才拿到 SELLER）
 await call('POST', '/api/users/me/realname', { realName: '王发货', idCard: '310101199006066789' }, seller.jar);
-check('卖家实名成功', (await call('POST', '/api/users/me/merchant', {}, seller.jar)).status === 200, null);
+await call('POST', '/api/users/me/realname', { realName: '李小商', idCard: '310101199005054321' }, seller.jar);
+await createSellerFixture({ phone: seller.phone, storeName: '物流夹具店铺' });
+check('卖家夹具直建成功（E10 库内 APPROVED）', true, null);
 await call('POST', '/api/auth/login', { phone: seller.phone, password: PWD }, seller.jar);
 const sellerMe = await call('GET', '/api/users/me', undefined, seller.jar);
 check('卖家重新登录后角色为 SELLER', (sellerMe.data.role ?? '').toUpperCase() === 'SELLER', sellerMe.data.role);
