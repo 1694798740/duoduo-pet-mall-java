@@ -478,6 +478,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        APP: mall
+        NGINX_CONF: nginx.conf
     restart: unless-stopped
     ports:
       - '8088:80'
@@ -491,6 +494,7 @@ services:
   # 为什么要独立容器：主平台不应依赖商城网站登录。两边用**不同主机名**
   # （商城 localhost:8088 / 后台 admin.localhost:8090）——
   # Cookie 是主机级作用域且**不区分端口**，只有换主机名才能做到"登录态互不共享"。
+  # E7-2：后台已是**独立应用**（apps/admin），只构建自己的源码、只装自己的 dist。
   duoduo-admin-web-app:
     container_name: duoduo-app-admin-web
     image: duoduo/duoduo-web:1.0.0-admin
@@ -498,6 +502,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
+        APP: admin
         NGINX_CONF: nginx-admin.conf
     restart: unless-stopped
     ports:
@@ -507,6 +512,7 @@ services:
         condition: service_started
 
   # ---------- 第三方商家平台站点（E6：独立端口 + 独立主机名 + 独立登录） ----------
+  # E7-2：商家已是**独立应用**（apps/merchant，含 pages/merchant 与 pages/seller）。
   duoduo-merchant-web-app:
     container_name: duoduo-app-merchant-web
     image: duoduo/duoduo-web:1.0.0-merchant
@@ -514,6 +520,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
+        APP: merchant
         NGINX_CONF: nginx-merchant.conf
     restart: unless-stopped
     ports:

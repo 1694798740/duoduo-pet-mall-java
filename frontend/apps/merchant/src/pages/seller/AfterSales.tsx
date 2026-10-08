@@ -19,7 +19,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
-import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '../afterSaleShared';
+import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
 
 export const SellerAfterSalesPage: React.FC = () => {

@@ -22,7 +22,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
-import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '../afterSaleShared';
+import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
 /** 可裁定的状态（终态不可再改判 —— 要改判只能新立案） */

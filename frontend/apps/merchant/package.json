@@ -1,0 +1,28 @@
+{
+  "name": "@duoduo/merchant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "多多宠物商店 · 第三方商家平台（E7-2 独立应用）：独立站点 merchant.localhost:8091，自有登录页，产物 dist/merchant.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --port 4190"
+  },
+  "dependencies": {
+    "@duoduo/api-sdk": "*",
+    "@duoduo/shared": "*",
+    "echarts": "^6.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

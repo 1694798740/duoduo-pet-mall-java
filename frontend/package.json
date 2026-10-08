@@ -3,14 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "多多宠物商店 · 前端 monorepo（E7）：apps/* 各端应用 + packages/* 共用包",
+  "description": "多多宠物商店 · 前端 monorepo（E7）：apps/* 三端独立应用 + packages/* 共用包",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @duoduo/mall",
-    "typecheck": "npm run typecheck -w @duoduo/mall",
+    "build": "npm run build -w @duoduo/mall && npm run build -w @duoduo/admin && npm run build -w @duoduo/merchant",
+    "build:mall": "npm run build -w @duoduo/mall",
+    "build:admin": "npm run build -w @duoduo/admin",
+    "build:merchant": "npm run build -w @duoduo/merchant",
+    "typecheck": "npm run typecheck -w @duoduo/mall && npm run typecheck -w @duoduo/admin && npm run typecheck -w @duoduo/merchant",
     "dev": "npm run dev -w @duoduo/mall"
   }
 }

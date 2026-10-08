@@ -12,6 +12,9 @@ import { fileURLToPath } from 'node:url';
  * 生产态：VITE_API_BASE 留空即走同源；若前端与网关不同源，
  * 则设置 VITE_API_BASE=https://gateway.example.com 由后端 CORS 放行该来源
  * （后端白名单见 duoduo-gateway 的 CORS_ORIGINS）。
+ *
+ * E7-2 起本应用只管**商城**：入口只有 `index.html`，产物只有自己的 `dist/`。
+ * 后台与商家已各自独立成 `apps/admin`、`apps/merchant`（各自构建、各自镜像）。
  */
 const devTarget = process.env.VITE_DEV_API_TARGET ?? 'http://localhost:8080';
 
@@ -51,15 +54,10 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 900,
     rollupOptions: {
-      // 多入口（E4–E6）：商城 index.html + 平台管理后台 admin.html + 第三方商家 merchant.html。
-      // 后台因此拥有独立产物与独立网址；商城产物不再需要承载后台入口。
-      // E7-2 会把 admin/merchant 各自迁成独立应用（apps/admin、apps/merchant）；
-      // 这一步先把共用层抽干净，保证每一步都可构建、可验收。
-      input: {
-        main: 'index.html',
-        admin: 'admin.html',
-        merchant: 'merchant.html',
-      },
+      // 单入口（E7-2）：商城应用只产出 index.html。
+      // 后台与商家在 E4–E6 曾作为本应用的另外两个入口（多入口过渡方案），
+      // E7-2 已各自迁成独立应用（apps/admin、apps/merchant）—— 商城产物里不再有它们的任何痕迹。
+      input: { main: 'index.html' },
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],

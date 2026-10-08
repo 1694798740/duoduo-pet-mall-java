@@ -1,0 +1,28 @@
+{
+  "name": "@duoduo/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "多多宠物商店 · 平台管理后台（E7-2 独立应用）：独立站点 admin.localhost:8090，自有登录页，产物 dist/admin.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --port 4180"
+  },
+  "dependencies": {
+    "@duoduo/api-sdk": "*",
+    "@duoduo/shared": "*",
+    "echarts": "^6.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

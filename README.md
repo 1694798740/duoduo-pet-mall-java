@@ -4,9 +4,9 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
-**E7-1（2026-10-08，用户要求：抽公共包 + 三工程）** — **前端改造成 monorepo：共用层抽成 `packages/*`，应用侧收进 `apps/*`**。
+**E7（2026-10-08，用户要求：抽公共包 + 三工程）** — **前端改造成 monorepo：共用层抽成 `packages/*`，三个应用各自独立成 `apps/*`（源码 / 构建 / 产物三者都分开）**。
 
-**为什么分两步走**：`apps/admin`、`apps/merchant` 独立成工程要重排目录、依赖与构建，一次做完中途一旦停下就会留下"构建变红"的半成品。所以先做**可构建、可验收**的第一步：把共用层抽干净，三个入口暂留在 `apps/mall`。
+**为什么分两步做**：重排目录、依赖与构建一次做完，中途一旦停下就会留下"构建变红"的半成品 —— 那种状态比不开始更糟。所以第一步先把共用层抽干净（三入口暂留 `apps/mall`），第二步再把后台与商家拆成独立应用。
 
 **目录（`frontend/` 即 monorepo 根，npm workspaces = `packages/*` + `apps/*`）**：
 
@@ -14,26 +14,35 @@
 |---|---|---|
 | `packages/api-sdk` | 类型化 HTTP 客户端 + 端点清单 + 类型定义 + 图片工具 | **零 React 依赖**（将来小程序 / 开放平台可直接复用） |
 | `packages/shared` | 认证与应用 store、共用组件库、角色判定、全局样式 | **单向**依赖 `api-sdk` |
-| `apps/mall` | 商城入口 `index.html` + 后台入口 `admin.html` + 商家入口 `merchant.html` 及全部页面 | 依赖上面两个包 |
+| `apps/mall` | 商城：入口 `index.html`（**独立应用，80 模块**） | 依赖上面两个包 |
+| `apps/admin` | 平台管理后台：入口 `admin.html`（独立应用，644 模块） | 同上 |
+| `apps/merchant` | 第三方商家平台：入口 `merchant.html`（独立应用，642 模块；含 `pages/merchant` 工作台外壳 + `pages/seller` 各业务页） | 同上 |
 
-**迁移做法（300 处 import 机械改写，不靠手改）**：
+**做法**：
 - 共用包**不预构建**，直接吃 TS 源码：Vite `resolve.alias` + tsconfig `paths` 指向各包 `src` —— 省掉"先 build 包再 build 应用"这一步，也就少一类"改了 packages 忘了重编"的假通过。
-- 用一次性脚本批量改写 import（`api/*` → `@duoduo/api-sdk/*`、`components|store|lib|styles.css` → `@duoduo/shared/*`），随后**用第二个脚本把 398 条 import 说明符逐个解析、验证目标真实存在**。
-  正是这一步抓出了 **11 处同目录形式的引用**（`./components/ui`、`./store/auth` —— 它们不匹配「`../` 开头」的改写规则，因而会静默留在原处，而目标文件已经搬走了）。这类错误只在构建时才炸，提示还是"找不到模块"，极易被误判成"包没装"；**手工改必漏**。
+- **300 处 import 机械改写**（`api/*` → `@duoduo/api-sdk/*`、`components|store|lib|styles.css` → `@duoduo/shared/*`），随后**用脚本把 398 条 import 说明符逐个解析、验证目标真实存在**。这一步先抓出 **11 处同目录形式的引用**（`./components/ui`、`./store/auth` —— 不匹配「`../` 开头」的改写规则，会静默留在原处，而目标文件已搬走）；E7-2 拆应用时又抓出 **3 处跨应用引用**。这类错误只在构建时才炸、提示还是"找不到模块"，极易被误判成"包没装"；**手工改必漏**。
+- **E7-2 拆分暴露的 3 处隐藏耦合（已修）**：① 商城 `Me.tsx` 绕道 `pages/seller/shared` 只为取一个中立判定 → 直引 `@duoduo/shared/lib/roles`；② `afterSaleShared` 被**三端共用**（mall 3 页 + admin 1 页 + merchant 1 页）→ 提升为 `packages/shared/components/afterSale`；③ admin/merchant 拆出后**丢了 public 目录**（favicon 请求 404）→ 各自补回。
+- **依赖分化**：`apps/mall` 移除 `echarts` —— 实测只有后台与商家用图表，商城产物里不再出现这个 559 KB 的库。
 - 路径映射（查旧文档时对照）：`frontend/src/api/*` → `packages/api-sdk/src/*`；`frontend/src/{store,components,lib,styles.css}` → `packages/shared/src/*`。其中 `components/Layout.tsx` 是**商城专属**路由外壳（只被 `App.tsx` 引用），留在 `apps/mall/src/components/`。
 - 应用根变了：Vite 只从**应用根**读 `.env`，故 `.env.example` 随迁到 `apps/mall/`。
+- 三镜像共用一份 Dockerfile，用两个构建参数区分：`APP`（`mall|admin|merchant`，决定装哪份产物）× `NGINX_CONF`。
 
-**验收（全部实测）**：`tsc --noEmit` + `vite build` 绿（695 模块、三入口产物齐全）；**398 条 import 说明符全部可解析**；三站点镜像重建后 **9 个 chunk + 三入口 HTML 与宿主构建产物逐字节一致**；**全量 e2e 17 套全绿**。
+**两个新增的可复用校验工具（`scripts/lib/`，可进 CI）**：
+1. `check-frontend-imports.mjs` —— 逐条解析全部 import 说明符（相对路径 + `@duoduo/*` 别名），验证目标真实存在；
+2. `check-bundle-isolation.mjs` —— **从 entry HTML 出发收集引用闭包**（跟随 `<script>`、`modulepreload`、chunk 间静态与动态 import），断言 ① **dist 内没有闭包之外的 `.js`**（有则是"摘不干净"的残留或误打包）② 闭包内**不含其他端的特征串**。特征串一律取**字符串字面量**而非标识符名 —— 生产构建会 minify，标识符会改名而字符串会保留。
+
+**验收（全部实测）**：三应用 `tsc --noEmit` + `vite build` 全绿（mall **80** 模块 / admin 644 / merchant 642）；**398 条 import 说明符全部可解析**；**产物隔离校验通过**（商城产物中 `/api/admin/`、`/api/seller/`、后台与商家文案、`echarts` 命中数均为 **0**）；三站点镜像重建后三入口 HTML 与宿主构建产物**逐字节一致**；**全量 e2e 17 套全绿**。
 
 **两个踩坑记录（都值得下次绕开）**：
 1. `vite.config.ts` 注释里写了 `packages/*/src`，其中 `*/` **提前闭合了块注释** → esbuild 直接语法报错（`Expected ";" but found "@"`）。注释里不要出现裸的 `*/`。
 2. 本机 `npm install` 会卡在 esbuild 的 postinstall —— 即本仓已知的 `spawnSync ... EBUSY errno -4082`（同步派生态在受限环境下不可用）。改用 `npm install --ignore-scripts` 即可，`@esbuild/win32-x64` 平台包会正常安装，构建不受影响。
 
-**下一步**：**E7-2** 把 `apps/admin` / `apps/merchant` 拆成各自独立的工程与镜像，并做**产物闭包扫描**（确认商城产物不再包含后台 / 商家的端点定义）。
+**下一步**：**E8 入口边界加固**（登录令牌加"入口标识" `aud` + 网关按入口裁剪允许路径 + CORS 按站点分列）—— 做完即 **P1「三平台独立部署」阶段收口**，进入 P2 入驻审核与租户化。
 
 **E6 / E6b（2026-10-08，用户要求：三平台**完全独立部署**）** — **商城 / 平台管理后台 / 第三方商家平台各自独立站点、独立端口、独立登录，互不共享会话；顺带修掉门禁「假通过」缺陷**。
 
 **① 三站点落地（E5 后台 + E6 商家）**。单应用**多入口**构建：Vite `rollupOptions.input = { main: index.html, admin: admin.html, merchant: merchant.html }`，同一份源码产出三个 HTML 入口，各挂各自的 Root（`AdminRoot` / `MerchantRoot`）。compose 新增 `duoduo-admin-web-app`（**8090**）与 `duoduo-merchant-web-app`（**8091**）；商城站点删掉 9 个后台页面 + 6 个商家页面的导入与路由。
+> **E7-2 起已不再是"多入口"**：后台与商家各自迁成独立应用（`apps/admin`、`apps/merchant`），**各自构建、各自产物**；上面这段描述的是 E5/E6 当时的过渡实现，保留作沿革记录。
 - **隔离必须换主机名，不能只换端口**：Cookie 是**主机级**作用域（不带 `Domain` 时 host-only）且**不区分端口** —— `localhost:8088` 与 `localhost:8090` 是同一个 Cookie 域，端口隔离等于没隔离。故后台走 `admin.localhost:8090`、商家走 `merchant.localhost:8091`（浏览器按 RFC 6761 把 `*.localhost` 解析到本机）。
 - **后台 / 商家各有自己的登录页**：此前未登录时提示「去商城登录」，那是**平台依赖商城**的耦合点；现在入口、页面、运行站点都在各自那一侧，商城下线不影响另两端。后端账号体系仍是同一套（一个账号中心），但**入口与会话分开**。
 - **角色判定抽到中立模块** `frontend/packages/shared/src/lib/roles.ts`（`isOperator` / `isAdminRole` / `canAccessSellerConsole`）：原先商城只要引用一个判定函数，就会把整个后台 / 商家 UI 打进商城产物 —— 抽出来后才真正「摘干净」，并用**产物闭包扫描**（跟随 entry HTML 的静态导入闭包逐 chunk 搜特征串）验证。**E7-1 起该文件已随共用层迁到 `packages/shared/src/lib/`**（旧路径 `frontend/src/lib/roles.ts`）。
@@ -640,8 +649,8 @@ bash scripts/web-up.sh        # ① 构建前端产物 ② 打镜像 ③ 起容�
 | `duoduo-nacos` | nacos/nacos-server:v2.3.2 | 8848 / 9848 | 服务注册与配置；**已注册 8 个服务**（网关 + 7 个业务服务） |
 | `duoduo-app-gateway` | duoduo/duoduo-gateway:1.0.0 | 8080 | 统一入口：路由 + JWT 前置校验 + 身份透传 + CORS |
 | `duoduo-app-web` | duoduo/duoduo-web:1.0.0 | 8088 | **网页端（S1）**：nginx 托管前端产物 + 同源反代 `/api`、`/sandbox` 到网关；起法 `bash scripts/web-up.sh` |
-| `duoduo-app-admin-web` | duoduo/duoduo-web:1.0.0-admin | 8090 | **平台管理后台（E5）**：同一份产物 + `nginx-admin.conf` 独立主机名 `admin.localhost`（短地址 `/console`）；入口 `admin.html`，**自有登录页**，会话与商城**完全隔离** |
-| `duoduo-app-merchant-web` | duoduo/duoduo-web:1.0.0-merchant | 8091 | **第三方商家平台（E6）**：同一份产物 + `nginx-merchant.conf` 独立主机名 `merchant.localhost`（短地址 `/workspace`）；入口 `merchant.html`，**自有登录页**，会话与商城、后台**互不共享** |
+| `duoduo-app-admin-web` | duoduo/duoduo-web:1.0.0-admin | 8090 | **平台管理后台（E5）**：**独立应用 `apps/admin` 的产物** + `nginx-admin.conf`，独立主机名 `admin.localhost`（短地址 `/console`）；入口 `admin.html`，**自有登录页**，会话与商城**完全隔离** |
+| `duoduo-app-merchant-web` | duoduo/duoduo-web:1.0.0-merchant | 8091 | **第三方商家平台（E6）**：**独立应用 `apps/merchant` 的产物** + `nginx-merchant.conf`，独立主机名 `merchant.localhost`（短地址 `/workspace`）；入口 `merchant.html`，**自有登录页**，会话与商城、后台**互不共享** |
 | `duoduo-app-user` | duoduo/duoduo-user:1.0.0 | 8081 | 注册登录 / 令牌轮转 / 实名 / 宠物档案 |
 | `duoduo-app-product` | duoduo/duoduo-product:1.0.0 | 8082 | 类目 / 品牌 / SPU-SKU / 检索 / 首页 / C2C 闲置 / **库存主数据** |
 | `duoduo-app-trade` | duoduo/duoduo-trade:1.0.0 | 8083 | 购物车 / 下单拆单 / 库存冻结 / 订单状态机 / **支付（沙箱扫码）** / C2C 担保交易 |

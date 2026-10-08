@@ -15,7 +15,7 @@ import { userApi } from '@duoduo/api-sdk/endpoints';
 import { formatDate } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { CreditPanel } from '@duoduo/shared/components/CreditBadge';
-import { canAccessSellerConsole } from './seller/shared';
+import { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 /** 身份证 18 位：6 位地区 + 8 位生日 + 3 位顺序 + 1 位校验（末位可为 X） */

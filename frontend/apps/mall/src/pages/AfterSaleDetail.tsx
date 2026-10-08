@@ -13,7 +13,7 @@ import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { AfterSaleStatusTag, AfterSaleSteps } from './afterSaleShared';
+import { AfterSaleStatusTag, AfterSaleSteps } from '@duoduo/shared/components/afterSale';
 
 /**
  * 可申请平台仲裁的状态（与后端 AfterSaleService.escalate 同口径）。

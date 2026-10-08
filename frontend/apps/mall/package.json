@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "多多宠物商店 · 买家端 Web 商城（React 18 + Vite + TS），接口指向 Java 微服务网关 :8080",
+  "description": "多多宠物商店 · 买家端 Web 商城（E7-2 独立应用）：入口 index.html，独立站点 localhost:8088",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -13,7 +13,6 @@
   "dependencies": {
     "@duoduo/api-sdk": "*",
     "@duoduo/shared": "*",
-    "echarts": "^6.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0"

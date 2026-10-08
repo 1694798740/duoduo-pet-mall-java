@@ -15,7 +15,7 @@ import { afterSaleApi, orderApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { AFTER_SALE_MAX_IMAGES, AFTER_SALE_TYPE_OPTIONS, splitImageLines } from './afterSaleShared';
+import { AFTER_SALE_MAX_IMAGES, AFTER_SALE_TYPE_OPTIONS, splitImageLines } from '@duoduo/shared/components/afterSale';
 import type { AfterSaleType } from '@duoduo/api-sdk/types';
 
 /** 可申请售后的订单状态（与后端 AfterSaleService.ALLOWED_ORDER_STATUS 同口径） */

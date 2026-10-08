@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from './afterSaleShared';
+import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 
 export const AfterSalesPage: React.FC = () => {
   const [status, setStatus] = useState('');

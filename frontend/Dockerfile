@@ -7,7 +7,7 @@
 #
 # 构建约定（与根 Dockerfile 一致）：**不在容器内做前端构建**，复用宿主机的依赖缓存，
 # 因此**必须先在本机构建出 dist**：
-#     cd frontend && npm run build          # monorepo 根 → 转发到 apps/mall（tsc --noEmit && vite build）
+#     cd frontend && npm run build     # monorepo 根 → 依次构建三个应用（各自 dist）
 # 一条命令的替代做法（脚本已备）：scripts/web-up.sh / scripts/web-up.ps1
 #
 # 为什么用「同源反代」而不是让浏览器直连网关：
@@ -21,14 +21,19 @@
 FROM nginx:1.27-alpine
 
 # 站点配置：SPA 兜底 + /api、/sandbox 反代 + 上传体积（后端上限 12MB）
-# 用构建参数区分站点：nginx.conf=商城站点；nginx-admin.conf=平台管理后台站点（独立主机名/独立登录）
+#
+# 两个构建参数把「哪个应用」与本应用的 nginx 配置解耦（三个站点共用这一份 Dockerfile）：
+#   APP        = mall | admin | merchant        —— 决定 COPY 哪一份构建产物
+#   NGINX_CONF = nginx.conf / nginx-admin.conf / nginx-merchant.conf
+ARG APP=mall
 ARG NGINX_CONF=nginx.conf
 COPY ${NGINX_CONF} /etc/nginx/conf.d/default.conf
 
 # 构建产物（必须先在本机 npm run build；.dockerignore 已排除宿主 node_modules）
-# E7 起前端是 monorepo（apps/* + packages/*）：构建仍在仓库根 frontend/ 执行，
-# 产物落在 apps/mall/dist；E7-2 拆出 apps/admin、apps/merchant 后各自有 dist。
-COPY apps/mall/dist /usr/share/nginx/html
+# E7-2 起三个应用**各自构建自己的 dist**（源码、构建、产物三者都分开）：
+#     cd frontend && npm run build     # = 依次构建 @duoduo/mall / @duoduo/admin / @duoduo/merchant
+# 只构建某一个应用：npm run build:admin 之类（见 frontend/package.json）
+COPY apps/${APP}/dist /usr/share/nginx/html
 
 EXPOSE 80
 
