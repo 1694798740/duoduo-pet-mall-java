@@ -486,6 +486,26 @@ services:
       duoduo-gateway-app:
         condition: service_started
 
+  # ---------- 平台管理后台站点（T-ARCH：独立端口 + 独立主机名 + 独立登录） ----------
+  #
+  # 为什么要独立容器：主平台不应依赖商城网站登录。两边用**不同主机名**
+  # （商城 localhost:8088 / 后台 admin.localhost:8090）——
+  # Cookie 是主机级作用域且**不区分端口**，只有换主机名才能做到"登录态互不共享"。
+  duoduo-admin-web-app:
+    container_name: duoduo-app-admin-web
+    image: duoduo/duoduo-web:1.0.0-admin
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NGINX_CONF: nginx-admin.conf
+    restart: unless-stopped
+    ports:
+      - '8090:80'
+    depends_on:
+      duoduo-gateway-app:
+        condition: service_started
+
 volumes:
   mysql-data:
   redis-data:

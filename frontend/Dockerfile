@@ -21,7 +21,9 @@
 FROM nginx:1.27-alpine
 
 # 站点配置：SPA 兜底 + /api、/sandbox 反代 + 上传体积（后端上限 12MB）
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# 用构建参数区分站点：nginx.conf=商城站点；nginx-admin.conf=平台管理后台站点（独立主机名/独立登录）
+ARG NGINX_CONF=nginx.conf
+COPY ${NGINX_CONF} /etc/nginx/conf.d/default.conf
 
 # 构建产物（必须先在本机 npm run build；.dockerignore 已排除宿主 node_modules）
 COPY dist /usr/share/nginx/html

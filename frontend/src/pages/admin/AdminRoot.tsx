@@ -13,9 +13,10 @@
  * <p>与商城入口的关系：**后端判定仍是唯一权威**（非运营一律 403）；
  * 这里只负责"入口级"的体验（非运营看到可读提示，而不是一屏 403）。
  */
-import { Link, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../store/auth';
 import { AdminDenied, isOperator } from './shared';
+import { AdminLoginPage } from './AdminLogin';
 import { AdminDashboardPage } from './Dashboard';
 import { AdminAuditsPage } from './Audits';
 import { AdminCategoriesPage } from './Categories';
@@ -29,6 +30,9 @@ import { AdminShareReportsPage } from './ShareReports';
 /** 后台外壳：登录/权限校验 + 顶部条 + 工单标签栏 */
 const AdminShell: React.FC = () => {
   const { user, loading, logout } = useAuth();
+  const navigate = useNavigate();
+  // 「返回商城」是**跨站点**跳转（不同主机名），必须用绝对地址；地址由部署时注入，默认本机 8088。
+  const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
 
   if (loading) {
     return (
@@ -38,21 +42,8 @@ const AdminShell: React.FC = () => {
     );
   }
   if (!user) {
-    // 后台入口与商城入口分离后，未登录不再跳商城登录页（避免用户以为"后台没做"），
-    // 而是明确告知去商城登录后回来。下一步做独立域名时改为后台自有登录页。
-    return (
-      <div className="container" style={{ paddingTop: 24 }}>
-        <div className="card" style={{ maxWidth: 520 }}>
-        <h3 style={{ marginTop: 0 }}>请先登录平台账号</h3>
-        <p className="text-muted">
-          平台管理后台仅对平台运营 / 管理员开放。请先到商城完成登录，再回到本页。
-        </p>
-          <Link className="btn btn-primary" to="/login">
-            去商城登录
-          </Link>
-        </div>
-      </div>
-    );
+    // T-ARCH：后台不再依赖商城登录 —— 直接进**本平台自己的登录页**
+    return <Navigate to="/login" replace />;
   }
   if (!isOperator(user.role)) {
     return <AdminDenied />;
@@ -69,10 +60,13 @@ const AdminShell: React.FC = () => {
           <strong>多多宠物 · 平台管理后台</strong>
           <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
             <span className="text-muted">{user.nickname || user.phoneMasked}（{user.role}）</span>
-            <Link className="btn btn-sm btn-ghost" to="/">
+            <a className="btn btn-sm btn-ghost" href={MALL_URL}>
               返回商城
-            </Link>
-            <button className="btn btn-sm btn-ghost" onClick={() => void logout()}>
+            </a>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void logout().then(() => navigate('/login', { replace: true }))}
+            >
               退出
             </button>
           </div>
@@ -86,6 +80,8 @@ const AdminShell: React.FC = () => {
 /** 后台入口的全部路由（与商城入口的 /admin/* 路由表保持一致） */
 export const AdminRoot: React.FC = () => (
   <Routes>
+    {/* 登录页在外壳之外：未登录时不应看到后台外壳与导航 */}
+    <Route path="/login" element={<AdminLoginPage />} />
     <Route element={<AdminShell />}>
       <Route path="/admin" element={<AdminDashboardPage />} />
       <Route path="/admin/audits" element={<AdminAuditsPage />} />
