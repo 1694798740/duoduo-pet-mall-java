@@ -1375,6 +1375,18 @@ export interface MerchantRejectReason {
   note: string;
 }
 
+/** 审核台列表项（E11；无材料明细 —— 看材料请进详情） */
+export interface MerchantApplicationSummary {
+  merchantId: string;
+  storeName: string;
+  status: 'DRAFT' | 'SUBMITTED' | 'REVIEWING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  ownerUserId: string;
+  /** 店主手机号掩码（139****0001）；后端脱敏后下发 */
+  ownerPhoneMasked: string;
+  appliedAt: string | null;
+  reviewedAt: string | null;
+}
+
 /** 入驻申请视图（商家侧与审核台共用） */
 export interface MerchantApplicationView {
   merchantId: string;

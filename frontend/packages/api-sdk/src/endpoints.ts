@@ -101,7 +101,9 @@ import type {
   SeckillActivityView,
   ShareReportHandleRequest,
   ShareReportView,
+  MerchantApplicationSummary as ApplicationSummary,
   MerchantApplicationView,
+  MerchantRejectReason,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -383,6 +385,22 @@ export const sellerApi = {
  * 全部接口由服务端 OperatorGuard.requireOperator() 把关，非运营返回 403；
  * 前端据此把入口藏给运营 / 管理员，但那只是体验优化，不是安全边界。
  */
+/** 入驻审核台（E11；落在 duoduo-user，路径属 E8 的 admin 专属族） */
+export const adminMerchantApi = {
+  page: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ApplicationSummary>>('/api/admin/merchants', { query }),
+  detail: (id: string) => api.get<MerchantApplicationView>(`/api/admin/merchants/${id}`),
+  /** 开始审核：SUBMITTED → REVIEWING（幂等） */
+  startReview: (id: string) =>
+    api.post<MerchantApplicationView>(`/api/admin/merchants/${id}/start-review`),
+  /** 通过并开店（幂等：重复通过返回现状） */
+  approve: (id: string) =>
+    api.post<MerchantApplicationView>(`/api/admin/merchants/${id}/approve`),
+  /** 驳回（结构化原因必填；结论一致时幂等更新） */
+  reject: (id: string, reasons: MerchantRejectReason[]) =>
+    api.post<MerchantApplicationView>(`/api/admin/merchants/${id}/reject`, { reasons }),
+};
+
 export const adminApi = {
   // ---- 运营报表与资金对账（落在 duoduo-trade） ----
   reportOverview: () => api.get<AdminReport>('/api/admin/reports/overview'),

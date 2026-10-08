@@ -19,7 +19,8 @@
  */
 
 import React, { useCallback } from 'react';
-import { adminApi } from '@duoduo/api-sdk/endpoints';
+import { Link } from 'react-router-dom';
+import { adminApi, adminMerchantApi } from '@duoduo/api-sdk/endpoints';
 import { Alert, LoadingBlock, formatPrice } from '@duoduo/shared/components/ui';
 import { LazyChart } from '@duoduo/shared/components/lazy-charts';
 import { useAsync } from '@duoduo/shared/components/hooks';
@@ -64,6 +65,7 @@ export const AdminDashboardPage: React.FC = () => {
     <div>
       <h2 className="section-title">平台管理后台 · 运营概览</h2>
       <AdminTabs />
+      <MerchantAuditEntry />
 
       {report.error ? <Alert kind="error">{report.error}</Alert> : null}
       {summary.error ? <Alert kind="error">{summary.error}</Alert> : null}
@@ -156,6 +158,36 @@ export const AdminDashboardPage: React.FC = () => {
           资金对账正常：所有已付款订单都有对应的托管单，无异常挂账。
         </Alert>
       )}
+    </div>
+  );
+};
+
+
+/**
+ * 入驻审核入口卡（E11）：顶栏导航已贴 594px 上限（再加一项必截断，见 R74-2 实测），
+ * 所以入驻审核不进顶栏，而是作为概览页的「待办」入口 —— 待审数量直接可见，
+ * 运营每天开后台第一眼就能看到有没有新申请。
+ */
+const MerchantAuditEntry: React.FC = () => {
+  const { data } = useAsync(
+    useCallback(() => adminMerchantApi.page({ status: 'SUBMITTED', page: 1, pageSize: 1 }), []),
+    true,
+    [],
+  );
+  const pending = data?.total ?? 0;
+  return (
+    <div className="card card-pad" style={{ marginBottom: 24 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <b>商家入驻审核</b>
+          <div className="small muted" style={{ marginTop: 4 }}>
+            待审核 {pending} 家 —— 通过即开店，驳回须逐条给出结构化原因
+          </div>
+        </div>
+        <Link className="btn btn-primary" to="/admin/merchants">
+          去审核
+        </Link>
+      </div>
     </div>
   );
 };
