@@ -6,12 +6,16 @@
  * （可单独部署、单独加访问策略），而每一步都可构建、可验收。
  * 下一步再把本目录整体迁到 `apps/admin` 并抽出共享包（见任务清单 T3）。
  *
+ * <p>导航栏只有一份：**页面自带**「标题 + 工单标签栏」（见各页顶部的 section-title + AdminTabs），
+ * 外壳只提供全局条（品牌 / 当前账号 / 返回商城 / 退出）—— 早先外壳也渲染了一份 AdminTabs，
+ * 结果页面上出现两条一模一样的导航（用户报障），已移除。
+ *
  * <p>与商城入口的关系：**后端判定仍是唯一权威**（非运营一律 403）；
  * 这里只负责"入口级"的体验（非运营看到可读提示，而不是一屏 403）。
  */
 import { Link, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../../store/auth';
-import { AdminDenied, AdminTabs, isOperator } from './shared';
+import { AdminDenied, isOperator } from './shared';
 import { AdminDashboardPage } from './Dashboard';
 import { AdminAuditsPage } from './Audits';
 import { AdminCategoriesPage } from './Categories';
@@ -28,8 +32,8 @@ const AdminShell: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="card" style={{ margin: 24 }}>
-        正在校验登录状态…
+      <div className="container" style={{ paddingTop: 24 }}>
+        <div className="card">正在校验登录状态…</div>
       </div>
     );
   }
@@ -37,14 +41,16 @@ const AdminShell: React.FC = () => {
     // 后台入口与商城入口分离后，未登录不再跳商城登录页（避免用户以为"后台没做"），
     // 而是明确告知去商城登录后回来。下一步做独立域名时改为后台自有登录页。
     return (
-      <div className="card" style={{ margin: 24, maxWidth: 520 }}>
+      <div className="container" style={{ paddingTop: 24 }}>
+        <div className="card" style={{ maxWidth: 520 }}>
         <h3 style={{ marginTop: 0 }}>请先登录平台账号</h3>
         <p className="text-muted">
           平台管理后台仅对平台运营 / 管理员开放。请先到商城完成登录，再回到本页。
         </p>
-        <Link className="btn btn-primary" to="/login">
-          去商城登录
-        </Link>
+          <Link className="btn btn-primary" to="/login">
+            去商城登录
+          </Link>
+        </div>
       </div>
     );
   }
@@ -53,14 +59,16 @@ const AdminShell: React.FC = () => {
   }
 
   return (
-    <>
-      <header className="card" style={{ margin: 16, padding: '12px 16px' }}>
+    <div className="container" style={{ paddingTop: 14, paddingBottom: 48 }}>
+      {/* 顶部条：只放全局信息与动作；**不放工单标签栏**（标签栏由各页面自带，避免重复导航） */}
+      <header
+        className="card"
+        style={{ padding: '10px 16px', marginBottom: 14, position: 'sticky', top: 0, zIndex: 20 }}
+      >
         <div className="row row-between row-wrap" style={{ gap: 12 }}>
           <strong>多多宠物 · 平台管理后台</strong>
-          <div className="row row-wrap" style={{ gap: 8 }}>
-            <span className="text-muted">
-              {user.nickname || user.phoneMasked}（{user.role}）
-            </span>
+          <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+            <span className="text-muted">{user.nickname || user.phoneMasked}（{user.role}）</span>
             <Link className="btn btn-sm btn-ghost" to="/">
               返回商城
             </Link>
@@ -70,11 +78,8 @@ const AdminShell: React.FC = () => {
           </div>
         </div>
       </header>
-      <main style={{ padding: '0 16px 32px' }}>
-        <AdminTabs />
-        <Outlet />
-      </main>
-    </>
+      <Outlet />
+    </div>
   );
 };
 

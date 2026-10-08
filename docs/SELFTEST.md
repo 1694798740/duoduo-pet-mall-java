@@ -214,7 +214,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 17 套 659 项（首页 / **商品详情页** / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 17 套 661 项（首页 / **商品详情页** / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注**） |
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 42 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
@@ -291,7 +291,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：17 套全 PASS，合计 659 项。判定同样看退出码。
+**预期**：17 套全 PASS，合计 661 项。判定同样看退出码。
 
 其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
 `home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、

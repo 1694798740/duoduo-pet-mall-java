@@ -356,6 +356,28 @@ console.log('\n> 平台管理后台独立入口（T3）');
   check('后台入口返回的是后台页面（标题正确）', html.includes('平台管理后台'), 'title 不匹配');
   check('后台入口未被商城 SPA 兜底', !html.includes('宠物用品自营商城'), '命中商城兜底');
 
+  // ★ 导航栏只能有一条：后台页面自带「标题+标签栏」，外壳**不得**再渲染一份
+  //   （曾因外壳也渲染 AdminTabs 导致页面出现两条一模一样的导航 —— 用户报障）
+  {
+    const op = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN' });
+    const lr = await fetch(`${UI}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13684295254', password: 'duoduo12345' }),
+    });
+    const jar = (lr.headers.getSetCookie?.() ?? []).map((c) => {
+      const [kv] = c.split(';'); const [n, v] = kv.split('=');
+      return { name: n.trim(), value: v, domain: 'localhost', path: '/' };
+    });
+    await op.addCookies(jar);
+    const pg = await op.newPage();
+    await pg.goto(`${UI}/admin.html`, { waitUntil: 'networkidle' });
+    const tabCount = await pg.locator('a[href="/admin/audits"]').count();
+    check('后台入口只有一条导航标签栏（不得重复）', tabCount === 1, `标签出现 ${tabCount} 次`);
+    const titleCount = await pg.locator('h2.section-title').count();
+    check('页面标题只有一处', titleCount === 1, `标题出现 ${titleCount} 次`);
+    await op.close();
+  }
+
   if (UI.includes(':8088')) {
     const c = await fetch(`${UI}/console`, { redirect: 'manual' });
     const loc = c.headers.get('location') || '';
