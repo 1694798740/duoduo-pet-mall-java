@@ -112,8 +112,12 @@ public class OrderService {
     /**
      * 平台自营的卖家 ID。
      * 商品域 SPU 目前没有商家字段，自营商品统一归到平台账号下。
+     *
+     * <p>E9 起语义的<b>单一权威</b>在 {@code duoduo-common} 的 {@code SellerOwnership}
+     * （常量与 isSelfSeller 判定都归它，本常量只是 trade 域内的既有引用名，保持兼容）。
+     * 新代码请直接用 SellerOwnership，不要再经由此常量。
      */
-    public static final long PLATFORM_SELLER_ID = 0L;
+    public static final long PLATFORM_SELLER_ID = com.duoduo.common.seller.SellerOwnership.SELF_SELLER_ID;
 
     private static final String ORDER_TYPE_NORMAL = "NORMAL";
     private static final String OPERATOR_USER = "USER";
