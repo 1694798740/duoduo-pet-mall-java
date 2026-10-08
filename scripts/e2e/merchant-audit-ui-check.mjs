@@ -77,6 +77,24 @@ async function call(method, p, body, jar) {
 
 const randPhone = () => '138' + String(Math.floor(1e7 + Math.random() * 8e7));
 
+/** E12 · 私有通道真实上传（multipart） */
+async function upload(jar, filename, bytes, contentType) {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: contentType }), filename);
+  const res = await fetch(`${GW}/api/users/me/merchant-application/materials`, {
+    method: 'POST',
+    headers: { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') },
+    body: form,
+  });
+  const json = await res.json().catch(() => null);
+  if (res.status !== 200) throw new Error(`上传失败 ${res.status} ${JSON.stringify(json)}`);
+  return json.data;
+}
+
+/** 审计行数（E12 下载留痕验证用） */
+const auditCount = async (merchantId) => Number((await mysql('duoduo_user',
+  `SELECT COUNT(*) FROM t_audit_log WHERE action='MERCHANT_MATERIAL_READ' AND target_id=${merchantId};`)).trim());
+
 // ---------------- 浏览器 ----------------
 const { chromium } = await import(PW_CORE);
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
@@ -114,15 +132,42 @@ try {
   const merchantId = app1.data.merchantId;
   const storeName = `审核台夹具店-${Date.now()}`;
 
+  // E12：材料走**私有通道**真实上传（multipart → 私有卷），不再用 /uploads 假路径
   const materials = {};
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
   for (const t of ['BUSINESS_LICENSE', 'LEGAL_ID_FRONT', 'LEGAL_ID_BACK',
-    'BANK_ACCOUNT', 'OPERATION_COMMITMENT', 'INDUSTRY_PERMIT']) {
-    materials[t] = `/uploads/audit-${t.toLowerCase()}.jpg`;
+    'BANK_ACCOUNT', 'OPERATION_COMMITMENT']) {
+    const up = await upload(seller.jar, `audit-${t.toLowerCase()}.png`, pngBytes, 'image/png');
+    materials[t] = up.path;
   }
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+  materials.INDUSTRY_PERMIT = (await upload(seller.jar, '许可.pdf', pdfBytes, 'application/pdf')).path;
+  check('私有通道上传 6 份材料（含 1 份 PDF）',
+    Object.values(materials).every((p) => p.startsWith('/api/merchant-materials/')), materials);
+  const anyPath = Object.values(materials)[0];
+
+  // ★ 借路径测试必须在 **DRAFT 态**（可编辑）跑：若在 SUBMITTED 后测，
+  //    422 的真实原因是"材料冻结"而不是"归属校验"，断言会假绿
+  const cross = await call('PUT', '/api/users/me/merchant-application',
+    { materials: { BUSINESS_LICENSE: anyPath.replace(/^\/api\/merchant-materials\/\d+/, '/api/merchant-materials/999') } }, seller.jar);
+  check('★ 借用他人材料路径填申请 → 422（归属校验）', cross.status === 422, cross.status);
+
   await call('PUT', '/api/users/me/merchant-application',
     { storeName, materials }, seller.jar);
   check('提交送审', (await call('POST', '/api/users/me/merchant-application/submit', undefined, seller.jar))
     .data?.status === 'SUBMITTED');
+
+  // 越权与归属校验（E12 核心）：无关登录用户读材料必须 403，且**不能借别人的路径**
+  const stranger = { jar: new Map() };
+  await call('POST', '/api/auth/register',
+    { phone: randPhone(), password: PWD, nickname: '越权探针' }, stranger.jar);
+  const foreign = await fetch(`${GW}${anyPath}`, {
+    headers: { cookie: [...stranger.jar].map(([k, v]) => `${k}=${v}`).join('; ') },
+  });
+  check('★ 无关登录用户读他人材料 → 403', foreign.status === 403, foreign.status);
+  const anon = await fetch(`${GW}${anyPath}`);
+  check('★ 未登录直读 → 401（网关白名单外强制登录）', anon.status === 401, anon.status);
+
 
   // ---------------- S2 概览入口 ----------------
   step('S2 运营概览的入驻审核入口卡');
@@ -149,8 +194,11 @@ try {
   const dialog = pageOp.locator('.modal, [role="dialog"]').first();
   await pageOp.getByText('核对提示').waitFor({ timeout: 10000 });
   check('详情有一致性核对提示', await pageOp.getByText('与营业执照上的名称是否一致').isVisible());
+  // E12：5 图 + 1 PDF —— PDF 按设计渲染为"PDF 文档"链接（<img> 渲染不了 pdf）
   const imgCount = await dialog.locator('img').count();
-  check('6 类材料图全部可预览', imgCount === 6, imgCount);
+  const pdfCount = await dialog.getByText('📄 PDF 文档').count();
+  check('6 类材料全部可预览（5 图 + 1 PDF 链接）', imgCount === 5 && pdfCount === 1,
+    { imgCount, pdfCount });
 
   await pageOp.getByRole('button', { name: '开始审核' }).click();
   await pageOp.getByText('已开始审核').waitFor({ timeout: 10000 });
@@ -195,6 +243,14 @@ try {
   check('无 pageerror / 5xx（后台会话）', wOp.httpErrors.length === 0, wOp.httpErrors);
 
   // ---------------- S5 开店生效 ----------------
+  step('S4.5 私有读取与留痕：店主 200 / 审计落库');
+  const ownRead = await fetch(`${GW}${anyPath}`, {
+    headers: { cookie: [...seller.jar].map(([k, v]) => `${k}=${v}`).join('; ') },
+  });
+  check('★ 店主读自己的材料 → 200', ownRead.status === 200, ownRead.status);
+  const audits = await auditCount(merchantId);
+  check('★ 每次读取都有留痕（t_audit_log ≥1 条 MERCHANT_MATERIAL_READ）', audits >= 1, audits);
+
   step('S5 开店生效：商家激活领新令牌');
   const roleInDb = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE phone='${seller.phone}';`)).trim();
   check('库内角色已升 SELLER（approve 动作）', roleInDb === 'SELLER', roleInDb);

@@ -9,10 +9,12 @@ import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
 import com.duoduo.user.entity.MerchantMemberEntity;
 import com.duoduo.user.entity.UserEntity;
+import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.MerchantMaterialStorage;
 import com.duoduo.user.support.MerchantStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,10 +57,12 @@ class MerchantOnboardingStateTest {
     private final UserMapper userMapper = mock(UserMapper.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final MerchantMaterialStorage materialStorage = mock(MerchantMaterialStorage.class);
+    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, objectMapper);
+                    userMapper, idGenerator, objectMapper, materialStorage, auditLogMapper);
 
     /** setUp 与各用例共享的 owner 实例（service 经 userMapper.selectById 读到的就是它） */
     private UserEntity ownerUser;

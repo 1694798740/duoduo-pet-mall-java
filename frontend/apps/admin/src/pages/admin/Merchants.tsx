@@ -246,13 +246,25 @@ export const AdminMerchantsPage: React.FC = () => {
                 <div key={t.type} style={{ width: 150 }}>
                   <div className="small" style={{ marginBottom: 4 }}>{t.label}</div>
                   {url ? (
-                    <a href={url} target="_blank" rel="noreferrer">
-                      <img
-                        src={url}
-                        alt={t.label}
-                        style={{ width: 150, height: 100, objectFit: 'cover', border: '1px solid var(--border, #ddd)', borderRadius: 6 }}
-                      />
-                    </a>
+                    url.toLowerCase().endsWith('.pdf') ? (
+                      <a
+                        className="btn btn-sm btn-ghost"
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ width: 150, height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border, #ddd)', borderRadius: 6 }}
+                      >
+                        📄 PDF 文档
+                      </a>
+                    ) : (
+                      <a href={url} target="_blank" rel="noreferrer">
+                        <img
+                          src={url}
+                          alt={t.label}
+                          style={{ width: 150, height: 100, objectFit: 'cover', border: '1px solid var(--border, #ddd)', borderRadius: 6 }}
+                        />
+                      </a>
+                    )
                   ) : (
                     <div className="small muted" style={{ width: 150, height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed var(--border, #ccc)', borderRadius: 6 }}>
                       缺失

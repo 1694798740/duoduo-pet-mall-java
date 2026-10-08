@@ -12,9 +12,12 @@ import com.duoduo.user.dto.MerchantDtos.SaveDraftRequest;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
 import com.duoduo.user.entity.UserEntity;
+import com.duoduo.user.entity.AuditLogEntity;
+import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.MerchantMaterialStorage;
 import com.duoduo.user.support.MerchantMaterialType;
 import com.duoduo.user.support.MerchantStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -48,6 +51,10 @@ public class MerchantOnboardingService {
 
     /** 材料引用只接受本平台上传通道的路径 —— 外链一张随时会失效的图，审核时看不到等于白交 */
     private static final String UPLOAD_PREFIX = "/uploads/";
+    /** E12 · 私有读取路径前缀（鉴权端点，不走公开 nginx） */
+    private static final String MATERIAL_READ_PREFIX = "/api/merchant-materials/";
+    /** E12 · 审计动作：读取入驻材料 */
+    public static final String ACTION_MATERIAL_READ = "MERCHANT_MATERIAL_READ";
     private static final int STORE_NAME_MIN = 2;
     private static final int STORE_NAME_MAX = 30;
 
@@ -57,19 +64,25 @@ public class MerchantOnboardingService {
     private final UserMapper userMapper;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final MerchantMaterialStorage materialStorage;
+    private final AuditLogMapper auditLogMapper;
 
     public MerchantOnboardingService(MerchantMapper merchantMapper,
                                      com.duoduo.user.mapper.MerchantMemberMapper memberMapper,
                                      MerchantMaterialMapper materialMapper,
                                      UserMapper userMapper,
                                      SnowflakeIdGenerator idGenerator,
-                                     ObjectMapper objectMapper) {
+                                     ObjectMapper objectMapper,
+                                     MerchantMaterialStorage materialStorage,
+                                     AuditLogMapper auditLogMapper) {
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
         this.materialMapper = materialMapper;
         this.userMapper = userMapper;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.materialStorage = materialStorage;
+        this.auditLogMapper = auditLogMapper;
     }
 
     // ---------------- 商家侧 ----------------
@@ -314,6 +327,54 @@ public class MerchantOnboardingService {
         return userMapper.selectById(userId);
     }
 
+    /**
+     * E12 · 上传一份资质材料（私有通道）。
+     *
+     * <p>文件立即落到该商家的租户目录；与申请的绑定在 saveDraft 里完成（上传与
+     * 填表解耦，重传覆盖靠 uk_merchant_type 的 upsert 语义）。
+     * 查看即建草稿的 {@link #ensureApplication} 在这里复用：上传需要一个落点。
+     */
+    public MerchantMaterialStorage.Stored storeMaterial(long userId, String originalName, byte[] content) {
+        MerchantEntity entity = requireOwned(userId);
+        return materialStorage.store(entity.getId(), originalName, content);
+    }
+
+    /**
+     * E12 · 读取一份资质材料（鉴权代理 + 下载留痕）。
+     *
+     * <p>授权口径：**店主本人**或**运营 / 管理员**。其余任何登录用户 → 403 ——
+     * 网关只保证"登录了"，"是不是该看这份材料"必须在服务端判断。
+     * 每次成功读取写一条审计（t_audit_log）：谁、何时、看了哪家店的哪份材料 ——
+     * 材料泄露的排查入口就是这张表。
+     */
+    public MerchantMaterialStorage.ReadResult readMaterial(Long readerId, long merchantId, String storedName) {
+        MerchantEntity entity = requireMerchant(merchantId);
+        com.duoduo.common.context.LoginUser reader = com.duoduo.common.context.UserContext.require();
+        String role = reader.role() == null ? "USER" : reader.role().toUpperCase();
+        boolean isOperator = "OPERATOR".equals(role) || "ADMIN".equals(role);
+        boolean isOwner = entity.getOwnerUserId() != null && entity.getOwnerUserId().equals(readerId);
+        if (!isOperator && !isOwner) {
+            log.warn("越权读取入驻材料被拒 reader={} merchantId={} role={}", readerId, merchantId, role);
+            throw BizException.forbidden("无权查看该入驻材料");
+        }
+        MerchantMaterialStorage.ReadResult result = materialStorage.read(merchantId, storedName);
+        try {
+            AuditLogEntity record = new AuditLogEntity();
+            record.setId(idGenerator.nextId());
+            record.setActorId(readerId);
+            record.setActorPhone(reader.phone() == null ? "" : reader.phone());
+            record.setAction(ACTION_MATERIAL_READ);
+            record.setTargetId(merchantId);
+            record.setDetail(storedName);
+            record.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
+            auditLogMapper.insert(record);
+        } catch (Exception ex) {
+            // 留痕失败不阻断读取 —— 但必须吵到日志里（审计静默丢失比不审计更危险）
+            log.error("材料读取留痕失败 merchantId={} storedName={} reader={}", merchantId, storedName, readerId, ex);
+        }
+        return result;
+    }
+
     // ---------------- 内部 ----------------
 
     private MerchantEntity requireOwned(Long userId) {
@@ -362,8 +423,17 @@ public class MerchantOnboardingService {
             if (url.isEmpty()) {
                 continue;   // 空值 = 不修改该类（删材料走显式空串语义过于隐晦，v1 不支持删）
             }
-            if (!url.startsWith(UPLOAD_PREFIX)) {
-                throw BizException.businessRule("材料必须通过本站上传通道提交（" + type.label() + "）");
+            // E12：新上传一律走私有通道（/api/merchant-materials/{merchantId}/{storedName}），
+            // 且路径里的 merchantId **必须是申请人自己的** —— 不校验归属的话，
+            // 把别人的材料路径填进自己的申请就能"借用"别人的执照通过审核。
+            // /uploads/ 前缀是 E10 时期的存量数据，只读兼容、不再产生新写入。
+            if (url.startsWith(MATERIAL_READ_PREFIX)) {
+                String pathMid = url.substring(MATERIAL_READ_PREFIX.length()).split("/")[0];
+                if (!String.valueOf(merchantId).equals(pathMid)) {
+                    throw BizException.businessRule("材料路径不属于当前申请（" + type.label() + "）");
+                }
+            } else if (!url.startsWith(UPLOAD_PREFIX)) {
+                throw BizException.businessRule("材料必须通过本站私有上传通道提交（" + type.label() + "）");
             }
             MerchantMaterialEntity row = materialMapper.selectOne(
                     new LambdaQueryWrapper<MerchantMaterialEntity>()

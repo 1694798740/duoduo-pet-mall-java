@@ -140,6 +140,9 @@ services:
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
       DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
+    volumes:
+      # E12 · 入驻资质材料私有卷（读取一律走鉴权端点，不挂公开路径）
+      - merchant-materials:/data/merchant-materials
     ports:
       - '8081:8081'
     depends_on:
@@ -533,3 +536,6 @@ volumes:
   mysql-data:
   redis-data:
   fulfilment-uploads:
+  # E12 · 入驻资质材料的私有存储：不挂任何公开 nginx 路径，
+  # 读取一律走鉴权端点（店主本人 / 运营），与公开的 /uploads/** 彻底分开
+  merchant-materials:

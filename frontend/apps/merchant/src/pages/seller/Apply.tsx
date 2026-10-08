@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MERCHANT_MATERIAL_TYPES, MerchantApplicationView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { userApi, uploadApi } from '@duoduo/api-sdk/endpoints';
+import { userApi } from '@duoduo/api-sdk/endpoints';
 import { Alert, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -60,8 +60,9 @@ export const MerchantApplyPage: React.FC = () => {
   const upload = async (type: string, file: File) => {
     setBusy(true);
     try {
-      const url = (await uploadApi.image(file)).url;
-      setMaterials((prev) => ({ ...prev, [type]: url }));
+      // E12：材料走私有通道（落私有卷、读取鉴权），不再用公开的 /uploads
+      const path = (await userApi.uploadMerchantMaterial(file)).path;
+      setMaterials((prev) => ({ ...prev, [type]: path }));
       push('上传成功，记得保存草稿', 'success');
     } catch (err) {
       push(toFriendlyMessage(err), 'error');
@@ -186,7 +187,7 @@ export const MerchantApplyPage: React.FC = () => {
           </div>
 
           <div className="small muted" style={{ margin: '10px 0 6px' }}>
-            资质材料（6 类必须齐全，图片格式 jpg/png/webp，单张 ≤ 5MB）
+            资质材料（6 类必须齐全；jpg / png / webp / pdf，单个 ≤ 6MB，仅审核相关方可见）
           </div>
           {MERCHANT_MATERIAL_TYPES.map((t) => (
             <div key={t.type} className="row" style={{ alignItems: 'center', marginBottom: 8 }}>
@@ -215,7 +216,7 @@ export const MerchantApplyPage: React.FC = () => {
                   fileRefs.current[t.type] = el;
                 }}
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
                 style={{ display: 'none' }}
                 onChange={(e) => {
                   const f = e.target.files?.[0];

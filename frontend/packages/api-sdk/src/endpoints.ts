@@ -160,6 +160,18 @@ export const userApi = {
   activateMerchant: () =>
     api.post<{ accessToken: string; expiresInSeconds: number }>(
       '/api/users/me/merchant-application/activate'),
+
+  /**
+   * E12 · 上传一份资质材料（**私有通道**）：文件落私有卷、读取走鉴权代理，
+   * 返回的 path 是鉴权读取路径（不是公开 URL）—— 把它填进 saveDraft 的 materials。
+   * 支持 jpg/png/webp/pdf，单文件 ≤ 6MB。
+   */
+  uploadMerchantMaterial: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ path: string; storedName: string; originalName: string }>(
+      '/api/users/me/merchant-application/materials', form);
+  },
 };
 
 // ---------- 宠物档案（/api/pets） ----------
