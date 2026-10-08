@@ -57,15 +57,6 @@ import { SellerOrderDetailPage } from './pages/seller/OrderDetail';
 import { SellerOrdersPage } from './pages/seller/Orders';
 import { SellerProductsPage } from './pages/seller/Products';
 import { SellerSettlementsPage } from './pages/seller/Settlements';
-import { AdminDashboardPage } from './pages/admin/Dashboard';
-import { AdminAuditsPage } from './pages/admin/Audits';
-import { AdminCategoriesPage } from './pages/admin/Categories';
-import { AdminBrandsPage } from './pages/admin/Brands';
-import { AdminOperatorsPage } from './pages/admin/Operators';
-import { AdminSeckillPage } from './pages/admin/Seckill';
-import { AdminOrdersPage } from './pages/admin/Orders';
-import { AdminAfterSalesPage } from './pages/admin/AfterSales';
-import { AdminShareReportsPage } from './pages/admin/ShareReports';
 import { AfterSalesPage } from './pages/AfterSales';
 import { AfterSaleNewPage } from './pages/AfterSaleNew';
 import { AfterSaleDetailPage } from './pages/AfterSaleDetail';
@@ -383,80 +374,6 @@ export const App: React.FC = () => (
           <RequireSeller>
             <SellerAfterSalesPage />
           </RequireSeller>
-        }
-      />
-
-      {/* ---------- 平台管理后台（M10，需登录；非运营由页面渲染 AdminDenied） ---------- */}
-      <Route
-        path="/admin"
-        element={
-          <RequireOperator>
-            <AdminDashboardPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/audits"
-        element={
-          <RequireOperator>
-            <AdminAuditsPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/categories"
-        element={
-          <RequireOperator>
-            <AdminCategoriesPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/brands"
-        element={
-          <RequireOperator>
-            <AdminBrandsPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/orders"
-        element={
-          <RequireOperator>
-            <AdminOrdersPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/after-sales"
-        element={
-          <RequireOperator>
-            <AdminAfterSalesPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/share-reports"
-        element={
-          <RequireOperator>
-            <AdminShareReportsPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/operators"
-        element={
-          <RequireOperator>
-            <AdminOperatorsPage />
-          </RequireOperator>
-        }
-      />
-      <Route
-        path="/admin/seckill"
-        element={
-          <RequireOperator>
-            <AdminSeckillPage />
-          </RequireOperator>
         }
       />
 

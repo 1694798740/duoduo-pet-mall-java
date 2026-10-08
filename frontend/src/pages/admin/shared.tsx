@@ -10,27 +10,14 @@ import React from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { Alert } from '../../components/ui';
 
-/** 能否进入平台管理后台：运营或管理员（与后端 LoginUser#isOperator() 同口径，忽略大小写） */
-export function isOperator(role: string | null | undefined): boolean {
-  if (!role) return false;
-  const upper = role.toUpperCase();
-  return upper === 'OPERATOR' || upper === 'ADMIN';
-}
-
 /**
- * 是否**管理员**（比 {@link isOperator} 更窄：只认 ADMIN，不含 OPERATOR）。
- *
- * 用在「运营账号」页里**只有管理员能做**的动作（给他人改角色）。
- * 刻意与 {@link isOperator} 放在一起：角色判定**必须同源相邻**，
- * 各页各写一份就会漂移 —— R74-3 删掉的那个恒为 false 的 `isAdmin`
- * （走了全小写比较，而库内是大写存储）就是漂移的样本。
+ * 角色判定已抽到中立模块 `src/lib/roles.ts`（见该文件注释：商城引一个判定函数
+ * 不该把整个后台 UI 模块拖进自己的产物）。这里**重导出**，让后台各页的 import 保持不变、
+ * 且"判定只有一处实现"这一约定继续成立。
  */
-export function isAdminRole(role: string | null | undefined): boolean {
-  if (!role) return false;
-  return role.toUpperCase() === 'ADMIN';
-}
+export { isAdminRole, isOperator } from '../../lib/roles';
 
-/** 后台内部导航：把八个工作台挂到一条标签上 */
+/** 后台内部导航：把九个工作台挂到一条标签上 */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
   { to: '/admin/audits', label: '内容审核', end: false },

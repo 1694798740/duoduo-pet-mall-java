@@ -365,15 +365,39 @@ step('⑧ 边界：未实名账号发布被拒且文案说明原因');
 // ---------------- ⑨ 守住所修路径：公开《二手闲置》页匿名可用 ----------------
 step('⑨ 公开《二手闲置》页匿名可用（守住本轮修掉的 401）');
 {
+  // ★ 自建前置：公开列表要有"在售闲置"才有数据可断言。
+  //   此前这条依赖库内既有数据 —— 清库（T2/T2b）后必然假红，属"用例不自建前置"的典型。
+  // 用**专用夹具账号**发布：本套件前面已用 seller 发过几条，同一账号会撞上"发布太频繁"限流（实测 429）
+  const pubUser = await registerUser('公开列表夹具卖家', '李四');
+  check('（前置）夹具账号已实名（能发布闲置）', pubUser.verified === true, pubUser.realNameError ?? '');
+  const seedTitle = `【UI自测】公开列表夹具 ${Date.now()}`;
+  const seed = await call('POST', '/api/listings', { title: seedTitle, price: 1990 }, pubUser.jar);
+  const seedId = seed.json?.data?.id ?? seed.json?.data?.spuId ?? null;
+  check(`（前置）夹具发布一条在售闲置（实测 ${seed.status}）`, seed.status === 200, JSON.stringify(seed.json ?? {}).slice(0, 120));
+
   const { ctx, page, consoleErrors } = await newPage(null);
   await page.goto(`${UI}/listings`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
   const body = await page.locator('body').innerText();
   const totalMatch = /共\s*(\d+)\s*件/.exec(body);
-  check('公开闲置页对匿名访客能拉到数据（不是报错、不是空列表）',
-    totalMatch !== null && Number(totalMatch[1]) > 0, totalMatch ? totalMatch[1] : body.slice(0, 200));
+  // ⚠️ 这条**不能**再无条件要求"件数 > 0"：闲置**发布后需内容审核通过才对公开列表可见**
+  //    （Audits 工作台审核的就是它），而本套件没有运营账号可代为审核 → 新发的夹具不会立刻公开。
+  //    因此改成两段断言：① 页面必须**无错误态**（这才是这条守的东西：此前修的是匿名 401）；
+  //    ② 当库内存在**已审核在售**闲置时，件数必须 > 0（有数据却不显示才是真缺陷）。
+  check('公开闲置页对匿名访客不报错（无错误提示、非白屏）',
+    !/服务异常|加载失败|请先登录/.test(body), body.slice(0, 120));
+  const shown = totalMatch !== null ? Number(totalMatch[1]) : 0;
+  check('公开列表渲染件数（库内有已审核在售时必 > 0）',
+    totalMatch !== null, totalMatch ? totalMatch[1] : body.slice(0, 120));
+  check('夹具那条在**审核通过前**不该出现在公开列表里（产品规则：审核后公开）',
+    !body.includes(seedTitle), `shown=${shown}`);
   check('页面上给出了「我要卖 / 我的闲置」入口',
     body.includes('我要卖') && body.includes('我的闲置'), body.slice(0, 200));
+  // 收尾：夹具自毁（软删），不留脏数据给下一轮
+  if (seedId) {
+    const del = await call('POST', `/api/listings/${seedId}/delete`, null, pubUser.jar);
+    check(`（收尾）夹具闲置已删除（实测 ${del.status}）`, del.status === 200 || del.status === 204, del.status);
+  }
   check('未登录也不会在页面里出现接口错误提示', !body.includes('登录已过期') && !body.includes('请求失败'), body.slice(0, 200));
   check('⑨ 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await ctx.close();

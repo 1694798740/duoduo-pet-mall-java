@@ -38,6 +38,14 @@ import { mysql } from '../lib/docker-exec.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+/** 平台管理后台**独立站点**（T-ARCH：不同主机名 → 独立会话）。可用 ADMIN_UI_BASE 覆盖。 */
+const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
+/**
+ * 同一站点的**命令行可达地址**：Node 的解析器**不认识** `*.localhost`（浏览器按 RFC 6761 才认），
+ * 所以服务端侧（fetch）一律走 127.0.0.1 + 端口；浏览器侧仍用 ADMIN_UI（保证 Cookie 作用域正确）。
+ * 管理后台站点的 nginx `server_name` 同时含 localhost，故两条路都能到。
+ */
+const ADMIN_HTTP = process.env.ADMIN_HTTP_BASE ?? 'http://127.0.0.1:8090';
 const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
 const PW_CORE =
   process.env.PW_CORE ??
@@ -172,7 +180,7 @@ const buyerReg = await call('POST', '/api/auth/register', { phone: buyerPhone, p
 check('普通买家账号注册成功', buyerReg.status === 200, buyerReg.status);
 
 // ================= S1 未登录 =================
-step('S1 · 未登录：不显示入口，直奔 /admin 被送到带 next 的登录页');
+step('S1 · 未登录：不显示入口；商城站内 /admin 已摘除（显示页面不存在）');
 {
   const ctx = await newContext();
   const page = await ctx.newPage();
@@ -183,13 +191,14 @@ step('S1 · 未登录：不显示入口，直奔 /admin 被送到带 next 的登
   check('未登录时也没有头像下拉（入口无处可点，符合「仅登录用户可见」）',
     (await page.locator('.app-header button.icon-btn').count()) === 0);
 
+  // T-ARCH 第 2 步：后台已独立部署 → 商城内**不再有** /admin 路由
   await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
-  const url = new URL(page.url());
-  check('未登录访问 /admin → 落到登录页', url.pathname === '/login', page.url());
-  check('★ 回跳参数 next 精确等于 /admin（登录后才会回运营概览）',
-    decodeURIComponent(url.searchParams.get('next') ?? '') === '/admin',
-    url.searchParams.get('next'));
+  const bodyS1 = await page.locator('body').innerText();
+  check('★ 商城内 /admin 已摘除（显示「页面不存在」，不再是站内后台）',
+    bodyS1.includes('页面不存在'), bodyS1.slice(0, 80));
+  check('★ 也不会被送去登录页（站内已无后台路由，不存在 next 回跳）',
+    new URL(page.url()).pathname === '/admin', page.url());
   check('S1 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await ctx.close();
 }
@@ -214,10 +223,10 @@ step('S2 · 普通买家登录：顶栏与下拉都不显示入口');
 
   // 权限边界：登录用户进 /admin 不该被踢回登录页，而应看到可读的拦截说明
   await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(600);
   const body = await page.locator('body').innerText();
-  check('买家访问 /admin 渲染「需要运营或管理员身份」拦截页（不是白屏也不是跳登录）',
-    body.includes('需要运营或管理员身份'), body.slice(0, 120));
+  check('★ 买家访问商城 /admin 也是「页面不存在」（后台已不在商城内，故不再是拦截页）',
+    body.includes('页面不存在'), body.slice(0, 120));
   check('S2 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await page.screenshot({ path: path.join(SHOTS, 'admin-entry-buyer-denied.png') });
   await ctx.close();
@@ -244,11 +253,13 @@ const ctxOp = await newContext();
     })());
 
   await navAdminLink(page).click();
-  await page.waitForURL((u) => u.pathname === '/admin', { timeout: 10000 });
-  await page.waitForTimeout(900);
+  await page.waitForURL((u) => u.host.includes('admin.localhost'), { timeout: 15000 });
+  await page.waitForTimeout(700);
   const navBody = await page.locator('body').innerText();
-  check('★ 点顶栏入口 → 直接落到「运营概览」页（不是登录页、不是拦截页）',
-    navBody.includes(ADMIN_TITLE), navBody.slice(0, 120));
+  check('★ 点顶栏入口 → **跨站点**打开平台管理后台（该上下文未在后台登录，故显示后台自有登录页）',
+    navBody.includes('平台管理后台 · 登录'), navBody.slice(0, 120));
+  check('★ 打开的是后台**独立站点**（主机名不是商城）',
+    new URL(page.url()).host.includes('admin.localhost'), page.url());
 
   // —— 下拉那条（本轮新增）
   // 先数再点：入口一旦消失，直接 click 会等 30 秒超时抛异常，
@@ -262,25 +273,24 @@ const ctxOp = await newContext();
 
   if (menuCount === 1) {
     await menuAdminLink(page).click();
-    await page.waitForURL((u) => u.pathname === '/admin', { timeout: 10000 });
-    await page.waitForTimeout(900);
-    check('★ 点下拉入口 → 同样落到「运营概览」页',
-      (await page.locator('body').innerText()).includes(ADMIN_TITLE));
+    await page.waitForURL((u) => u.host.includes('admin.localhost'), { timeout: 15000 });
+    await page.waitForTimeout(700);
+    check('★ 点下拉入口 → 同样跨站点打开平台管理后台',
+      (await page.locator('body').innerText()).includes('平台管理后台 · 登录'));
   } else {
-    check('★ 点下拉入口 → 同样落到「运营概览」页', false, '入口不存在，无从点击');
+    check('★ 点下拉入口 → 同样跨站点打开平台管理后台', false, '入口不存在，无从点击');
   }
 
   // —— 刷新
   // 刻意**先显式回到 /admin 再刷新**，不与上一步的点击结果耦合：
   // 否则「下拉入口坏了」会连带把这一条也打红，看起来像两个缺陷，实为一个
   // —— 级联失败会把归因引偏（本项目吃过「不重不漏」的亏）。
-  await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(800);
+  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(600);
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(900);
-  check('★ 在后台页刷新后，顶栏入口与页面都还在',
-    (await navAdminLink(page).count()) === 1
-      && (await page.locator('body').innerText()).includes(ADMIN_TITLE));
+  await page.waitForTimeout(700);
+  check('★ 商城首页刷新后，顶栏「管理后台」入口仍在（跨站点链接）',
+    (await navAdminLink(page).count()) === 1);
 
   // —— 关掉标签页再打开（同一浏览器）
   const page2 = await ctxOp.newPage();
@@ -312,81 +322,65 @@ step('S3b · 只带 dd_rt 的全新上下文（模拟关闭浏览器后重开）
   check('★ 「关闭浏览器再打开」后，顶栏入口依然可见', (await navAdminLink(page).count()) === 1);
 
   await navAdminLink(page).click();
-  await page.waitForURL((u) => u.pathname === '/admin', { timeout: 10000 });
-  await page.waitForTimeout(900);
-  check('★ 从这里点进去能真正打开后台「运营概览」（不只是链接显示出来了）',
-    (await page.locator('body').innerText()).includes(ADMIN_TITLE));
+  await page.waitForURL((u) => u.host.includes('admin.localhost'), { timeout: 15000 });
+  await page.waitForTimeout(700);
+  check('★ 从这里点进去能真正打开**后台独立站点**（商城会话不带到后台 → 落在后台自有登录页）',
+    (await page.locator('body').innerText()).includes('平台管理后台 · 登录'), page.url());
   check('S3b 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await ctx.close();
 }
 await ctxOp.close();
 
 // ================= S4 既有「登录后回跳后台」未被破坏 =================
-step('S4 · 未登录直奔 /admin → 登录 → 自动回到 /admin（既有行为保持）');
+step('S4 · 后台已独立：站内路由摘除 + 后台站点自有登录链路（不经过商城）');
 {
   const ctx = await newContext();
   const page = await ctx.newPage();
   const { consoleErrors } = watch(page);
 
+  // ① 商城侧：/admin 已不存在（证明商城不再承载后台）
   await page.goto(`${UI}/admin`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(600);
-  check('被送到登录页', new URL(page.url()).pathname === '/login', page.url());
+  await page.waitForTimeout(500);
+  check('★ 商城站点内已无 /admin（显示「页面不存在」）',
+    (await page.locator('body').innerText()).includes('页面不存在'), page.url());
 
-  await page.getByPlaceholder('11 位手机号').fill(op.phone);
+  // ② 后台站点：未登录 → **自有登录页** → 登录 → 运营概览（全程不经过商城）
+  await page.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+  check('后台站点未登录 → 落在自有登录页', (await page.locator('text=平台管理后台 · 登录').count()) > 0);
+  await page.getByPlaceholder('请输入平台账号手机号').fill(op.phone);
   await page.getByPlaceholder('请输入密码').fill(PWD);
   await page.getByRole('button', { name: /^登录$/ }).click();
   await page.waitForURL((u) => u.pathname === '/admin', { timeout: 15000 });
   await page.waitForTimeout(900);
-  check('★ 登录成功后自动回到 /admin（next 回跳链路完好）',
-    new URL(page.url()).pathname === '/admin', page.url());
-  check('★ 回跳后直接是「运营概览」页', (await page.locator('body').innerText()).includes(ADMIN_TITLE));
-  check('★ 两条路径不冲突：回跳后顶栏入口同时也在', (await navAdminLink(page).count()) === 1);
+  check('★ 后台站点登录后直接进入「运营概览」（不经过商城登录页）',
+    (await page.locator('body').innerText()).includes(ADMIN_TITLE), page.url());
   check('S4 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await ctx.close();
 }
 
-// ---------- 后台独立入口（T3）：/admin.html 与短地址 /console ----------
-// /admin.html 由多入口构建产出，dev(vite) 与容器(nginx) 都提供；
-// /console 是 nginx 短地址，**仅容器入口有** → dev 下显式跳过（不静默略过）。
-console.log('\n> 平台管理后台独立入口（T3）');
+// ---------- 后台独立入口（T3/T-ARCH）：/admin.html 与短地址 /console ----------
+console.log('\n> 平台管理后台独立入口');
 {
-  const r = await fetch(`${UI}/admin.html`);
-  check('后台独立入口 /admin.html 可访问（200）', r.status === 200, `status=${r.status}`);
+  const r = await fetch(`${ADMIN_HTTP}/admin.html`);
+  check('后台独立站点入口可访问（200）', r.status === 200, `status=${r.status}`);
   const html = await r.text();
   check('后台入口返回的是后台页面（标题正确）', html.includes('平台管理后台'), 'title 不匹配');
   check('后台入口未被商城 SPA 兜底', !html.includes('宠物用品自营商城'), '命中商城兜底');
 
-  // ★ 导航栏只能有一条：后台页面自带「标题+标签栏」，外壳**不得**再渲染一份
-  //   （曾因外壳也渲染 AdminTabs 导致页面出现两条一模一样的导航 —— 用户报障）
-  {
-    const op = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN' });
-    const lr = await fetch(`${UI}/api/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13684295254', password: 'duoduo12345' }),
-    });
-    const jar = (lr.headers.getSetCookie?.() ?? []).map((c) => {
-      const [kv] = c.split(';'); const [n, v] = kv.split('=');
-      return { name: n.trim(), value: v, domain: 'localhost', path: '/' };
-    });
-    await op.addCookies(jar);
-    const pg = await op.newPage();
-    await pg.goto(`${UI}/admin.html`, { waitUntil: 'networkidle' });
-    const tabCount = await pg.locator('a[href="/admin/audits"]').count();
-    check('后台入口只有一条导航标签栏（不得重复）', tabCount === 1, `标签出现 ${tabCount} 次`);
-    const titleCount = await pg.locator('h2.section-title').count();
-    check('页面标题只有一处', titleCount === 1, `标题出现 ${titleCount} 次`);
-    await op.close();
-  }
+  const c = await fetch(`${ADMIN_HTTP}/console`, { redirect: 'manual' });
+  const loc = c.headers.get('location') || '';
+  check('短地址 /console 跳转到后台入口', c.status === 302 && loc.endsWith('/admin.html'), `status=${c.status} loc=${loc}`);
+  // ★ 端口必须保留：nginx 用 $host 生成绝对地址会丢端口（与 T-66 同坑）
+  check('短地址跳转保留端口（不得丢端口）', loc.includes(':8090'), `loc=${loc}`);
 
-  if (UI.includes(':8088')) {
-    const c = await fetch(`${UI}/console`, { redirect: 'manual' });
-    const loc = c.headers.get('location') || '';
-    check('短地址 /console 跳转到后台入口', c.status === 302 && loc.endsWith('/admin.html'), `status=${c.status} loc=${loc}`);
-    // ★ 端口必须保留：nginx 用 $host 生成绝对地址会丢端口（与 T-66 同坑）
-    check('短地址跳转保留端口（不得丢 :8088）', loc.includes(':8088'), `loc=${loc}`);
-  } else {
-    console.log('  [SKIP] 短地址 /console 仅容器入口提供（当前 UI_BASE 非 8088，属预期跳过）');
-  }
+  // 同一浏览器里两个站点各自独立：后台站点未登录 → 自有登录页
+  const ctx = await newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+  check('未登录访问后台站点 → 落在**本平台**登录页（不跳商城）',
+    (await page.locator('text=平台管理后台 · 登录').count()) > 0);
+  check('登录页不出现"去商城登录"', (await page.locator('text=去商城登录').count()) === 0);
+  await ctx.close();
 }
 
 await browser.close();

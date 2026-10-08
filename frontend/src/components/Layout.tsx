@@ -29,7 +29,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole } from '../pages/seller/shared';
-import { isOperator } from '../pages/admin/shared';
+import { isOperator } from '../lib/roles';
 import { messageApi } from '../api/endpoints';
 import { useApp } from '../store/app';
 import { useAuth } from '../store/auth';
@@ -49,7 +49,20 @@ import { useAuth } from '../store/auth';
  * 个人事务并没被删掉，只是移到头像下拉 —— **入口去重不是全删，要分清哪个是导航骨架、
  * 哪个是个人事务入口**。
  */
-const NAV = [
+/**
+ * 平台管理后台站点地址（T-ARCH 第 2 步）。
+ *
+ * <p>后台已经从商城**独立部署**（独立主机名/端口/登录），因此商城侧的入口必须是
+ * **跨站点绝对地址**，而不是原来的站内路由 `/admin` —— 后者已被摘除。
+ * 地址由部署注入（VITE_ADMIN_URL），默认本机 admin.localhost:8090。
+ */
+const ADMIN_URL =
+  (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'http://admin.localhost:8090/admin.html';
+
+/** 顶部导航项：站内用 `to`（路由），跨站点用 `href`（外部链接） */
+type NavItem = { label: string; to: string } | { label: string; href: string };
+
+const NAV: NavItem[] = [
   { to: '/', label: '首页' },
   { to: '/search', label: '逛商品' },
   { to: '/ai', label: 'AI 导购' },
@@ -128,13 +141,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
   // 商家端入口只在「真的是卖家」时出现；角色判定与后端同源（忽略大小写）
   // 管理后台入口同理：只对运营 / 管理员显示（M10）
-  const navItems = useMemo(() => {
+  const navItems = useMemo<NavItem[]>(() => {
     let items = NAV;
     if (canAccessSellerConsole(user?.role)) {
       items = [...items, { to: '/seller', label: '商家端' }];
     }
     if (isOperator(user?.role)) {
-      items = [...items, { to: '/admin', label: '管理后台' }];
+      // 跨站点入口：带 href（外部链接），不再是站内路由
+      items = [...items, { href: ADMIN_URL, label: '管理后台' }];
     }
     return items;
   }, [user?.role]);
@@ -155,16 +169,23 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </Link>
 
           <nav className="nav-links">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
-              >
-                {item.label}
-              </NavLink>
-            ))}
+            {navItems.map((item) =>
+              'href' in item ? (
+                // 跨站点入口（平台管理后台）：用 <a> 而不是 <NavLink> —— 它不在本应用的路由表里
+                <a key={item.href} className="nav-link" href={item.href}>
+                  {item.label}
+                </a>
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+                >
+                  {item.label}
+                </NavLink>
+              ),
+            )}
           </nav>
 
           <div className="header-right">
@@ -252,7 +273,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     ) : null}
                     {/* 平台管理后台入口（与顶栏那条同源同判）——
                         只对运营 / 管理员显示，与后端 OperatorGuard 同口径。
-                        ★ 必须用 isOperator()：判定**只有这一处权威实现**（pages/admin/shared.tsx）。
+                        ★ 必须用 isOperator()：判定**只有这一处权威实现**（src/lib/roles.ts，中立模块）。
                         auth store 里曾经有个 `isAdmin` 走了全小写比较（user.role === 'admin'），
                         而库内是大写存储，它**永远返回 false** —— 入口静默不出现且不报任何错。
                         该字段已在 R74-3 删除，重新加回会编译失败（见 store/auth.tsx 顶部注释）。
@@ -261,9 +282,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                         因此「关掉页面再打开」入口照样在 —— 见
                         scripts/e2e/admin-entry-ui-check.mjs 的复开断言。 */}
                     {isOperator(user.role) ? (
-                      <Link className="nav-link" to="/admin" style={{ display: 'block' }}>
+                      <a className="nav-link" href={ADMIN_URL} style={{ display: 'block' }}>
                         进入管理后台
-                      </Link>
+                      </a>
                     ) : null}
                     <div className="divider" style={{ margin: '6px 0' }} />
                     <button
