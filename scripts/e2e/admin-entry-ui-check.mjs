@@ -345,6 +345,28 @@ step('S4 · 未登录直奔 /admin → 登录 → 自动回到 /admin（既有�
   await ctx.close();
 }
 
+// ---------- 后台独立入口（T3）：/admin.html 与短地址 /console ----------
+// /admin.html 由多入口构建产出，dev(vite) 与容器(nginx) 都提供；
+// /console 是 nginx 短地址，**仅容器入口有** → dev 下显式跳过（不静默略过）。
+console.log('\n> 平台管理后台独立入口（T3）');
+{
+  const r = await fetch(`${UI}/admin.html`);
+  check('后台独立入口 /admin.html 可访问（200）', r.status === 200, `status=${r.status}`);
+  const html = await r.text();
+  check('后台入口返回的是后台页面（标题正确）', html.includes('平台管理后台'), 'title 不匹配');
+  check('后台入口未被商城 SPA 兜底', !html.includes('宠物用品自营商城'), '命中商城兜底');
+
+  if (UI.includes(':8088')) {
+    const c = await fetch(`${UI}/console`, { redirect: 'manual' });
+    const loc = c.headers.get('location') || '';
+    check('短地址 /console 跳转到后台入口', c.status === 302 && loc.endsWith('/admin.html'), `status=${c.status} loc=${loc}`);
+    // ★ 端口必须保留：nginx 用 $host 生成绝对地址会丢端口（与 T-66 同坑）
+    check('短地址跳转保留端口（不得丢 :8088）', loc.includes(':8088'), `loc=${loc}`);
+  } else {
+    console.log('  [SKIP] 短地址 /console 仅容器入口提供（当前 UI_BASE 非 8088，属预期跳过）');
+  }
+}
+
 await browser.close();
 
 // ================= 汇总 =================
