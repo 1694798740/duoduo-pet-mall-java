@@ -95,8 +95,16 @@ function translateStatus(status: number): string {
 
 let refreshPromise: Promise<boolean> | null = null;
 
-/** 单飞刷新：并发的多个 401 只会触发一次刷新请求 */
-function refreshSession(): Promise<boolean> {
+/**
+ * 单飞刷新：并发的多个 401 只会触发一次刷新请求。
+ *
+ * <p>除 401 兜底外，还服务于「身份快照刚变化」的场景：实名认证 / 成为卖家都会把
+ * `realNameVerified` / `role` 写进**访问令牌**（15 分钟内有效），而这两步成功后
+ * 令牌不会自动更新 —— 不主动轮转一次，下一个请求仍带着旧快照，就会出现
+ * 「个人中心显示已实名，发布闲置却 403」这类状态不一致（R52 在小程序端修过同款，
+ * 网页端这次补齐；对应边界 B-08）。
+ */
+export function refreshSession(): Promise<boolean> {
   if (!refreshPromise) {
     refreshPromise = fetch(`${API_BASE}/api/auth/refresh`, {
       method: 'POST',

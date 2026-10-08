@@ -10,7 +10,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { toFriendlyMessage } from '../api/client';
+import { refreshSession, toFriendlyMessage } from '../api/client';
 import { userApi } from '../api/endpoints';
 import { formatDate } from '../api/client';
 import { Alert, Field, LoadingBlock, useToast } from '../components/ui';
@@ -94,6 +94,10 @@ export const MePage: React.FC = () => {
     setRealBusy(true);
     try {
       await userApi.realName({ realName: realName.trim(), idCard: idCard.trim().toUpperCase() });
+      // ★ 实名状态写在访问令牌里（15 分钟），认证成功后必须**立刻轮转一次令牌**，
+      //   否则发布闲置仍会 403（个人中心读的是 /me 实时数据，两处就会「一边已认证、一边说没认证」）。
+      //   R52 在小程序端修过同款，网页端此前漏了 —— 不刷新的话，用户要干等令牌过期或退出重登。
+      await refreshSession();
       await refreshMe();
       setIdCard('');
       setRealName('');

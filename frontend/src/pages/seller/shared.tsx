@@ -8,7 +8,7 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { toFriendlyMessage } from '../../api/client';
+import { toFriendlyMessage, refreshSession } from '../../api/client';
 import { userApi } from '../../api/endpoints';
 import { Alert, useToast } from '../../components/ui';
 import { useAuth } from '../../store/auth';
@@ -42,8 +42,11 @@ export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) =>
     setBusy(true);
     try {
       await userApi.applyMerchant();
+      // ★ 角色写在访问令牌里：入驻成功后**立刻轮转一次令牌**，商家端权限即时生效
+      //   （此前提示「重新登录后生效」，就是边界 B-08 —— 这里把它在网页端正式修掉）。
+      await refreshSession();
       await refreshMe();
-      push('已成为卖家，重新登录后商家端完整生效', 'success');
+      push('已成为卖家，商家端已解锁', 'success');
     } catch (err) {
       setError(toFriendlyMessage(err));
     } finally {
