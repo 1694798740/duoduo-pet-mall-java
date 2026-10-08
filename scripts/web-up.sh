@@ -17,7 +17,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "[1/4] 构建前端产物（tsc --noEmit && vite build，产出三个入口）…"
+echo "[1/4] 构建前端产物（E7 monorepo：cd frontend && npm run build → 转发到 apps/mall 跑 tsc + vite）…"
 (cd frontend && npm run build)
 
 echo "[2/4] 打三个站点镜像（同源产物 + 各自 nginx 配置）…"

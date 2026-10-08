@@ -4,12 +4,39 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**E7-1（2026-10-08，用户要求：抽公共包 + 三工程）** — **前端改造成 monorepo：共用层抽成 `packages/*`，应用侧收进 `apps/*`**。
+
+**为什么分两步走**：`apps/admin`、`apps/merchant` 独立成工程要重排目录、依赖与构建，一次做完中途一旦停下就会留下"构建变红"的半成品。所以先做**可构建、可验收**的第一步：把共用层抽干净，三个入口暂留在 `apps/mall`。
+
+**目录（`frontend/` 即 monorepo 根，npm workspaces = `packages/*` + `apps/*`）**：
+
+| 包 | 内容 | 依赖方向 |
+|---|---|---|
+| `packages/api-sdk` | 类型化 HTTP 客户端 + 端点清单 + 类型定义 + 图片工具 | **零 React 依赖**（将来小程序 / 开放平台可直接复用） |
+| `packages/shared` | 认证与应用 store、共用组件库、角色判定、全局样式 | **单向**依赖 `api-sdk` |
+| `apps/mall` | 商城入口 `index.html` + 后台入口 `admin.html` + 商家入口 `merchant.html` 及全部页面 | 依赖上面两个包 |
+
+**迁移做法（300 处 import 机械改写，不靠手改）**：
+- 共用包**不预构建**，直接吃 TS 源码：Vite `resolve.alias` + tsconfig `paths` 指向各包 `src` —— 省掉"先 build 包再 build 应用"这一步，也就少一类"改了 packages 忘了重编"的假通过。
+- 用一次性脚本批量改写 import（`api/*` → `@duoduo/api-sdk/*`、`components|store|lib|styles.css` → `@duoduo/shared/*`），随后**用第二个脚本把 398 条 import 说明符逐个解析、验证目标真实存在**。
+  正是这一步抓出了 **11 处同目录形式的引用**（`./components/ui`、`./store/auth` —— 它们不匹配「`../` 开头」的改写规则，因而会静默留在原处，而目标文件已经搬走了）。这类错误只在构建时才炸，提示还是"找不到模块"，极易被误判成"包没装"；**手工改必漏**。
+- 路径映射（查旧文档时对照）：`frontend/src/api/*` → `packages/api-sdk/src/*`；`frontend/src/{store,components,lib,styles.css}` → `packages/shared/src/*`。其中 `components/Layout.tsx` 是**商城专属**路由外壳（只被 `App.tsx` 引用），留在 `apps/mall/src/components/`。
+- 应用根变了：Vite 只从**应用根**读 `.env`，故 `.env.example` 随迁到 `apps/mall/`。
+
+**验收（全部实测）**：`tsc --noEmit` + `vite build` 绿（695 模块、三入口产物齐全）；**398 条 import 说明符全部可解析**；三站点镜像重建后 **9 个 chunk + 三入口 HTML 与宿主构建产物逐字节一致**；**全量 e2e 17 套全绿**。
+
+**两个踩坑记录（都值得下次绕开）**：
+1. `vite.config.ts` 注释里写了 `packages/*/src`，其中 `*/` **提前闭合了块注释** → esbuild 直接语法报错（`Expected ";" but found "@"`）。注释里不要出现裸的 `*/`。
+2. 本机 `npm install` 会卡在 esbuild 的 postinstall —— 即本仓已知的 `spawnSync ... EBUSY errno -4082`（同步派生态在受限环境下不可用）。改用 `npm install --ignore-scripts` 即可，`@esbuild/win32-x64` 平台包会正常安装，构建不受影响。
+
+**下一步**：**E7-2** 把 `apps/admin` / `apps/merchant` 拆成各自独立的工程与镜像，并做**产物闭包扫描**（确认商城产物不再包含后台 / 商家的端点定义）。
+
 **E6 / E6b（2026-10-08，用户要求：三平台**完全独立部署**）** — **商城 / 平台管理后台 / 第三方商家平台各自独立站点、独立端口、独立登录，互不共享会话；顺带修掉门禁「假通过」缺陷**。
 
 **① 三站点落地（E5 后台 + E6 商家）**。单应用**多入口**构建：Vite `rollupOptions.input = { main: index.html, admin: admin.html, merchant: merchant.html }`，同一份源码产出三个 HTML 入口，各挂各自的 Root（`AdminRoot` / `MerchantRoot`）。compose 新增 `duoduo-admin-web-app`（**8090**）与 `duoduo-merchant-web-app`（**8091**）；商城站点删掉 9 个后台页面 + 6 个商家页面的导入与路由。
 - **隔离必须换主机名，不能只换端口**：Cookie 是**主机级**作用域（不带 `Domain` 时 host-only）且**不区分端口** —— `localhost:8088` 与 `localhost:8090` 是同一个 Cookie 域，端口隔离等于没隔离。故后台走 `admin.localhost:8090`、商家走 `merchant.localhost:8091`（浏览器按 RFC 6761 把 `*.localhost` 解析到本机）。
 - **后台 / 商家各有自己的登录页**：此前未登录时提示「去商城登录」，那是**平台依赖商城**的耦合点；现在入口、页面、运行站点都在各自那一侧，商城下线不影响另两端。后端账号体系仍是同一套（一个账号中心），但**入口与会话分开**。
-- **角色判定抽到中立模块** `frontend/src/lib/roles.ts`（`isOperator` / `isAdminRole` / `canAccessSellerConsole`）：原先商城只要引用一个判定函数，就会把整个后台 / 商家 UI 打进商城产物 —— 抽出来后才真正「摘干净」，并用**产物闭包扫描**（跟随 entry HTML 的静态导入闭包逐 chunk 搜特征串）验证。
+- **角色判定抽到中立模块** `frontend/packages/shared/src/lib/roles.ts`（`isOperator` / `isAdminRole` / `canAccessSellerConsole`）：原先商城只要引用一个判定函数，就会把整个后台 / 商家 UI 打进商城产物 —— 抽出来后才真正「摘干净」，并用**产物闭包扫描**（跟随 entry HTML 的静态导入闭包逐 chunk 搜特征串）验证。**E7-1 起该文件已随共用层迁到 `packages/shared/src/lib/`**（旧路径 `frontend/src/lib/roles.ts`）。
 
 **② E6b：五套 e2e 改指向独立站点**。后台与商家从商城摘除后，仍通过**商城入口**驱动后台 / 商家页面的套件会红 —— 那是**预期变化**，不是回归。逐套改为各站点的**独立地址 + 独立登录页**（引入 `ADMIN_UI_BASE` / `MERCHANT_UI_BASE`）：
 - `seckill`（65 项）、`share-report`（32 项）、`admin-charts`（32 项）→ 后台站点 `admin.localhost:8090`；`aftersale`（44 项，卖家页 + 运营页**分别**指向两个站点）、`logistics`（44 项）→ 商家站点 `merchant.localhost:8091`。
@@ -698,7 +725,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps
 #   ADMIN_UI_BASE=http://admin.localhost:8090   MERCHANT_UI_BASE=http://merchant.localhost:8091
 
 # 也可手工跑（默认 UI_BASE=http://localhost:5173）：
-cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
+cd frontend && npm run dev -- --port 5173 --strictPort --host localhost   # 另开终端（E7 monorepo：转发到 apps/mall）
 # 注意必须走 localhost，不能是 127.0.0.1（不在 CORS 白名单）
 cd .. && node scripts/e2e/home-ui-check.mjs           # 首页 7 项：非白屏 / 可点击 / 真点进详情 / 无非预期接口错误
 node scripts/e2e/seller-ui-check.mjs                 # 商家端 29 项
@@ -1317,9 +1344,9 @@ React 18.3 · react-router-dom 6.28 · TypeScript 5.6（strict + noUncheckedInde
 
 ```bash
 cd frontend
-npm install
-npm run dev        # http://localhost:5173，需后端 10 容器在跑（网关 :8080）
-npm run build      # tsc --noEmit && vite build
+npm install        # monorepo（E7）：一次装齐 packages/* 与 apps/*
+npm run dev        # http://localhost:5173，需后端 10 容器在跑（网关 :8080）；转发到 apps/mall
+npm run build      # 转发到 apps/mall：tsc --noEmit && vite build
 ```
 
 ### 页面清单（主交易闭环 10 页 + 优惠券 /coupons）

@@ -1,0 +1,8 @@
+{
+  "name": "@duoduo/api-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "接口层 SDK：类型化 HTTP 客户端（client）+ 端点清单（endpoints）+ 类型定义（types）+ 图片工具（images）。**零业务 UI 依赖、零 React 依赖**，因此任何一端（含将来的小程序/开放平台）都能直接复用。",
+  "sideEffects": false
+}

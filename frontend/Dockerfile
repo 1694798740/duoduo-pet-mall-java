@@ -7,7 +7,7 @@
 #
 # 构建约定（与根 Dockerfile 一致）：**不在容器内做前端构建**，复用宿主机的依赖缓存，
 # 因此**必须先在本机构建出 dist**：
-#     cd frontend && npm run build          # = tsc --noEmit && vite build
+#     cd frontend && npm run build          # monorepo 根 → 转发到 apps/mall（tsc --noEmit && vite build）
 # 一条命令的替代做法（脚本已备）：scripts/web-up.sh / scripts/web-up.ps1
 #
 # 为什么用「同源反代」而不是让浏览器直连网关：
@@ -26,7 +26,9 @@ ARG NGINX_CONF=nginx.conf
 COPY ${NGINX_CONF} /etc/nginx/conf.d/default.conf
 
 # 构建产物（必须先在本机 npm run build；.dockerignore 已排除宿主 node_modules）
-COPY dist /usr/share/nginx/html
+# E7 起前端是 monorepo（apps/* + packages/*）：构建仍在仓库根 frontend/ 执行，
+# 产物落在 apps/mall/dist；E7-2 拆出 apps/admin、apps/merchant 后各自有 dist。
+COPY apps/mall/dist /usr/share/nginx/html
 
 EXPOSE 80
 

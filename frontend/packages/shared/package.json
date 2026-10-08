@@ -1,0 +1,14 @@
+{
+  "name": "@duoduo/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "共用层：认证与应用 store、共用组件库、角色判定（lib/roles）、全局样式。依赖 @duoduo/api-sdk 发请求；**不依赖任何一端的页面**。",
+  "dependencies": {
+    "@duoduo/api-sdk": "*",
+    "echarts": "^6.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  }
+}
