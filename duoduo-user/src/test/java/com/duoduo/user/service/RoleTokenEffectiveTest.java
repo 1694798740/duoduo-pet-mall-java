@@ -24,7 +24,9 @@ import java.time.Duration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -121,7 +123,10 @@ class RoleTokenEffectiveTest {
     void 入驻后浏览器通道只覆盖访问令牌_不动刷新令牌() {
         AuthService auth = mock(AuthService.class);
         when(auth.applyMerchant(any())).thenReturn(mock(UserView.class));
-        when(auth.renewAccessToken(USER_ID)).thenReturn("new-access-token");
+        // E8：入驻重签的令牌**必须带商家入口**（见 UserController.entryAfterMerchantApply）——
+        // 若沿用请求头里的入口（商城也可以是入驻入口），新令牌会 ent=mall，
+        // 用户随即在商家端全线 403，而且报错完全指不到原因。这里把入口钉死为 merchant
+        when(auth.renewAccessToken(eq(USER_ID), eq("merchant"))).thenReturn("new-access-token");
         when(auth.accessTtlSeconds()).thenReturn(900L);
         UserController controller = new UserController(auth, petProfileService);
 
@@ -134,13 +139,15 @@ class RoleTokenEffectiveTest {
         assertThat(response.getCookie(AuthCookieWriter.COOKIE_ACCESS).isHttpOnly()).isTrue();
         // 刷新令牌不该被轮换：轮换 = 吊销旧批次 = 把用户其它端踢下线
         assertThat(response.getCookie(AuthCookieWriter.COOKIE_REFRESH)).isNull();
+        // E8：入口必须被固定为商家侧（不是"传什么都行"）
+        verify(auth).renewAccessToken(eq(USER_ID), eq("merchant"));
     }
 
     @Test
     void 小程序通道从响应体拿新令牌() {
         AuthService auth = mock(AuthService.class);
         when(auth.applyMerchant(any())).thenReturn(mock(UserView.class));
-        when(auth.renewAccessToken(USER_ID)).thenReturn("mp-access-token");
+        when(auth.renewAccessToken(eq(USER_ID), eq("merchant"))).thenReturn("mp-access-token");
         when(auth.accessTtlSeconds()).thenReturn(900L);
         UserController controller = new UserController(auth, petProfileService);
 

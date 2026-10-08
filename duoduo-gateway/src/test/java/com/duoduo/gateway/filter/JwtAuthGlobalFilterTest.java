@@ -142,4 +142,123 @@ class JwtAuthGlobalFilterTest {
     void 预检请求直接放行() {
         assertThat(run(MockServerHttpRequest.options("/api/orders")).passed()).isTrue();
     }
+
+    // ================= E8 · 入口边界 =================
+
+    @Test
+    void 商城入口的令牌调后台管理面被拒为403() {
+        // mall 站点签发的**运营账号**令牌：ent=mall。就算角色真是 OPERATOR
+        // （服务端角色校验本会放行），/api/admin/** 属后台专属路径族，
+        // 网关在它之前就挡下 —— 403 而不是 401：身份清楚，只是这一端不该调它
+        String token = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000001L, "13684295254", "OPERATOR", true),
+                "mall");
+
+        Result result = run(get("/api/admin/users").header("Authorization", "Bearer " + token));
+
+        assertThat(result.passed()).isFalse();
+        assertThat(result.original().getResponse().getStatusCode().value()).isEqualTo(403);
+    }
+
+    @Test
+    void 商城入口的令牌调商家经营面被拒为403() {
+        String token = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000001L, "13900000001", "USER", true), "mall");
+
+        Result result = run(get("/api/seller/orders").header("Authorization", "Bearer " + token));
+
+        assertThat(result.passed()).isFalse();
+        assertThat(result.original().getResponse().getStatusCode().value()).isEqualTo(403);
+    }
+
+    @Test
+    void 各自入口的令牌访问本端专属路径放行() {
+        String adminToken = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000001L, "13684295254", "OPERATOR", true), "admin");
+        String merchantToken = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000002L, "13900000002", "SELLER", true), "merchant");
+
+        assertThat(run(get("/api/admin/users").header("Authorization", "Bearer " + adminToken)).passed()).isTrue();
+        assertThat(run(get("/api/seller/orders").header("Authorization", "Bearer " + merchantToken)).passed()).isTrue();
+        // 非专属路径（普通业务接口）对所有入口开放
+        assertThat(run(get("/api/orders").header("Authorization", "Bearer " + merchantToken)).passed()).isTrue();
+    }
+
+    @Test
+    void 未声明入口的令牌不受入口限制_向后兼容() {
+        // 老令牌（加 ent 字段之前签发的）与小程序直连网关签发的令牌都没有 ent。
+        // 若把"无声明"一律当非法，等于上线当天把所有在线用户与小程序一起踢下线。
+        String legacyToken = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000001L, "13684295254", "OPERATOR", true));
+
+        assertThat(run(get("/api/admin/users").header("Authorization", "Bearer " + legacyToken)).passed())
+                .isTrue();
+    }
+
+    @Test
+    void 未声明入口的令牌仍要过认证这一关() {
+        // "不受入口限制"只指入口维度 —— 令牌无效照样 401，别把向后兼容理解成免检
+        Result result = run(get("/api/admin/users").header("Authorization", "Bearer not-a-real-token"));
+
+        assertThat(result.passed()).isFalse();
+        assertThat(result.original().getResponse().getStatusCode().value()).isEqualTo(401);
+    }
+
+    @Test
+    void 客户端伪造的入口头会被剥离而非透传() {
+        // 网关剥离后只回写三个合法字面量之一；胡乱编的值到不了下游
+        Result result = run(get("/api/products/123")
+                .header(com.duoduo.common.security.ClientEntry.HEADER, "cookie: admin=1; evil"));
+
+        assertThat(result.passed()).isTrue();
+        assertThat(result.downstream().getRequest().getHeaders()
+                .getFirst(com.duoduo.common.security.ClientEntry.HEADER)).isNull();
+    }
+
+    @Test
+    void 合法入口头归一化后透传_大小写不符一律视为未声明() {
+        // 大写 MALL 不在合法字面量里 → 归一化为 null → 不透传。
+        // 刻意不做"宽容解析"：入口标识必须是封闭集合，任何"尽量理解意图"的解析
+        // 都会让这个集合慢慢变成开放集合
+        Result upper = run(get("/api/products/123").header(com.duoduo.common.security.ClientEntry.HEADER, "MALL"));
+        assertThat(upper.downstream().getRequest().getHeaders()
+                .getFirst(com.duoduo.common.security.ClientEntry.HEADER)).isNull();
+
+        Result ok = run(get("/api/products/123").header(com.duoduo.common.security.ClientEntry.HEADER, "mall"));
+        assertThat(ok.downstream().getRequest().getHeaders()
+                .getFirst(com.duoduo.common.security.ClientEntry.HEADER)).isEqualTo("mall");
+    }
+
+    @Test
+    void 关闭入口裁剪开关后跨端访问放行() {
+        GatewaySecurityProperties props = new GatewaySecurityProperties();
+        props.setEntryScopeEnabled(false);
+        JwtAuthGlobalFilter relaxed = new JwtAuthGlobalFilter(jwt, props);
+
+        String token = jwt.createAccessToken(
+                new com.duoduo.common.context.LoginUser(710000000000000001L, "13900000001", "USER", true), "mall");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                get("/api/admin/users").header("Authorization", "Bearer " + token).build());
+        AtomicBoolean passed = new AtomicBoolean(false);
+        relaxed.filter(exchange, ex -> {
+            passed.set(true);
+            return Mono.empty();
+        }).block();
+
+        assertThat(passed.get()).isTrue();
+    }
+
+    @Test
+    void 刷新令牌携带入口且老令牌继承为空() {
+        // refresh 令牌也带 ent：刷新一次就把入口洗掉 = 字段形同虚设
+        String refresh = jwt.createRefreshToken(710000000000000001L, "jti-entry-1", "admin");
+        var payload = jwt.parse(refresh, JwtTokenService.TYPE_REFRESH);
+        assertThat(payload.valid()).isTrue();
+        assertThat(payload.entry()).isEqualTo("admin");
+
+        // 老刷新令牌（无 ent）→ 继承为 null（不受限，向后兼容）
+        var legacy = jwt.parse(jwt.createRefreshToken(710000000000000001L, "jti-entry-2"), JwtTokenService.TYPE_REFRESH);
+        assertThat(legacy.valid()).isTrue();
+        assertThat(legacy.entry()).isNull();
+    }
 }

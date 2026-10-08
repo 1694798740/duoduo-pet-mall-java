@@ -44,9 +44,19 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: devTarget, changeOrigin: true },
+      // E8 · 入口标识：开发态没有站点 nginx，由代理替它注入 ——
+      // 否则开发态登录拿到的令牌不声明入口，与正式版行为不一致（"开发能用、正式版不能用"的反面也一样成立）
+      '/api': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'mall' },
+      },
       // 沙箱收银台是服务端渲染页面，二维码指向网关的 /sandbox/pay/**
-      '/sandbox': { target: devTarget, changeOrigin: true },
+      '/sandbox': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'mall' },
+      },
     },
   },
   build: {

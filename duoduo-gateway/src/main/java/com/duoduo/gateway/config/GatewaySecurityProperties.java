@@ -1,11 +1,14 @@
 package com.duoduo.gateway.config;
 
+import com.duoduo.common.security.ClientEntry;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 网关安全与 JWT 配置。
@@ -126,6 +129,43 @@ public class GatewaySecurityProperties {
             "/health/**"
     );
 
+    // ---------------- E8 · 入口边界（按入口裁剪可访问路径） ----------------
+
+    /**
+     * 是否启用「按入口裁剪可访问路径」。默认开启；配置为 false 可整体退回（排障或回滚用）。
+     *
+     * <p>留这个开关的原因很直接：这是在**认证链路上**新增的一道判断，
+     * 一旦判定写错就是把正常用户挡在门外。有一个「一行配置退回原行为」的兜底，
+     * 出问题时的处置时间从"改代码 + 重新发版"降到"改配置 + 重启"。
+     */
+    private boolean entryScopeEnabled = true;
+
+    /**
+     * 路径族 → 允许访问该族路径的入口列表。
+     *
+     * <p><b>刻意用"只列专属族"的方式，而不是给每个入口列白名单</b>：
+     * <ul>
+     *   <li>本项目的接口面有 100+ 端点、由 7 个服务分担，用"入口白名单"穷举一遍，
+     *       漏一条的后果是**该功能直接 403**，而且往往只在某个入口的某条路径上才暴露；</li>
+     *   <li>而"跨端专属族"只有两组（后台管理面 {@code /api/admin/**}、商家经营面
+     *       {@code /api/seller/**}），它们的归属是**确定且稳定**的 ——
+     *       不会因为某个服务新增一个端点就变。</li>
+     * </ul>
+     * 换言之：这里收窄的是「**别端的专属面**」，而不是「本端能做什么」——
+     * 后者由业务服务的角色与归属校验负责，不该在网关复制一份。
+     *
+     * <p>未列出的路径对所有入口放行（含未声明入口的令牌，见 {@code ClientEntry} 的向后兼容段）。
+     */
+    private Map<String, List<String>> entryRules = new LinkedHashMap<>(Map.of(
+            // 平台运营管理面：只有平台管理后台站点能调。
+            // 小程序/T 商城令牌即使带过来，也会在这里被挡下（角色校验是第二道，这里只是收窄）
+            "/api/admin/**", List.of(ClientEntry.ADMIN),
+            // 商家经营面：只有第三方商家平台站点能调。
+            // 注：平台运营「代运营」需要从后台调商家接口 —— 那是 P3 的功能，
+            // 届时把 ClientEntry.ADMIN 加进本列表即可（配置项，无需改代码逻辑）
+            "/api/seller/**", List.of(ClientEntry.MERCHANT)
+    ));
+
     @Bean
     public com.duoduo.common.security.JwtTokenService jwtTokenService() {
         return new com.duoduo.common.security.JwtTokenService(jwtSecret, accessTokenTtl, refreshTokenTtl);
@@ -161,5 +201,21 @@ public class GatewaySecurityProperties {
 
     public void setWhitelist(List<String> whitelist) {
         this.whitelist = whitelist;
+    }
+
+    public boolean isEntryScopeEnabled() {
+        return entryScopeEnabled;
+    }
+
+    public void setEntryScopeEnabled(boolean entryScopeEnabled) {
+        this.entryScopeEnabled = entryScopeEnabled;
+    }
+
+    public Map<String, List<String>> getEntryRules() {
+        return entryRules;
+    }
+
+    public void setEntryRules(Map<String, List<String>> entryRules) {
+        this.entryRules = entryRules;
     }
 }

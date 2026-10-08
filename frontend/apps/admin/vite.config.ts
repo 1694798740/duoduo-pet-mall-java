@@ -29,8 +29,17 @@ export default defineConfig({
     // 5180：与商城的 5173 错开，便于同时开两个 dev server 对照排查
     port: 5180,
     proxy: {
-      '/api': { target: devTarget, changeOrigin: true },
-      '/sandbox': { target: devTarget, changeOrigin: true },
+      // E8 · 入口标识：开发态没有站点 nginx，由代理替它注入（与 nginx-admin.conf 同一口径）
+      '/api': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'admin' },
+      },
+      '/sandbox': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'admin' },
+      },
     },
   },
   build: {

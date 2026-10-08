@@ -70,7 +70,7 @@ public class UserController {
     public ApiResponse<UserView> applyMerchant(HttpServletResponse response) {
         Long userId = UserContext.requireUserId();
         UserView view = authService.applyMerchant(userId);
-        AuthCookieWriter.writeAccess(response, authService.renewAccessToken(userId),
+        AuthCookieWriter.writeAccess(response, authService.renewAccessToken(userId, entryAfterMerchantApply()),
                 authService.accessTtlSeconds());
         return ApiResponse.ok(view);
     }
@@ -85,8 +85,22 @@ public class UserController {
     public ApiResponse<MerchantTokenResponse> applyMerchantToken() {
         Long userId = UserContext.requireUserId();
         authService.applyMerchant(userId);
-        return ApiResponse.ok(new MerchantTokenResponse(authService.renewAccessToken(userId),
+        return ApiResponse.ok(new MerchantTokenResponse(
+                authService.renewAccessToken(userId, entryAfterMerchantApply()),
                 authService.accessTtlSeconds()));
+    }
+
+    /**
+     * E8 · 入驻成功那一刻，重签令牌该带哪个入口。
+     *
+     * <p><b>固定为商家侧，而不是"从当前请求头取"</b>：入驻是「买家 → 卖家」的身份转换，
+     * 转换完成后用户接下来的动作必然在商家站点。若沿用请求头里的入口（例如从商城入口发起入驻，
+     * 那里也可以是入驻的入口之一），新令牌会带 {@code ent=mall} ——
+     * 结果就是「入驻成功了，但商家端所有接口 403」，而报错信息完全指不到原因。
+     * 把入口写成商家侧，语义与实际用途一致。
+     */
+    private static String entryAfterMerchantApply() {
+        return com.duoduo.common.security.ClientEntry.MERCHANT;
     }
 
     /** 入驻后的新访问令牌（小程序通道用） */

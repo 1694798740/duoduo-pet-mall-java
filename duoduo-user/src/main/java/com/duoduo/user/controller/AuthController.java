@@ -2,6 +2,7 @@ package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.common.security.ClientEntry;
 import com.duoduo.user.dto.UserDtos.LoginRequest;
 import com.duoduo.user.dto.UserDtos.LoginResponse;
 import com.duoduo.user.dto.UserDtos.RefreshRequest;
@@ -41,6 +42,12 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>安全：`/token` 两个端点与对应的浏览器端点同级免登（它们本身就是「还没有登录态」时用的），
  * 已在网关白名单中**逐条精确列出**；{@code /wechat/bind} 需要登录态，绝不在白名单内。
+ *
+ * <p><b>E8 · 入口标识</b>：签发令牌的四个端点（注册 / 密码登录 / 微信登录）都接收
+ * {@code X-Duoduo-Entry} 头 —— 三个站点的 nginx 各自注入（mall / admin / merchant），
+ * 网关先剥离客户端同名头、再写入归一化后的值透传到这里。这里**不做任何校验或默认值猜测**：
+ * 归一化（只认三个合法字面量）已经在 {@link ClientEntry#normalize} 里做过一次，
+ * 重复实现第二份判断只会多一处口径。刷新端点刻意**不收该头** —— 入口从刷新令牌继承。
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -58,8 +65,9 @@ public class AuthController {
 
     @PostMapping("/register")
     public ApiResponse<UserView> register(@Valid @RequestBody RegisterRequest request,
+                                          @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                           HttpServletResponse response) {
-        LoginResponse result = authService.register(request);
+        LoginResponse result = authService.register(request, entry);
         writeCookies(response, result);
         return ApiResponse.ok(result.user());
     }
@@ -67,8 +75,9 @@ public class AuthController {
     @PostMapping("/login")
     public ApiResponse<UserView> login(@Valid @RequestBody LoginRequest request,
                                        @RequestHeader(value = "User-Agent", required = false) String userAgent,
+                                       @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                        HttpServletResponse response) {
-        LoginResponse result = authService.login(request, userAgent);
+        LoginResponse result = authService.login(request, userAgent, entry);
         writeCookies(response, result);
         return ApiResponse.ok(result.user());
     }
@@ -77,12 +86,13 @@ public class AuthController {
      * 移动端密码登录：令牌走响应体，不写 Cookie。
      *
      * <p>与 {@link #login} 共用同一份认证逻辑（密码校验、失败计数、令牌签发都只有一份），
-     * 差别仅在令牌的下发通道。
+     * 差别仅在令牌的下发通道。小程序直连网关、不带入口头 → 令牌不声明入口（不受入口限制）。
      */
     @PostMapping("/login/token")
     public ApiResponse<LoginResponse> loginWithToken(@Valid @RequestBody LoginRequest request,
-                                                     @RequestHeader(value = "User-Agent", required = false) String userAgent) {
-        return ApiResponse.ok(authService.login(request, userAgent));
+                                                     @RequestHeader(value = "User-Agent", required = false) String userAgent,
+                                                     @RequestHeader(value = ClientEntry.HEADER, required = false) String entry) {
+        return ApiResponse.ok(authService.login(request, userAgent, entry));
     }
 
     /** 前端在收到 401 后自动调用；成功即可重试原请求 */
@@ -118,8 +128,9 @@ public class AuthController {
      */
     @PostMapping("/wechat")
     public ApiResponse<UserView> wechatLogin(@Valid @RequestBody WechatLoginRequest request,
-                                             @RequestHeader(value = "User-Agent", required = false) String userAgent) {
-        LoginResponse result = authService.wechatLogin(request.code(), userAgent);
+                                             @RequestHeader(value = "User-Agent", required = false) String userAgent,
+                                             @RequestHeader(value = ClientEntry.HEADER, required = false) String entry) {
+        LoginResponse result = authService.wechatLogin(request.code(), userAgent, entry);
         return ApiResponse.ok(result.user());
     }
 
@@ -130,8 +141,9 @@ public class AuthController {
      */
     @PostMapping("/wechat/token")
     public ApiResponse<LoginResponse> wechatLoginWithToken(@Valid @RequestBody WechatLoginRequest request,
-                                                           @RequestHeader(value = "User-Agent", required = false) String userAgent) {
-        return ApiResponse.ok(authService.wechatLogin(request.code(), userAgent));
+                                                           @RequestHeader(value = "User-Agent", required = false) String userAgent,
+                                                           @RequestHeader(value = ClientEntry.HEADER, required = false) String entry) {
+        return ApiResponse.ok(authService.wechatLogin(request.code(), userAgent, entry));
     }
 
     /** A13 · 登录态下绑定微信（需 Bearer 令牌，不在网关白名单内） */

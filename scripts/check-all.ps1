@@ -83,12 +83,21 @@ if (-not $ps) {
 
 # ---------- [1/5] 前端构建 ----------
 if (-not $SkipFrontendBuild) {
-    Write-Host "`n[1/5] 前端构建（tsc --noEmit && vite build）"
+    Write-Host "`n[1/5] 前端构建（tsc --noEmit && vite build，三应用）"
     Push-Location (Join-Path $repo 'frontend')
     & npm run build 2>&1 | Select-Object -Last 4 | Write-Host
     $code = $LASTEXITCODE
     Pop-Location
     Record '前端构建（tsc + vite）' ($code -eq 0) "exit=$code"
+
+    # E7/E8 固化的两个产物校验（纳入门禁）：
+    #   · import 说明符逐条解析 —— 大迁移后「静默失效引用」的唯一可靠抓法（E7-1 抓出 11 处）
+    #   · 产物隔离 —— 「三端互不含对方代码」的机器可检结论（E8 起"商城不含后台代码"靠它证明）
+    Write-Host "`n[1/5] 前端引用与产物隔离校验（check-frontend-imports / check-bundle-isolation）"
+    & node (Join-Path $repo 'scripts\lib\check-frontend-imports.mjs') 2>&1 | Select-Object -Last 3 | Write-Host
+    Record 'import 说明符解析校验' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+    & node (Join-Path $repo 'scripts\lib\check-bundle-isolation.mjs') 2>&1 | Select-Object -Last 6 | Write-Host
+    Record '产物隔离校验' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 } else {
     Write-Host "`n[1/5] 前端构建：跳过（-SkipFrontendBuild）"
     $results += @{ name = '前端构建'; ok = $true; detail = '跳过' }

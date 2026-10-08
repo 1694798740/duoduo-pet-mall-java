@@ -67,6 +67,28 @@ foreach ($s in $scripts) {
     }
 }
 
+# E8 · node 冒烟显式列出：上面的发现逻辑只认 *smoke.ps1，node 脚本不会自动进清单 ——
+# 漏列的后果是「门禁少跑一套还照样报全绿」（与文件头注释里 smoke.ps1 通配符那个坑同性质）
+$nodeSmoke = @('e8-entry-scope-smoke.mjs')
+foreach ($n in $nodeSmoke) {
+    $f = Join-Path (Join-Path $script:root 'scripts') $n
+    if (-not (Test-Path $f)) { continue }
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Cyan
+    Write-Host " 运行 $n" -ForegroundColor Cyan
+    Write-Host "==================================================================" -ForegroundColor Cyan
+    $logPath = Join-Path $logDir ([IO.Path]::GetFileNameWithoutExtension($n) + '.log')
+    & node $f 2>&1 | Tee-Object -FilePath $logPath | Out-Null
+    $code = $LASTEXITCODE
+    Write-Host "  -> EXIT=$code"
+    $results += [pscustomobject]@{
+        Script  = $n
+        Exit    = $code
+        Summary = '(node 脚本，以退出码为准)'
+        Guard   = 'n/a'
+    }
+}
+
 Write-Host ""
 Write-Host "==================================================================" -ForegroundColor Green
 Write-Host " 汇总" -ForegroundColor Green

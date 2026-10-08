@@ -87,6 +87,19 @@ public class AuthService {
 
     @Transactional
     public LoginResponse register(RegisterRequest request) {
+        return register(request, null);
+    }
+
+    /**
+     * 注册并登录（E8：{@code entry} 用于把"从哪个站点注册的"写进令牌）。
+     *
+     * <p>为什么 register 也要带入口：注册成功即签发令牌（下面直接 issueTokens）。
+     * 若注册不写 ent，用户「注册后立刻用」的那枚令牌就是"不受入口限制"的 ——
+     * 于是后台站点注册一个账号，就能拿到一枚可访问任意入口的令牌，
+     * 入口边界在注册这条路径上被绕过。
+     */
+    @Transactional
+    public LoginResponse register(RegisterRequest request, String entry) {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         UserEntity entity = new UserEntity();
         entity.setId(idGenerator.nextId());
@@ -112,11 +125,22 @@ public class AuthService {
         }
 
         log.info("用户注册成功 userId={} phone={}", entity.getId(), maskPhone(entity.getPhone()));
-        return issueTokens(entity, null);
+        return issueTokens(entity, null, entry);
     }
 
     @Transactional
     public LoginResponse login(LoginRequest request, String userAgent) {
+        return login(request, userAgent, null);
+    }
+
+    /**
+     * 密码登录（E8：{@code entry} 写入令牌的 ent 声明）。
+     *
+     * <p>入口由网关从 {@code X-Duoduo-Entry} 请求头归一化后透传过来（三个站点的 nginx 各自注入）。
+     * 直连网关（小程序、命令行夹具）时不带该头 → {@code entry=null} → 令牌不声明入口、不受限制。
+     */
+    @Transactional
+    public LoginResponse login(LoginRequest request, String userAgent, String entry) {
         UserEntity entity = findByPhone(request.phone());
         if (entity == null || !passwordEncoder.matches(request.password(), entity.getPasswordHash())) {
             // 账号不存在与密码错误返回同一提示，避免手机号枚举
@@ -131,7 +155,7 @@ public class AuthService {
         userMapper.updateById(entity);
 
         log.info("用户登录成功 userId={}", entity.getId());
-        return issueTokens(entity, userAgent);
+        return issueTokens(entity, userAgent, entry);
     }
 
     @Transactional
@@ -160,9 +184,14 @@ public class AuthService {
             throw BizException.forbidden("账号已被封禁");
         }
 
-        // 轮转：旧令牌立即吊销，签发全新令牌对
+        // 轮转：旧令牌立即吊销，签发全新令牌对。
+        //
+        // E8：入口**从刷新令牌继承**（而不是从当前请求头取）——
+        // 刷新令牌的 ent 是签名过的原始入口，若在这里改看请求头，
+        // 任何人都能"用商城登录 → 拿刷新令牌 → 声明自己是后台 → 刷新出后台令牌"，
+        // 这个字段就等于没加。老刷新令牌没有 ent → 继承为 null（不受限，向后兼容）。
         refreshTokenMapper.revoke(payload.jti());
-        return issueTokens(entity, userAgent);
+        return issueTokens(entity, userAgent, payload.entry());
     }
 
     @Transactional
@@ -188,6 +217,12 @@ public class AuthService {
      */
     @Transactional
     public LoginResponse wechatLogin(String code, String userAgent) {
+        return wechatLogin(code, userAgent, null);
+    }
+
+    /** 微信登录（E8：{@code entry} 写入令牌的 ent 声明，与密码登录同一口径） */
+    @Transactional
+    public LoginResponse wechatLogin(String code, String userAgent, String entry) {
         String openid = wechatGateway.codeToOpenid(code);
         UserEntity entity = findByOpenid(openid);
         if (entity == null) {
@@ -203,7 +238,7 @@ public class AuthService {
         userMapper.updateById(entity);
 
         log.info("微信登录成功 userId={}", entity.getId());
-        return issueTokens(entity, userAgent);
+        return issueTokens(entity, userAgent, entry);
     }
 
     /**
@@ -469,6 +504,17 @@ public class AuthService {
      * 这也是本方法<b>不接角色参数</b>的原因：不接受调用方传入的角色，避免第二份口径。
      */
     public String renewAccessToken(Long userId) {
+        return renewAccessToken(userId, null);
+    }
+
+    /**
+     * 重签访问令牌（E8：入口随请求带上）。
+     *
+     * <p>这里**必须带入口**：角色升级（买家 → 卖家）常发生在商家站点的入驻流程里，
+     * 若不写 ent，用户进商家端后拿到的就是一枚"不受入口限制"的令牌，
+     * 等于走一次入驻流程就把入口边界绕开了。
+     */
+    public String renewAccessToken(Long userId, String entry) {
         if (userId == null) {
             throw BizException.unauthorized("请先登录");
         }
@@ -482,7 +528,7 @@ public class AuthService {
         LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
                 entity.isRealNameVerified());
         log.info("用户 {} 角色变更为 {}，重签访问令牌使新角色即时生效", userId, entity.getRole());
-        return jwtTokenService.createAccessToken(loginUser);
+        return jwtTokenService.createAccessToken(loginUser, entry);
     }
 
     /** 访问令牌有效期（秒）：供控制器写 Cookie 的 max-age */
@@ -519,13 +565,20 @@ public class AuthService {
 
     // ---------------- 内部方法 ----------------
 
-    private LoginResponse issueTokens(UserEntity entity, String userAgent) {
+    /**
+     * 签发一整对令牌（access + refresh）。
+     *
+     * @param entry E8 · 入口标识（{@code X-Duoduo-Entry} 归一化后的值）；null = 不声明入口、不受入口限制。
+     *              <b>refresh 也要带</b>：刷新时入口是从 refresh 令牌继承的，
+     *              若刷新令牌不带，刷新一次就把入口限制洗掉了
+     */
+    private LoginResponse issueTokens(UserEntity entity, String userAgent, String entry) {
         LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
                 entity.isRealNameVerified());
-        String accessToken = jwtTokenService.createAccessToken(loginUser);
+        String accessToken = jwtTokenService.createAccessToken(loginUser, entry);
 
         String jti = UUID.randomUUID().toString().replace("-", "");
-        String refreshToken = jwtTokenService.createRefreshToken(entity.getId(), jti);
+        String refreshToken = jwtTokenService.createRefreshToken(entity.getId(), jti, entry);
 
         RefreshTokenEntity tokenRecord = new RefreshTokenEntity();
         tokenRecord.setId(jti);

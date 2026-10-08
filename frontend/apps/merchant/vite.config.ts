@@ -32,8 +32,17 @@ export default defineConfig({
     // 5190：与商城 5173、后台 5180 都错开
     port: 5190,
     proxy: {
-      '/api': { target: devTarget, changeOrigin: true },
-      '/sandbox': { target: devTarget, changeOrigin: true },
+      // E8 · 入口标识：开发态没有站点 nginx，由代理替它注入（与 nginx-merchant.conf 同一口径）
+      '/api': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'merchant' },
+      },
+      '/sandbox': {
+        target: devTarget,
+        changeOrigin: true,
+        headers: { 'X-Duoduo-Entry': 'merchant' },
+      },
     },
   },
   build: {

@@ -27,7 +27,13 @@ spring:
       globalcors:
         cors-configurations:
           '[/**]':
-            allowed-origin-patterns: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+            # E8 · CORS 白名单按"谁的页面会跨域调网关"列：三个站点的 **dev server**（5173/5180/5190）
+            # 与历史 dev 端口 3000。生产三站点是同源部署（各自 nginx 反代 /api），浏览器请求根本
+            # 不产生跨域 —— 这份白名单只服务开发态与"把网关直接暴露出去"的场景。
+            # ★ 三个正式站点主机名（localhost:8088 / admin.localhost:8090 / merchant.localhost:8091）
+            #   刻意**不**进这份名单：它们是同源访问，把站点本身写进 CORS 白名单
+            #   只会让"白名单"慢慢变成"全站点名册"。
+            allowed-origin-patterns: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000,http://localhost:5180,http://localhost:5190}
             allowed-methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
             allowed-headers: '*'
             exposed-headers: [X-Request-Id]
