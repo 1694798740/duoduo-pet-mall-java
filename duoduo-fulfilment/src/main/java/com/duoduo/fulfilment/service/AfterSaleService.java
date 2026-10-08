@@ -183,10 +183,7 @@ public class AfterSaleService {
             throw BizException.validation("处理动作只能是 AGREE 或 REJECT");
         }
         AfterSaleEntity entity = loadAfterSale(id);
-        if (!userId.equals(entity.getSellerId())) {
-            // 越权与不存在刻意区分：售后单 id 是雪花值不可枚举，明说「不是你的店」更有助于排查
-            throw BizException.forbidden("只能处理自己店铺的售后单");
-        }
+        requireCanProcess(entity, userId);
         requireStatus(entity, Set.of(AfterSaleStatus.PENDING),
                 "只有「待卖家处理」的售后单可以处理");
 
@@ -283,9 +280,7 @@ public class AfterSaleService {
     public AfterSaleView receiveReturn(Long userId, Long id) {
         requireLogin(userId);
         AfterSaleEntity entity = loadAfterSale(id);
-        if (!userId.equals(entity.getSellerId())) {
-            throw BizException.forbidden("只能处理自己店铺的售后单");
-        }
+        requireCanProcess(entity, userId);
         requireStatus(entity, Set.of(AfterSaleStatus.RETURNING),
                 "只有「买家已寄回」的售后单可以确认收货");
 
@@ -443,6 +438,40 @@ public class AfterSaleService {
     }
 
     // ---------------- 内部：校验与装配 ----------------
+
+    /**
+     * 平台自营（伪卖家）标识。
+     *
+     * <p>与 trade 域 {@code OrderService.PLATFORM_SELLER_ID} 同为 0：**平台自营没有真实的卖家账号**，
+     * 商品/交易/售后三域各自引用这个约定值。管理后台拆分（任务 T7）落地后，自营会变成真正的
+     * "平台自营店铺"租户实体，届时这里收敛为租户判定，不再需要"0 的特例"。
+     */
+    private static final long PLATFORM_SELLER_ID = 0L;
+
+    /**
+     * 处理权限：本店本人；**或运营/管理员代处理平台自营**（seller_id = 0）。
+     *
+     * <p>为什么运营必须能代处理自营：自营单没有卖家账号可登录，不给运营这个口子，
+     * 自营售后就**没有任何人**能处理。列表接口（{@link #listForSeller}）早已按
+     * "运营额外可见 seller_id = 0"实现（其注释写明"自营单只能由运营代处理"），
+     * 处理接口此前漏了同一口径 —— 这正是"列表看得到、点开却 403"的成因（缺陷 S21）。
+     *
+     * <p>为什么不给运营更大范围：**运营不得触碰第三方商家的售后**。第三方店铺的代操作
+     * 按设计只能走"关联工单 + 白名单动作 + 全量审计"的独立通道（任务 T21），
+     * 在本接口放开等于直接拆掉越权防线。
+     */
+    private void requireCanProcess(AfterSaleEntity entity, Long userId) {
+        if (userId.equals(entity.getSellerId())) {
+            return;
+        }
+        LoginUser user = UserContext.get();
+        if (user != null && user.isOperator()
+                && entity.getSellerId() != null && entity.getSellerId() == PLATFORM_SELLER_ID) {
+            return;
+        }
+        // 越权与不存在刻意区分：售后单 id 是雪花值不可枚举，明说「不是你的店」更有助于排查
+        throw BizException.forbidden("只能处理自己店铺的售后单（平台运营仅可代处理自营售后）");
+    }
 
     private LoginUser requireLogin(Long userId) {
         if (userId == null) {
