@@ -690,7 +690,13 @@ public class ProductService {
                         spu.getCategoryId(),
                         categoryNames.get(spu.getCategoryId()),
                         spu.getBrandId(),
-                        brandNames.get(spu.getBrandId()),
+                        // ★ 品牌是**可选**字段（E14 起第三方卖家上架时可以不填），
+                        //   所以这里必须显式判空 —— 与 SellerProductService 的三处调用保持同一口径。
+                        //   2026-10-09（E27 发现）：漏了这个判空，当**一整页商品都没有品牌**时，
+                        //   CatalogLookup 会返回 Map.of()（不可变 Map），而 `不可变Map.get(null)`
+                        //   直接抛 NPE → 商品列表 / 详情 / AI 候选召回全部 500。
+                        //   只要页内有任意一条带品牌就被掩盖，所以种子数据（都带品牌）永远测不出来。
+                        spu.getBrandId() == null ? null : brandNames.get(spu.getBrandId()),
                         spu.getSupplyType(),
                         spu.getMainImage(),
                         nz(spu.getMinPrice()),

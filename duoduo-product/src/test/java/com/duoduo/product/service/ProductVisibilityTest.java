@@ -176,6 +176,30 @@ class ProductVisibilityTest {
         assertThat(detail.card().title()).isEqualTo("测试商品");
     }
 
+    /**
+     * <b>不填品牌的商品必须能正常出卡片</b>（E27 · 2026-10-09 由一次真实 500 补上）。
+     *
+     * <p>品牌是可选字段，第三方卖家上架可以不填。这里刻意把 {@code brandNames} 打桩成
+     * <b>{@code Map.of()}（不可变 Map）</b> —— 也就是「这一页商品一条带品牌的都没有」时
+     * 修复前 {@code CatalogLookup} 的真实返回值。
+     *
+     * <p>为什么不能让基座那个 HashMap 打桩替我们兜住：那会**掩盖**被测代码的判空缺失。
+     * 本用例要证明的恰恰是「不管名称表返回的是哪种 Map 实现，出卡片都不该炸」——
+     * 判空的正确位置在调用方，不在 Map 的实现里。
+     */
+    @Test
+    void 不填品牌的商品详情正常返回且品牌名为null() {
+        when(spuMapper.selectById(9001L)).thenReturn(spu("APPROVED", "ON_SALE"));
+        // 不可变 Map：一旦调用方漏了判空，get(null) 会直接抛 NPE
+        when(catalogLookup.brandNames(any())).thenReturn(Map.of());
+
+        var detail = service.detail(9001L);
+
+        assertThat(detail.card().brandId()).isNull();
+        assertThat(detail.card().brandName()).isNull();
+        assertThat(detail.card().title()).isEqualTo("测试商品");
+    }
+
     @Test
     void 未过审商品在采购视图里不可售() {
         SkuEntity sku = new SkuEntity();

@@ -31,6 +31,11 @@ function Check([string]$name, [bool]$ok, $extra) {
 
 function CodeOf($resp) { if ($resp) { [int]$resp.StatusCode } else { 0 } }
 
+# E27：闲置夹具（现场建，跑完删）。该 helper 连的是 duoduo_product 库 —— 商品与闲置同在。
+. (Join-Path $PSScriptRoot 'lib\listing-fixture.ps1')
+# E27：商品域通用夹具（无品牌商品 / 关键词商品），同样是现场建、跑完删。
+. (Join-Path $PSScriptRoot 'lib\catalog-fixture.ps1')
+
 # 跨 PS 版本读错误响应体（T-45）：
 #   * PS5.1 的 Response 是 HttpWebResponse → GetResponseStream() 可读；
 #   * pwsh 7（CI Linux）的 Response 是 HttpResponseMessage，且 PS7 已自行读过内容流
@@ -71,6 +76,26 @@ for ($i = 0; $i -lt 40; $i++) {
 }
 Check "网关 /actuator/health 就绪" $ready
 if (-not $ready) { Write-Host "网关未就绪，终止"; exit 1 }
+
+# ---------- 0b. 闲置夹具（E27） ----------
+# 本机库经多轮清理后 t_listing 里**已无一条已过审**（历次 e2e 收尾都会把自建闲置下架），
+# 而本节后面的断言原先依赖种子闲置（写死"首页 6 条 / 列表 ≥8 条"、直访 3001/3009/3010）。
+# 现在改为**现场建 1 通过 + 1 待审 + 1 驳回**，跑完删除；计数断言对着库内实际条数算。
+Write-Host ""
+Write-Host "> 闲置夹具（现场建，跑完删除）"
+$lf = $null
+$listingCount = 0
+try {
+    $lf = Resolve-ListingFixtures
+    $listingCount = Get-ApprovedOnSaleListingCount
+    Write-Host "  已过审且在售的闲置：$listingCount 条（含本次夹具 $($lf.ApprovedId)）"
+} catch {
+    Write-Host "  夹具建立失败：$($_.Exception.Message)"
+    $lfErr = $_.Exception.Message
+}
+# 夹具失败必须**显式计入失败**：不然后面几条断言会因为"库内本来就是 0 条"而全部静默通过，
+# 变成"测试说没问题，其实什么都没测"。
+Check "闲置夹具建立成功（含 1 条已过审 / 1 待审 / 1 驳回）" ($null -ne $lf) $lfErr
 
 # ---------- 1. 注册（免认证，网关放行） ----------
 Write-Host ""
@@ -236,7 +261,11 @@ try {
     Check "卡片已补齐类目名与品牌名（批量查询生效）" `
         ((-not [string]::IsNullOrEmpty($homeData.recommended[0].categoryName)) -and (-not [string]::IsNullOrEmpty($homeData.recommended[0].brandName))) `
         ($homeData.recommended[0].categoryName + '/' + $homeData.recommended[0].brandName)
-    Check "首页闲置仅返回已审核通过的 6 条（排除待审/驳回）" (@($homeData.secondhand).Count -eq 6) (@($homeData.secondhand).Count)
+    # 计数断言对着**库内实际条数**算，不写死 6（E27）：写死是"钉当前有几条数据"，
+    # 环境一变就红；真正要守的性质是「首页这个栏目只带已过审且在售的那批」。
+    # 栏目有 6 条上限，所以期望 = min(6, 库内条数)。
+    $expectHomeSecondhand = [Math]::Min(6, $listingCount)
+    Check "首页闲置只带已过审且在售的（期望 $expectHomeSecondhand 条）" (@($homeData.secondhand).Count -eq $expectHomeSecondhand) (@($homeData.secondhand).Count)
 } catch {
     Check "首页聚合返回 200" $false $_.Exception.Message
 }
@@ -245,13 +274,16 @@ try {
 Write-Host ""
 Write-Host "> 商品域 · 检索"
 
-# 点一级类目应展开其下子类目（主粮 → 猫主粮 / 犬主粮 / 冻干湿粮，共 8 件）
+# 点一级类目应展开其下子类目（主粮 → 猫主粮 / 犬主粮 / 冻干湿粮）。
+# 期望件数**从库内算**（E27）：原先写死 8，库内种子被清理后就变成假红 ——
+# 要守的性质是「一级类目会展开到子类目」，不是「主粮当前恰好 8 件」。
+$expectedCatCount = [int]"$(Invoke-ListingSql -Query "SELECT COUNT(*) FROM t_spu WHERE status='ON_SALE' AND audit_status='APPROVED' AND category_id IN (SELECT id FROM t_category WHERE parent_id=1);")"
 try {
     $r = Invoke-WebRequest -Uri "$Gateway/api/products?categoryId=1&pageSize=50" -UseBasicParsing -TimeoutSec 20
     $p = ($r.Content | ConvertFrom-Json).data
-    Check "一级类目自动展开子类目（主粮命中 8 件）" ($p.total -eq 8) $p.total
+    Check "一级类目自动展开子类目（库内主粮 $expectedCatCount 件）" ($p.total -eq $expectedCatCount) $p.total
 } catch {
-    Check "一级类目自动展开子类目（主粮命中 8 件）" $false $_.Exception.Message
+    Check "一级类目自动展开子类目（库内主粮 $expectedCatCount 件）" $false $_.Exception.Message
 }
 
 # 价格区间是「相交」语义：筛选 12900 分应命中区间 12900~13900 的商品，
@@ -288,17 +320,22 @@ try {
 }
 
 $kw = [uri]::EscapeDataString('猫粮')
+# 期望值**从库内算**（E27）：原先写死 ≥3，库内种子被清理后只剩 2 件 → 假红。
+# 要守的性质有两条：① 检索**不是恒 0**（当年 R71 修的正是"全平台搜索恒 0"这个缺陷）；
+# ② 库内确实有该关键词的商品，否则这条断言测的是"空气"。
+$dbCatFood = [int]"$(Invoke-ListingSql -Query "SELECT COUNT(*) FROM t_spu WHERE title LIKE '%猫粮%' AND status='ON_SALE' AND audit_status='APPROVED';")"
+Check "（前置）库内在售猫粮商品 ≥ 1（检索断言才有意义）" ($dbCatFood -ge 1) $dbCatFood
 try {
     $r = Invoke-WebRequest -Uri "$Gateway/api/products?keyword=$kw&pageSize=50" -UseBasicParsing -TimeoutSec 20
     $p = ($r.Content | ConvertFrom-Json).data
-    Check "关键词检索命中猫粮相关商品（≥3 件）" ($p.total -ge 3) $p.total
+    Check "关键词检索命中猫粮相关商品（库内 $dbCatFood 件，检索非空）" ($p.total -ge [Math]::Min(3, $dbCatFood)) $p.total
     # `total` 是**计数**，必须按 JSON 数字下发。它曾漏进 LongToStringJacksonModule 的白名单
     # 而被当标识转成字符串，于是上面那条 `-ge` 在 PowerShell 里退化成**字典序比较**
     # （"15" -ge "3" → False）恒失败 —— 类型错误伪装成业务失败。
     # 断言原始文本而非反序列化结果，让同类问题**当场现形**（见 docs/agent/08 篇 T-40/T-56）。
     Check "分页 total 以 JSON 数字下发（计数不是标识）" ($r.Content -match '"total"\s*:\s*\d') 'raw'
 } catch {
-    Check "关键词检索命中猫粮相关商品（≥3 件）" $false $_.Exception.Message
+    Check "关键词检索命中猫粮相关商品（库内 $dbCatFood 件，检索非空）" $false $_.Exception.Message
 }
 
 try {
@@ -362,22 +399,22 @@ try {
     # 网关白名单刻意不放行它（按路径匹配、不区分方法），GET 裸路径只会拿到 401。
     $r = Invoke-WebRequest -Uri "$Gateway/api/listings/search?pageSize=50" -UseBasicParsing -TimeoutSec 20
     $l = ($r.Content | ConvertFrom-Json).data
-    $lids = @($l.items | ForEach-Object { $_.id })
-    # 断言「不少于 8 条」而不是「恰好 8 条」：库里已累积历次探针创建并通过审核的闲置
-    # （实测 42 条 = 种子 8 + 历史探针产物）。写死 8 会让断言随环境数据漂移而变红，
-    # 反而把下面两条**真正要守**的断言（不含待审 / 不含驳回）淹没在噪声里 ——
-    # 计数类断言要钉「不变的性质」，不要钉「当前有几条」。
-    Check "闲置列表只返回已审核通过的（≥8 条且均为上架）" ($l.total -ge 8) $l.total
-    Check "待审核闲置不出现在列表" (-not ($lids -contains 3009)) ($lids -join ',')
-    Check "已驳回闲置不出现在列表" (-not ($lids -contains 3010)) ($lids -join ',')
+    $lids = @($l.items | ForEach-Object { "$($_.id)" })
+    # 计数断言钉「不变的性质」而不是「当前有几条」（E27）：期望值 = min(50, 库内已过审且在售条数)。
+    # 写死 ≥8 会在库被清理后变成假红，反而把下面两条**真正要守**的断言
+    # （不含待审 / 不含驳回）淹没在噪声里。
+    $expectList = [Math]::Min(50, (Get-ApprovedOnSaleListingCount))
+    Check "闲置列表只返回已过审且在售的（期望 $expectList 条）" ($l.total -eq $expectList) $l.total
+    Check "待审闲置不出现在列表" (-not ($lids -contains "$($lf.PendingId)")) ($lids -join ',')
+    Check "已驳回闲置不出现在列表" (-not ($lids -contains "$($lf.RejectedId)")) ($lids -join ',')
 } catch {
-    Check "闲置列表只返回已审核通过的 8 条" $false $_.Exception.Message
+    Check "闲置列表只返回已过审且在售的" $false $_.Exception.Message
 }
 
 # 未审核内容即使拿到 id 直访也必须不可见，否则「先发布再发链接」就绕过了审核
 $lc = 0
 try {
-    $r = Invoke-WebRequest -Uri "$Gateway/api/listings/3009" -UseBasicParsing -TimeoutSec 20
+    $r = Invoke-WebRequest -Uri "$Gateway/api/listings/$($lf.PendingId)" -UseBasicParsing -TimeoutSec 20
     $lc = [int]$r.StatusCode
 } catch {
     $lc = [int]$_.Exception.Response.StatusCode.value__
@@ -385,7 +422,7 @@ try {
 Check "待审核闲置按 id 直访返回 404" ($lc -eq 404) $lc
 
 try {
-    $r = Invoke-WebRequest -Uri "$Gateway/api/listings/3001" -UseBasicParsing -TimeoutSec 20
+    $r = Invoke-WebRequest -Uri "$Gateway/api/listings/$($lf.ApprovedId)" -UseBasicParsing -TimeoutSec 20
     $d = ($r.Content | ConvertFrom-Json).data
     Check "闲置详情返回 200 且带「同款全新」推荐" `
         (($r.StatusCode -eq 200) -and (@($d.sameCategoryNew).Count -ge 1)) (@($d.sameCategoryNew).Count)
@@ -393,6 +430,60 @@ try {
     Check "闲置详情返回 200 且带「同款全新」推荐" $false $_.Exception.Message
 }
 
+# ---------- 汇总 ----------
+# 夹具自建自拆：不删的话下次跑又会被当成"既有数据"算进条数，夹具越攒越多正是历轮把库搞乱的老路。
+# ---------- 10. 商品域 · 无品牌商品（可选字段，E27 补） ----------
+# 背景（2026-10-09 E27 发现的真实 500）：品牌是**可选**字段，第三方卖家上架不填时
+# `t_spu.brand_id` 为 NULL。读路径的卡片装配在「这一页商品一条带品牌的都没有」时
+# 会对不可变空 Map 取 null key → NPE → 商品列表 / 详情 / AI 候选召回全部 500。
+# 单测已覆盖该分支，这里再补一条**端到端**守卫：单测挡不住"装配处漏判空"这类接线问题。
+Write-Host ""
+Write-Host "> 商品域 · 无品牌商品（可选字段）"
+$noBrandId = $null
+$noBrandErr = $null
+try {
+    # 类目按名字取（id 会变、名字不会）；不传品牌即落库为 NULL
+    $nbCatId = "$(Invoke-ProductSql -Query "SELECT id FROM t_category WHERE name='犬主粮' AND status='ACTIVE' ORDER BY id LIMIT 1;")"
+    if (-not $nbCatId) { throw '库内没有启用中的「犬主粮」类目' }
+    $noBrandId = "$(New-CatalogFixtureSpu -Title 'E27夹具·无品牌犬粮 1kg' -Subtitle '无品牌 · 冒烟夹具' -CategoryId $nbCatId -Price 8800)"
+    Write-Host "  已建无品牌商品 SPU $noBrandId（brand_id=NULL）"
+} catch {
+    $noBrandErr = $_.Exception.Message
+    Write-Host "  无品牌商品建立失败：$noBrandErr"
+}
+Check "无品牌商品夹具建立成功（brand_id=NULL）" ($null -ne $noBrandId) $noBrandErr
+
+$nbCode = 0
+$nbBrandId = 'n/a'
+$nbBrandName = 'n/a'
+try {
+    $r = Invoke-WebRequest -Uri "$Gateway/api/products/$noBrandId" -UseBasicParsing -TimeoutSec 20
+    $nbCode = [int]$r.StatusCode
+    $nbCard = ($r.Content | ConvertFrom-Json).data.card
+    $nbBrandId = "$($nbCard.brandId)"
+    $nbBrandName = "$($nbCard.brandName)"
+} catch {
+    try { $nbCode = [int]$_.Exception.Response.StatusCode.value__ } catch { $nbCode = 0 }
+}
+Check "无品牌商品详情返回 200（不得因缺品牌 500）" ($nbCode -eq 200) $nbCode
+# 「没有品牌」必须表达成 null，不能变成空串或字面量 "null"，否则前端会渲染出一个空品牌标签
+Check "无品牌商品卡片 brandId/brandName 均为空" `
+    (($nbBrandId -eq '') -and (($nbBrandName -eq '') -or ($nbBrandName -eq 'null'))) "brandId=[$nbBrandId] brandName=[$nbBrandName]"
+
+# 列表路径同样要走一遍：命中「无品牌」商品时，品牌名映射不能把整页打挂
+$nbListCode = 0
+try {
+    $r = Invoke-WebRequest -Uri "$Gateway/api/products?keyword=%E7%8A%AC%E7%B2%AE&pageSize=20" -UseBasicParsing -TimeoutSec 20
+    $nbListCode = [int]$r.StatusCode
+} catch {
+    try { $nbListCode = [int]$_.Exception.Response.StatusCode.value__ } catch { $nbListCode = 0 }
+}
+Check "含无品牌商品的检索列表返回 200（不得 500）" ($nbListCode -eq 200) $nbListCode
+
+if ($lf) { Remove-ListingFixtures -Ids $lf.CreatedIds }
+if ($noBrandId) { Remove-SpuFixtures -Ids @($noBrandId) }
+$nbLeft = if ($noBrandId) { "$(Invoke-ProductSql -Query "SELECT COUNT(*) FROM t_spu WHERE id = $noBrandId;")" } else { '0' }
+Check "无品牌商品夹具已拆除（库内复原）" ($nbLeft -eq '0') $nbLeft
 Write-Host ""
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
 if ($fail -gt 0) {

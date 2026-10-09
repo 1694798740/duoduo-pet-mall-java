@@ -1,12 +1,20 @@
 # A6 · CI：编译 + 冒烟子集（全套回归留在本地，见 scripts/run-all-smoke.ps1）
 #
-# 为什么子集：19 套冒烟全套太慢，PR 上只跑「基线 + 最近改动域」（smoke / trade / order /
-# address / id-precision，合计 356 项断言）。新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
+# 为什么子集：全套冒烟跑完太慢，PR 上只跑「基线 + 受改动影响的业务域」。
+# 新增业务域时把对应 *-smoke.ps1 加进 SMOKE_SCRIPTS。
+#
+# ★ E27 教训（本文件此前的子集就是反面教材）：seller / aftersale / logistics / credit
+#   四套曾**不在** SMOKE_SCRIPTS 里，于是 E10 删掉 `POST /api/users/me/merchant` 之后，
+#   这四套里的老调用方一直红着却没人发现 —— 本地没人跑、CI 不跑，
+#   「端点删了、调用方没改」这类断裂可以静默存活好几轮。现已全部纳入。
+#   子集与全量的差别只能是**跑不跑**，不能是**有没有人管**。
 #
 # 已知环境差异的处理：
 #   * 冒烟脚本是 PS 5.1 风格但与 pwsh 兼容（错误响应体读取已做双版本兼容，T-45）；runner 自带 pwsh（ubuntu-latest）。
 #   * 脚本里有 `& curl.exe`（Windows 习惯）—— Linux 上没有 curl.exe，做一个 symlink shim。
 #   * 金额/状态断言只走 HTTP，不依赖 docker exec 输出编码，Linux 下无 GBK 问题。
+#   * 部分套件用 `docker exec <mysql> mysql` 直建/清理夹具（E27 起成为标准做法），
+#     runner 与容器同机，`docker exec` 可用。
 
 name: CI
 
@@ -15,6 +23,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # 手动重跑（例如怀疑某套被环境问题跳过时）
+  workflow_dispatch:
 
 jobs:
   build:
@@ -50,9 +60,12 @@ jobs:
     name: 冒烟子集（Docker 全栈 + pwsh 断言）
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
-      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1
+      # ★ 必须写成**单行**：YAML 的折叠块（`>-`）会把换行折成**空格**，
+      #   于是 "id-precision-smoke.ps1, seller-smoke.ps1" 里的脚本名会带上前导空格 → 找不到文件。
+      #   逗号分隔清单只有一个正确写法，就是一行写到底。
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +82,7 @@ jobs:
       - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
         run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
 
-      - name: 起全栈（mysql / redis / nacos + 7 个业务服务）
+      - name: 起全栈（mysql / redis / nacos + 11 个业务服务 + 前端三站点）
         run: |
           docker compose up -d --build || {
             echo "::error::compose up 失败，打印中间件日志辅助定位"
@@ -78,13 +91,18 @@ jobs:
             exit 1
           }
 
-      - name: 等 10 个容器全部 healthy（最长 10 分钟）
+      - name: 等全部容器 healthy（最长 10 分钟）
         run: |
+          # 判据刻意**不写死容器总数**：这里原先写的是 `healthy -eq 10 && total -eq 10`，
+          # 服务从 10 个涨到 14 个之后这道门永远不可能满足 → 每轮 CI 都在这里干等 10 分钟再失败。
+          # 「加了服务忘了改 CI」与「加了套件忘了进子集」是同一种病（见文件头 E27 注释）。
+          # 现在的判据：容器数达到下限（防 compose 只起了一半）+ 全部 healthy。
+          MIN_TOTAL=10
           for i in $(seq 1 60); do
-            healthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health=="healthy")] | length')
             total=$(docker compose ps --format json | jq -s 'length')
-            echo "[$i/60] healthy=$healthy/$total"
-            if [ "$healthy" -eq 10 ] && [ "$total" -eq 10 ]; then exit 0; fi
+            healthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health=="healthy")] | length')
+            echo "[$i/60] healthy=$healthy/$total (下限 $MIN_TOTAL)"
+            if [ "$total" -ge "$MIN_TOTAL" ] && [ "$healthy" -eq "$total" ]; then exit 0; fi
             # 有容器反复重启就不等了，直接失败并打日志
             restarting=$(docker compose ps --format json | jq -s '[.[] | select(.State=="restarting")] | length')
             if [ "$restarting" -gt 0 ]; then
@@ -94,7 +112,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "::error::10 分钟内未达到 10/10 healthy"
+          echo "::error::10 分钟内未达到全部 healthy"
           docker compose ps
           docker compose logs --tail 50
           exit 1
@@ -109,4 +127,74 @@ jobs:
         with:
           name: smoke-logs
           path: logs/ci/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 全量冒烟：只在 push 到 main 时跑（PR 上跑子集，保证反馈快）。
+  #
+  # ★ E27 的教训就是「有一批套件**谁都不跑**」：当时 seller / aftersale / logistics / credit
+  #   既不在 CI 子集里，本地也没人天天跑，于是 E10 删掉一个端点后它们红了整整几轮无人知晓。
+  #   子集只能解决"反馈快"，解决不了"没人跑"—— 所以 main 上一定要有一次全量。
+  #   PR 上跑子集是为了快，main 上跑全量是为了不漏，这是两件事。
+  # ---------------------------------------------------------------------------
+  smoke-full:
+    name: 全量冒烟（全部 *-smoke.ps1，仅 main）
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 构建各服务 fat jar
+        run: mvn -B -ntp -DskipTests package
+
+      - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
+        run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
+
+      - name: 起全栈
+        run: |
+          docker compose up -d --build || {
+            echo "::error::compose up 失败"
+            docker compose logs --tail 80 || true
+            exit 1
+          }
+
+      - name: 等全部容器 healthy（最长 10 分钟）
+        run: |
+          MIN_TOTAL=10
+          for i in $(seq 1 60); do
+            total=$(docker compose ps --format json | jq -s 'length')
+            healthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health=="healthy")] | length')
+            echo "[$i/60] healthy=$healthy/$total (下限 $MIN_TOTAL)"
+            if [ "$total" -ge "$MIN_TOTAL" ] && [ "$healthy" -eq "$total" ]; then exit 0; fi
+            restarting=$(docker compose ps --format json | jq -s '[.[] | select(.State=="restarting")] | length')
+            if [ "$restarting" -gt 0 ]; then
+              echo "::error::有容器处于 restarting 状态，放弃等待"
+              docker compose logs --tail 50
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::10 分钟内未达到全部 healthy"
+          docker compose ps
+          exit 1
+
+      - name: 跑全量冒烟（脚本自发现，任何断言失败即 job 失败）
+        shell: pwsh
+        run: ./scripts/run-all-smoke.ps1
+
+      - name: 上传全量冒烟日志（无论成败）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-full-logs
+          path: logs/
           retention-days: 7

@@ -8,6 +8,8 @@
 #   2. 对话：回复非空 + 推荐每一条都来自真实商品库（id 可经公开详情接口验证，标题同源）——
 #      「不得编造商品」是 A9 验收①的核心，断言落在 id 与 title 双对齐上；
 #   3. 中文意图召回（幼犬/狗粮/猫）与无匹配时的如实告知；
+#      ★ E27：「幼犬/狗粮」的种子商品现场建（Resolve-DogFoodSpuFixture），跑完删除 ——
+#        本机库清理后只剩猫粮 SPU，不建前置则该断言红的是数据而非代码（详见该 helper 注释）。
 #   3b. 多轮追问召回（上下文并入关键词）；
 #   3c. 推荐数量上限 + 预算硬过滤（无条件断言：mock 与 llm 共享召回链路，候选在 SQL 里已按预算筛过）；
 #   3d. 预算区间过滤（重叠语义）+ 极小预算空结果（证明过滤真的生效，不是空转断言）
@@ -27,6 +29,9 @@ $pass = 0
 $fail = 0
 $failures = @()
 
+# E27：关键词召回夹具（现场建 SPU，跑完删）
+. (Join-Path $PSScriptRoot 'lib\catalog-fixture.ps1')
+
 function Check([string]$name, [bool]$ok, $extra) {
     if ($ok) {
         $script:pass++
@@ -38,8 +43,30 @@ function Check([string]$name, [bool]$ok, $extra) {
     }
 }
 
+function ChatTimeoutOf([string]$uri) {
+    # `llm` 形态下 /chat 要等外部大模型；DashScopeClient 是**逐个备选模型试**的
+    # （每个 15s，见其超时配置），两个模型都超时就接近 30s。
+    # 客户端若也给 30s，就会恰好卡在这条线上：**服务端已经正确降级并答完**，
+    # 客户端却判成"没拿到响应"（status=0）—— 这是纯假红，而且是最坏的一种：
+    # 它会训练出"这条本来就是红的"的习惯，真坏掉时反而没人看。
+    if ($uri -like '*/api/duoduo/chat*') { return 75 }
+    return 30
+}
+
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
-    $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 30 }
+    $r = CallOnce $method $uri $session $bodyObj $headers
+    # 只在**传输层没拿到响应**（status=0）时重试一次：这类失败可以安全重来。
+    # HTTP 层的 4xx/5xx 是有意义的信号（含限流 429），绝不重试、绝不掩盖。
+    if ($r.status -eq 0 -and $uri -like '*/api/duoduo/chat*') {
+        Write-Host "    （对话请求未拿到 HTTP 响应：多半是外部模型超时，重试 1 次）"
+        Start-Sleep -Seconds 2
+        $r = CallOnce $method $uri $session $bodyObj $headers
+    }
+    return $r
+}
+
+function CallOnce([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
+    $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = (ChatTimeoutOf $uri) }
     if ($session) { $params.WebSession = $session }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
@@ -102,6 +129,19 @@ Check "chat 可用" ($r.body.data.chatAvailable -eq $true) ($r.body.data | Conve
 # ---------- 2. 对话主链路：真实商品库不变式 ----------
 Write-Host ""
 Write-Host "> 对话（推荐必须来自真实商品库）"
+# E27：本节断言「幼犬/狗粮」能被召回，所以先**现场造一条犬粮**。
+# 本机库经多轮清理只剩猫粮 SPU，不建前置时召回必然为空 —— 那是数据问题，不是代码回归。
+$df = $null
+$dfErr = $null
+try {
+    $df = Resolve-DogFoodSpuFixture
+    Write-Host "  已建犬粮前置商品 SPU $($df.Id)（类目 $($df.CategoryId)）"
+} catch {
+    $dfErr = $_.Exception.Message
+    Write-Host "  犬粮前置商品建立失败：$dfErr"
+}
+Check "关键词召回前置商品建立成功（犬主粮）" ($null -ne $df) $dfErr
+
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐一款适合幼犬吃的狗粮' } $null $null
 Check "对话返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress -Depth 6)
 Check "回复非空" ($r.body.data.reply -and "$($r.body.data.reply)".Length -gt 0) $r.body.data.reply
@@ -122,6 +162,12 @@ Check "推荐标题与商品库逐字同源" $detailMatched
 
 $leak = @($r.body.data.recommendations | Where-Object { $null -ne $_.PSObject.Properties['sellerId'] }).Count
 Check "候选视图不泄露服务间字段（sellerId）" ($leak -eq 0)
+
+# 本节之后不再需要犬粮前置商品（后续断言全部围绕猫粮 / 无匹配 / 出口预判），
+# 就地拆除 —— 越早拆，中途失败时残留在库里的夹具越少。
+if ($df) { Remove-SpuFixtures -Ids $df.CreatedIds }
+$leftDf = if ($df) { "$(Invoke-ProductSql -Query "SELECT COUNT(*) FROM t_spu WHERE id = $($df.Id);")" } else { '0' }
+Check "犬粮前置商品已拆除（库内复原）" ($leftDf -eq '0') $leftDf
 
 # ---------- 3. 意图召回与无匹配 ----------
 Write-Host ""
@@ -205,7 +251,9 @@ Check "极小预算（1 元）召回为空（证明 SQL 过滤真实生效）" (
 
 # 用户提了预算但没给出数字：必须如实告知，绝不能当「没提预算」静默放过
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '有没有便宜划算的猫粮'; clarified = $true } $null $null
-Check "预算没听懂时如实告知（不静默失效）" ($r.status -eq 200 -and "$($r.body.data.reply)".Contains('没听清你的预算')) "$($r.body.data.reply)"
+# 失败信息里带上 status：T- 记录过「reply 打印为空」的坑 —— 只看 reply 分不清
+# 「服务真的回了一句别的话」还是「根本没拿到 200 响应」（限流 429 / 超时都会让 data 为 null）。
+Check "预算没听懂时如实告知（不静默失效）" ($r.status -eq 200 -and "$($r.body.data.reply)".Contains('没听清你的预算')) "status=$($r.status) reply=[$($r.body.data.reply)]"
 
 # ---------- 3e. 出口预判（M5）：答不了的问题不硬答 ----------
 Write-Host ""

@@ -69,7 +69,15 @@ public class CatalogLookup {
                                         Function<T, String> nameGetter) {
         Set<Long> distinct = distinct(ids);
         if (distinct.isEmpty()) {
-            return Map.of();
+            // ★ 这里刻意返回**可变的空 HashMap**，不能用 Map.of()。
+            // Map.of() 是不可变 Map，`get(null)` 直接抛 NullPointerException（不是返回 null）——
+            // 而「id 为 null」在本域是**合法且常见**的：品牌是可选字段，
+            // 第三方卖家上架不填品牌时 brand_id 就是 NULL，调用方 `brandNames.get(spu.getBrandId())`
+            // 会拿 null 来查。2026-10-09（E27）正是踩在这里：商城侧漏了判空 +
+            // 空结果返回 Map.of() → 商品列表/详情/AI 候选召回对无品牌商品全部 500。
+            // 调用方的判空仍是第一道防线，这里只是把「查不到」与「id 为 null」
+            // 统一成同一种结果（都得到 null），不再让它们一个返回 null、一个直接炸。
+            return new HashMap<>();
         }
         Map<Long, String> result = new HashMap<>(distinct.size());
         for (T item : loader.apply(distinct)) {

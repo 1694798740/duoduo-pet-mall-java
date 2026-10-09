@@ -39,6 +39,7 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\seller-fixture.ps1')
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -154,22 +155,25 @@ Check "普通买家访问卖出订单列表返回 403" ($r.status -eq 403) $r.st
 $r = Call 'Get' "$Gateway/api/seller/settlements" $sessNew $null
 Check "普通买家访问资金对账返回 403" ($r.status -eq 403) $r.status
 
-# ---------- 2. 商家入驻：实名前置 + 幂等 ----------
+# ---------- 2. 商家入驻：旧口子已封死（E10）+ 库内直建夹具 ----------
 Write-Host ""
-Write-Host "> 商家入驻"
+Write-Host "> 商家入驻（E10 起：实名不再自动开店）"
+
+# ★ 回归守卫：E10 主动删掉的「实名即开店」端点必须**仍然**不存在。
+#   这条断言的价值不在"现在没有这个路由"，而在于**将来谁把它加回来就立刻红** ——
+#   那是一个能绕过入驻审核直接开店的口子，属于必须长期钉死的性质。
 $r = Call 'Post' "$Gateway/api/users/me/merchant" $sessNew $null
-Check "★ 未实名申请成为卖家被拒（422）" ($r.status -eq 422) $r.status
-Check "拒绝原因说明需先完成实名" ($r.body.message -match '实名') $r.body.message
+Check "★ 旧端点 POST /api/users/me/merchant 已封死（E10 删除，期望 404）" ($r.status -eq 404) $r.status
 
 $r = Call 'Post' "$Gateway/api/users/me/realname" $sessNew @{ realName = '丙小明'; idCard = '310101199001011234' }
 Check "（准备）新用户完成实名认证（200）" ($r.status -eq 200) $r.status
 
-$r = Call 'Post' "$Gateway/api/users/me/merchant" $sessNew $null
-Check "★ 实名后申请成为卖家成功（200）" ($r.status -eq 200) $r.status
-Check "角色已升级为 SELLER" ($r.body.data.role -eq 'SELLER') $r.body.data.role
+$r = Call 'Get' "$Gateway/api/seller/summary" $sessNew $null
+Check "★ 实名之后仍然开不了店（未入驻 → 403）" ($r.status -eq 403) $r.status
 
-$r = Call 'Post' "$Gateway/api/users/me/merchant" $sessNew $null
-Check "重复申请成为卖家幂等（200，不报错）" ($r.status -eq 200) $r.status
+# E27：卖家夹具改为「库内直建 APPROVED 商家」，与 scripts/lib/e2e-seller-fixture.mjs 同构
+$fxNew = New-SellerFixture -Phone $phoneNew -StoreName '新用户丙' -Gateway $Gateway
+Check "（夹具）直建 APPROVED 商家并把角色升为 SELLER" ($fxNew.roleSet) $fxNew.role
 
 # 角色在 access token 里是快照，必须重新登录才能带到下游服务
 $reNew = Login $phoneNew
@@ -233,15 +237,15 @@ $regSeller = Register $phoneSeller '卖家乙'
 Check "卖家注册/登录成功（200）" ($regSeller.result.status -eq 200) $regSeller.result.status
 $r = Call 'Post' "$Gateway/api/users/me/realname" $regSeller.session @{ realName = '乙小商'; idCard = '310101199002022345' }
 Check "（准备）卖家完成实名（200）" ($r.status -eq 200) $r.status
-$r = Call 'Post' "$Gateway/api/users/me/merchant" $regSeller.session $null
-Check "（准备）卖家入驻成功（200）" ($r.status -eq 200) $r.status
+$fxSeller = New-SellerFixture -Phone $phoneSeller -StoreName '卖家乙' -Gateway $Gateway
+Check "（准备）卖家直建为 APPROVED 商家" ($fxSeller.roleSet) $fxSeller.role
 $reSeller = Login $phoneSeller
 $sessSeller = $reSeller.session
 $sellerId = [long]$reSeller.result.body.data.id
 
 $regOther = Register $phoneOther '另一卖家丁'
 Call 'Post' "$Gateway/api/users/me/realname" $regOther.session @{ realName = '丁小二'; idCard = '310101199003033456' } | Out-Null
-Call 'Post' "$Gateway/api/users/me/merchant" $regOther.session $null | Out-Null
+$fxOther = New-SellerFixture -Phone $phoneOther -StoreName '另一卖家丁' -Gateway $Gateway
 $reOther = Login $phoneOther
 $sessOther = $reOther.session
 Check "（准备）另一卖家入驻成功且已刷新登录态" ($reOther.result.status -eq 200) $reOther.result.status
@@ -417,8 +421,16 @@ if ($SkipDbCheck) {
     # 夹具：选两个在售 SPU 划给卖家，验证归属、越权与上下架；结尾就地复原
     $spuA = Sql 'duoduo_product' "SELECT id FROM t_spu WHERE status='ON_SALE' ORDER BY id LIMIT 1;"
     $spuB = Sql 'duoduo_product' "SELECT id FROM t_spu WHERE status='ON_SALE' AND id <> $spuA ORDER BY id LIMIT 1;"
-    Sql 'duoduo_product' "UPDATE t_spu SET seller_id = $sellerId WHERE id IN ($spuA,$spuB);" | Out-Null
-    Check "（夹具）SPU A / B 已划给卖家 $sellerId" ((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = $sellerId;") -eq '2')
+
+    # ★ 必须**同时**改 supply_type（E27 修正）：
+    #   第七十三轮起「自营 / 第三方」的判据是 `t_spu.supply_type`，**不是 seller_id**。
+    #   采购视图（交易域下单拆单读的那份数据）对自营商品**无条件返回 sellerId=0**，
+    #   所以「只改 seller_id 不改 supply_type」时，订单仍会落回平台自营 ——
+    #   这正是本节末尾「归属链路」三条断言失败的真因。
+    #   此前它一直被掩盖：夹具 404 导致的全链级联红把这一条读起来像"由级联引起的"。
+    $origSupply = Sql 'duoduo_product' "SELECT GROUP_CONCAT(CONCAT(id,':',supply_type) ORDER BY id) FROM t_spu WHERE id IN ($spuA,$spuB);"
+    Sql 'duoduo_product' "UPDATE t_spu SET seller_id = $sellerId, supply_type = 'merchant' WHERE id IN ($spuA,$spuB);" | Out-Null
+    Check "（夹具）SPU A / B 已划给卖家 $sellerId 且供货类型改为 merchant" ((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = $sellerId AND supply_type = 'merchant';") -eq '2')
 
     $r = Call 'Get' "$Gateway/api/seller/products?pageSize=50" $sessSeller $null
     Check "★ 商家商品列表返回 200" ($r.status -eq 200) $r.status
@@ -460,9 +472,19 @@ if ($SkipDbCheck) {
         Check "归属链路：SKU A 库存充足" $false "stock=$stockA"
     }
 
-    # 复原商品归属（测试产生的订单是本轮新数据，不在复原范围）
-    Sql 'duoduo_product' "UPDATE t_spu SET seller_id = 0 WHERE id IN ($spuA,$spuB);" | Out-Null
-    Check "（复原）SPU A / B 的 seller_id 已归零" ((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = 0;") -eq '2')
+    # 复原商品归属（测试产生的订单是本轮新数据，不在复原范围）。
+    # 逐行按**记录的原值**写回，而不是一律写 'self' —— 若将来夹具选中的是真正的第三方商品，
+    # 一律写 'self' 就会把它的供货类型永久改错，而这类错误不会引起任何断言失败。
+    foreach ($pair in ("$origSupply" -split ',')) {
+        $kv = $pair -split ':'
+        if ($kv.Count -eq 2 -and $kv[0] -ne '') {
+            Sql 'duoduo_product' "UPDATE t_spu SET seller_id = 0, supply_type = '$($kv[1])' WHERE id = $($kv[0]);" | Out-Null
+        }
+    }
+    $restored = Sql 'duoduo_product' "SELECT GROUP_CONCAT(CONCAT(id,':',supply_type) ORDER BY id) FROM t_spu WHERE id IN ($spuA,$spuB);"
+    Check "（复原）SPU A / B 的 seller_id 归零且 supply_type 回到原值" `
+        (((Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB) AND seller_id = 0;") -eq '2') -and ("$restored" -eq "$origSupply")) `
+        "restored=$restored vs orig=$origSupply"
 }
 
 # ---------- 13. 复原夹具 ----------

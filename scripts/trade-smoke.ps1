@@ -34,6 +34,7 @@ function Check([string]$name, [bool]$ok, $extra) {
 
 # 统一请求：返回 @{ status=..; body=.. }，非 2xx 不抛异常
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\catalog-fixture.ps1')
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{
@@ -105,12 +106,28 @@ function Sql([string]$sql) {
 $phoneA = '139' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $phoneB = '138' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 
-# 参考 SKU（来自种子数据）：2001/2002 同属 SPU 1001；2009 库存 0；2021 已下架；2004 库存较小
-$SKU_A = 2001
-$SKU_B = 2002
-$SKU_TIGHT = 2004
-$SKU_SOLD_OUT = 2009
-$SKU_OFF_SHELF = 2021
+# 参考 SKU：**现场解析**（E27），不再写死 2001/2002/2004/2009/2021。
+# 原先写死的那几个号（尤其"库存较小的 2004 / 售罄的 2009 / 已下架的 2021"）
+# 在本机库经多轮清理后已不存在 → 夹具读到 0 → 「本机红、CI 绿」，
+# 谁都不确定是数据漂移还是代码回归。现在改为「按需解析、缺啥建啥」，跑完删除。
+if ($SkipDbCheck) {
+    # 保留一条无库访问的退路（-SkipDbCheck 的语义就是"不碰库"）。
+    # 注意：这条路径在数据漂移的库上**本来就会红** —— 它只用于「有库但想跳过库断言」的排查场景，
+    # run-all-smoke.ps1 与 ci-run.ps1 从不传这个开关。
+    $SKU_A = 2001
+    $SKU_B = 2002
+    $SKU_TIGHT = 2004
+    $SKU_SOLD_OUT = 2009
+    $SKU_OFF_SHELF = 2021
+    $fxSku = $null
+} else {
+    $fxSku = Resolve-SkuFixtures -MinStock 5
+    $SKU_A = $fxSku.A
+    $SKU_B = $fxSku.B
+    $SKU_TIGHT = $fxSku.Tight
+    $SKU_SOLD_OUT = $fxSku.SoldOut
+    $SKU_OFF_SHELF = $fxSku.OffShelf
+}
 $SKU_MISSING = 999999
 
 Write-Host ""
@@ -372,6 +389,7 @@ $r = Call 'Get' "$Gateway/api/cart" $sessA $null
 Check "清空后购物车为空" ($r.body.data.itemCount -eq 0) $r.body.data.itemCount
 
 # ---------- 汇总 ----------
+if ($fxSku) { Remove-SkuFixtures -Ids $fxSku.CreatedIds }
 Write-Host ""
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
 if ($fail -gt 0) {

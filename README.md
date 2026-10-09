@@ -708,31 +708,41 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 
 ### 端到端冒烟（24 套接口断言 + 21 套真实浏览器 UI 断言 + 小程序无浏览器 72 项）
 
-> **⚠️ 本地库数据漂移提示（2026-10-09 复核）**：一键全量冒烟在**当前本地库**上有 9 套红，
-> **均非代码回归**，而是两类历史原因：
-> ① **4 套夹具过期**（`seller` / `aftersale` / `logistics` / `credit`）——它们仍调用 **E10 已删除**的
-> `POST /api/users/me/merchant`（"实名即开店"旧路径），夹具 404 后全链级联；这 4 套**不在 CI 子集内**，
-> 所以自 E10 起一直未被发现；
-> ② **5 套依赖固定种子数据**（`smoke` / `trade` / `order` / `ai` / `review`）——本地库经多轮清理后
-> 种子商品由 8+ 件降到 **2 件**、`t_listing` 为 **0 条**、SKU `2004/2005` 与 SPU `1003/1004` 已不存在；
-> **CI 用全新库初始化，不受影响**。
-> 修复已登记为 **E27**（抽 `scripts/lib/seller-fixture.ps1` 供 4 套共用 + 断言改数据驱动 + 纳入 CI 子集）。
-> 判断"是否本轮引入"的方法：看失败项是否落在本轮改动文件上（`git status` 逐条比对），
-> 以及失败是否可由「库内数据不存在」直接解释（例如 `SELECT COUNT(*) FROM t_spu` 只有 2 行）。
+> **✅ 本地库数据漂移已根治（2026-10-09 · E27 完成）**：一键全量冒烟此前在本地库上有 **9 套红**，
+> 经逐套归因**全部非代码回归**，现已从根上消掉，不再需要"看到红先判断是不是漂移"：
+> ① **4 套夹具过期**（`seller` / `aftersale` / `logistics` / `credit`）——它们曾调用 **E10 已删除**的
+> `POST /api/users/me/merchant`；② **5 套依赖固定种子数据**（`smoke` / `trade` / `order` / `ai` / `review`）——
+> 本地库清理后种子商品由 8+ 件降到 2 件、`t_listing` 为 0 条。
+>
+> **做法（三层，全部落地）**：
+> 1. **夹具化**：`scripts/lib/{seller,catalog,listing}-fixture.ps1` 现场建前置、跑完自毁，
+>    与种子数据彻底解耦；夹具建不起来会**显式报红**（否则后面几条会因"库内本来就是 0 条"静默通过）；
+> 2. **断言数据驱动**：计数类断言改成「先查库内实际值再断言」，不再写死"首页 6 条"这类数字 ——
+>    写死条数钉的是"当前有几条数据"，环境一变就红，而它想守的其实是「只返回已过审的那批」；
+> 3. **全员进 CI**：CI 子集 5 → 11 套，并新增 **`smoke-full` 作业**（push 到 main 跑全量）——
+>    子集只解决"反馈快"，解决不了"没人跑"，这是 E10→E27 之间那批套件静默变红的直接原因。
+>
+> **★ 本轮最重要的产出是夹具反过来挖出的真实缺陷**：**无品牌商品会让商品列表 / 商品详情 /
+> AI 候选召回全部 500**（`CatalogLookup` 空结果返回不可变 `Map.of()`，而 `Map.get(null)` 直接抛 NPE；
+> 只要同页有一条带品牌就被掩盖，种子数据全带品牌 → 单测与冒烟双双假绿）。修复与验证见下方变更记录。
+> 判断"是否本轮引入"的方法仍然适用：看失败项是否落在本轮改动文件上（`git status` 逐条比对），
+> 以及失败是否可由「库内数据不存在」直接解释（例如 `SELECT COUNT(*) FROM t_spu`）。
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
-> CI 子集（本地 / GitHub Actions 同一入口）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1`。
+> CI 子集（本地 / GitHub Actions 同一入口，**11 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1`。
+> **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
+> 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
 > `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**（当前 **241 个端点**），
 > 加 `--check` 即变门禁（文档落后于源码时退出码 1）—— 端点清单不再靠手工维护。
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 55 项：用户域 + 商品域
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 62 项：用户域 + 商品域（含 E27 的闲置/无品牌商品夹具守卫）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 77 项：下单拆单 + 库存冻结
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 72 项：支付幂等 + 状态机 + 超时关单
@@ -740,7 +750,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 59 项：履约域评价（内部接口/资格/匿名/追评/聚合）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -749,7 +759,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\coupon-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\address-smoke.ps1      # 82 项：收货地址簿（CRUD/默认唯一性与删除顺延/归属统一 404/下单写快照/清理复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\id-precision-smoke.ps1 # 56 项：跨域 ID 精度回归（只断言 JSON 原始文本，绕开反序列化的精度掩盖）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wechat-auth-smoke.ps1  # 26 项：微信登录绑定（未绑 422/未配置 503/幂等/抢绑 409/免登 401）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 37 项：AI 导购（形态自适应/推荐真实性/多轮追问/预算硬过滤与区间/极小预算空结果/预算未解析告知/出口预判/澄清反问/推荐上限/伪造 XFF 不能绕过限流/429）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1           # 39 项：AI 导购（形态自适应/推荐真实性/多轮追问/预算硬过滤与区间/极小预算空结果/预算未解析告知/出口预判/澄清反问/推荐上限/伪造 XFF 不能绕过限流/429；**犬粮前置商品现场建、跑完删**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1       # 40 项：ES 检索（拼音与同义词容错/对账三空/停 ES 降级/**需 ES 在跑**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 51 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄/DB 不负数/取消回补/运营编辑·删除与守卫/套件自我清理）
@@ -1623,6 +1633,70 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-09（E27 + E29 · 接口冒烟夹具与数据漂移根治；顺带修掉无品牌商品 500）
+
+**为什么要有这一轮**：E14 收尾时发现**一键全量冒烟有 9 套红**。逐套归因后确认全部非代码回归，
+但它们红着这件事本身就说明系统有问题：**没有任何人会发现它们变红**（既不在 CI 子集里，本地也不是天天跑）。
+更要紧的是，这两类"红"会把人训练成"反正有几套是红的"，真回归出现时反而没人看。
+所以这一轮的目标不是"把红改成绿"，而是**让断言不再依赖环境里恰好有什么数据**。
+
+**① 夹具化：前置由脚本现场造，不再依赖种子数据**（新增 `scripts/lib/`）
+
+| 夹具库 | 造什么 | 供谁用 |
+|---|---|---|
+| `seller-fixture.ps1` | 库内直建 `t_merchant`(APPROVED) + `t_merchant_member`(OWNER) + `t_user.role=SELLER`，与 `e2e-seller-fixture.mjs` 同构 | seller / aftersale / logistics / credit |
+| `catalog-fixture.ps1` | 五类 SKU（可售×2 / 小库存 / 售罄 / 已下架）+ 关键词商品 SPU + **无品牌商品 SPU** | trade / order / smoke / ai |
+| `listing-fixture.ps1` | 闲置 1 已过审 + 1 待审 + 1 已驳回 | smoke |
+
+三条硬纪律：**现场建、跑完自毁**（id 用 `97/98/99` 段位，库里一眼可辨）；**建不起来就显式报红**
+（否则后面几条会因"库内本来就是 0 条"静默通过）；**夹具默认带复核回读**（写错列名时当场炸，
+不让"夹具没建成"伪装成"业务缺陷"）。
+
+**② 断言数据驱动**：`smoke` / `trade` / `order` / `ai` / `review` / `seller` / `aftersale` / `logistics` / `credit`
+九套的固定种子件数与固定种子 id 断言，改为「先查库内实际值再断言」或「自建夹具自证」。
+写死条数钉的是"当前有几条数据"，环境一变就红 —— 而它想守的性质（"列表只返回已过审的那批"）与条数无关。
+
+**③ CI 从"有人管"这一层收口**：CI 子集 **5 → 11 套**（补入 seller / aftersale / logistics / credit / ai / review）；
+并新增 **`smoke-full` 作业**（push 到 main 时跑 `run-all-smoke.ps1` 全量）。
+子集只解决"反馈快"，解决不了"没人跑"—— E10 删掉旧端点后这批套件静默红了整整几轮，根因就在这里。
+顺带修掉一个**一直坏着**的 CI 门禁：容器健康等待写死 `healthy -eq 10`，服务数从 10 涨到 14 之后
+这道门**永远不可能满足**，每轮 CI 都在这里干等 10 分钟后失败（已改为「数量达下限 + 全部 healthy」）。
+
+**④ ★ 夹具反过来挖出的真实生产缺陷（E29，P0 级）**
+
+`ai-smoke` 的两条失败里藏着一条**与测试无关**的缺陷：**无品牌商品的商品列表 / 商品详情 /
+AI 候选召回全部 500**（本地复现 `detail=500`、`list=500`、AI 返回 `DEGRADED`）。
+
+- **根因**：`ProductService.toCards()` 取品牌名时没判空 → `brandNames.get(null)`；
+  而 `CatalogLookup.names()` 在「一个 id 都没查到」时返回 `Map.of()`，**不可变 Map 的 `get(null)` 直接抛
+  `NullPointerException`**（不是返回 null）。品牌自 E14 起是**可选**字段，第三方卖家不填就是 NULL。
+- **为什么一直没被测出来（最值得记的一点）**：只要同一页里有**任意一条**商品带品牌，
+  返回的就是允许 null key 的 `HashMap`，一切正常。而种子数据每条商品都带品牌 ——
+  于是**单测（打桩用了可变 Map，注释还写着"真实的 CatalogLookup 返回的是 HashMap"，而那句是假的）
+  与冒烟（种子都带品牌）双双假绿**。
+- **修复**：① `toCards` 补判空（与 `SellerProductService` 三处既有写法对齐）；
+  ② `CatalogLookup.names()` 空结果改为返回可变空 `HashMap`，让「查不到」与「id 为 null」同形。
+- **验证**：单测 +6（`CatalogLookupTest` 5 项 + `ProductVisibilityTest` 1 项），并做**反向验证** ——
+  临时摘掉判空，**恰好红掉那 1 条**、其余 9 条全绿；`smoke.ps1` 另加 **5 条端到端守卫**
+  （无品牌商品详情/列表均 200、`brandId`/`brandName` 均为空、夹具自拆复原）。
+  重建镜像后逐模块比对容器与宿主 jar md5 一致。
+
+**⑤ 另一处脚本级缺陷（同样只有断言真跑才暴露）**：`review-smoke.ps1` 第 11 节给内部 recompute 传的
+是**顶层单元素数组**，而 PowerShell 管道会**枚举**数组 → `@(@{...})` 被序列化成 `{...}` 而非 `[{...}]`，
+服务端 `@RequestBody List<RatingPatch>` 直接 400。修复：`ConvertTo-Json` 改用 `-InputObject`
+（管道的隐式枚举是这类"看起来像接口不认 payload"的常见真凶）。
+
+**⑥ 测试端的假红也一并修掉**：`ai-smoke` 的「预算没听懂时如实告知」曾因**外部大模型超时**假红 ——
+`DashScopeClient` 逐个备选模型试（每个 15s），两个都超时就接近 30s，恰好撞上客户端的 30s 超时，
+**服务端其实已经正确降级并答完**了。修复：对话请求超时放宽到 75s + 仅在「传输层没拿到响应」(status=0) 时重试 1 次
+（4xx/5xx 是有意义的信号，绝不重试、绝不掩盖）。失败信息也从"只打印 reply"改为**带 status**，
+一次就能分清"服务回了别的话"和"根本没拿到响应"。
+
+**结果**：九套全绿 —— `seller 99/0`、`aftersale 101/0`、`logistics 79/0`、`credit 82/0`、
+`trade 87/0`、`order 77/0`、`smoke 62/0`、`ai 39/0`、`review 61/0`；夹具残留检查 0（`spu 97*` / `sku 99*` / `listing 98*` 均为 0）；
+后端单测 **368/0**（362 + 6）。新增文件：`scripts/lib/{seller,catalog,listing}-fixture.ps1`、
+`duoduo-product/.../support/CatalogLookupTest.java`。
 
 ### 2026-10-09（E15 · P2 第 7 项：资质有效期与提醒，**P2 收官**）
 

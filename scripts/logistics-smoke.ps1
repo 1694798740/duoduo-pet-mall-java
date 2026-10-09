@@ -67,6 +67,7 @@ function Check([string]$name, [bool]$ok, $extra) {
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
 . (Join-Path $PSScriptRoot 'lib\platform-operator.ps1')
+. (Join-Path $PSScriptRoot 'lib\seller-fixture.ps1')
 # 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
 # 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
 $sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
@@ -191,8 +192,8 @@ Check "卖家 S 注册成功（初始 USER）" ($regS.result.status -eq 200) $re
 $sessS = $regS.session
 $r = Call 'Post' "$Gateway/api/users/me/realname" $sessS @{ realName = '张老板'; idCard = '310101199001011234' }
 Check "卖家 S 实名认证成功" ($r.status -eq 200) $r.status
-$r = Call 'Post' "$Gateway/api/users/me/merchant" $sessS $null
-Check "卖家 S 申请成为卖家成功" ($r.status -eq 200) $r.status
+$fxS = New-SellerFixture -Phone $phoneS -StoreName '物流测试-卖家S' -Gateway $Gateway
+Check "（夹具）卖家 S 直建为 APPROVED 商家且角色升为 SELLER" ($fxS.roleSet) $fxS.role
 $sessS = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $r = Call 'Post' "$Gateway/api/auth/login" $sessS @{ phone = $phoneS; password = $Password }
 Check "卖家 S 重新登录成功（角色是 token 快照，必须重登）" ($r.status -eq 200) $r.status

@@ -204,6 +204,59 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-09（E27 接口冒烟夹具与数据漂移根治；顺带修掉 E29 无品牌商品 500）
+
+**为什么要有这一轮**：E14 收尾时发现全量冒烟 9 套红，逐套归因后确认**全部非代码回归**。
+但"红着"本身就是问题 —— 它们既不在 CI 子集里、本地也不是天天跑，**没有任何人会看到它们变红**；
+而且这种红会训练出"反正有几套是红的"的心态，真回归出现时反而没人看。
+目标因此不是"把红改成绿"，而是**让断言不再依赖环境里恰好有什么数据**。
+
+**① 夹具化**（新增 `scripts/lib/`，三条硬纪律：现场建 / 跑完自毁 / **建不起来就显式报红**）
+
+- `seller-fixture.ps1`：库内直建 `t_merchant`(APPROVED) + `t_merchant_member`(OWNER) + `t_user.role=SELLER`
+  （与 `scripts/lib/e2e-seller-fixture.mjs` 同构），三步回读复核 → seller / aftersale / logistics / credit 共用。
+- `catalog-fixture.ps1`：五类 SKU（可售×2 / 小库存 / 售罄 / 已下架）+ 关键词商品 SPU + **无品牌商品 SPU**。
+- `listing-fixture.ps1`：闲置 1 已过审 + 1 待审 + 1 已驳回。
+- id 段位 `97 / 98 / 99` 与种子、雪花都不重叠 → 「库里冒出这个号」一眼可辨是夹具。
+
+**② 断言数据驱动**：九套（smoke / trade / order / ai / review / seller / aftersale / logistics / credit）
+的固定种子件数与固定种子 id 断言，改为「先查库内实际值再断言」或「自建夹具自证」。
+写死条数钉的是"当前有几条数据"，环境一变就红，而它想守的性质（如"列表只返回已过审的那批"）与条数无关。
+
+**③ CI 从"有人管"这一层收口**：子集 **5 → 11 套**（补 seller / aftersale / logistics / credit / ai / review）；
+新增 **`smoke-full` 作业**（push main 跑 `run-all-smoke.ps1` 全量）。
+子集只解决"反馈快"，解决不了"没人跑"—— E10 删掉旧端点后这批套件静默红了好几轮，根因即此。
+**顺带修掉一个一直坏着的 CI 门禁**：容器健康等待写死 `healthy -eq 10`，服务数涨到 14 后这道门
+**永远不可能满足**，每轮 CI 都干等 10 分钟后失败（改为「数量达下限 + 全部 healthy」）。
+
+**④ ★ 夹具反过来挖出的真实生产缺陷（E29，P0 级）**：**无品牌商品的商品列表 / 详情 / AI 候选召回全部 500**。
+
+- **根因**：`ProductService.toCards()` 取品牌名时没判空 → `brandNames.get(null)`；
+  `CatalogLookup.names()` 在「一个 id 都没查到」时返回 `Map.of()`，**不可变 Map 的 `get(null)` 直接抛
+  `NullPointerException`**（不是返回 null）。品牌自 E14 起是**可选**字段（第三方卖家不填即 NULL）→ 正常路径。
+- **为什么一直没被测出来（最值得记的一点）**：只要同页有**任意一条**商品带品牌，
+  返回的就是允许 null key 的 `HashMap`，一切正常。而种子数据每条都带品牌 ——
+  于是**单测（打桩用了可变 Map，基座注释还断言"真实的 CatalogLookup 返回的是 HashMap"，而那句是假的）
+  与冒烟（种子都带品牌）双双假绿**。这是一次典型的"测试自己把缺陷挡住了"。
+- **修复**：① `toCards` 补判空（与 `SellerProductService` 三处既有写法对齐）；
+  ② `CatalogLookup.names()` 空结果改为返回可变空 `HashMap`，让「查不到」与「id 为 null」同形。
+- **验证**：单测 +6（`CatalogLookupTest` 5 + `ProductVisibilityTest` 1）并做**反向验证** ——
+  临时摘掉判空，**恰好红掉那 1 条**、其余 9 条全绿；`smoke.ps1` 另加 **5 条端到端守卫**。
+  重建镜像后逐模块比对容器与宿主 jar **md5 一致**。
+
+**⑤ 脚本级缺陷（同样只有断言真跑才暴露）**：`review-smoke.ps1` 第 11 节给内部 recompute 传的是
+**顶层单元素数组**，PowerShell 管道会**枚举**数组 → `@(@{...})` 被序列化成 `{...}` 而非 `[{...}]`，
+服务端 `@RequestBody List<RatingPatch>` 直接 **400**。修复：`ConvertTo-Json` 改 `-InputObject`。
+
+**⑥ 测试端假红一并修掉**：`ai-smoke` 的「预算没听懂时如实告知」曾因**外部大模型超时**假红 ——
+`DashScopeClient` 逐个备选模型试（每个 15s），两个都超时就接近 30s，恰好撞上客户端 30s 超时，
+**服务端其实已经正确降级并答完**。修复：对话请求超时放宽到 75s + 仅在「传输层没拿到响应」(status=0) 时重试 1 次
+（4xx/5xx 是有意义的信号，绝不重试）；失败信息从"只打印 reply"改为**带 status**。
+
+**结果**：九套全绿 —— seller 99/0、aftersale 101/0、logistics 79/0、credit 82/0、trade 87/0、
+order 77/0、smoke 62/0、ai 39/0、review 61/0；夹具残留 0（`spu 97*` / `sku 99*` / `listing 98*`）；
+后端单测 **368/0**（362 + 6）；全量 23 套回归见 `logs/e27-runall.log`。
+
 ### 2026-10-09（E15 · P2 第 7 项：资质有效期与提醒，**P2 收官**）
 
 **问题**：E10 收上了六份资质材料，但**只有"有没有"没有"到没到期"**。证照过期既不会提醒商家，

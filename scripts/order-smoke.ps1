@@ -29,6 +29,7 @@ function Check([string]$name, [bool]$ok, $extra) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\internal-token.ps1')
+. (Join-Path $PSScriptRoot 'lib\catalog-fixture.ps1')
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
     $params = @{ Uri = $uri; Method = $method; UseBasicParsing = $true; TimeoutSec = 25 }
@@ -88,9 +89,22 @@ function NewKey { return [guid]::NewGuid().ToString() }
 
 $phoneA = '139' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $phoneB = '138' + (Get-Random -Minimum 10000000 -Maximum 99999999)
-$SKU_A = 2001
-$SKU_B = 2002
-$SKU_TIGHT = 2004
+# 参考 SKU：**现场解析**（E27），不再写死 2001/2002/2004。
+# 写死的号（"库存较小的 2004"）在本机库清理后已不存在 → 夹具读到 0 → 「本机红、CI 绿」。
+# 现在按需解析、缺啥建啥，跑完删除。
+if ($SkipDbCheck) {
+    # 无库访问的退路（语义与开关一致）；这条路径在数据漂移的库上本来就会红，
+    # run-all-smoke.ps1 与 ci-run.ps1 从不传这个开关。
+    $SKU_A = 2001
+    $SKU_B = 2002
+    $SKU_TIGHT = 2004
+    $fxSku = $null
+} else {
+    $fxSku = Resolve-SkuFixtures -MinStock 5
+    $SKU_A = $fxSku.A
+    $SKU_B = $fxSku.B
+    $SKU_TIGHT = $fxSku.Tight
+}
 
 Write-Host ""
 Write-Host "=== 多多宠物商店 · 交易服务（下单/拆单/库存冻结）冒烟 @ $Gateway ==="
@@ -349,6 +363,7 @@ if ($SkipDbCheck) {
 }
 
 # ---------- 汇总 ----------
+if ($fxSku) { Remove-SkuFixtures -Ids $fxSku.CreatedIds }
 Write-Host ""
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
 if ($fail -gt 0) {

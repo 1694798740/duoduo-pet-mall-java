@@ -65,7 +65,12 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
     }
     if ($headers) { $params.Headers = $headers }
     if ($null -ne $bodyObj) {
-        $params.Body = ($bodyObj | ConvertTo-Json -Compress -Depth 6)
+        # ★ 必须用 -InputObject 而不是管道：管道会**枚举**数组，单元素数组被拆成裸对象，
+        # 于是 `@(@{...})` 序列化成 `{...}` 而不是 `[{...}]`，
+        # 服务端 `@RequestBody List<RatingPatch>` 直接 400（VALIDATION_ERROR）——
+        # 报错长得像"接口不认这个 payload"，实际是脚本把数组写丢了。
+        # 本文件第 11 节给内部 recompute 传的就是单元素数组，正是踩在这里。
+        $params.Body = (ConvertTo-Json -InputObject $bodyObj -Compress -Depth 6)
         $params.ContentType = 'application/json; charset=utf-8'
     }
     try {
@@ -357,7 +362,7 @@ Check "评价夹具已删除（库内复原）" ($left -eq '0') $left
 $recomp = Call 'Post' "$Product/api/products/internal/ratings/recompute" $null `
     @(@{ spuId = $SPU; avgRating = [double]$spuRating0; ratingCount = [int]$spuCount0 }) `
     @{ 'X-Internal-Token' = 'internal' }
-Check "内部 recompute 接受复原补丁（applied >= 1）" ($recomp.status -eq 200 -and [long]$recomp.body.data -ge 1) "$($recomp.status) $($recomp.body.data)"
+Check "内部 recompute 接受复原补丁（applied >= 1）" ($recomp.status -eq 200 -and [long]$recomp.body.data -ge 1) "status=$($recomp.status) applied=$($recomp.body.data) raw=$($recomp.raw)"
 $nowRating = Sql 'duoduo_product' "SELECT rating FROM t_spu WHERE id = $SPU;"
 $nowCount = Sql 'duoduo_product' "SELECT rating_count FROM t_spu WHERE id = $SPU;"
 Check "t_spu 评分复原（R73 回写链不残留）" ("$nowRating" -eq "$spuRating0" -and "$nowCount" -eq "$spuCount0") "$spuRating0/$spuCount0 -> $nowRating/$nowCount"
