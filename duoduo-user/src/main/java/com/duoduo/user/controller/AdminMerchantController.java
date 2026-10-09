@@ -7,6 +7,7 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.user.dto.MerchantDtos.ApplicationSummary;
 import com.duoduo.user.dto.MerchantDtos.ApplicationView;
 import com.duoduo.user.dto.MerchantDtos.RejectRequest;
+import com.duoduo.user.service.MerchantLicenseJob;
 import com.duoduo.user.service.MerchantOnboardingService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,9 +28,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminMerchantController {
 
     private final MerchantOnboardingService onboardingService;
+    private final MerchantLicenseJob licenseJob;
 
-    public AdminMerchantController(MerchantOnboardingService onboardingService) {
+    public AdminMerchantController(MerchantOnboardingService onboardingService,
+                                   MerchantLicenseJob licenseJob) {
         this.onboardingService = onboardingService;
+        this.licenseJob = licenseJob;
     }
 
     @GetMapping
@@ -39,6 +43,20 @@ public class AdminMerchantController {
             @RequestParam(required = false) String status) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(onboardingService.adminPage(page, pageSize, status));
+    }
+
+    /**
+     * 手动触发一轮资质巡检（E15）：临期提醒 + 过期自动停业，返回本轮处理计数。
+     *
+     * <p>刻意不做「只读的预览」而是真的执行 —— 运营需要它来回答两个实际问题：
+     * ① 刚给某家店补录了有效期，想知道现在的结论是什么；
+     * ② 库里数据被人工改过（如修错日期），要立刻按新数据重算一遍，
+     * 而不能等到下一轮 6 小时之后。处置动作全部是条件更新 + 只升档才提醒，可安全重复调用。
+     */
+    @PostMapping("/license-sweep")
+    public ApiResponse<MerchantLicenseJob.SweepReport> licenseSweep() {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(licenseJob.sweepNow());
     }
 
     @GetMapping("/{id}")

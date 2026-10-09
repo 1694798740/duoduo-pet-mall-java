@@ -33,10 +33,13 @@ public class UserController {
     private final AuthService authService;
     private final PetProfileService petProfileService;
     private final com.duoduo.user.service.MerchantStaffService staffService;
+    private final com.duoduo.user.service.MerchantOnboardingService onboardingService;
 
     public UserController(AuthService authService, PetProfileService petProfileService,
-                          com.duoduo.user.service.MerchantStaffService staffService) {
+                          com.duoduo.user.service.MerchantStaffService staffService,
+                          com.duoduo.user.service.MerchantOnboardingService onboardingService) {
         this.staffService = staffService;
+        this.onboardingService = onboardingService;
         this.authService = authService;
         this.petProfileService = petProfileService;
     }
@@ -92,6 +95,22 @@ public class UserController {
     public ApiResponse<com.duoduo.user.dto.MerchantDtos.MembershipInfo> merchantMembership(
             @org.springframework.web.bind.annotation.RequestParam("userId") Long userId) {
         return ApiResponse.ok(staffService.membershipOf(userId));
+    }
+
+    /**
+     * E15 · 店铺资质与营业状态（内部端点，商品域的上架门禁用）。
+     *
+     * <p>与 {@code /internal/merchant-membership} 的区别：那个查「这个人是不是店员」（按 userId），
+     * 这个查「这家店现在能不能卖东西」（按<b>店主</b> userId）。店主自己走商家端时
+     * 不经过成员查询，所以只补成员查询是拦不住「停业店铺的店主继续上架」的。
+     *
+     * <p>无入驻申请（平台自营的 ownerUserId、或还没申请过）→ {@code null}，
+     * 调用方按“不阻塞”处理。
+     */
+    @GetMapping("/internal/merchant-license")
+    public ApiResponse<com.duoduo.user.dto.MerchantDtos.MerchantLicenseInfo> merchantLicense(
+            @org.springframework.web.bind.annotation.RequestParam("ownerUserId") Long ownerUserId) {
+        return ApiResponse.ok(onboardingService.licenseInfoOf(ownerUserId));
     }
 
     @GetMapping("/internal/briefs")

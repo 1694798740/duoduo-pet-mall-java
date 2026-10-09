@@ -102,6 +102,11 @@ public class LongToStringJacksonModule extends SimpleModule {
             // **新增任何「前端会拿去比大小 / 加减」的计数字段，必须同时加进本集合**。
             "commentCount", "replyCount", "shareCount",
             "closeMinutes", "expireMinutes", "durationMinutes", "expiresInSeconds",
+            // 第七十六轮补齐：E15 资质剩余天数。这是**度量**不是标识 ——
+            // 前端 types.ts 早已声明为 number，界面要显示「还剩 N 天」、将来还要按它排序
+            // 与判断紧急程度。漏列的后果与上面 commentCount 同型：以字符串下发，
+            // `remaining > 7` 退化成字典序比较（"10" > "7" 为 false，即"只剩 10 天"被当成不紧急）。
+            "licenseRemainingDays",
             // 第十七轮补齐：**分页总数**。此前漏列导致 `PageResult.total` 以字符串下发，
             // 于是 `smoke.ps1` 的 `$p.total -ge 3` 在 PowerShell 里退化成**字典序比较**
             // （"15" -ge "3" 为 False）而恒失败 —— 一个类型错误伪装成业务失败。

@@ -17,6 +17,14 @@ public class MerchantMaterialEntity {
     /** MerchantMaterialType.name() */
     private String materialType;
     private String fileUrl;
+    /**
+     * 证件有效期至（E15，UTC，含当日有效）。
+     *
+     * <p><b>NULL = 长期有效</b>（存量数据与「经营承诺书」这类本就没有到期日的材料）——
+     * 与「已过期」不是一回事。判定口径见 {@code MerchantOnboardingService}：
+     * 只有非 NULL 的到期日才参与「店铺最早到期日」的取值。
+     */
+    private LocalDateTime expireAt;
     private String originalName;
     private Long uploadedBy;
     private LocalDateTime createdAt;
@@ -52,6 +60,14 @@ public class MerchantMaterialEntity {
 
     public void setFileUrl(String fileUrl) {
         this.fileUrl = fileUrl;
+    }
+
+    public LocalDateTime getExpireAt() {
+        return expireAt;
+    }
+
+    public void setExpireAt(LocalDateTime expireAt) {
+        this.expireAt = expireAt;
     }
 
     public String getOriginalName() {

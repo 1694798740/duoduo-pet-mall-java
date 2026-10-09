@@ -135,6 +135,81 @@ CREATE TABLE IF NOT EXISTS `t_audit_log` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '运营审计日志';
 
 -- ============================================================================
+-- 第三方商家租户（E9 建表 / E10 状态机 / E13 成员 / E15 资质有效期）
+-- ============================================================================
+-- ★ 这三张表原先只在 incremental/25-e9-merchant.sql、26-e10-merchant-material.sql 里，
+--   本文件漏了同步 —— 结果是「已有环境升级正常、全新环境（docker compose 初始化、
+--   CI 的干净库）建不出表」。docker 的 entrypoint 只执行 docs/sql/ 根目录下的 .sql，
+--   不递归 incremental/，所以这个缺口不会自己暴露。E15 要在这些表上加列时才发现，
+--   此处补齐（结构与最新增量脚本一致）。
+--
+-- 设计要点：
+--   * 表落在 duoduo_user 库：入驻申请、店主与成员都是「账号域」的事实，
+--     与 user 服务现有的角色升级同处一个事务边界。
+--   * 本表只管**第三方商家**。平台自营保持既有语义（seller_id = 0，见
+--     duoduo-common 的 SellerOwnership）—— 自营不是入驻来的，塞进本表
+--     反而要给「唯一店主 / 邀请成员 / 审核状态机」这些第三方专属约束开例外。
+--   * isolation_level 预留（P3 租户隔离硬化用）：当前所有第三方商家同一档 STANDARD。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `t_merchant` (
+    `id`                  BIGINT       NOT NULL COMMENT '雪花 id（按字符串流转，前端禁止 Number()）',
+    `name`                VARCHAR(64)  NOT NULL COMMENT '店铺名（入驻时填写，审核通过即开店名）',
+    `owner_user_id`       BIGINT       NOT NULL COMMENT '店主用户 id（t_user.id）',
+    `status`              VARCHAR(20)  NOT NULL DEFAULT 'DRAFT'
+                          COMMENT 'DRAFT/SUBMITTED/REVIEWING/APPROVED/REJECTED/SUSPENDED（状态机在 E10）',
+    `license_expire_at`   DATETIME     NULL
+                          COMMENT '店铺资质最早到期日（派生：材料 expire_at 的最小值）；NULL = 无到期概念（E15）',
+    `expire_notify_stage` VARCHAR(10)  NULL
+                          COMMENT '已提醒到的档位 T30/T7/EXPIRED（提醒去重，只升档）；NULL = 本周期未提醒过（E15）',
+    `isolation_level`     VARCHAR(20)  NOT NULL DEFAULT 'STANDARD' COMMENT '租户隔离档位（P3 预留，当前恒 STANDARD）',
+    `reject_reason`       VARCHAR(255) NULL COMMENT '最近一次申请驳回原因（结构化 JSON，E10）',
+    `suspended_reason`    VARCHAR(255) NULL COMMENT '停业原因（SUSPENDED 时有值，如资质过期，E15）',
+    `applied_at`          DATETIME     NULL COMMENT '最近一次提交时间',
+    `reviewed_at`         DATETIME     NULL COMMENT '最近一次审核时间',
+    `reviewed_by`         BIGINT       NULL COMMENT '最近一次审核人（运营 user id）',
+    `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_owner` (`owner_user_id`),
+    UNIQUE KEY `uk_name` (`name`),
+    KEY `idx_status` (`status`),
+    KEY `idx_merchant_license_expire` (`license_expire_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '第三方商家租户（E9/E10/E15）';
+
+-- 成员表：一个用户至多属于一个商家（v1 口径，跨店兼职是将来有真实需求再放宽的事）
+CREATE TABLE IF NOT EXISTS `t_merchant_member` (
+    `id`          BIGINT      NOT NULL COMMENT '雪花 id',
+    `merchant_id` BIGINT      NOT NULL COMMENT '所属商家（t_merchant.id）',
+    `user_id`     BIGINT      NOT NULL COMMENT '成员用户 id（t_user.id）',
+    `role`        VARCHAR(20) NOT NULL COMMENT 'OWNER（店主）/ STAFF（店员，E13）',
+    `status`      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE / DISABLED（E13 停用）',
+    `invited_by`  BIGINT      NULL COMMENT '邀请人（店主 user id；店主自建为 NULL）',
+    `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user` (`user_id`),
+    KEY `idx_member_merchant` (`merchant_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商家成员（E9 建表，E13 子账号使用）';
+
+-- 资质材料：每类一份（重传覆盖）。审核台永远看到最新提交 ——
+-- 历史版本审计走 binlog/留痕，不在这里堆版本行。
+CREATE TABLE IF NOT EXISTS `t_merchant_material` (
+    `id`            BIGINT       NOT NULL COMMENT '雪花 id',
+    `merchant_id`   BIGINT       NOT NULL COMMENT '所属申请（t_merchant.id）',
+    `material_type` VARCHAR(40)  NOT NULL COMMENT '材料类型（6 类，见 MerchantMaterialType）',
+    `file_url`      VARCHAR(512) NOT NULL COMMENT '材料文件引用（E12 起为私有通道 /api/merchant-materials/{merchantId}/{storedName}）',
+    `expire_at`     DATETIME     NULL
+                    COMMENT '证件有效期至（UTC，含当日有效）；NULL = 长期有效（E15）',
+    `original_name` VARCHAR(255) NULL COMMENT '上传时的原始文件名（仅展示用，不做安全依据）',
+    `uploaded_by`   BIGINT       NOT NULL COMMENT '上传人（店主 user id）',
+    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_merchant_type` (`merchant_id`, `material_type`),
+    KEY `idx_material_merchant` (`merchant_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '入驻资质材料（E10/E15）';
+
+-- ============================================================================
 -- 说明：以下表结构在后续阶段（P1~P3）加入，此处预留，避免 DBA 反复评审
 --   t_address        收货地址（**已落地**，见上方 t_user_address，A8）
 --   t_audit_log      运营审计日志（**已落地**，见上方，A7）

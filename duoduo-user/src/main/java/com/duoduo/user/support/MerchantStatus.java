@@ -48,6 +48,25 @@ public enum MerchantStatus {
         return this == APPROVED || this == REJECTED;
     }
 
+    /**
+     * 能否发起资质续期（E15）。
+     *
+     * <p>两类店铺可以续：
+     * <ul>
+     *   <li>{@link #APPROVED} —— 还在营业、证快到期了<b>主动续</b>。这是主流路径，
+     *       让商家可以在到期前从容准备，而不是被停业了才手忙脚乱；</li>
+     *   <li>{@link #SUSPENDED} —— 已经过期被停业，<b>补办</b>后重新开张。</li>
+     * </ul>
+     *
+     * <p>刻意<b>不</b>允许 SUBMITTED / REVIEWING：申请正在审，材料与有效期就是
+     * 「送审的样本」，中途换掉会让审核结论与材料失去对应关系（与 {@link #canEditMaterials}
+     * 同一条理由）。也不允许 DRAFT / REJECTED —— 那两种状态还没开张，
+     * 走 {@link #canSubmit()} 的提交路径即可，多一条续期入口只会让人分不清该点哪个按钮。
+     */
+    public boolean canRenew() {
+        return this == APPROVED || this == SUSPENDED;
+    }
+
     /** 审核起点：只有 SUBMITTED 能开始审核 */
     public static final Set<MerchantStatus> REVIEWABLE = Set.of(SUBMITTED, REVIEWING);
 }

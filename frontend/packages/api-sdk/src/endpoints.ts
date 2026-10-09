@@ -108,6 +108,7 @@ import type {
   ShareReportView,
   MerchantApplicationSummary as ApplicationSummary,
   MerchantApplicationView,
+  MerchantLicenseSweepReport,
   MerchantRejectReason,
   StaffView,
   StaffAdminView,
@@ -156,8 +157,27 @@ export const userApi = {
     api.get<MerchantApplicationView>('/api/users/me/merchant-application'),
 
   /** 保存草稿（店名 + 材料引用）。仅 DRAFT / REJECTED 可改；材料引用来自 uploadImage 的返回 url */
-  saveMerchantApplication: (body: { storeName?: string; materials?: Record<string, string> }) =>
-    api.put<MerchantApplicationView>('/api/users/me/merchant-application', body),
+  saveMerchantApplication: (body: {
+    storeName?: string;
+    materials?: Record<string, string>;
+    /**
+     * E15 · 材料类型名 → 有效期至（yyyy-MM-dd）。
+     * 未出现的类型 = 不修改；显式传空串 = 改为「长期有效」。
+     */
+    materialExpiry?: Record<string, string>;
+  }) => api.put<MerchantApplicationView>('/api/users/me/merchant-application', body),
+
+  /**
+   * E15 · 资质续期：临期（APPROVED）或已停业（SUSPENDED）的店铺换新证后重新送审。
+   *
+   * <p>提交后状态回到 SUBMITTED，需平台重新审核 —— 续期不是自动通过，
+   * 否则商家拿一张过期证照的截图就能把停业状态刷回来。
+   */
+  renewMerchantApplication: (body?: {
+    storeName?: string;
+    materials?: Record<string, string>;
+    materialExpiry?: Record<string, string>;
+  }) => api.post<MerchantApplicationView>('/api/users/me/merchant-application/renewal', body ?? {}),
 
   /** 提交送审（幂等：重复提交返回现状；被驳回后可修改材料重提）。服务端校验实名 + 店名 + 6 类材料 */
   submitMerchantApplication: () =>
@@ -478,6 +498,15 @@ export const adminMerchantApi = {
   /** 驳回（结构化原因必填；结论一致时幂等更新） */
   reject: (id: string, reasons: MerchantRejectReason[]) =>
     api.post<MerchantApplicationView>(`/api/admin/merchants/${id}/reject`, { reasons }),
+  /**
+   * E15 · 手动触发一轮资质巡检（临期提醒 + 过期自动停业），返回本轮处理计数。
+   *
+   * 定时任务 6 小时一轮，这个入口给运营一个「现在就按最新数据重算一遍」的按钮：
+   * 补录/修正有效期后不必等到下一轮，验收与排障都能当场看到结果。
+   * 处置动作均为条件更新且提醒「只升档才发」，可安全重复点击。
+   */
+  licenseSweep: () =>
+    api.post<MerchantLicenseSweepReport>('/api/admin/merchants/license-sweep'),
 };
 
 export const adminApi = {

@@ -7,6 +7,7 @@
  *   POST /api/admin/merchants/{id}/start-review    —— SUBMITTED → REVIEWING
  *   POST /api/admin/merchants/{id}/approve         —— 通过并开店（幂等）
  *   POST /api/admin/merchants/{id}/reject          —— 驳回（结构化原因必填）
+ *   POST /api/admin/merchants/license-sweep        —— E15 手动触发一轮资质巡检
  *
  * 两条刻意的产品取舍：
  *  ① **材料在详情里直接大图预览**，且把「店名与执照名称是否一致」作为固定核对提示 ——
@@ -19,8 +20,10 @@ import React, { useCallback, useState } from 'react';
 import { adminMerchantApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import {
+  MERCHANT_LICENSE_STAGE_LABEL,
   MERCHANT_MATERIAL_TYPES,
   MerchantApplicationView,
+  MerchantLicenseStage,
   MerchantRejectReason,
 } from '@duoduo/api-sdk/types';
 import {
@@ -44,7 +47,7 @@ const STATUS_LABEL: Record<string, string> = {
   REVIEWING: '审核中',
   APPROVED: '已通过',
   REJECTED: '已驳回',
-  SUSPENDED: '已暂停',
+  SUSPENDED: '已停业',
 };
 
 const statusTagClass = (status: string): string => {
@@ -53,6 +56,37 @@ const statusTagClass = (status: string): string => {
   if (status === 'APPROVED') return 'tag';
   if (status === 'REJECTED') return 'tag tag-danger';
   return 'tag';
+};
+
+/**
+ * E15 · 资质档位标签。
+ *
+ * <p>为什么审核台必须能看到这个：运营收到「我的店怎么停了」的咨询时，
+ * 第一件事就是进这里看这家店是不是资质过期。如果列表里看不到，
+ * 他得逐个点开详情才发现 —— 而「已停业」的店恰恰是最需要立刻给出解释的那一类。
+ */
+const licenseTagClass = (stage: MerchantLicenseStage): string => {
+  if (stage === 'EXPIRED') return 'tag tag-danger';
+  if (stage === 'T7') return 'tag tag-warn';
+  return 'tag';
+};
+
+/** 资质单元格：长期有效 / 档位 + 到期日 */
+const licenseCell = (item: {
+  licenseExpireAt: string | null;
+  licenseStage: MerchantLicenseStage;
+}): React.ReactNode => {
+  if (!item.licenseExpireAt) {
+    return <span className="small muted">长期有效</span>;
+  }
+  return (
+    <>
+      <span className={licenseTagClass(item.licenseStage)}>
+        {MERCHANT_LICENSE_STAGE_LABEL[item.licenseStage]}
+      </span>
+      <div className="small muted">{item.licenseExpireAt.slice(0, 10)}</div>
+    </>
+  );
 };
 
 const REJECT_CODE_OPTIONS = [
@@ -84,6 +118,7 @@ export const AdminMerchantsPage: React.FC = () => {
     { scope: 'GENERAL', code: 'MATERIAL_ILLEGIBLE', note: '' },
   ]);
   const [busy, setBusy] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsync(
@@ -134,6 +169,33 @@ export const AdminMerchantsPage: React.FC = () => {
     setRejecting(false);
   };
 
+  /**
+   * E15 · 手动触发一轮资质巡检。
+   *
+   * 定时任务 6 小时一轮，运营在两种情况下需要「现在就重算」：刚给某家店补录/修正了有效期，
+   * 想知道结论是否如预期；或库里数据被人工改过，要立刻按新数据重处置一遍。
+   * 按钮不会造成重复打扰 —— 提醒按档位只升一次、停业与下架都是条件更新。
+   */
+  const runSweep = async () => {
+    setSweeping(true);
+    try {
+      const r = await adminMerchantApi.licenseSweep();
+      const abnormal = r.notifyFailed + r.offShelfFailed;
+      push(
+        `巡检完成：停业 ${r.suspended} 家、提醒 ${r.reminded} 家`
+          + (abnormal > 0
+            ? `；通知失败 ${r.notifyFailed} 家、下架失败 ${r.offShelfFailed} 家，请核查服务日志`
+            : ''),
+        abnormal > 0 ? 'error' : 'success',
+      );
+      reload();
+    } catch (err) {
+      push(toFriendlyMessage(err), 'error');
+    } finally {
+      setSweeping(false);
+    }
+  };
+
   const st = detail?.status ?? '';
 
   return (
@@ -159,6 +221,16 @@ export const AdminMerchantsPage: React.FC = () => {
             {tab.label}
           </button>
         ))}
+        {/* E15 · 手动巡检：定时任务 6 小时一轮，这里给运营一个「现在就重算」的入口 */}
+        <span style={{ flex: 1 }} />
+        <button
+          className="btn btn-sm btn-ghost"
+          disabled={sweeping}
+          title="按当前库内数据立即执行一轮：临期提醒 + 过期自动停业（可重复点击）"
+          onClick={() => void runSweep()}
+        >
+          {sweeping ? '巡检中…' : '立即巡检资质'}
+        </button>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -176,6 +248,7 @@ export const AdminMerchantsPage: React.FC = () => {
                 <th>店铺名称</th>
                 <th>店主</th>
                 <th>状态</th>
+                <th>资质</th>
                 <th>最近提交</th>
                 <th>操作</th>
               </tr>
@@ -183,9 +256,17 @@ export const AdminMerchantsPage: React.FC = () => {
             <tbody>
               {data.items.map((item) => (
                 <tr key={item.merchantId}>
-                  <td>{item.storeName}</td>
+                  <td>
+                    {item.storeName}
+                    {/* 停业原因直接挂在列表上：运营被问「我的店怎么停了」时，
+                        答案应该一眼可见，而不是点开详情再往下翻 */}
+                    {item.suspendedReason ? (
+                      <div className="small tag-danger">{item.suspendedReason}</div>
+                    ) : null}
+                  </td>
                   <td>{item.ownerPhoneMasked || item.ownerUserId}</td>
                   <td><span className={statusTagClass(item.status)}>{STATUS_LABEL[item.status] ?? item.status}</span></td>
+                  <td>{licenseCell(item)}</td>
                   <td>{item.appliedAt ? formatDate(item.appliedAt) : '—'}</td>
                   <td>
                     <button className="btn btn-sm btn-ghost" onClick={() => void openDetail(item.merchantId)}>
@@ -229,13 +310,33 @@ export const AdminMerchantsPage: React.FC = () => {
             <span className="small muted" style={{ marginLeft: 8 }}>
               店主 ID {detail.ownerUserId} ｜ 最近提交 {detail.appliedAt ? formatDate(detail.appliedAt) : '—'}
               {detail.reviewedAt ? ` ｜ 审核时间 ${formatDate(detail.reviewedAt)}` : ''}
+              {detail.licenseExpireAt
+                ? ` ｜ 资质有效期至 ${detail.licenseExpireAt.slice(0, 10)}`
+                  + `（${MERCHANT_LICENSE_STAGE_LABEL[detail.licenseStage]}，剩余 ${detail.licenseRemainingDays} 天）`
+                : ' ｜ 资质长期有效'}
             </span>
           </div>
+
+          {detail.suspendedReason ? (
+            <div style={{ marginBottom: 12 }}>
+              <Alert kind="error">
+                店铺当前已停业：{detail.suspendedReason}
+                <div className="small" style={{ marginTop: 4 }}>
+                  商家提交续期后状态会回到「待审核」，通过即恢复营业；已售出订单不受影响。
+                </div>
+              </Alert>
+            </div>
+          ) : null}
 
           {/* 一致性核对提示：店名与执照名称不一致是入驻材料最高频的真实问题 */}
           <Alert kind="info">
             核对提示：店铺名称「<b>{detail.storeName}</b>」与营业执照上的名称是否一致？
             法人身份证是否两面齐全且在有效期？行业许可证是否属于平台准入类目？
+            <div style={{ marginTop: 4 }}>
+              <b>E15 · 有效期核对</b>：下方每份材料标注的「有效期至」是<b>商家自己填的</b>，
+              请与证照上印的有效期逐份比对 —— 这个日期决定店铺何时自动停业，填错一天，
+              商家就会在证照还有效时被下架（或反之）。未填 = 长期有效。
+            </div>
           </Alert>
 
           <div className="small muted" style={{ margin: '12px 0 6px' }}>资质材料（点击图片可放大）</div>
@@ -245,6 +346,11 @@ export const AdminMerchantsPage: React.FC = () => {
               return (
                 <div key={t.type} style={{ width: 150 }}>
                   <div className="small" style={{ marginBottom: 4 }}>{t.label}</div>
+                  {detail.materialExpiry[t.type] ? (
+                    <div className="small muted" style={{ marginBottom: 4 }}>
+                      有效期至 {detail.materialExpiry[t.type]}
+                    </div>
+                  ) : null}
                   {url ? (
                     url.toLowerCase().endsWith('.pdf') ? (
                       <a

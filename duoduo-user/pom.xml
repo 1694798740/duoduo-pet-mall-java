@@ -64,6 +64,21 @@
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-crypto</artifactId>
     </dependency>
+
+    <!-- E15 · 服务间调用：资质到期的提醒要落到用户通知中心（社交域），
+         过期停业要联动下架该店在售商品（商品域）——两件都是"用户域说了算、
+         别的域执行"的跨域副作用，走内部端点而不是直连别人的库。
+         ★ loadbalancer 不能省：@FeignClient(name="duoduo-social") 走 Nacos 服务发现，
+           缺了它启动即失败（No Feign Client for loadBalancing defined）——
+           E14 已在商品域踩过一次，同样只在**容器启动**时炸、单测看不到。 -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-openfeign</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+    </dependency>
   </dependencies>
 
   <build>

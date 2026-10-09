@@ -1541,6 +1541,12 @@ export interface MerchantApplicationSummary {
   ownerPhoneMasked: string;
   appliedAt: string | null;
   reviewedAt: string | null;
+  /** E15 · 资质最早到期日；null = 长期有效 */
+  licenseExpireAt: string | null;
+  /** E15 · 资质档位（审核台据此标出临期 / 已停业的店） */
+  licenseStage: MerchantLicenseStage;
+  /** E15 · 停业原因（SUSPENDED 时有值）—— 运营看到「已停业」时最需要知道的就是这个 */
+  suspendedReason: string | null;
 }
 
 /** 入驻申请视图（商家侧与审核台共用） */
@@ -1556,10 +1562,47 @@ export interface MerchantApplicationView {
   appliedAt: string | null;
   reviewedAt: string | null;
   createdAt: string | null;
+  /** E15 · 资质最早到期日（ISO）；null = 长期有效（不是「今天到期」） */
+  licenseExpireAt: string | null;
+  /** E15 · 资质档位：NONE 正常 / T30 即将到期 / T7 临近到期 / EXPIRED 已过期 */
+  licenseStage: MerchantLicenseStage;
+  /** E15 · 剩余日历天数；null = 无到期概念（0 才表示今天到期） */
+  licenseRemainingDays: number | null;
+  /** E15 · 停业原因（SUSPENDED 时有值） */
+  suspendedReason: string | null;
+  /** E15 · 材料类型名 → 有效期至（yyyy-MM-dd，仅含已填写的类） */
+  materialExpiry: Record<string, string>;
 }
 
-/** 入驻材料清单（6 类，提交时必须齐全） */
-export const MERCHANT_MATERIAL_TYPES = [
+/** 资质到期档位（E15）。顺序即紧急程度，可直接用于排序/比较 */
+export type MerchantLicenseStage = 'NONE' | 'T30' | 'T7' | 'EXPIRED';
+
+/** 档位对应的中文说明与配色意图（商家端横幅、后台审核台共用，避免两处各写一套文案） */
+export const MERCHANT_LICENSE_STAGE_LABEL: Record<MerchantLicenseStage, string> = {
+  NONE: '正常',
+  T30: '即将到期',
+  T7: '临近到期',
+  EXPIRED: '已过期',
+};
+
+/**
+ * 资质巡检结果（E15）。运营手动触发一轮「临期提醒 + 过期停业」后的处理计数。
+ *
+ * 为什么要有手动触发：到期提醒与自动停业若只能靠定时器观察，改完一份材料的有效期后
+ * 想确认后果就只剩「等下一轮」这一条路 —— 验收与排障都被迫掐着表。有了它才能当场验证。
+ */
+export interface MerchantLicenseSweepReport {
+  /** 本轮因过期被停业的店铺数 */
+  suspended: number;
+  /** 本轮成功发出提醒的店铺数（同档位不会重复发） */
+  reminded: number;
+  /** 提醒没发出去、留待下一轮重试的店铺数（刻意不记档位，见后端注释） */
+  notifyFailed: number;
+  /** 停业成功但商品批量下架失败的店铺数（>0 需人工核查） */
+  offShelfFailed: number;
+}
+
+/** 入驻材料清单（6 类，提交时必须齐全） */export const MERCHANT_MATERIAL_TYPES = [
   { type: 'BUSINESS_LICENSE', label: '营业执照' },
   { type: 'LEGAL_ID_FRONT', label: '法人身份证人像面' },
   { type: 'LEGAL_ID_BACK', label: '法人身份证国徽面' },

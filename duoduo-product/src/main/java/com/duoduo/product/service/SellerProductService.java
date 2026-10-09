@@ -1,6 +1,7 @@
 package com.duoduo.product.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
@@ -9,7 +10,9 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.client.MembershipClient;
+import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.dto.MembershipInfo;
+import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
@@ -109,6 +112,7 @@ public class SellerProductService {
     private final SpuMapper spuMapper;
     private final SkuMapper skuMapper;
     private final MembershipClient membershipClient;
+    private final MerchantLicenseClient merchantLicenseClient;
     private final SnowflakeIdGenerator idGenerator;
     private final BannedWordGuard bannedWordGuard;
     private final CatalogLookup catalogLookup;
@@ -117,6 +121,7 @@ public class SellerProductService {
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
                                 MembershipClient membershipClient,
+                                MerchantLicenseClient merchantLicenseClient,
                                 SnowflakeIdGenerator idGenerator,
                                 BannedWordGuard bannedWordGuard,
                                 CatalogLookup catalogLookup,
@@ -124,6 +129,7 @@ public class SellerProductService {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
+        this.merchantLicenseClient = merchantLicenseClient;
         this.idGenerator = idGenerator;
         this.bannedWordGuard = bannedWordGuard;
         this.catalogLookup = catalogLookup;
@@ -464,19 +470,22 @@ public class SellerProductService {
      * 重复请求与并发点击天然无副作用；真正要拦的是越权、目标状态非法，
      * 以及<b>绕过审核</b>。
      *
-     * <p><b>E14 新增门禁</b>：目标态 {@code ON_SALE} 要求 {@code auditStatus=APPROVED}，
+     * <p><b>E14 门禁</b>：目标态 {@code ON_SALE} 要求 {@code auditStatus=APPROVED}，
      * 否则「先提交成 PENDING、再自己上架」就绕过了整条审核链。
-     * 下架不限 —— 卖家主动撤下自己的商品永远是权利，不需要先过审。
-     * 自营商品 auditStatus 恒 APPROVED，这道门禁对它透明。
+     * <b>E15 再加一道</b>：店铺资质必须有效（见 {@link #requireShopActive}）。
+     * 下架不限 —— 卖家主动撤下自己的商品永远是权利，不需要先过审、也不看资质。
+     * 自营商品 auditStatus 恒 APPROVED、且没有资质概念，两道门禁对它都透明。
      */
     public SellerProductView changeStatus(Long spuId, String action) {
         SellerScope scope = requireSellerScope();
         String target = normalizeAction(action);
 
         SpuEntity spu = requireOwned(spuId, scope);
-        if (STATUS_ON_SALE.equals(target) && isMerchantSupplied(spu)
-                && !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
-            throw BizException.businessRule(auditBlockReason(spu.getAuditStatus()));
+        if (STATUS_ON_SALE.equals(target)) {
+            requireShopActive(scope);
+            if (isMerchantSupplied(spu) && !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
+                throw BizException.businessRule(auditBlockReason(spu.getAuditStatus()));
+            }
         }
 
         if (!target.equals(spu.getStatus())) {
@@ -487,6 +496,95 @@ public class SellerProductService {
             log.info("商品 {} 由卖家 {} 上下架：{} -> {}", spuId, UserContext.require().userId(), from, target);
         }
         return toView(spu, skuStatsOf(spuId));
+    }
+
+    /**
+     * E15 门禁：店铺当前处于可营业状态，否则不许上架。
+     *
+     * <h2>为什么门禁落在「上架」而不是「所有商品操作」</h2>
+     * 停业（资质过期）时商家仍应能管理自己的商品：下架、改价、清理库存都不该被拦 ——
+     * 那是他在为恢复营业做准备。真正必须拦住的是<b>把商品重新摆出去卖</b>。
+     * 若一刀切拦住所有写操作，商家的第一反应是「系统坏了」而不是「我该续期了」。
+     *
+     * <h2>★ 查不到 / 查不通时放行</h2>
+     * 这是纵深防御的<b>第二道</b>门：第一道是「过期即停业 + 商品联动下架」，
+     * 它不依赖用户域是否可用。若这里在 Feign 抖动时改成「拒绝」，
+     * 一次跨域超时就会让全平台商家都无法上架 —— 用一个可自愈的小问题
+     * 换一个全站停工，代价完全不成比例。故障会以 WARN 留在日志里。
+     */
+    private void requireShopActive(SellerScope scope) {
+        if (scope.platformScope() || scope.ownerUserId() == null) {
+            return;                     // 运营 / 自营：不走入驻流程，没有资质概念
+        }
+        MerchantLicenseInfo license;
+        try {
+            license = merchantLicenseClient.of(scope.ownerUserId()).data();
+        } catch (Exception ex) {
+            log.warn("店铺资质查询失败，本次上架按放行处理 ownerUserId={} : {}",
+                    scope.ownerUserId(), ex.getMessage());
+            return;
+        }
+        if (license == null || license.canSell()) {
+            return;                     // 没有入驻记录（历史数据）或状态正常
+        }
+        throw BizException.businessRule("店铺当前状态为「" + statusLabel(license.status())
+                + "」，无法上架商品" + (license.suspendedReason() == null
+                ? "；请先完成资质审核" : "：" + license.suspendedReason()));
+    }
+
+    /** 把店铺状态翻译成给商家看的话（内部枚举值直接甩给商家等于没提示） */
+    private static String statusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "SUSPENDED" -> "已停业（资质过期或违规）";
+            case "SUBMITTED" -> "资质审核中";
+            case "REVIEWING" -> "资质审核中";
+            case "REJECTED" -> "资质申请已驳回";
+            case "DRAFT" -> "入驻申请未提交";
+            default -> status;
+        };
+    }
+
+    /**
+     * E15 · 内部：把某店铺的<b>全部在售商品一次性下架</b>（资质过期联动停售）。
+     *
+     * <h2>为什么这是「命令式」而不是「条件式」</h2>
+     * 另一种做法是让商品可见性多查一个条件（「所在店铺资质有效」），
+     * 但那样每次商品列表、每次搜索都要跨域问一次用户域 —— 成本高、耦合紧，
+     * 而且一个跨域调用超时就能让整个商城前台搜不出任何东西。
+     * 这里选择<b>在停业那一刻把状态改掉</b>：判断只发生一次，
+     * 之后前台的读路径完全不知道自己背后发生过什么。
+     *
+     * <h2>只动 status，不动 audit_status</h2>
+     * 与 E14「审核通过不动 status」互为镜像，理由相同：交易维度与合规维度是两个维度，
+     * 一次停业不改变「这个商品曾经被审核通过」这个事实。续期通过后商家重新上架即可，
+     * <b>不需要重新送审</b> —— 内容一个字没改，再走一遍审核等于白审。
+     *
+     * <h2>索引同步</h2>
+     * 只更新 {@code updated_at}，由 {@code SearchSyncJob} 的 15 秒补偿扫描自动重索引 ——
+     * 与商家手动上下架走的是同一条路（{@link #changeStatus} 也只更新时间戳）。
+     * 不在这里直接写 ES：搜索是「尽力而为」的旁路，让商品写路径依赖 ES 可用性，
+     * 就成了「搜索挂了商家就下不了架」。
+     *
+     * @param sellerId 店铺主体（t_merchant.owner_user_id）
+     * @return 实际被下架的商品数（幂等：已在架下的不会被重复计入）
+     */
+    public int offShelfAllBySeller(Long sellerId) {
+        if (sellerId == null || sellerId == 0L) {
+            // 平台自营（seller_id = 0 是既有语义，不是一个真实的店铺 id）
+            // 不走入驻流程、没有资质概念 —— 传 0 进来只能是调用方搞错了，直接空转
+            log.warn("忽略对自营（sellerId=0）的停售指令");
+            return 0;
+        }
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getSellerId, sellerId)
+                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                .set(SpuEntity::getUpdatedAt, LocalDateTime.now(ZoneOffset.UTC)));
+        log.info("店铺 {} 因资质停业，在售商品下架 {} 件", sellerId, rows);
+        return rows;
     }
 
     /**

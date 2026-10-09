@@ -1,12 +1,14 @@
 package com.duoduo.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.ApplicationSummary;
 import com.duoduo.user.dto.MerchantDtos.ApplicationView;
+import com.duoduo.user.dto.MerchantDtos.MerchantLicenseInfo;
 import com.duoduo.user.dto.MerchantDtos.RejectReason;
 import com.duoduo.user.dto.MerchantDtos.SaveDraftRequest;
 import com.duoduo.user.entity.MerchantEntity;
@@ -17,6 +19,7 @@ import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.LicenseExpiry;
 import com.duoduo.user.support.MerchantMaterialStorage;
 import com.duoduo.user.support.MerchantMaterialType;
 import com.duoduo.user.support.MerchantStatus;
@@ -139,6 +142,63 @@ public class MerchantOnboardingService {
         if (request.materials() != null) {
             upsertMaterials(entity.getId(), userId, request.materials());
         }
+        if (request.materialExpiry() != null) {
+            applyMaterialExpiry(entity.getId(), request.materialExpiry());
+        }
+        // E15：材料一变就重算店铺级到期日（派生列的唯一写入出口）。
+        // 放在最后是因为它要读「刚写进去的」那批材料。
+        entity.setLicenseExpireAt(refreshLicenseExpireAt(entity.getId()));
+        merchantMapper.updateById(entity);
+        return toView(entity);
+    }
+
+    /**
+     * E15 · 资质续期：更新临期/已过期店铺的材料与有效期，重新送审。
+     *
+     * <p><b>与 saveDraft 的区别不是「能改什么」而是「谁能改、改完到哪去」</b>：
+     * saveDraft 只服务还没开张的草稿（DRAFT/REJECTED），续期服务的是
+     * <b>已经开张</b>的店铺（APPROVED 临期主动续、SUSPENDED 过期后补救）。
+     * 两者都会走完整审核 —— 续期不是「交钱即续」，而是<b>换一份新证再核一遍</b>，
+     * 否则商家可以拿一张过期的糊涂图把停业状态刷回来。
+     *
+     * <p>提交后状态回 {@code SUBMITTED}，由运营重新走 startReview → approve。
+     * 通过时 {@link #approve} 会清空提醒档位，于是下一个有效期周期从零开始计。
+     */
+    @Transactional
+    public ApplicationView renewal(Long userId, SaveDraftRequest request) {
+        MerchantEntity entity = requireOwned(userId);
+        MerchantStatus status = MerchantStatus.valueOf(entity.getStatus());
+        if (!status.canRenew()) {
+            throw BizException.businessRule("当前状态（" + status + "）不能发起资质续期；"
+                    + "审核中的申请请等待结论，草稿请直接提交");
+        }
+        if (request != null && request.storeName() != null) {
+            validateStoreName(request.storeName());
+            entity.setName(request.storeName().trim());
+        }
+        if (request != null && request.materials() != null) {
+            upsertMaterials(entity.getId(), userId, request.materials());
+        }
+        if (request != null && request.materialExpiry() != null) {
+            applyMaterialExpiry(entity.getId(), request.materialExpiry());
+        }
+        LocalDateTime earliest = refreshLicenseExpireAt(entity.getId());
+        // 续期的唯一实质要求：换完之后本店确实有了一段**未来**的有效期。
+        // 不满足就驳回，否则商家提交一份和原来一样（甚至更早）的证，
+        // 走完一圈审核回来发现照样停业 —— 白白消耗两边的精力。
+        if (earliest != null && !earliest.isAfter(now())) {
+            throw BizException.businessRule("续期后的资质有效期仍在过去（"
+                    + earliest.toLocalDate() + "），请上传有效期内的新证件");
+        }
+        entity.setStatus(MerchantStatus.SUBMITTED.name());
+        entity.setAppliedAt(now());
+        entity.setLicenseExpireAt(earliest);
+        entity.setUpdatedAt(now());
+        merchantMapper.updateById(entity);
+        // 新周期：提醒从零开始计 + 已进入续期审核、停业原因不再展示。
+        // 这两列的"清空"必须走 clearNullableState —— updateById 不会写 null（见方法注释）
+        clearNullableState(entity, now());
+        log.info("资质续期提交 merchantId={} userId={} licenseExpireAt={}", entity.getId(), userId, earliest);
         return toView(entity);
     }
 
@@ -178,9 +238,13 @@ public class MerchantOnboardingService {
         }
         entity.setStatus(MerchantStatus.SUBMITTED.name());
         entity.setAppliedAt(now());
-        entity.setRejectReason(null);        // 重提时旧的驳回原因已过时（历史在审核日志）
+        // E15：提交时把店铺级到期日定格一次 —— 运营审的就是这一刻的材料与有效期
+        entity.setLicenseExpireAt(refreshLicenseExpireAt(entity.getId()));
         entity.setUpdatedAt(now());
         merchantMapper.updateById(entity);
+        // 重提时旧的驳回原因已过时（历史在审核日志）—— 这一列是"NULL 有语义"的，
+        // 必须走 clearNullableState 才真的写得进去，理由见该方法的注释
+        clearNullableState(entity, now());
         log.info("入驻申请提交 merchantId={} userId={} status=SUBMITTED", entity.getId(), userId);
         return toView(entity);
     }
@@ -195,12 +259,18 @@ public class MerchantOnboardingService {
                         .orderByDesc(MerchantEntity::getAppliedAt)
                         .orderByDesc(MerchantEntity::getCreatedAt));
         Map<Long, String> phones = loadOwnerPhones(p.getRecords());
+        LocalDateTime current = now();
         List<ApplicationSummary> items = p.getRecords().stream()
                 .map(m -> new ApplicationSummary(
                         String.valueOf(m.getId()), m.getName(), m.getStatus(),
                         String.valueOf(m.getOwnerUserId()),
                         phones.get(m.getOwnerUserId()),
-                        m.getAppliedAt(), m.getReviewedAt()))
+                        m.getAppliedAt(), m.getReviewedAt(),
+                        // E15：审核台要能一眼看出「这家店资质快到期了 / 已经过期被停业」，
+                        // 否则运营只能靠逐个点开详情才发现 —— 而停业店铺恰恰是最需要解释原因的
+                        m.getLicenseExpireAt(),
+                        LicenseExpiry.stageOf(m.getLicenseExpireAt(), current).name(),
+                        m.getSuspendedReason()))
                 .toList();
         return PageResult.of(items, p.getTotal(), page, pageSize);
     }
@@ -249,6 +319,10 @@ public class MerchantOnboardingService {
         entity.setReviewedBy(operatorId);
         entity.setUpdatedAt(now());
         merchantMapper.updateById(entity);
+        // E15：审核通过 = 新的有效期成立，提醒档位清空，下个周期从零开始计。
+        // 首次入驻时清空本就是空操作；续期通过时这一步决定「会不会再提醒一次」。
+        // 停业原因同时清掉 —— 店铺已经恢复营业，再挂着停业理由只会误导运营与商家。
+        clearNullableState(entity, now());
 
         // 开店动作（幂等：重复 approve 时 member 已存在、role 已是 SELLER，均为无副作用）
         if (findMember(merchantId, entity.getOwnerUserId()) == null) {
@@ -377,6 +451,30 @@ public class MerchantOnboardingService {
 
     // ---------------- 内部 ----------------
 
+    /**
+     * E15 · 店铺资质与营业状态（内部端点下发，供商品域做上架门禁）。
+     *
+     * <p>按<b>店主 userId</b> 查（商品域的归属也是店主 userId，两侧同一个键）。
+     * 查不到（该用户没有入驻申请）返回 {@code null} —— 调用方据此放行：
+     * 门禁是纵深防御的第二道，第一道是「过期即停业 + 商品联动下架」。
+     * 下游故障时把「拒绝」当成默认，会让一次 Feign 抖动变成全平台商家都无法上架。
+     */
+    public MerchantLicenseInfo licenseInfoOf(Long ownerUserId) {
+        if (ownerUserId == null) {
+            return null;
+        }
+        MerchantEntity entity = findByOwner(ownerUserId);
+        if (entity == null) {
+            return null;
+        }
+        return new MerchantLicenseInfo(
+                String.valueOf(entity.getId()),
+                entity.getStatus(),
+                LicenseExpiry.stageOf(entity.getLicenseExpireAt(), now()).name(),
+                entity.getLicenseExpireAt(),
+                entity.getSuspendedReason());
+    }
+
     private MerchantEntity requireOwned(Long userId) {
         MerchantEntity entity = findByOwner(userId);
         if (entity == null) {
@@ -405,12 +503,15 @@ public class MerchantOnboardingService {
                 .last("LIMIT 1"));
     }
 
-    private Map<MerchantMaterialType, String> loadMaterials(Long merchantId) {
-        List<MerchantMaterialEntity> rows = materialMapper.selectList(
+    private List<MerchantMaterialEntity> loadMaterialRows(Long merchantId) {
+        return materialMapper.selectList(
                 new LambdaQueryWrapper<MerchantMaterialEntity>()
                         .eq(MerchantMaterialEntity::getMerchantId, merchantId));
+    }
+
+    private Map<MerchantMaterialType, String> loadMaterials(Long merchantId) {
         Map<MerchantMaterialType, String> out = new EnumMap<>(MerchantMaterialType.class);
-        for (MerchantMaterialEntity row : rows) {
+        for (MerchantMaterialEntity row : loadMaterialRows(merchantId)) {
             out.put(MerchantMaterialType.parse(row.getMaterialType()), row.getFileUrl());
         }
         return out;
@@ -462,6 +563,113 @@ public class MerchantOnboardingService {
         }
     }
 
+    /**
+     * E15 · 写入材料有效期。
+     *
+     * <p>三条语义（与 {@code materials} 保持同一套，前端不用记两套规则）：
+     * <ul>
+     *   <li><b>没出现的类型 = 不修改</b>（老前端不传这个字段，一切照旧）；</li>
+     *   <li><b>空串 = 改为长期有效</b>（显式表达「这张证没有到期日」，
+     *       与「不修改」必须能区分，否则填错日期就没法撤回了）；</li>
+     *   <li><b>材料不存在时跳过</b>：有效期依附于材料，先传文件再填日期。
+     *       这里不报错是因为前端可能一次提交里两项都有，顺序由服务端决定。</li>
+     * </ul>
+     */
+    private void applyMaterialExpiry(Long merchantId, Map<String, String> expiryByType) {
+        for (Map.Entry<String, String> e : expiryByType.entrySet()) {
+            MerchantMaterialType type = MerchantMaterialType.parse(e.getKey());
+            String raw = e.getValue();
+            LocalDateTime expireAt = (raw == null || raw.isBlank()) ? null : parseExpireDate(raw, type);
+            MerchantMaterialEntity row = materialMapper.selectOne(
+                    new LambdaQueryWrapper<MerchantMaterialEntity>()
+                            .eq(MerchantMaterialEntity::getMerchantId, merchantId)
+                            .eq(MerchantMaterialEntity::getMaterialType, type.name())
+                            .last("LIMIT 1"));
+            if (row == null) {
+                continue;           // 材料还没上传，等它传上来的那次再写
+            }
+            row.setExpireAt(expireAt);
+            row.setUpdatedAt(now());
+            materialMapper.updateById(row);
+        }
+    }
+
+    /**
+     * 把「NULL 本身有语义」的几个可空列<b>真正写进库</b>。
+     *
+     * <h2>★ 为什么不能靠 {@code updateById}</h2>
+     * MyBatis-Plus 的默认更新策略是 {@code NOT_NULL}：实体字段为 {@code null} 时
+     * 该列<b>根本不会出现在 UPDATE 语句里</b>。而下面这三列的「清空」恰恰是业务动作：
+     * <ul>
+     *   <li>{@code expire_notify_stage} —— 清空 = 提醒重新从零计数（续期提交 / 审核通过）；</li>
+     *   <li>{@code suspended_reason} —— 清空 = 停业原因不再展示（店铺已恢复营业）；</li>
+     *   <li>{@code reject_reason} —— 清空 = 上次驳回原因已过时（商家重新提交）。</li>
+     * </ul>
+     * 用 {@code updateById} 的失效方式极其隐蔽：接口返回 200、{@code status} 也确实变了，
+     * 只有这几列悄悄留着旧值 —— 没有异常、没有日志、也不影响任何既有断言。
+     * 本轮就是被 e2e 里「续期后档位应当清零」这两条断言抓出来的（S6/S7），
+     * 靠读代码几乎不可能发现。
+     *
+     * <p><b>内存与库都要清</b>：{@code toView()} 读的是内存对象，只清库会让<b>响应体</b>
+     * 里还带着旧值 —— 那是方向相反的同一个 bug（库对了、接口错）。
+     *
+     * <p>这三列在任何调用点被一起清掉都是安全的：能走到「提交 / 续期 / 通过」的店铺，
+     * 其余两列本就应该为空（草稿没有停业原因，已开张的店没有驳回原因）。
+     */
+    private void clearNullableState(MerchantEntity entity, LocalDateTime now) {
+        entity.setExpireNotifyStage(null);
+        entity.setSuspendedReason(null);
+        entity.setRejectReason(null);
+        merchantMapper.update(null, new LambdaUpdateWrapper<MerchantEntity>()
+                .eq(MerchantEntity::getId, entity.getId())
+                .set(MerchantEntity::getExpireNotifyStage, null)
+                .set(MerchantEntity::getSuspendedReason, null)
+                .set(MerchantEntity::getRejectReason, null)
+                .set(MerchantEntity::getUpdatedAt, now));
+    }
+
+    /**
+     * E15 · 重算店铺级到期日（派生列 {@code license_expire_at} 的<b>唯一写入出口</b>）。
+     *
+     * <p>派生列最常见的坏法不是算错，而是「材料改了、派生列没跟着改」——
+     * 于是审核台看到的有效期与扫描任务判定用的有效期是两回事。
+     * 把重算收敛到一个方法、所有写材料的地方都调它，这类漂移就不可能发生。
+     *
+     * @return 该店铺最早的材料到期日；一份带有效期的材料都没有时返回 {@code null}（长期有效）
+     */
+    private LocalDateTime refreshLicenseExpireAt(Long merchantId) {
+        return LicenseExpiry.earliest(loadMaterialRows(merchantId).stream()
+                .map(MerchantMaterialEntity::getExpireAt)
+                .toArray(LocalDateTime[]::new));
+    }
+
+    /**
+     * E15 · 解析有效期字符串 → 到期时刻。
+     *
+     * <p>接受 {@code yyyy-MM-dd}（前端日期选择器）与 {@code yyyy-MM-ddTHH:mm}（带时间的调用方）。
+     * ★ 只给到日的输入一律落到<b>当日 23:59:59</b>：「有效期至 2026-12-31」在常识里
+     * 指这天结束才失效；存成当日 00:00:00 会让商家在到期日零点就被停业，
+     * 等于凭空少用一天。
+     *
+     * <p>非法格式直接 400（校验类错误），不宽容 —— 日期解析失败的静默兜底
+     * （比如当成长效）会让商家以为填上了，实际证照永远不过期。
+     */
+    private LocalDateTime parseExpireDate(String raw, MerchantMaterialType type) {
+        String text = raw.trim();
+        try {
+            if (text.length() <= 10) {
+                return java.time.LocalDate.parse(text).atTime(23, 59, 59);
+            }
+            String normalized = text.replace(' ', 'T');
+            if (normalized.length() == 16) {
+                normalized = normalized + ":59";
+            }
+            return LocalDateTime.parse(normalized);
+        } catch (java.time.format.DateTimeParseException ex) {
+            throw BizException.validation("「" + type.label() + "」的有效期格式不对（应为 yyyy-MM-dd）：" + raw);
+        }
+    }
+
     private void validateStoreName(String raw) {
         String name = raw == null ? "" : raw.trim();
         if (name.length() < STORE_NAME_MIN || name.length() > STORE_NAME_MAX) {
@@ -484,9 +692,28 @@ public class MerchantOnboardingService {
     }
 
     private ApplicationView toView(MerchantEntity entity) {
+        // 一次查询供三处使用：材料 URL、有效期回填、店铺到期日。
+        // ★ 这里**实时算**到期日，而不是读 t_merchant.license_expire_at：
+        //   那一列是给扫描任务走索引用的冗余列，不是展示的真值来源。
+        //   若展示读冗余列，任何「材料改了但派生列没跟着刷」的路径都会让商家
+        //   在界面上看到旧日期 —— 而派生列存在的意义恰恰是让高频路径不必算，
+        //   低频的展示路径没有这个必要。
+        List<MerchantMaterialEntity> rows = loadMaterialRows(entity.getId());
         Map<String, String> materials = new LinkedHashMap<>();
-        loadMaterials(entity.getId())
-                .forEach((type, url) -> materials.put(type.name(), url));
+        Map<String, String> expiry = new LinkedHashMap<>();
+        for (MerchantMaterialEntity row : rows) {
+            MerchantMaterialType type = MerchantMaterialType.parse(row.getMaterialType());
+            materials.put(type.name(), row.getFileUrl());
+            if (row.getExpireAt() != null) {
+                // 回填给前端编辑框（yyyy-MM-dd）；不回填的话商家每次进来都看到空白日期，
+                // 会以为上次没填上而重填一遍
+                expiry.put(type.name(), row.getExpireAt().toLocalDate().toString());
+            }
+        }
+        LocalDateTime expireAt = LicenseExpiry.earliest(rows.stream()
+                .map(MerchantMaterialEntity::getExpireAt)
+                .toArray(LocalDateTime[]::new));
+        LocalDateTime current = now();
         return new ApplicationView(
                 String.valueOf(entity.getId()),
                 entity.getName(),
@@ -497,7 +724,13 @@ public class MerchantOnboardingService {
                 String.valueOf(entity.getOwnerUserId()),
                 entity.getAppliedAt(),
                 entity.getReviewedAt(),
-                entity.getCreatedAt());
+                entity.getCreatedAt(),
+                expireAt,
+                LicenseExpiry.stageOf(expireAt, current).name(),
+                // 无到期概念时回 null 而不是 0：「剩余 0 天」在界面上等于「今天到期」
+                LicenseExpiry.hasExpiry(expireAt) ? LicenseExpiry.remainingDays(expireAt, current) : null,
+                entity.getSuspendedReason(),
+                expiry);
     }
 
     private List<RejectReason> fromJson(String json) {

@@ -14,8 +14,9 @@
 
 import React, { useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { sellerApi } from '@duoduo/api-sdk/endpoints';
+import { sellerApi, userApi } from '@duoduo/api-sdk/endpoints';
 import type { SellerAnalytics, SellerSummary } from '@duoduo/api-sdk/types';
+import type { MerchantApplicationView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { LazyChart } from '@duoduo/shared/components/lazy-charts';
 import {
@@ -25,6 +26,70 @@ import {
 } from '@duoduo/shared/components/ui';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
 import { useAuth } from '@duoduo/shared/store/auth';
+
+/**
+ * E15 · 资质到期警示条。
+ *
+ * <p><b>为什么它不是「可选的贴心提示」</b>：资质过期会让店铺整体停业、商品全部下架，
+ * 而商家通常几个月才登录一次后台看看。只发一条站内通知，很可能在到期前根本没被点开 ——
+ * 工作台是商家每天第一眼看到的页面，把倒计时放在这里，才真正构成「提醒」。
+ *
+ * <p><b>正常时返回 null（不占位置）</b>：一个永远存在的「一切正常」横幅，
+ * 只会训练用户无视这一整块区域，等到真出问题时反而看不见。
+ */
+const SellerLicenseBanner: React.FC = () => {
+  const fetcher = useCallback(() => userApi.getMerchantApplication(), []);
+  // 查询失败时静默返回 null：这块是「额外提示」，不该因为一次失败在概览页上
+  // 插一条红条，把商家真正关心的经营数据挤下去
+  const { data } = useAsync<MerchantApplicationView>(fetcher, true, []);
+  if (!data) {
+    return null;
+  }
+  const expireDate = data.licenseExpireAt?.slice(0, 10);
+  const remaining = data.licenseRemainingDays;
+
+  if (data.status === 'SUSPENDED' || data.licenseStage === 'EXPIRED') {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <Alert kind="error">
+          <b>店铺已停业，商品已全部下架。</b>
+          {data.suspendedReason ? `原因：${data.suspendedReason}。` : ''}
+          已售出订单不受影响，可正常发货与售后。
+          <Link to="/apply" style={{ marginLeft: 8, fontWeight: 600 }}>
+            去提交续期 →
+          </Link>
+        </Alert>
+      </div>
+    );
+  }
+  if (data.licenseStage === 'T7') {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <Alert kind="warn">
+          <b>经营资质还剩 {remaining} 天到期</b>（{expireDate}）。
+          到期后店铺会自动停业、在售商品一并下架，请尽快续期。
+          <Link to="/apply" style={{ marginLeft: 8, fontWeight: 600 }}>
+            立即续期 →
+          </Link>
+        </Alert>
+      </div>
+    );
+  }
+  if (data.licenseStage === 'T30') {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <Alert kind="info">
+          经营资质将于 {expireDate} 到期（还剩 {remaining} 天）。
+          可以现在准备续期材料，避免临近到期时手忙脚乱。
+          <Link to="/apply" style={{ marginLeft: 8, fontWeight: 600 }}>
+            提前续期 →
+          </Link>
+        </Alert>
+      </div>
+    );
+  }
+  return null;
+};
 
 const StatCard: React.FC<{ label: string; value: React.ReactNode; hint?: string; to?: string }> = ({
   label,
@@ -87,6 +152,8 @@ export const SellerDashboardPage: React.FC = () => {
           </button>
         </Alert>
       ) : null}
+
+      <SellerLicenseBanner />
 
       {loading && !data ? <LoadingBlock text="正在汇总经营数据…" /> : null}
 

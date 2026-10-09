@@ -69,4 +69,21 @@ public class MerchantApplicationController {
                 authService.renewAccessToken(userId, ClientEntry.MERCHANT),
                 authService.accessTtlSeconds()));
     }
+
+    /**
+     * E15 · 资质续期。
+     *
+     * <p>可发起的两种店铺：<b>APPROVED 且临期</b>（主动续，主流路径）、
+     * <b>SUSPENDED</b>（过期被停业后补办）。请求体与保存草稿同形
+     * （材料 + 有效期；店名可不传）—— 复用同一个 DTO 而不是另造一个几乎一样的，
+     * 是为了让前端只有一套「填材料」的表单逻辑。
+     *
+     * <p>提交后回到 SUBMITTED，由运营重新审核：<b>续期不是自动通过</b>，
+     * 否则商家拿一张过期证照的截图就能把停业状态刷回来。
+     */
+    @PostMapping("/renewal")
+    public ApiResponse<ApplicationView> renewal(
+            @RequestBody(required = false) SaveDraftRequest request) {
+        return ApiResponse.ok(onboardingService.renewal(UserContext.requireUserId(), request));
+    }
 }

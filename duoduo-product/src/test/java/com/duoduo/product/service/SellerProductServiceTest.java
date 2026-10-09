@@ -6,7 +6,9 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.client.MembershipClient;
+import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.dto.MembershipInfo;
+import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
@@ -25,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -65,12 +68,26 @@ class SellerProductServiceTest {
     private final SpuMapper spuMapper = mock(SpuMapper.class);
     private final SkuMapper skuMapper = mock(SkuMapper.class);
     private final MembershipClient membershipClient = mock(MembershipClient.class);
+    private final MerchantLicenseClient merchantLicenseClient = mock(MerchantLicenseClient.class);
     private final BannedWordGuard bannedWordGuard = mock(BannedWordGuard.class);
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
-            spuMapper, skuMapper, membershipClient,
+            spuMapper, skuMapper, membershipClient, merchantLicenseClient,
             new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper);
+
+    /**
+     * 默认让「店铺资质」查得到且可售（E15）。
+     *
+     * <p>不这么做的话，E14 那批上下架用例会因为多了一道门禁而全红 ——
+     * 而它们想验的是审核维度，不是资质维度。默认放行 + 单独的资质用例，
+     * 比让每条用例都自己 stub 一次更不容易漏。
+     */
+    @BeforeEach
+    void stubLicenseAsSellable() {
+        when(merchantLicenseClient.of(any())).thenReturn(ApiResponse.ok(
+                new MerchantLicenseInfo("710000000000000101", "APPROVED", "NONE", null, null)));
+    }
 
     @AfterEach
     void clearContext() {
@@ -435,6 +452,114 @@ class SellerProductServiceTest {
 
         assertThat(view.status()).isEqualTo("ON_SALE");
         assertThat(view.auditStatus()).isEqualTo("APPROVED");
+    }
+
+    // ---------------- E15 · 资质门禁（第二道门） ----------------
+
+    @Test
+    void 停业店铺不能上架_提示要说明停业原因与下一步() {
+        UserContext.set(seller(101L));
+        when(merchantLicenseClient.of(101L)).thenReturn(ApiResponse.ok(new MerchantLicenseInfo(
+                "710000000000000101", "SUSPENDED", "EXPIRED", null,
+                "经营资质已过期（2026-06-30），店铺已暂停营业")));
+        SpuEntity spu = spu(9001L, 101L, "本来在架", null, "merchant", "APPROVED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        // 「已停业」这三个字对商家毫无操作价值，必须一并给出原因
+        assertThatThrownBy(() -> service.changeStatus(9001L, "ON_SALE"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("已停业")
+                .hasMessageContaining("经营资质已过期");
+        verify(spuMapper, never()).updateById(any(SpuEntity.class));
+    }
+
+    @Test
+    void 续期审核中的店铺也不能上架_判据是状态而不是没过期() {
+        UserContext.set(seller(101L));
+        // 续期已提交、正在审：证照其实还没过期，但资质尚未续上，同样不能卖。
+        // 若用「过期了没有」当判据，这一档会被放过去。
+        when(merchantLicenseClient.of(101L)).thenReturn(ApiResponse.ok(new MerchantLicenseInfo(
+                "710000000000000101", "SUBMITTED", "T7", null, null)));
+        SpuEntity spu = spu(9001L, 101L, "续期中", null, "merchant", "APPROVED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.changeStatus(9001L, "ON_SALE"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("资质审核中");
+    }
+
+    @Test
+    void 停业店铺仍然可以下架自己的商品_不该一刀切拦住所有写操作() {
+        UserContext.set(seller(101L));
+        when(merchantLicenseClient.of(101L)).thenReturn(ApiResponse.ok(new MerchantLicenseInfo(
+                "710000000000000101", "SUSPENDED", "EXPIRED", null, "经营资质已过期")));
+        SpuEntity spu = spu(9001L, 101L, "还在架上的", null, "merchant", "APPROVED", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        // 商家在被停业期间清理自己的货架是正当操作；全拦住只会让他以为系统坏了
+        assertThat(service.changeStatus(9001L, "OFF_SHELF").status()).isEqualTo("OFF_SHELF");
+    }
+
+    @Test
+    void 资质查询失败时放行_一次跨域抖动不能变成全平台商家都上不了架() {
+        UserContext.set(seller(101L));
+        when(merchantLicenseClient.of(any())).thenThrow(new RuntimeException("connection refused"));
+        SpuEntity spu = spu(9001L, 101L, "正常商品", null, "merchant", "APPROVED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        // 这是纵深防御的第二道门：第一道（过期即停业 + 商品联动下架）不依赖用户域可用性，
+        // 所以这里可以安全地「故障即放行」，并把异常留在日志里
+        assertThat(service.changeStatus(9001L, "ON_SALE").status()).isEqualTo("ON_SALE");
+    }
+
+    @Test
+    void 无入驻记录时放行_历史商品不该被新门禁卡死() {
+        UserContext.set(seller(101L));
+        when(merchantLicenseClient.of(any())).thenReturn(ApiResponse.ok(null));
+        SpuEntity spu = spu(9001L, 101L, "老数据", null, "merchant", "APPROVED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.changeStatus(9001L, "ON_SALE").status()).isEqualTo("ON_SALE");
+    }
+
+    @Test
+    void 运营改自营商品状态不查资质_自营没有入驻记录这件事本身就是正常的() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 0L, "自营商品", null, "self", "APPROVED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.changeStatus(9001L, "ON_SALE").status()).isEqualTo("ON_SALE");
+        verify(merchantLicenseClient, never()).of(any());
+    }
+
+    // ---------------- E15 · 资质过期联动停售（内部端点） ----------------
+
+    @Test
+    void 内部停售只下架在售商品_返回真实改动条数() {
+        when(spuMapper.update(any(), any())).thenReturn(3);
+
+        assertThat(service.offShelfAllBySeller(101L)).isEqualTo(3);
+
+        // 条件必须是「该店铺 + 在售」：漏掉 status 条件会把已下架的商品
+        // 也一并重写更新时间，让「本次改了几件」这个返回值失去意义
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<SpuEntity>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(spuMapper).update(any(), captor.capture());
+        assertThat(captor.getValue().getSqlSegment()).contains("status");
+    }
+
+    @Test
+    void 内部停售忽略自营_自营没有资质这个概念() {
+        // seller_id = 0 是「平台自营」的既有语义，不是一个真实店铺 id；
+        // 传 0 进来只能是调用方搞错了，绝不能把自营商品整店下架
+        assertThat(service.offShelfAllBySeller(0L)).isZero();
+        assertThat(service.offShelfAllBySeller(null)).isZero();
+        verify(spuMapper, never()).update(any(), any());
     }
 
     @Test
