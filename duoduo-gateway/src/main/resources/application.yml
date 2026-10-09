@@ -72,7 +72,10 @@ spring:
             #   必须显式列出（本路由是按具体子路径列举的，不是 /api/admin/** 兜底，
             #   漏了这段会静默 404 而不是报错）。不进白名单：运营审核必须登录，
             #   权限由服务端 OperatorGuard 把关（网关那层只管登录与入口收窄）。
-            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/products/**,/api/admin/search/**
+            # /api/admin/audit-sla/** = 审核 SLA 事后抽查（E28）：抽查任务表在商品库，
+            #   同样必须显式列出（本路由是按具体子路径列举的，不是 /api/admin/** 兜底）。
+            #   漏了它不会报错，只会静默 404 —— 这类"路由漏列"本项目已经踩过两次。
+            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/products/**,/api/admin/search/**,/api/admin/audit-sla/**
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:

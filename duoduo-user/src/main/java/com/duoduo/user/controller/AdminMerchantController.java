@@ -29,11 +29,17 @@ public class AdminMerchantController {
 
     private final MerchantOnboardingService onboardingService;
     private final MerchantLicenseJob licenseJob;
+    private final com.duoduo.user.service.MerchantAuditSampleService sampleService;
+    private final com.duoduo.user.service.MerchantAuditSampleJob sampleJob;
 
     public AdminMerchantController(MerchantOnboardingService onboardingService,
-                                   MerchantLicenseJob licenseJob) {
+                                   MerchantLicenseJob licenseJob,
+                                   com.duoduo.user.service.MerchantAuditSampleService sampleService,
+                                   com.duoduo.user.service.MerchantAuditSampleJob sampleJob) {
         this.onboardingService = onboardingService;
         this.licenseJob = licenseJob;
+        this.sampleService = sampleService;
+        this.sampleJob = sampleJob;
     }
 
     @GetMapping
@@ -88,5 +94,45 @@ public class AdminMerchantController {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(onboardingService.reject(
                 Long.valueOf(id), UserContext.requireUserId(), request.reasons()));
+    }
+
+    // ---------------- E28 · 入驻事后抽查 ----------------
+    // 路径刻意用两段（/audit-sla/...）而不是挂在 /{id} 下面：
+    // /{id} 是「按 id 取详情」，与一个固定的子资源名放在同一层，
+    // 匹配优先级要靠框架的"字面量优先"规则来解释 —— 将来有人改成自定义匹配就会踩坑。
+
+    /** 入驻抽查列表：PENDING（默认）/ PASSED / REJECTED / ALL */
+    @GetMapping("/audit-sla/samples")
+    public ApiResponse<PageResult<com.duoduo.user.dto.MerchantAuditSlaDtos.AuditSampleView>> auditSamples(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(sampleService.pageSamples(status, page, pageSize));
+    }
+
+    /** 复核一条入驻抽查任务：PASS / REJECT（判违规必须填原因；判违规 = 直接停业 + 联动下架） */
+    @PostMapping("/audit-sla/samples/{id}/review")
+    public ApiResponse<com.duoduo.user.dto.MerchantAuditSlaDtos.AuditSampleView> reviewAuditSample(
+            @PathVariable("id") String id,
+            @RequestBody com.duoduo.user.dto.MerchantAuditSlaDtos.ReviewRequest request) {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(sampleService.review(Long.valueOf(id),
+                request == null ? null : request.action(),
+                request == null ? null : request.note()));
+    }
+
+    /** SLA 自证指标（读它会顺带评估并执行自动收紧） */
+    @GetMapping("/audit-sla/metrics")
+    public ApiResponse<com.duoduo.user.dto.MerchantAuditSlaDtos.AuditMetrics> auditMetrics() {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(sampleService.metrics());
+    }
+
+    /** 立即跑一轮入驻抽查（抽昨天那批自动放行的店铺） */
+    @PostMapping("/audit-sla/sweep")
+    public ApiResponse<com.duoduo.user.dto.MerchantAuditSlaDtos.SampleReport> auditSampleSweep() {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(sampleJob.sweepNow());
     }
 }

@@ -55,7 +55,8 @@ class MerchantMaterialAccessTest {
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, objectMapper, storage, auditLogMapper);
+                    userMapper, idGenerator, objectMapper, storage, auditLogMapper,
+                    mock(MerchantViolationService.class));
 
     @BeforeEach
     void setUp() {

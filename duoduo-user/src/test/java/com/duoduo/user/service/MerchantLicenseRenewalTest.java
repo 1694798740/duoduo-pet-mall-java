@@ -72,7 +72,8 @@ class MerchantLicenseRenewalTest {
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, new ObjectMapper(), materialStorage, auditLogMapper);
+                    userMapper, idGenerator, new ObjectMapper(), materialStorage, auditLogMapper,
+                    mock(MerchantViolationService.class));
 
     /** service 每次 selectList 都返回这一份材料行，用例可以改它模拟「商家填了哪些有效期」 */
     private final List<MerchantMaterialEntity> materialRows = new ArrayList<>();
@@ -202,7 +203,7 @@ class MerchantLicenseRenewalTest {
     // ---------------- 续期 ----------------
 
     @Test
-    @DisplayName("★ 续期：APPROVED 临期店铺提交新证 → 回 SUBMITTED 重走审核，并清空提醒档位")
+    @DisplayName("★ 续期：APPROVED 临期店铺改有效期 → 回 SUBMITTED 重走审核（改声明也是新证据），并清空提醒档位")
     void renewalFromApprovedGoesBackToReview() {
         MerchantEntity entity = merchant(MerchantStatus.APPROVED);
         entity.setExpireNotifyStage("T7");
@@ -211,7 +212,8 @@ class MerchantLicenseRenewalTest {
         ApplicationView view = service.renewal(USER_ID, new SaveDraftRequest(
                 null, null, Map.of("BUSINESS_LICENSE", isoDateAfterDays(400))));
 
-        // 续期不是自动通过 —— 必须回到 SUBMITTED 让人再过一眼
+        // 提交了新的有效期就是「有新东西可审」—— 有效期是声明，审核要核的正是声明与证件是否一致。
+        // 若改个日期就能自动通过，把一张过期执照的日期填到三年后即可自动复业（E28 堵掉的绕过）
         assertThat(view.status()).isEqualTo("SUBMITTED");
         assertThat(view.appliedAt()).isNotNull();
         // 新周期从零开始：档位清空，否则下一个有效期期间不会再提醒
@@ -220,7 +222,7 @@ class MerchantLicenseRenewalTest {
     }
 
     @Test
-    @DisplayName("★ 续期：SUSPENDED（已过期被停业）补齐新证后可重新送审，停业原因清除")
+    @DisplayName("★ 续期：SUSPENDED（已过期被停业）补齐新有效期后重新送审，停业原因清除")
     void renewalFromSuspendedClearsReason() {
         MerchantEntity entity = merchant(MerchantStatus.SUSPENDED);
         entity.setSuspendedReason("经营资质已过期（2026-06-30），店铺已停业");
@@ -248,9 +250,23 @@ class MerchantLicenseRenewalTest {
     }
 
     @Test
-    @DisplayName("续期时全部材料都是长期有效 → 放行（earliest 为 NULL 不等于「过期」）")
-    void renewalWithNoExpiryIsAllowed() {
+    @DisplayName("★ 续期且**没有任何新证据**（材料全长期有效、请求体空）→ 直接通过，不再空跑一圈人工")
+    void renewalWithoutNewEvidenceAutoApproves() {
         merchant(MerchantStatus.SUSPENDED);
+        materialRow("BUSINESS_LICENSE", null);
+
+        // earliest 为 NULL 不等于「过期」：一份带有效期的材料都没有 = 长期有效，续期校验放行。
+        // 而请求体里什么都没提交，人工那边也没有新信息可看 —— 让它排队只是白等一轮。
+        assertThat(service.renewal(USER_ID, new SaveDraftRequest(null, null, null)).status())
+                .isEqualTo("APPROVED");
+    }
+
+    @Test
+    @DisplayName("★ 有违规处置记录的店：续期即使没提交新证据也不许自动复业（否则停业处罚被绕过）")
+    void renewalWithViolationRecordNeverAutoApproves() {
+        MerchantEntity entity = merchant(MerchantStatus.SUSPENDED);
+        // 因违规被停业：资质可能本来就长期有效，走同一个续期入口，但绝不能自动复业
+        entity.setViolationCount(3);
         materialRow("BUSINESS_LICENSE", null);
 
         assertThat(service.renewal(USER_ID, new SaveDraftRequest(null, null, null)).status())
@@ -279,12 +295,12 @@ class MerchantLicenseRenewalTest {
     }
 
     @Test
-    @DisplayName("续期请求体可以为空（什么都不改，只是把店重新送一次审）")
+    @DisplayName("续期请求体可以为 null（什么都不改 → 没有新证据 → 自动通过）")
     void renewalWithNullBodyIsSafe() {
         merchant(MerchantStatus.SUSPENDED);
         materialRow("BUSINESS_LICENSE", null);
 
-        assertThat(service.renewal(USER_ID, null).status()).isEqualTo("SUBMITTED");
+        assertThat(service.renewal(USER_ID, null).status()).isEqualTo("APPROVED");
     }
 
     // ---------------- 审核通过时重置提醒周期 ----------------

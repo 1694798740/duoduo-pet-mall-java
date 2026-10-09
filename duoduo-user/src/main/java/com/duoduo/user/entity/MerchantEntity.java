@@ -47,6 +47,19 @@ public class MerchantEntity {
     private String rejectReason;
     /** 停业原因（E15，SUSPENDED 时有值）；与申请驳回原因 rejectReason 分列 */
     private String suspendedReason;
+    /**
+     * 审核来源（E28）：AUTO(按规则自动放行) / MANUAL(人工判定)；NULL = E28 之前的历史数据。
+     *
+     * <p>入驻侧没有 SELF —— 平台自营不走入驻流程。
+     */
+    private String auditSource;
+    /**
+     * 商家级违规累计次数（E28）：判违规 +1，达阈值自动停业，复业时清零。
+     *
+     * <p>★ <b>只增不减</b>：它是「这家店历史上被判过几次违规」的事实。
+     * 复核通过（PASSED）不能减 —— 那是「这次抽查没问题」，不是「以前的违规撤销了」。
+     */
+    private Integer violationCount;
     private LocalDateTime appliedAt;
     private LocalDateTime reviewedAt;
     /** 最近一次审核人（运营 user id） */
@@ -132,6 +145,22 @@ public class MerchantEntity {
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public String getAuditSource() {
+        return auditSource;
+    }
+
+    public void setAuditSource(String auditSource) {
+        this.auditSource = auditSource;
+    }
+
+    public Integer getViolationCount() {
+        return violationCount;
+    }
+
+    public void setViolationCount(Integer violationCount) {
+        this.violationCount = violationCount;
     }
 
     public LocalDateTime getReviewedAt() {

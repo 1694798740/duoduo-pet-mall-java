@@ -706,7 +706,12 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（24 套接口断言 + 21 套真实浏览器 UI 断言 + 小程序无浏览器 72 项）
+### 端到端冒烟（24 套接口断言 = 23 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
+
+> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（23 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
+> 外加 node 冒烟 `scripts/e8-entry-scope-smoke.mjs`；
+> 浏览器 e2e 由 `scripts/e2e/*-ui-check.mjs` **自发现**（22 套）。
+> `scripts/check-all.ps1` 里的套件数**从目录实算**，不再写死 —— 写死的数字在加套件之后会变成假话，而没人会记得改它。
 
 > **✅ 本地库数据漂移已根治（2026-10-09 · E27 完成）**：一键全量冒烟此前在本地库上有 **9 套红**，
 > 经逐套归因**全部非代码回归**，现已从根上消掉，不再需要"看到红先判断是不是漂移"：
@@ -733,7 +738,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
-> CI 子集（本地 / GitHub Actions 同一入口，**11 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1`。
+> CI 子集（本地 / GitHub Actions 同一入口，**12 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1`。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
@@ -751,6 +756,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 54 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -769,8 +775,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（21 套） =================
-# 一键跑：起 dev server → 跑 21 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（22 套） =================
+# 一键跑：起 dev server → 跑 22 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # 打**容器入口**（真应用，而不是开发态）：给了 -UiBase 就不再启 dev server
@@ -798,6 +804,7 @@ node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 32 �
 node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 21 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 未登录入口可发现性 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
 node scripts/e2e/product-detail-ui-check.mjs          # 商品详情页 20 项（主图可放大切图 / 包装规格 / 同类推荐 / 两端标签一致 / 无非预期接口错误）
+node scripts/e2e/audit-sla-ui-check.mjs               # 审核事后抽查 56 项（后台站点；**直插 PENDING 任务保证确定性** / 六项指标卡都出数 / **未填依据时"判定违规"按钮禁用（双向断言）** / 判合规后商品仍在售 / 域切换后文案变"停业"口径 / 手动抽查 toast 四要素立标 / **非运营两级都进不来（登录页拒绝 + 页面拒绝）** / 夹具自毁）
 node scripts/e2e/merchant-audit-ui-check.mjs          # 入驻审核台 27 项（提交→驳回→重提→通过→开店全链路；材料大图与 PDF 链接；**运营用主运营账号，不新建运营夹具**）
 node scripts/e2e/merchant-staff-ui-check.mjs          # 商家子账号 24 项（邀请→店员干活→结算 403→停用即时失效→平台跨租户处置→恢复；收尾删成员行）
 node scripts/e2e/product-audit-ui-check.mjs           # 商品上架审核 36 项（真实发布弹窗→前台不可见→**索引有文档但检索不命中**→上架门禁 422→后台通过→上架后可见→改内容回待审→驳回→重提→再通过；**先 reindex 让断言真正测到 ES 过滤**；收尾删夹具商品）
@@ -1037,6 +1044,11 @@ duoduo-pet-mall-java/
 | POST | `/api/admin/orders/{orderNo}/force-close` | **强制关单**（仅待付款）：复用状态机合法流转 + 作废未支付支付单 + 释放冻结 + 状态日志记 OPERATOR | 运营 |
 | GET | `/api/admin/users?role=&keyword=` | **运营账号列表**（A7）：分页 + 角色过滤 + 关键字（手机号/昵称模糊匹配）；**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号 | 运营/ADMIN |
 | POST | `/api/admin/users/{id}/role` | **变更用户角色**（A7，**仅 ADMIN**）：角色白名单（USER/SELLER/OPERATOR/ADMIN）；自己降权 **422**、最后一个 ADMIN 不可降 **422**、同角色幂等 200 不留审计；每次变更写 `t_audit_log`；目标用户**重新登录后**新角色生效（notice 提示） | ADMIN |
+| GET | `/api/admin/audit-sla/samples?status=&page=&pageSize=` | **E28 事后抽查队列**（商品域）：`status` 取 `PENDING`（默认，待复核）/ `PASSED` / `REJECTED`，不传=全部；**待复核按建单时间升序**（先来先做，24h 响应时长的守门就是它），已复核按复核时间倒序；视图冗余带出 `spuTitle` 与 `sellerId`，队列里一眼看出"该看哪件" | 运营 |
+| POST | `/api/admin/audit-sla/samples/{id}/review` | **复核一条抽查任务**：`{action:'PASS'\|'REJECT', note}`。**PASS 只记结论、不动任何业务数据**（抽中 ≠ 下架）；**REJECT 是真处置** —— 商品驳回（`REJECTED`）+ 强制下架（`OFF_SHELF`）+ 来源记 `SAMPLE`，再上报商家违规计数（跨域，失败不回滚止血动作），最后落结论；`note` 判违规**必填**；**已复核再判 → 422**（否则误判率可被反复点通过刷平） | 运营 |
+| GET | `/api/admin/audit-sla/metrics` | **SLA 自证指标**（窗口 30 天）：当前抽样比例 / 是否已自动收紧 / 已复核数 / 抽中违规数 / 抽中违规率 / 平均复核时长 / 误判率 / 待复核数。**读指标会顺带评估一次自动收紧**（连续 3 天抽中违规率 **> 10%** 才翻倍，恰好 10% 不算；封顶 40%） | 运营 |
+| POST | `/api/admin/audit-sla/sweep` | **手动触发一轮抽查**：抽的是**昨天**那批自动放行商品（与定时器同口径，避免"点两次看到两个结果"）；**不看开关、不抢选主锁**；返回 `candidates/created/skipped/ratePercent/reasons`，幂等靠 `uk_biz_date`（重复点 `created=0`） | 运营 |
+| GET/POST | `/api/admin/merchants/audit-sla/samples`、`/samples/{id}/review`、`/metrics`、`/sweep` | **入驻侧同链路**（店铺维度，路径前缀 `/api/admin/merchants`）：判违规走 `suspendByAudit` —— **资质造假是主体资格问题，直接停业、不攒次数**，停业用条件更新（`WHERE status='APPROVED'`，抢不到就不发通知不写留痕）；停业后**联动下架该店全部商品** | 运营 |
 
 **权限模型**：统一 `OperatorGuard.requireOperator()`（OPERATOR / ADMIN，忽略大小写）；
 网关层 `/api/admin/**` 不进白名单（未登录 401），服务层校验角色（非运营 403）——两层各挡一种流量。
@@ -1633,6 +1645,49 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-09（E28 · 审核 SLA 落地：默认放行 + 事后抽查）
+
+**这一步在做什么**：把入驻（E11）与商品（E14）的审核从**强制前置人工**改为**默认自动放行 + 事后抽查**
+（方案见《开发执行总纲》附录 D，用户已确认）。人工审核不再是上线的必经环节，而是**抽样复核**。
+这件事的对价非常明确：**免掉事前审，事后就必须真的在抽** —— 而这一轮挖出的第一个缺陷，正好就是**抽查一直没跑起来**。
+
+**① 数据层**（`docs/sql/incremental/29-e28-audit-sla.sql`，全量脚本 `01/02` 已同步）
+
+| 位置 | 新增 | 关键口径 |
+|---|---|---|
+| `duoduo_product.t_spu` | `audit_source` | `AUTO`(按规则自动放行) / `MANUAL`(人工) / `SELF`(自营免审) / **`NULL`=E28 前历史数据（刻意不回填）**。不从 `audit_by` 反推：它为 null 有三种含义，三者后续要做的处置完全不同 |
+| `duoduo_product` | `t_audit_sample` | `uk_biz_date(biz_type,biz_id,sample_date)` 是**幂等**的唯一来源；`sample_date` 必须是 **DATE**（用 DATETIME 会让每次重跑都建新行，"幂等"成空话）；`reason` 记录**为什么被抽中**（队列里要能分清"随机抽到"与"本来就重点盯的"） |
+| `duoduo_product` | `t_audit_sample_rate` | **单行表，id 固定 1**。比例必须能被自动改写，写进 yml 就成了"改配置再重启"，那不叫自动收紧 |
+| `duoduo_user.t_merchant` | `audit_source` + `violation_count` | 商家级违规累计：**只增不减**（"这次抽查没问题"≠"以前的违规撤销了"），唯一重置点是**复业**；升级判定要可原子自增，所以放行上而不是实时聚合 |
+| `duoduo_user` | `t_audit_sample` + `t_audit_sample_rate` | **两库各持一份**：服务边界是"每个服务只连自己的库"；抽不抽查不该取决于对方服务此刻是否健康 |
+| `duoduo_user.t_sched_leader` | **补建** | ★ 此前**缺这张表** → `SchedLeaderLock` 兜底是"返回 true（放行）" → E15 的 `MerchantLicenseJob` 选主**一直静默失效**。它不算错（任务幂等）所以没人发现 —— 这正是"静默兜底"的典型代价 |
+
+**② 自动放行判定**（`SpuRiskJudge` / `MerchantRiskRules`，纯函数 + 单测）
+命中四类风险即**转人工**：违禁类目 / 联系方式（手机号含 `+86` 与分隔符、**带区号**的座机、邮箱、微信/QQ、网址）/ 价格异常 / **该对象此前被驳回过或判过违规**；其余自动放行。
+★ 判定**必须放在内容字段都填好之后**（`create()` 里挪到 `setSellerId` 之后）：提前落状态会让判定读到全空值，而空值恰好不命中任何规则 → **所有商品都被自动放行**，且测试很难发现（因为它看起来"都过了"）。
+★ 正则收紧过一次：原写法会把「净重 12345678 克」判成座机 → 改为「手机号（可含 `+86`/分隔符）」或「**带区号**的座机」。
+
+**③ 抽查规则**（`AuditSlaPolicy` 放 `duoduo-common`：纯函数、无 Spring 注解、两域共用）
+
+- 基础 **5%**；每日**至少 3 条、最多 20 条**；当日可抽量**不足 3 条则全查**（量小时"抽 5%"等于没抽）。目标数用**上取整**，且不超当日放行量；`ratePercent<=0` → 0（否则出现"比例 0% 却目标 3 条"的自相矛盾）。
+- **必抽（100%，不占 optional 配额）**：新商家**头 3 件** / `RESUME`（恢复营业 7 天内）/ 有污点商家按 **20%** 加重（`ESCALATED`）。
+- 取样用 **`hash(bizId + epochDay) % 100`**（murmur3 finalizer 打散雪花 id 低位），**不用随机数**：可复现、不可被"卡发布时间"规避，且比例提高时集合是**包含关系**（5% ⊂ 10% ⊂ 20%，这是"收紧不作废上次结论"的全部依据）。
+- **自动收紧**：连续 3 天抽中违规率 **> 10%（严格大于，恰好 10% 不算）** → 比例翻倍，封顶 **40%**。抽样为 0 的日子**不占观察期**。
+- 候选集 = `supply_type='merchant' AND audit_source='AUTO' AND audit_at ∈ [当天,次日)`。
+
+**④ 两个被堵死的绕过路径（★ 本轮最重要的产出）**
+
+1. **自动放行必须写 `audit_at`** —— 抽查候选集按它筛。`create()` 原为恒 `setAuditAt(null)` → 任务每天照跑、每次 `created=0`，**接口 200、无异常、无日志**，看起来只是"今天没有可抽的"，实际上是这条制度的入口被自己堵死。修复 4 处（`create` / `applyContentReaudit` 两分支 / `update` 显式清空 / `resubmit`）。
+2. **曾判违规者不得自动放行** —— `applyContentReaudit` 会对已放行商品重跑判定，而判定里没有"你曾被判过违规"这个前提 → **改一个错别字即可自动重新上线**，平台的处罚结论被冲掉。加 `wasRejected` 短路；**同一条纪律同步到入驻侧**：`submit()` 与 `renewal()` 加 `hasEnforcementRecord`（`violationCount>0 || fromStatus==REJECTED`）—— 否则**因违规停业的店，点一次续期（甚至空请求体）就能自动复业**（它与"资质过期停业"共用同一续期入口）。
+
+**⑤ 复核与处置**：**不可重入**（只有 PENDING 能判，再判 422 —— 否则误判率可被反复点通过刷平）；判合规**只记结论、不动前台可见性**（抽中 ≠ 下架）；判违规是真处置 —— 商品 `REJECTED` + 强制下架 + 来源 `SAMPLE`，再上报商家违规计数（跨域 Feign，失败不回滚止血动作）；入驻侧判违规走 `suspendByAudit`：**资质造假是主体资格问题，直接停业、不攒次数**，停业用**条件更新**（`WHERE status='APPROVED'`，`changed=0` 时不许发通知、不许写留痕）+ 联动下架全店商品；`violation_count` 用 `setSql("violation_count = violation_count + 1")` 原子自增（避免读-改-写丢计数），达阈值升级商家级 `SUSPENDED`。Feign 故障/查不到一律**放行**（纵深防御第二道门：不能把"查不到"当高风险，否则一次跨域抖动把全平台商品推进待审队列）。
+
+**⑥ 前台**：后台第 10 个工作台「**抽查复核**」（`/admin/audit-sla`）—— 两域切换（第三方商品 / 入驻店铺）+ 四状态（待复核 / 复核通过 / 判违规 / 全部）+ 六张指标卡（当前抽样比例 / 近 30 天已复核 / 抽中违规率 / 平均复核时长 / **误判率** / 待复核）+ 复核弹窗（判违规**必填依据**，不填按钮禁用）。**指标与队列分开取**：读指标会顺带触发自动收紧评估，不该跟着翻页反复执行。
+
+**⑦ 验证**：单测 **458/0**（新增 69：`AuditSlaPolicyTest` 35 / `SpuRiskJudgeTest` 21 / `MerchantRiskRulesTest` 13 / `MerchantViolationServiceTest` 12）；新增 `scripts/audit-sla-smoke.ps1` **54/0**（已入 CI 子集）；新增 `scripts/e2e/audit-sla-ui-check.mjs` **56/0**；三端构建 + 产物隔离校验通过。
+
+**⑧ ★ 本轮还抓到一次"验证本身是假绿"**：改完代码后我比对了"容器内 jar 与宿主 jar 的 md5"，**两边逐字节一致**，结论是"已部署"。但**两边都是旧包** —— 打包发生在改代码**之前**（jar 16:41 / 源码 16:42:48），之后只跑了 `mvn test`（重编 classes，未重打包）。改用**拆包核对**才验出来（`javap` 数关键调用：旧包 2 处、新包 4 处）。**已进纪律**：验证部署一律"拆包看内容"，不比大小/时间/哈希。
 
 ### 2026-10-09（E27 + E29 · 接口冒烟夹具与数据漂移根治；顺带修掉无品牌商品 500）
 

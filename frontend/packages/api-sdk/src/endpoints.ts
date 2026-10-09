@@ -108,10 +108,16 @@ import type {
   ShareReportView,
   MerchantApplicationSummary as ApplicationSummary,
   MerchantApplicationView,
+  MerchantAuditSampleReport,
+  MerchantAuditSampleView,
   MerchantLicenseSweepReport,
   MerchantRejectReason,
   StaffView,
   StaffAdminView,
+  AuditSlaMetrics,
+  AuditSampleReport,
+  AuditSampleReviewRequest,
+  AuditSampleView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -507,6 +513,27 @@ export const adminMerchantApi = {
    */
   licenseSweep: () =>
     api.post<MerchantLicenseSweepReport>('/api/admin/merchants/license-sweep'),
+
+  // ---- E28 · 入驻侧事后抽查（挂在同一个控制器上，路径两段以免与 /{id} 抢匹配） ----
+
+  /**
+   * 入驻抽查队列。`status` 不传 = PENDING（运营的待办就是「还没复核的那批」）。
+   *
+   * 抽查**不是**上线前的人工关卡：店铺已经自动放行、已在营业，这里复核的是
+   * 「放行判对了没有」。所以这个队列里的东西比待审队列更紧急（处置错了两边后果不同）。
+   */
+  auditSamples: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<MerchantAuditSampleView>>('/api/admin/merchants/audit-sla/samples', { query }),
+
+  /** 复核：PASS 只记结论；REJECT = 直接停业 + 联动下架该店商品（note 必填） */
+  reviewAuditSample: (id: string, body: AuditSampleReviewRequest) =>
+    api.post<MerchantAuditSampleView>(`/api/admin/merchants/audit-sla/samples/${id}/review`, body),
+
+  /** SLA 自证指标（读它顺带评估并执行自动收紧） */
+  auditMetrics: () => api.get<AuditSlaMetrics>('/api/admin/merchants/audit-sla/metrics'),
+
+  /** 立即跑一轮入驻抽查（抽昨天那批自动放行的店铺，唯一键幂等） */
+  auditSweep: () => api.post<MerchantAuditSampleReport>('/api/admin/merchants/audit-sla/sweep'),
 };
 
 export const adminApi = {
@@ -557,6 +584,25 @@ export const adminApi = {
   /** 审核结论：驳回时 reason 必填（服务端会 400）；审核可重入（允许改判） */
   auditProduct: (spuId: string, body: AdminProductAuditRequest) =>
     api.post<AdminProductAuditView>(`/api/admin/products/${spuId}/audit`, body),
+
+  // ---- E28 · 商品侧事后抽查（落在 duoduo-product，路径族与审核台分开） ----
+  //
+  // 为什么另开一个路径族而不是塞进 /api/admin/products：那个是「人工待审队列」，
+  // 这个是「已经自动放行、现在回头抽查」。合并后运营分不清「在等我审」和
+  // 「已经在卖、我只是复核」—— 后者更紧急，且判错的后果落在真实在售商品上。
+  /** 抽查队列；status 不传 = PENDING */
+  auditSlaSamples: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AuditSampleView>>('/api/admin/audit-sla/samples', { query }),
+
+  /** 复核：PASS 只记结论；REJECT = 驳回并**强制下架**（note 必填） */
+  reviewAuditSlaSample: (id: string, body: AuditSampleReviewRequest) =>
+    api.post<AuditSampleView>(`/api/admin/audit-sla/samples/${id}/review`, body),
+
+  /** SLA 自证指标（读它顺带评估并执行自动收紧） */
+  auditSlaMetrics: () => api.get<AuditSlaMetrics>('/api/admin/audit-sla/metrics'),
+
+  /** 立即跑一轮商品抽查（抽昨天那批自动放行的第三方商品） */
+  auditSlaSweep: () => api.post<AuditSampleReport>('/api/admin/audit-sla/sweep'),
 
   // ---- 运营账号管理（A7，落在 duoduo-user；改角色仅 ADMIN） ----
   adminUsers: (query?: { role?: string; keyword?: string; page?: number; pageSize?: number }) =>

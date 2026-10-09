@@ -1602,6 +1602,118 @@ export interface MerchantLicenseSweepReport {
   offShelfFailed: number;
 }
 
+// ---------- 审核 SLA：事后抽查（E28） ----------
+
+/**
+ * 抽查任务状态。
+ *
+ * 与商品/入驻的 `auditStatus` **刻意不共用一套常量**：那是「这条内容能不能上」的结论，
+ * 这是「我回头看了一眼，抽中的这条合不合格」的结论。混用会让「PENDING」在页面上
+ * 同时意味着「等着上架」和「已经在卖、等着复核」，运营必然看错。
+ */
+export type AuditSampleStatus = 'PENDING' | 'PASSED' | 'REJECTED';
+
+export const AUDIT_SAMPLE_STATUS_LABEL: Record<string, string> = {
+  PENDING: '待复核',
+  PASSED: '复核通过',
+  REJECTED: '判违规',
+};
+
+/** 一条商品侧抽查任务（E28）。`spuTitle` / `sellerId` 由服务端冗余带出，避免列表 1+N 查询 */
+export interface AuditSampleView {
+  id: string;
+  bizType: string;
+  bizId: string;
+  sellerId: string;
+  /** 抽中的那一批业务的日期（yyyy-MM-dd）；不是复核时间 */
+  sampleDate: string | null;
+  /** 抽中理由的枚举名（BASE / TINY_ALL / NEW_SELLER / RESUME / ESCALATED） */
+  reason: string;
+  /** 抽中理由的中文说明；服务端给，前端不自己翻译（避免两处文案漂移） */
+  reasonLabel: string;
+  status: AuditSampleStatus | string;
+  spuTitle: string | null;
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string | null;
+  /** 建任务 → 复核完成的小时数；未复核为 null（0 才是「不到一小时」） */
+  responseHours: number | null;
+}
+
+/** 一条入驻侧抽查任务（E28）。与商品侧差别：没有 sellerId，改带店铺名；无「必抽」理由 */
+export interface MerchantAuditSampleView {
+  id: string;
+  bizType: string;
+  bizId: string;
+  sampleDate: string | null;
+  reason: string;
+  reasonLabel: string;
+  status: AuditSampleStatus | string;
+  storeName: string | null;
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string | null;
+  responseHours: number | null;
+}
+
+/**
+ * 复核结论。`PASS` 只记结论、不动业务；`REJECT` 是**真处置**：
+ * 商品侧驳回并强制下架，入驻侧直接停业 + 联动下架该店商品。因此 note 必填。
+ */
+export interface AuditSampleReviewRequest {
+  action: 'PASS' | 'REJECT';
+  note?: string;
+}
+
+/** 一轮商品抽查的执行结果（手动触发时回显） */
+export interface AuditSampleReport {
+  /** 当天自动放行的候选商品数 */
+  candidates: number;
+  /** 本轮新建的抽查任务数 */
+  created: number;
+  /** 因唯一键幂等跳过的条数 */
+  skipped: number;
+  /** 本轮生效的抽样比例（%）—— 可能已被自动收紧抬高 */
+  ratePercent: number;
+  /** 逐条抽中理由（给运营解释「为什么抽到它」） */
+  reasons: string[];
+}
+
+/** 一轮入驻抽查的执行结果 */
+export interface MerchantAuditSampleReport {
+  candidates: number;
+  created: number;
+  skipped: number;
+  ratePercent: number;
+}
+
+/**
+ * SLA 自证指标（附录 D 第五节）。
+ *
+ * 抽查制度要能自证「有没有用」，靠的就是这几个数：抽中违规率说明放行是否过松、
+ * 平均复核时长说明处置是否及时、误判率说明抽查是否在制造噪音。
+ * `tightened` 单列出来：比例从 5% 变 10% 时运营得知道是**系统自行收紧**，不是配置被改。
+ */
+export interface AuditSlaMetrics {
+  /** 统计窗口天数（近 N 天） */
+  windowDays: number;
+  sampled: number;
+  violated: number;
+  /** 抽中违规率（%），分母是已复核数 */
+  violationPercent: number;
+  passed: number;
+  /** 平均复核时长（小时） */
+  avgResponseHours: number;
+  /** 误判率（%）= 连续两次抽查结论不一致的占比 */
+  falsePositivePercent: number;
+  /** 当前生效的抽样比例（%） */
+  currentRatePercent: number;
+  /** 本次读取指标时是否触发了自动收紧（连续 3 天超标 → 比例翻倍） */
+  tightened: boolean;
+}
+
 /** 入驻材料清单（6 类，提交时必须齐全） */export const MERCHANT_MATERIAL_TYPES = [
   { type: 'BUSINESS_LICENSE', label: '营业执照' },
   { type: 'LEGAL_ID_FRONT', label: '法人身份证人像面' },

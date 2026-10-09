@@ -164,6 +164,9 @@ CREATE TABLE IF NOT EXISTS `t_merchant` (
     `isolation_level`     VARCHAR(20)  NOT NULL DEFAULT 'STANDARD' COMMENT '租户隔离档位（P3 预留，当前恒 STANDARD）',
     `reject_reason`       VARCHAR(255) NULL COMMENT '最近一次申请驳回原因（结构化 JSON，E10）',
     `suspended_reason`    VARCHAR(255) NULL COMMENT '停业原因（SUSPENDED 时有值，如资质过期，E15）',
+    `audit_source`        VARCHAR(10)  NULL COMMENT '入驻审核来源 AUTO(自动放行)/MANUAL(人工)；NULL=历史数据（E28）',
+    `violation_count`     INT          NOT NULL DEFAULT 0
+                          COMMENT '商家级违规累计次数（E28）：判违规 +1，达阈值自动停业；复业时清零。只增不减',
     `applied_at`          DATETIME     NULL COMMENT '最近一次提交时间',
     `reviewed_at`         DATETIME     NULL COMMENT '最近一次审核时间',
     `reviewed_by`         BIGINT       NULL COMMENT '最近一次审核人（运营 user id）',
@@ -173,8 +176,9 @@ CREATE TABLE IF NOT EXISTS `t_merchant` (
     UNIQUE KEY `uk_owner` (`owner_user_id`),
     UNIQUE KEY `uk_name` (`name`),
     KEY `idx_status` (`status`),
-    KEY `idx_merchant_license_expire` (`license_expire_at`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '第三方商家租户（E9/E10/E15）';
+    KEY `idx_merchant_license_expire` (`license_expire_at`),
+    KEY `idx_merchant_violation` (`violation_count`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '第三方商家租户（E9/E10/E15/E28）';
 
 -- 成员表：一个用户至多属于一个商家（v1 口径，跨店兼职是将来有真实需求再放宽的事）
 CREATE TABLE IF NOT EXISTS `t_merchant_member` (
@@ -208,6 +212,48 @@ CREATE TABLE IF NOT EXISTS `t_merchant_material` (
     UNIQUE KEY `uk_merchant_type` (`merchant_id`, `material_type`),
     KEY `idx_material_merchant` (`merchant_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '入驻资质材料（E10/E15）';
+
+-- ---------- E28 · 审核 SLA 事后抽查（增量脚本 29-e28-audit-sla.sql） ----------
+-- ★ 与商品库的表**同名、同结构**，但两库各持一份：服务边界是「每个服务只连自己的库」，
+--   为了几个字段引入一次跨服务调用，会让「抽不抽查」取决于对方服务此刻是否健康。
+--   两边的数据天然不重叠（本库只写 biz_type='MERCHANT'，商品库只写 'SPU'）。
+CREATE TABLE IF NOT EXISTS `t_audit_sample` (
+    `id`          BIGINT       NOT NULL COMMENT '雪花 id（按字符串流转）',
+    `biz_type`    VARCHAR(20)  NOT NULL COMMENT 'SPU(商品) / MERCHANT(入驻申请)',
+    `biz_id`      BIGINT       NOT NULL COMMENT '对象 id（t_spu.id / t_merchant.id）',
+    `seller_id`   BIGINT       NOT NULL DEFAULT 0 COMMENT '归属店铺主体 user id；0=平台自营',
+    `sample_date` DATE         NOT NULL COMMENT '抽样日期（UTC），与 biz_id 组成幂等键',
+    `reason`      VARCHAR(32)  NOT NULL COMMENT 'BASE/TINY_ALL/NEW_SELLER/RESUME/ESCALATED',
+    `status`      VARCHAR(20)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PASSED/REJECTED',
+    `review_note` VARCHAR(200) NULL,
+    `reviewed_by` BIGINT       NULL,
+    `reviewed_at` DATETIME     NULL COMMENT '复核时间（UTC）；与 created_at 之差即响应时长',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_biz_date` (`biz_type`, `biz_id`, `sample_date`),
+    KEY `idx_status_created` (`status`, `created_at`),
+    KEY `idx_seller_date` (`seller_id`, `sample_date`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '审核 SLA 事后抽查任务（E28）';
+
+CREATE TABLE IF NOT EXISTS `t_audit_sample_rate` (
+    `id`                  BIGINT   NOT NULL COMMENT '固定 1（单行状态表）',
+    `sample_rate_percent` INT      NOT NULL DEFAULT 5,
+    `tightened_at`        DATETIME NULL COMMENT '最近一次自动收紧时间（UTC）',
+    `updated_at`          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '审核 SLA 抽样强度状态（E28，单行）';
+INSERT INTO `t_audit_sample_rate` (`id`, `sample_rate_percent`) VALUES (1, 5);
+
+-- 定时任务选主表（E28 补建：23-r58-sched-leader.sql 遗漏了本库，
+-- 导致 E15 的资质扫描任务一直处于「选主静默失效」状态 —— 单实例无感，多实例会重复扫）
+CREATE TABLE IF NOT EXISTS `t_sched_leader` (
+    `name`       VARCHAR(64)  NOT NULL COMMENT '任务名（全局唯一）',
+    `owner`      VARCHAR(64)  NOT NULL COMMENT '持锁实例标识（hostname#pid）',
+    `expire_at`  DATETIME     NOT NULL COMMENT '持锁到期时间（UTC）',
+    `updated_at` DATETIME     NOT NULL COMMENT '最近一次抢占或续约时间（UTC）',
+    PRIMARY KEY (`name`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '定时任务选主：多实例部署时保证同一任务只跑一份';
 
 -- ============================================================================
 -- 说明：以下表结构在后续阶段（P1~P3）加入，此处预留，避免 DBA 反复评审

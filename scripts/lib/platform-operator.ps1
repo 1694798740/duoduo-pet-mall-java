@@ -58,3 +58,24 @@ function New-PlatformOperatorSession {
     # 而报错是「该账号不是卖家」—— 排查方向会完全跑偏到权限逻辑上去。
     return @{ session = $sess; phone = $phone; roleSet = $roleSet; role = $lastRole }
 }
+
+function Remove-PlatformOperatorPrivilege {
+    <#
+    .SYNOPSIS
+      收回本次运行临时提权的运营角色（收尾用）。
+    .DESCRIPTION
+      运营角色只是冒烟为了拿到后台入口而临时提的。不收尾的话，每跑一轮就在库里留一个
+      永久可进后台的账号 —— 这类残留不会让任何断言变红，只会让攻击面随运行次数增长
+      （E26 清理存量时就见过一批）。所以新套件一律在结尾调用本函数。
+      刻意「降级」而不是「删号」：账号是本次随机手机号注册的，随时可再提权；
+      而删号会牵连它参与过的业务数据，副作用大于收益。
+    .OUTPUTS
+      收回后的角色字符串（应为 USER），供调用方断言。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Phone)
+    & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
+        -e "UPDATE t_user SET role='USER' WHERE phone='$Phone';" 2>&1 | Out-Null
+    $row = & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
+        -e "SELECT role FROM t_user WHERE phone='$Phone';" 2>$null
+    return ("$row").Trim()
+}

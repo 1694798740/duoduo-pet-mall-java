@@ -34,12 +34,15 @@ public class UserController {
     private final PetProfileService petProfileService;
     private final com.duoduo.user.service.MerchantStaffService staffService;
     private final com.duoduo.user.service.MerchantOnboardingService onboardingService;
+    private final com.duoduo.user.service.MerchantViolationService violationService;
 
     public UserController(AuthService authService, PetProfileService petProfileService,
                           com.duoduo.user.service.MerchantStaffService staffService,
-                          com.duoduo.user.service.MerchantOnboardingService onboardingService) {
+                          com.duoduo.user.service.MerchantOnboardingService onboardingService,
+                          com.duoduo.user.service.MerchantViolationService violationService) {
         this.staffService = staffService;
         this.onboardingService = onboardingService;
+        this.violationService = violationService;
         this.authService = authService;
         this.petProfileService = petProfileService;
     }
@@ -111,6 +114,36 @@ public class UserController {
     public ApiResponse<com.duoduo.user.dto.MerchantDtos.MerchantLicenseInfo> merchantLicense(
             @org.springframework.web.bind.annotation.RequestParam("ownerUserId") Long ownerUserId) {
         return ApiResponse.ok(onboardingService.licenseInfoOf(ownerUserId));
+    }
+
+    /**
+     * E28 · 商家风险画像（内部端点，商品域判「自动放行还是转人工」用）。
+     *
+     * <p>与 {@code /internal/merchant-license} 是两个问题：那个判「能不能卖」，
+     * 这个判「值不值得重点看」。合成一个端点会让「只想问能不能卖」的调用方
+     * 也拿到违规计数，将来给这份视图加字段时两边被迫一起改。
+     *
+     * <p>无入驻记录 → {@code null}（调用方按「无风险标记」处理）。
+     */
+    @GetMapping("/internal/merchant-risk")
+    public ApiResponse<com.duoduo.user.dto.MerchantDtos.MerchantRiskInfo> merchantRisk(
+            @org.springframework.web.bind.annotation.RequestParam("ownerUserId") Long ownerUserId) {
+        return ApiResponse.ok(onboardingService.riskInfoOf(ownerUserId));
+    }
+
+    /**
+     * E28 · 上报一次商家违规（内部端点，商品域在判违规后调用）。
+     *
+     * <p>为什么是这个方向（商品域 → 用户域）而不是反过来：违规判定发生在**商品侧**
+     * （人工驳回、抽查判违规），用户域无从得知。做成「商品域判完主动上报」，
+     * 比用户域定时扫商品库少一次全量扫描，也不会因为扫描周期让停业迟到。
+     */
+    @PostMapping("/internal/merchant-violation")
+    public ApiResponse<com.duoduo.user.dto.MerchantDtos.MerchantViolationInfo> merchantViolation(
+            @org.springframework.web.bind.annotation.RequestParam("ownerUserId") Long ownerUserId,
+            @org.springframework.web.bind.annotation.RequestParam(value = "reason", required = false)
+            String reason) {
+        return ApiResponse.ok(violationService.markViolation(ownerUserId, reason));
     }
 
     @GetMapping("/internal/briefs")

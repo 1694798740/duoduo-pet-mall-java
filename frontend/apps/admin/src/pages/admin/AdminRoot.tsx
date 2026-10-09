@@ -20,6 +20,7 @@ import { AdminLoginPage } from './AdminLogin';
 import { AdminDashboardPage } from './Dashboard';
 import { AdminAuditsPage } from './Audits';
 import { AdminProductAuditsPage } from './ProductAudits';
+import { AdminAuditSlaPage } from './AuditSla';
 import { AdminMerchantsPage } from './Merchants';
 import { AdminMerchantStaffPage } from './MerchantStaff';
 import { AdminCategoriesPage } from './Categories';
@@ -91,6 +92,7 @@ export const AdminRoot: React.FC = () => (
       <Route path="/admin/merchant-staff" element={<AdminMerchantStaffPage />} />
       <Route path="/admin/audits" element={<AdminAuditsPage />} />
       <Route path="/admin/product-audits" element={<AdminProductAuditsPage />} />
+      <Route path="/admin/audit-sla" element={<AdminAuditSlaPage />} />
       <Route path="/admin/categories" element={<AdminCategoriesPage />} />
       <Route path="/admin/brands" element={<AdminBrandsPage />} />
       <Route path="/admin/orders" element={<AdminOrdersPage />} />

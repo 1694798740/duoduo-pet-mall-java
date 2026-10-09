@@ -9,6 +9,7 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.ApplicationSummary;
 import com.duoduo.user.dto.MerchantDtos.ApplicationView;
 import com.duoduo.user.dto.MerchantDtos.MerchantLicenseInfo;
+import com.duoduo.user.dto.MerchantDtos.MerchantRiskInfo;
 import com.duoduo.user.dto.MerchantDtos.RejectReason;
 import com.duoduo.user.dto.MerchantDtos.SaveDraftRequest;
 import com.duoduo.user.entity.MerchantEntity;
@@ -22,6 +23,7 @@ import com.duoduo.user.mapper.UserMapper;
 import com.duoduo.user.support.LicenseExpiry;
 import com.duoduo.user.support.MerchantMaterialStorage;
 import com.duoduo.user.support.MerchantMaterialType;
+import com.duoduo.user.support.MerchantRiskRules;
 import com.duoduo.user.support.MerchantStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,6 +63,20 @@ public class MerchantOnboardingService {
     private static final int STORE_NAME_MIN = 2;
     private static final int STORE_NAME_MAX = 30;
 
+    /**
+     * 「重新开业观察期」长度（天）—— E28 的必抽规则之一：
+     * 恢复营业后这段时间内发布的商品 100% 进抽查队列。
+     *
+     * <p>窗口长度定义在这一处，跨服务只传「在不在窗口内」这个布尔值 ——
+     * 把时间戳传出去，两个服务就得各自维护同一个数字，改的时候必然漏一边。
+     */
+    public static final int RESUME_WINDOW_DAYS = 7;
+
+    /** E28 · 审核来源：系统按规则自动放行（没有人类审核人） */
+    public static final String AUDIT_SOURCE_AUTO = "AUTO";
+    /** E28 · 审核来源：运营人工判定 */
+    public static final String AUDIT_SOURCE_MANUAL = "MANUAL";
+
     private final MerchantMapper merchantMapper;
     private final com.duoduo.user.mapper.MerchantMemberMapper memberMapper;
     private final MerchantMaterialMapper materialMapper;
@@ -69,6 +85,7 @@ public class MerchantOnboardingService {
     private final ObjectMapper objectMapper;
     private final MerchantMaterialStorage materialStorage;
     private final AuditLogMapper auditLogMapper;
+    private final MerchantViolationService violationService;
 
     public MerchantOnboardingService(MerchantMapper merchantMapper,
                                      com.duoduo.user.mapper.MerchantMemberMapper memberMapper,
@@ -77,7 +94,8 @@ public class MerchantOnboardingService {
                                      SnowflakeIdGenerator idGenerator,
                                      ObjectMapper objectMapper,
                                      MerchantMaterialStorage materialStorage,
-                                     AuditLogMapper auditLogMapper) {
+                                     AuditLogMapper auditLogMapper,
+                                     MerchantViolationService violationService) {
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
         this.materialMapper = materialMapper;
@@ -86,6 +104,7 @@ public class MerchantOnboardingService {
         this.objectMapper = objectMapper;
         this.materialStorage = materialStorage;
         this.auditLogMapper = auditLogMapper;
+        this.violationService = violationService;
     }
 
     // ---------------- 商家侧 ----------------
@@ -198,8 +217,45 @@ public class MerchantOnboardingService {
         // 新周期：提醒从零开始计 + 已进入续期审核、停业原因不再展示。
         // 这两列的"清空"必须走 clearNullableState —— updateById 不会写 null（见方法注释）
         clearNullableState(entity, now());
-        log.info("资质续期提交 merchantId={} userId={} licenseExpireAt={}", entity.getId(), userId, earliest);
+
+        // E28：续期的自动放行条件比首次入驻**更窄** —— 必须「没有任何新东西可审」。
+        // 换材料就是「换一份新证再核一遍」的本意（E15 立下的口径），必须人工看；
+        // 只改有效期同样算新信息：有效期是**声明**，审核要核的正是「声明与上传的证是否一致」，
+        // 若改个日期就能自动通过，商家把一张过期执照的日期填到三年后即可自动复业 —— 那是绕过。
+        boolean newEvidence = request != null
+                && ((request.materials() != null && !request.materials().isEmpty())
+                || (request.materialExpiry() != null && !request.materialExpiry().isEmpty()));
+        boolean seenByHuman = newEvidence || hasEnforcementRecord(entity, status);
+        if (seenByHuman) {
+            log.info("资质续期提交 merchantId={} userId={} licenseExpireAt={} → 待审"
+                            + "（提交了新证据={} 历史处置记录={}）",
+                    entity.getId(), userId, earliest, newEvidence,
+                    hasEnforcementRecord(entity, status));
+        } else {
+            applyApproval(entity, null, AUDIT_SOURCE_AUTO, now());
+            log.info("资质续期提交 merchantId={} userId={} licenseExpireAt={} → 自动通过（未提交任何新证据）",
+                    entity.getId(), userId, earliest);
+        }
         return toView(entity);
+    }
+
+    /**
+     * 这家店是否**已经有历史处置记录**（在营期被判过违规，或入驻申请曾被驳回）。
+     *
+     * <p>有记录就不许自动放行 —— 这条与商品侧「曾被判违规的商品改完仍需人看」是同一条纪律，
+     * 理由是同一件事：一次人工结论被「重新提交」冲掉，等于没有结论。
+     *
+     * <p>特别是「违规停业」的店：它和「资质过期停业」走的是同一个续期入口，
+     * 但资质可能本来就长期有效。若不给这道门，一家因违规被关掉的店只要点一次续期
+     * （甚至请求体为空）就会自动复业 —— 平台自己作出的停业处罚被绕过去了。
+     *
+     * <p>{@code violationCount} 只增不减、唯一清零点是复业，所以它是可靠的「有前科」指标。
+     */
+    private boolean hasEnforcementRecord(MerchantEntity entity, MerchantStatus fromStatus) {
+        if (entity.getViolationCount() != null && entity.getViolationCount() > 0) {
+            return true;
+        }
+        return fromStatus == MerchantStatus.REJECTED;
     }
 
     /**
@@ -236,17 +292,47 @@ public class MerchantOnboardingService {
         if (entity.getName() == null || entity.getName().startsWith("待填写-")) {
             throw BizException.businessRule("请先填写店铺名称");
         }
+        // E15：提交时把店铺级到期日定格一次 —— 运营审的就是这一刻的材料与有效期
+        LocalDateTime earliest = refreshLicenseExpireAt(entity.getId());
+        entity.setLicenseExpireAt(earliest);
         entity.setStatus(MerchantStatus.SUBMITTED.name());
         entity.setAppliedAt(now());
-        // E15：提交时把店铺级到期日定格一次 —— 运营审的就是这一刻的材料与有效期
-        entity.setLicenseExpireAt(refreshLicenseExpireAt(entity.getId()));
         entity.setUpdatedAt(now());
         merchantMapper.updateById(entity);
         // 重提时旧的驳回原因已过时（历史在审核日志）—— 这一列是"NULL 有语义"的，
         // 必须走 clearNullableState 才真的写得进去，理由见该方法的注释
         clearNullableState(entity, now());
-        log.info("入驻申请提交 merchantId={} userId={} status=SUBMITTED", entity.getId(), userId);
+
+        // E28：先跑一遍风险规则。命中任何一条转人工，全不命中则**直接通过并开店** ——
+        // 「人工审核不是上线的必经环节，而是抽样复核」（方案附录 D 的一句话口径）。
+        // ★ 注意这里不是「跳过审核」，而是「审核延后成抽样」：
+        //   自动放行的这次会被当天的抽查任务覆盖到（见 MerchantAuditSampleService）。
+        // ★ REJECTED 重提必须人工再看：驳回是运营作出的结论，「随便改一处再重提」
+        //   不能把它冲掉（与商品侧的同类修复同一条纪律）。
+        List<MerchantRiskRules.Hit> risks = risksOf(entity, earliest);
+        boolean seenByHuman = hasEnforcementRecord(entity, status);
+        if (risks.isEmpty() && !seenByHuman) {
+            applyApproval(entity, null, AUDIT_SOURCE_AUTO, now());
+            log.info("入驻申请提交 merchantId={} userId={} → 自动放行并开店（未命中风险规则）",
+                    entity.getId(), userId);
+        } else {
+            log.info("入驻申请提交 merchantId={} userId={} status=SUBMITTED（命中风险：{}，历史处置记录={}）",
+                    entity.getId(), userId, risks.stream().map(MerchantRiskRules.Hit::code).toList(),
+                    seenByHuman);
+        }
         return toView(entity);
+    }
+
+    /**
+     * 跑一遍入驻侧的风险规则（E28）。
+     *
+     * <p>材料剩余天数按**最早到期的那张证**算：一张营业执照还有三年、
+     * 但行业许可证 20 天后到期 —— 这家店 20 天后就要被停业，当然该先看一眼。
+     * 取「最紧迫的那张」而不是「有没有临期的」，是因为后者判不出紧迫程度。
+     */
+    private List<MerchantRiskRules.Hit> risksOf(MerchantEntity entity, LocalDateTime earliestExpire) {
+        Long remaining = earliestExpire == null ? null : LicenseExpiry.remainingDays(earliestExpire, now());
+        return MerchantRiskRules.risks(new MerchantRiskRules.Context(entity.getName(), remaining));
     }
 
     // ---------------- 运营侧（E11 审核台的后端） ----------------
@@ -314,27 +400,62 @@ public class MerchantOnboardingService {
         if (status != MerchantStatus.REVIEWING) {
             throw BizException.businessRule("只有审核中的申请可以通过（当前 " + status + "）");
         }
+        applyApproval(entity, operatorId, AUDIT_SOURCE_MANUAL, now());
+        log.info("入驻通过并开店 merchantId={} owner={} operator={}", merchantId, entity.getOwnerUserId(), operatorId);
+        return toView(entity);
+    }
+
+    /**
+     * 通过并开店 —— 人工 {@code approve} 与 E28 的**自动放行**共用这一段。
+     *
+     * <h2>为什么必须共用，而不是让自动放行自己写一套</h2>
+     * 「开店」不是一个状态位，而是三件事一起成立：状态变 APPROVED、member 写 OWNER、
+     * 用户角色升 SELLER。自动放行若绕过其中任何一件，就会出现
+     * 「审核通过了但商家端进不去」（角色没升）或「订单归属查不到店铺」（member 没写）——
+     * 这类问题在接口层看起来是 200，只有商家真去用才暴露。
+     *
+     * @param operatorId  审核人；传 {@code null} 表示系统自动放行（没有人类审核人）
+     * @param auditSource {@link #AUDIT_SOURCE_AUTO} / {@link #AUDIT_SOURCE_MANUAL}
+     */
+    @Transactional
+    public void applyApproval(MerchantEntity entity, Long operatorId, String auditSource, LocalDateTime now) {
+        boolean wasSuspended = entity.getSuspendedReason() != null;
         entity.setStatus(MerchantStatus.APPROVED.name());
-        entity.setReviewedAt(now());
+        entity.setReviewedAt(now);
         entity.setReviewedBy(operatorId);
-        entity.setUpdatedAt(now());
+        entity.setAuditSource(auditSource);
+        entity.setUpdatedAt(now);
         merchantMapper.updateById(entity);
+        if (operatorId == null) {
+            // 系统自动放行没有人类审核人。updateById 的更新策略是 NOT_NULL，**不写 null** ——
+            // 不清的话，续期自动通过后 reviewed_by 会留着上一次人工审核的那个人，
+            // 事后复盘「这次是谁放的」会得到一个错误答案（而且没有任何报错提示这件事）。
+            merchantMapper.update(null, new LambdaUpdateWrapper<MerchantEntity>()
+                    .eq(MerchantEntity::getId, entity.getId())
+                    .set(MerchantEntity::getReviewedBy, null));
+        }
         // E15：审核通过 = 新的有效期成立，提醒档位清空，下个周期从零开始计。
         // 首次入驻时清空本就是空操作；续期通过时这一步决定「会不会再提醒一次」。
         // 停业原因同时清掉 —— 店铺已经恢复营业，再挂着停业理由只会误导运营与商家。
         clearNullableState(entity, now());
 
+        // E28：从停业恢复 → 违规计数清零（否则「再犯一次即停业」，
+        // 那不是我们的规则 —— 3 次是累计阈值，不是「停过一次就永远一次即停」）。
+        if (wasSuspended) {
+            violationService.resetViolations(entity.getId());
+        }
+
         // 开店动作（幂等：重复 approve 时 member 已存在、role 已是 SELLER，均为无副作用）
-        if (findMember(merchantId, entity.getOwnerUserId()) == null) {
+        if (findMember(entity.getId(), entity.getOwnerUserId()) == null) {
             com.duoduo.user.entity.MerchantMemberEntity member =
                     new com.duoduo.user.entity.MerchantMemberEntity();
             member.setId(idGenerator.nextId());
-            member.setMerchantId(merchantId);
+            member.setMerchantId(entity.getId());
             member.setUserId(entity.getOwnerUserId());
             member.setRole("OWNER");
             member.setStatus("ACTIVE");
-            member.setCreatedAt(now());
-            member.setUpdatedAt(now());
+            member.setCreatedAt(now);
+            member.setUpdatedAt(now);
             try {
                 memberMapper.insert(member);
             } catch (DuplicateKeyException ex) {
@@ -344,11 +465,9 @@ public class MerchantOnboardingService {
         UserEntity owner = userMapper.selectById(entity.getOwnerUserId());
         if (owner != null && !"SELLER".equals(owner.getRole())) {
             owner.setRole("SELLER");
-            owner.setUpdatedAt(now());
+            owner.setUpdatedAt(now);
             userMapper.updateById(owner);
         }
-        log.info("入驻通过并开店 merchantId={} owner={} operator={}", merchantId, entity.getOwnerUserId(), operatorId);
-        return toView(entity);
     }
 
     /** 驳回：REVIEWING → REJECTED（结构化原因必填；已驳回时允许更新原因 —— 结论一致） */
@@ -481,6 +600,46 @@ public class MerchantOnboardingService {
             throw BizException.notFound("入驻申请");
         }
         return entity;
+    }
+
+    /**
+     * E28 · 商家风险画像（内部端点，商品域判「自动放行还是转人工」时用）。
+     *
+     * <p>无入驻记录（平台自营 / 从没申请过）返回 {@code null}，调用方按「无风险标记」处理 ——
+     * 与 {@link #licenseInfoOf} 同一口径：查不到不等于有问题。
+     */
+    public MerchantRiskInfo riskInfoOf(Long ownerUserId) {
+        if (ownerUserId == null) {
+            return null;
+        }
+        MerchantEntity entity = findByOwner(ownerUserId);
+        if (entity == null) {
+            return null;
+        }
+        return new MerchantRiskInfo(
+                String.valueOf(entity.getId()),
+                entity.getViolationCount() == null ? 0 : entity.getViolationCount(),
+                MerchantStatus.SUSPENDED.name().equals(entity.getStatus()),
+                MerchantStatus.REJECTED.name().equals(entity.getStatus()),
+                inResumeWindow(entity));
+    }
+
+    /**
+     * 是否处于「重新开业观察期」。
+     *
+     * <p>判据是「当前 APPROVED 且最近一次审核在 {@value #RESUME_WINDOW_DAYS} 天内」——
+     * 这是**可观测近似**：系统没有单独记录「从 SUSPENDED 恢复」这个事件，
+     * {@code reviewed_at} 同时被「首次审核通过」与「停业后恢复」写入。
+     * 于是首次入驻通过的商家也会被算进观察期。这是刻意的取舍：
+     * 它只会让**更多**商品进抽查队列（宁可多抽），不会放过该抽的；
+     * 而为区分这两种情况单独加一张事件表，收益远小于它带来的写路径复杂度。
+     */
+    private boolean inResumeWindow(MerchantEntity entity) {
+        if (!MerchantStatus.APPROVED.name().equals(entity.getStatus())) {
+            return false;
+        }
+        LocalDateTime reviewedAt = entity.getReviewedAt();
+        return reviewedAt != null && !reviewedAt.isBefore(now().minusDays(RESUME_WINDOW_DAYS));
     }
 
     private MerchantEntity requireMerchant(Long merchantId) {

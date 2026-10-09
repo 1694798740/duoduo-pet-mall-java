@@ -18,6 +18,7 @@ import com.duoduo.user.support.MerchantMaterialStorage;
 import com.duoduo.user.support.MerchantStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 
@@ -62,7 +63,8 @@ class MerchantOnboardingStateTest {
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, objectMapper, materialStorage, auditLogMapper);
+                    userMapper, idGenerator, objectMapper, materialStorage, auditLogMapper,
+                    mock(MerchantViolationService.class));
 
     /** setUp 与各用例共享的 owner 实例（service 经 userMapper.selectById 读到的就是它） */
     private UserEntity ownerUser;
@@ -79,14 +81,50 @@ class MerchantOnboardingStateTest {
     // ---------------- 提交 ----------------
 
     @Test
-    void 提交_草稿材料齐全且实名_进入SUBMITTED() {
+    @DisplayName("提交_草稿材料齐全且实名且无风险 → 自动放行并开店（E28：人工审核不再是必经环节）")
+    void 提交_草稿材料齐全且实名_自动放行并开店() {
         mockMerchant(MerchantStatus.DRAFT, "豆豆宠物用品店");
         mockMaterials(allSix());
 
         ApplicationView view = service.submit(USER_ID);
 
-        assertThat(view.status()).isEqualTo("SUBMITTED");
+        // 与商品侧同一口径：未命中风险规则就直接开张，事后由抽查复核兜底。
+        // 这条断言是 E28 的整个前提 —— 若它悄悄变回 SUBMITTED，就说明「免除事前人工审核」失效了。
+        assertThat(view.status()).isEqualTo("APPROVED");
         assertThat(view.rejectReasons()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("★ 提交_店名含误导词 → 停在 SUBMITTED 等人工（不自动放行）")
+    void 提交_店名误导_转人工() {
+        mockMerchant(MerchantStatus.DRAFT, "多多官方旗舰店");
+        mockMaterials(allSix());
+
+        ApplicationView view = service.submit(USER_ID);
+
+        assertThat(view.status()).isEqualTo("SUBMITTED");
+    }
+
+    @Test
+    @DisplayName("★ 提交_曾被驳回的申请重提 → 必须人工再看（否则「改一处再重提」就是绕过驳回的捷径）")
+    void 提交_曾驳回重提_转人工() {
+        mockMerchant(MerchantStatus.REJECTED, "豆豆宠物用品店");
+        mockMaterials(allSix());
+
+        ApplicationView view = service.submit(USER_ID);
+
+        // 驳回是运营作出的结论；若重提能自动通过，那个结论就被一次重新提交冲掉了
+        assertThat(view.status()).isEqualTo("SUBMITTED");
+    }
+
+    @Test
+    @DisplayName("★ 提交_有违规处置记录的店 → 同样转人工（店名干净、状态是草稿也拦）")
+    void 提交_有违规记录_转人工() {
+        MerchantEntity entity = mockMerchant(MerchantStatus.DRAFT, "豆豆宠物用品店");
+        entity.setViolationCount(2);   // 单独用「有前科」这一个条件命中，避免与 REJECTED 混淆
+        mockMaterials(allSix());
+
+        assertThat(service.submit(USER_ID).status()).isEqualTo("SUBMITTED");
     }
 
     @Test

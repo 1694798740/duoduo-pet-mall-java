@@ -46,6 +46,15 @@ public class SpuEntity {
     private LocalDateTime auditAt;
     /** 最近一次审核人（运营 / 管理员 user id），留痕 */
     private Long auditBy;
+    /**
+     * 审核来源（E28）：AUTO(按规则自动放行) / MANUAL(人工判定) / SELF(自营免审)；
+     * NULL = E28 之前的历史数据。
+     *
+     * <p>为什么不从 {@link #auditBy} 反推：auditBy 为 null 有三种含义
+     * （自营从未审过 / 系统自动放行 / 历史数据），而三者之后要做的事完全不同 ——
+     * 自营不用管、自动放行要纳入抽查、历史数据要补标。
+     */
+    private String auditSource;
     private Integer salesCount;
     private BigDecimal rating;
     private Integer ratingCount;
@@ -174,6 +183,14 @@ public class SpuEntity {
 
     public void setAuditBy(Long auditBy) {
         this.auditBy = auditBy;
+    }
+
+    public String getAuditSource() {
+        return auditSource;
+    }
+
+    public void setAuditSource(String auditSource) {
+        this.auditSource = auditSource;
     }
 
     public Integer getSalesCount() {

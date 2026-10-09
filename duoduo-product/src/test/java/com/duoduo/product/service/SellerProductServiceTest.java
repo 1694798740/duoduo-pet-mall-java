@@ -7,8 +7,10 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
+import com.duoduo.product.client.MerchantRiskClient;
 import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
+import com.duoduo.product.client.dto.MerchantRiskInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
@@ -40,6 +42,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -69,24 +72,36 @@ class SellerProductServiceTest {
     private final SkuMapper skuMapper = mock(SkuMapper.class);
     private final MembershipClient membershipClient = mock(MembershipClient.class);
     private final MerchantLicenseClient merchantLicenseClient = mock(MerchantLicenseClient.class);
+    private final MerchantRiskClient merchantRiskClient = mock(MerchantRiskClient.class);
     private final BannedWordGuard bannedWordGuard = mock(BannedWordGuard.class);
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
-            spuMapper, skuMapper, membershipClient, merchantLicenseClient,
+            spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
             new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper);
 
     /**
-     * 默认让「店铺资质」查得到且可售（E15）。
+     * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
      *
      * <p>不这么做的话，E14 那批上下架用例会因为多了一道门禁而全红 ——
      * 而它们想验的是审核维度，不是资质维度。默认放行 + 单独的资质用例，
      * 比让每条用例都自己 stub 一次更不容易漏。
+     *
+     * <p>风险画像同理：不 stub 就会走 NPE 兜底分支（按无标记处理，行为一样但会刷 WARN 日志），
+     * 而且「无标记」是绝大多数商家的常态 —— 把它设成默认值，需要污点的用例显式覆盖。
      */
     @BeforeEach
     void stubLicenseAsSellable() {
         when(merchantLicenseClient.of(any())).thenReturn(ApiResponse.ok(
                 new MerchantLicenseInfo("710000000000000101", "APPROVED", "NONE", null, null)));
+        when(merchantRiskClient.of(any())).thenReturn(ApiResponse.ok(
+                new MerchantRiskInfo("710000000000000101", 0, false, false, false)));
+    }
+
+    /** 让该商家带上「此前有驳回 / 停业记录」的污点（E28 的风险规则之一） */
+    private void stubFlaggedSeller() {
+        when(merchantRiskClient.of(any())).thenReturn(ApiResponse.ok(
+                new MerchantRiskInfo("710000000000000101", 1, false, false, false)));
     }
 
     @AfterEach
@@ -260,10 +275,10 @@ class SellerProductServiceTest {
         verify(spuMapper, never()).updateById(any(SpuEntity.class));
     }
 
-    // ---------------- E14 · 提交商品 ----------------
+    // ---------------- E14 + E28 · 提交商品：自动放行判定 ----------------
 
     @Test
-    void 第三方商家提交商品_落待审且归属店铺主体() {
+    void 第三方商家提交干净商品_自动放行且归属店铺主体() {
         UserContext.set(seller(101L));
         stubCreateDeps();
 
@@ -274,19 +289,90 @@ class SellerProductServiceTest {
         SpuEntity saved = captor.getValue();
         assertThat(saved.getSupplyType()).isEqualTo("merchant");
         assertThat(saved.getSellerId()).isEqualTo(101L);
-        assertThat(saved.getAuditStatus()).isEqualTo("PENDING");
+        // E28：人工审核不再是必经环节 —— 未命中任何风险规则的商品提交即放行，
+        // 来源标 AUTO（这是事后抽查能回头找到它的唯一依据）。
+        assertThat(saved.getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(saved.getAuditSource()).isEqualTo("AUTO");
+        assertThat(saved.getAuditBy()).isNull();
+        // ★ 抽查的候选集按「audit_at 落在当天」筛（AuditSampleService.sweepOnce）——
+        //   自动放行不写这个时间，整条抽查链路就永远抽不到任何东西，而且一声不响
+        assertThat(saved.getAuditAt()).isNotNull();
         // 交易维度先按「卖家希望它在售」落，可见性由审核维度把守 ——
         // 这样审核通过的那一刻商品自动出现，卖家不必再点一次上架
         assertThat(saved.getStatus()).isEqualTo("ON_SALE");
         assertThat(saved.getMinPrice()).isEqualTo(1990L);
         assertThat(saved.getMaxPrice()).isEqualTo(3990L);
         assertThat(saved.getRating()).isEqualByComparingTo("0.00");
-        assertThat(view.auditStatus()).isEqualTo("PENDING");
-        assertThat(view.auditLabel()).isEqualTo("待审核");
+        assertThat(view.auditStatus()).isEqualTo("APPROVED");
+        assertThat(view.auditLabel()).isEqualTo("已通过");
         assertThat(view.skuCount()).isEqualTo(2);
         assertThat(view.totalStock()).isEqualTo(15);
         // 两个规格都要落库
         verify(skuMapper, times(2)).insert(any(SkuEntity.class));
+    }
+
+    @Test
+    void 第三方商家提交命中风险的商品_转人工待审() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+
+        // 详情里放了微信号 —— 「转向站外交易」是最典型的一类需要人看的商品
+        SellerProductCreateRequest risky = new SellerProductCreateRequest("新商品", "副标题", 500L, null,
+                "https://img/main.png", null, "加微信 duoduo888 咨询",
+                List.of(new SellerSkuInput("2kg", 1990L, 10, null)));
+        SellerProductView view = service.create(risky);
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(spuMapper).insert(captor.capture());
+        SpuEntity saved = captor.getValue();
+        assertThat(saved.getAuditStatus()).isEqualTo("PENDING");
+        // 「待审」必须配「来源为 null」：留着 AUTO 会让抽查任务把它当成自动放行的那一批再抽一次，
+        // 而它其实正排在人工队列里没上架
+        assertThat(saved.getAuditSource()).isNull();
+        // 转人工 = 这段内容还没有结论，audit_at 必须为空；留着旧值会被当成「今天刚自动放行」抽进队列
+        assertThat(saved.getAuditAt()).isNull();
+        assertThat(view.auditStatus()).isEqualTo("PENDING");
+        assertThat(view.auditLabel()).isEqualTo("待审核");
+    }
+
+    @Test
+    void 前置许可类目_转人工核验资质() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+        when(catalogLookup.categoryNames(any())).thenReturn(Map.of(500L, "宠物药品"));
+
+        service.create(createRequest("驱虫药"));
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(spuMapper).insert(captor.capture());
+        assertThat(captor.getValue().getAuditStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void 有污点的商家提交干净商品_也转人工() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+        stubFlaggedSeller();          // 该店此前有驳回 / 停业记录
+
+        service.create(createRequest("新商品"));
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(spuMapper).insert(captor.capture());
+        assertThat(captor.getValue().getAuditStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void 类目名或商家画像查不到_不因此转人工() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+        // 用户域查不通（抛异常）：按无标记处理，否则一次跨域超时会把全平台商品推进待审队列
+        when(merchantRiskClient.of(any())).thenThrow(new IllegalStateException("用户域超时"));
+
+        service.create(createRequest("新商品"));
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(spuMapper).insert(captor.capture());
+        assertThat(captor.getValue().getAuditStatus()).isEqualTo("APPROVED");
     }
 
     @Test
@@ -302,6 +388,9 @@ class SellerProductServiceTest {
         assertThat(saved.getSupplyType()).isEqualTo("self");
         assertThat(saved.getSellerId()).isEqualTo(0L);
         assertThat(saved.getAuditStatus()).isEqualTo("APPROVED");
+        // 自营的放行来源是 SELF 而不是 AUTO：抽查只抽第三方，
+        // 混进 AUTO 会让「平台自己的商品被抽查」这种无意义任务出现在运营待办里
+        assertThat(saved.getAuditSource()).isEqualTo("SELF");
     }
 
     @Test
@@ -363,23 +452,44 @@ class SellerProductServiceTest {
         verify(bannedWordGuard).rejectIfHit(eq("商品详情"), eq("商品详情"));
     }
 
-    // ---------------- E14 · 内容变更再审 ----------------
+    // ---------------- E14 + E28 · 内容变更再审 ----------------
 
     @Test
-    void 第三方商品内容变更_回到待审() {
+    void 第三方商品内容变更_重新判定_干净则自动放行() {
         UserContext.set(seller(101L));
         SpuEntity spu = spu(9001L, 101L, "原标题", "https://img/old.png");
         when(spuMapper.selectById(9001L)).thenReturn(spu);
         when(skuMapper.selectList(any())).thenReturn(List.of());
 
-        SellerProductView view = service.update(9001L, titleUpdate("违规新标题"));
+        SellerProductView view = service.update(9001L, titleUpdate("改好的新标题"));
 
-        // 审核结论是针对「当时那段内容」作出的：内容变了结论就失效，
-        // 否则「先过审、再改成违规内容」就绕过了审核
-        assertThat(spu.getAuditStatus()).isEqualTo("PENDING");
-        assertThat(view.auditStatus()).isEqualTo("PENDING");
-        assertThat(view.auditLabel()).isEqualTo("待审核");
+        // E28：内容变更后**重跑判定**，干净则继续在售 —— 若每次改文案都要人工过一遍，
+        // 「免除事前人工审核」就只剩一句口号。而「先过审、再改成违规内容」依然被挡住：
+        // 改成违规内容会命中风险规则（见下一条用例）。
+        assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getAuditSource()).isEqualTo("AUTO");
+        assertThat(spu.getAuditAt()).isNotNull();     // 重新放行也要留下可被抽查的时间锚点
+        assertThat(view.auditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getStatus()).isEqualTo("ON_SALE");
         verify(spuMapper).updateById(spu);
+    }
+
+    @Test
+    void 第三方商品内容变更_命中风险则回到待审() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", "https://img/old.png");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L, titleUpdate("加微信 duoduo888 领券"));
+
+        // 「先过审、再改成违规内容」是最常见的绕过手法，这里守住它
+        assertThat(spu.getAuditStatus()).isEqualTo("PENDING");
+        assertThat(spu.getAuditSource()).isNull();
+        assertThat(spu.getAuditAt()).isNull();
+        // ★ audit_source 必须靠显式 set(col, null) 落库：updateById 的 NOT_NULL 策略不写 null 字段，
+        // 界面上就会出现「待审 + 来源=AUTO」这种自相矛盾的组合（接口照样 200）
+        verify(spuMapper).update(isNull(), any());
     }
 
     @Test
@@ -392,7 +502,10 @@ class SellerProductServiceTest {
 
         service.update(9001L, titleUpdate("改好了"));
 
+        // ★ 曾被判违规的商品，内容改得再干净也要人看 —— 否则「随便改一个字」
+        //   就能把 REJECTED 冲掉并重新自动上线，人工驳回与抽查判违规全部作废
         assertThat(spu.getAuditStatus()).isEqualTo("PENDING");
+        assertThat(spu.getAuditSource()).isNull();
         assertThat(spu.getAuditReason()).isNull();
         // 驳回时 status 被压成 OFF_SHELF，且 REJECTED 件不可能自己上架（门禁堵死）；
         // 若不在这里恢复，卖家改完并通过审核后仍是不可见状态，且没有任何入口能放它出来
@@ -410,6 +523,8 @@ class SellerProductServiceTest {
 
         // 平台免审：运营改自己商品的文案不该把自己卡进审核队列
         assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+        // 自营走的是另一条路：不重跑判定、也不重写来源，审核态与来源都保持原值
+        assertThat(spu.getAuditSource()).isNull();
         assertThat(spu.getStatus()).isEqualTo("ON_SALE");
     }
 
@@ -718,7 +833,9 @@ class SellerProductServiceTest {
         verify(spuMapper).insert(captor.capture());
         // 归属店主：店主停掉这个店员之后，商品仍留在店里、仍管得着
         assertThat(captor.getValue().getSellerId()).isEqualTo(101L);
-        assertThat(captor.getValue().getAuditStatus()).isEqualTo("PENDING");
+        // 店员的商品与店主自己发的走**同一套**自动放行判定（不因为「是员工发的」就收紧或放宽）
+        assertThat(captor.getValue().getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(captor.getValue().getAuditSource()).isEqualTo("AUTO");
     }
 
     @Test

@@ -17,11 +17,14 @@ import { Alert } from '@duoduo/shared/components/ui';
  */
 export { isAdminRole, isOperator } from '@duoduo/shared/lib/roles';
 
-/** 后台内部导航：把九个工作台挂到一条标签上 */
+/** 后台内部导航：把十个工作台挂到一条标签上 */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
   { to: '/admin/audits', label: '内容审核', end: false },
   { to: '/admin/product-audits', label: '商品审核', end: false },
+  // E28：抽查是「已经在卖了、我回头看」的复核，与上面两个「等着放行」的队列语义不同，
+  // 因此是独立入口而不是并进审核台（混在一起运营会看错待办的紧急程度）。
+  { to: '/admin/audit-sla', label: '抽查复核', end: false },
   { to: '/admin/share-reports', label: '举报处理', end: false },
   { to: '/admin/categories', label: '类目管理', end: false },
   { to: '/admin/brands', label: '品牌管理', end: false },

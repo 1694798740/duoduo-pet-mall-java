@@ -38,6 +38,8 @@ public class MerchantLicenseNotifier {
     private static final String CATEGORY_MERCHANT = "MERCHANT";
     private static final String BIZ_EXPIRING = "MERCHANT_LICENSE_EXPIRING";
     private static final String BIZ_EXPIRED = "MERCHANT_LICENSE_EXPIRED";
+    /** E28：因累计商品违规被停业 */
+    private static final String BIZ_VIOLATION_SUSPEND = "MERCHANT_VIOLATION_SUSPEND";
 
     private final SocialNoticeClient socialNoticeClient;
     private final ProductOffShelfClient productOffShelfClient;
@@ -84,6 +86,28 @@ public class MerchantLicenseNotifier {
                 + " 到期，店铺已自动暂停营业（已售出订单不受影响，可正常发货与售后）。"
                 + "请上传有效期内的新证件并提交资质续期，审核通过后即可恢复营业。";
         return push(merchant, BIZ_EXPIRED, title, content);
+    }
+
+    /**
+     * 发一条「因累计违规被停业」通知（E28）。
+     *
+     * <p>为什么不能复用 {@link #notifySuspended}：那条的文案是围绕「证件到期」写的
+     * （「您的营业执照已于 X 日到期」）。套到违规场景会变成
+     * 「您的『商品违规』已于 X 日到期」—— 商家看完只会更困惑。
+     * 通知文案必须说清**停业的真实原因**，否则商家第一反应是找客服而不是去核查商品。
+     *
+     * <p>文案里刻意带上最近一次违规原因：只说「您违规了」而不同时说清是哪一件、
+     * 什么原因，商家没有任何可执行动作，只能反复找客服。
+     *
+     * @return 是否送达（与资质停业通知同一口径：失败不重发，商家端有常驻提示兜底）
+     */
+    public boolean notifyViolationSuspended(MerchantEntity merchant, int violationCount, String reason) {
+        String title = "【已停业】店铺因累计 " + violationCount + " 件商品违规被暂停营业";
+        String content = "您的店铺累计有 " + violationCount + " 件商品在审核中被判违规，已暂停营业"
+                + "（已售出订单不受影响，可正常发货与售后）。"
+                + "最近一次原因：" + (reason == null ? "商品内容违规" : reason)
+                + "。请核对商品内容后联系平台处理。";
+        return push(merchant, BIZ_VIOLATION_SUSPEND, title, content);
     }
 
     /**

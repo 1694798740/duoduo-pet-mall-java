@@ -79,6 +79,9 @@ CREATE TABLE t_spu (
     audit_reason VARCHAR(200),
     audit_at     DATETIME,
     audit_by     BIGINT,
+    -- E28 · 审核来源：AUTO(按规则自动放行) / MANUAL(运营人工) / SELF(自营免审)。
+    --   NULL = E28 之前的历史数据，刻意不回填 —— 回填会凭空制造「这批人工审过」的假事实。
+    audit_source VARCHAR(10),
     sales_count  INT          NOT NULL DEFAULT 0,
     rating       DECIMAL(3,2) NOT NULL DEFAULT 5.00,
     rating_count INT          NOT NULL DEFAULT 0,
@@ -98,6 +101,41 @@ CREATE INDEX idx_spu_price ON t_spu (min_price);
 CREATE INDEX idx_spu_seller ON t_spu (seller_id, status);
 -- E14：审核台按「审核状态 + 交易状态」筛（增量脚本 27-e14-spu-audit.sql）
 CREATE INDEX idx_spu_audit ON t_spu (audit_status, status);
+
+-- ---------- E28 · 审核 SLA 事后抽查（增量脚本 29-e28-audit-sla.sql） ----------
+-- 为什么抽查任务是独立表而不是 t_spu 上再加几列：
+--   抽查按天批量产生（同一商品可被不同日期各抽中一次），加列只能记「最近一次」；
+--   且复核结论与审核结论是两件事（抽查判通过不改 audit_status）。
+-- ★ uk_biz_date 是幂等的来源：同一天同一对象最多一条，重跑/多实例/手动触发都不会重复建。
+CREATE TABLE t_audit_sample (
+    id          BIGINT       NOT NULL,
+    biz_type    VARCHAR(20)  NOT NULL COMMENT 'SPU(商品) / MERCHANT(入驻申请)',
+    biz_id      BIGINT       NOT NULL COMMENT '对象 id（t_spu.id / t_merchant.id）',
+    seller_id   BIGINT       NOT NULL DEFAULT 0 COMMENT '归属店铺主体 user id；0=平台自营',
+    sample_date DATE         NOT NULL COMMENT '抽样日期（UTC），与 biz_id 组成幂等键',
+    reason      VARCHAR(32)  NOT NULL COMMENT 'BASE/TINY_ALL/NEW_SELLER/RESUME/ESCALATED',
+    status      VARCHAR(20)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PASSED/REJECTED',
+    review_note VARCHAR(200),
+    reviewed_by BIGINT,
+    reviewed_at DATETIME,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_biz_date (biz_type, biz_id, sample_date),
+    KEY idx_status_created (status, created_at),
+    KEY idx_seller_date (seller_id, sample_date)
+);
+
+-- 抽样强度（单行，id 固定 1）：附录 D 第五节「连续 3 天违规率超标 → 比例翻倍」要有个
+-- 能被**自动改写**的落点；写进配置文件就变成「改配置再重启」，那就不叫自动收紧。
+CREATE TABLE t_audit_sample_rate (
+    id                  BIGINT   NOT NULL COMMENT '固定 1（单行状态表）',
+    sample_rate_percent INT      NOT NULL DEFAULT 5,
+    tightened_at        DATETIME,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+);
+INSERT INTO t_audit_sample_rate (id, sample_rate_percent) VALUES (1, 5);
 
 -- ---------- SKU：可售最小单元（库存与价格落在这一层） ----------
 CREATE TABLE t_sku (

@@ -11,8 +11,10 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
+import com.duoduo.product.client.MerchantRiskClient;
 import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
+import com.duoduo.product.client.dto.MerchantRiskInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
@@ -27,6 +29,7 @@ import com.duoduo.product.mapper.SpuMapper;
 import com.duoduo.product.support.BannedWordGuard;
 import com.duoduo.product.support.CatalogLookup;
 import com.duoduo.product.support.Csv;
+import com.duoduo.product.support.SpuRiskJudge;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,6 +100,27 @@ public class SellerProductService {
     private static final String SUPPLY_SELF = "self";
     private static final String SUPPLY_MERCHANT = "merchant";
 
+    // ---------------- E28 · 审核来源与自动放行 ----------------
+
+    /** 系统按规则自动放行（没有人类审核人） */
+    public static final String AUDIT_SOURCE_AUTO = "AUTO";
+    /** 运营人工判定 */
+    public static final String AUDIT_SOURCE_MANUAL = "MANUAL";
+    /** 自营免审：不需要审核这回事，与「自动放行」刻意分开记 */
+    public static final String AUDIT_SOURCE_SELF = "SELF";
+    /** 事后抽查判定（系统） */
+    public static final String AUDIT_SOURCE_SAMPLE = "SAMPLE";
+
+    /**
+     * 价格基准的取样上限。
+     *
+     * <p>算「同类均价」时只取最近 {@value} 件在售商品，而不是全量 AVG：
+     * 这条规则是**加分项**（多看一眼），不是判据。为它做一次全表聚合
+     * 会让商品提交这条高频写路径依赖商品表的规模 ——
+     * 卖掉第一万件商品之后，提交一次商品就要扫全表，代价与收益完全不成比例。
+     */
+    private static final int PRICE_BENCHMARK_SAMPLE = 200;
+
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
     private static final int TITLE_MAX = 60;
@@ -113,6 +137,7 @@ public class SellerProductService {
     private final SkuMapper skuMapper;
     private final MembershipClient membershipClient;
     private final MerchantLicenseClient merchantLicenseClient;
+    private final MerchantRiskClient merchantRiskClient;
     private final SnowflakeIdGenerator idGenerator;
     private final BannedWordGuard bannedWordGuard;
     private final CatalogLookup catalogLookup;
@@ -122,6 +147,7 @@ public class SellerProductService {
                                 SkuMapper skuMapper,
                                 MembershipClient membershipClient,
                                 MerchantLicenseClient merchantLicenseClient,
+                                MerchantRiskClient merchantRiskClient,
                                 SnowflakeIdGenerator idGenerator,
                                 BannedWordGuard bannedWordGuard,
                                 CatalogLookup catalogLookup,
@@ -130,6 +156,7 @@ public class SellerProductService {
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
         this.merchantLicenseClient = merchantLicenseClient;
+        this.merchantRiskClient = merchantRiskClient;
         this.idGenerator = idGenerator;
         this.bannedWordGuard = bannedWordGuard;
         this.catalogLookup = catalogLookup;
@@ -334,10 +361,6 @@ public class SellerProductService {
         spu.setImages(images.isEmpty() ? null : String.join(",", images));
         spu.setDetail(detail);
         spu.setStatus(STATUS_ON_SALE);
-        spu.setAuditStatus(selfSupplied ? AUDIT_APPROVED : AUDIT_PENDING);
-        spu.setAuditReason(null);
-        spu.setAuditAt(null);
-        spu.setAuditBy(null);
         spu.setSalesCount(0);
         // 评分从 0 起步（而不是 DDL 里的 5.00）：t_spu.rating / rating_count 的唯一写入口
         // 是评价域的聚合回写，种子期的 5.00 是历史假数据。0 + count=0 让展示层
@@ -347,6 +370,24 @@ public class SellerProductService {
         spu.setMinPrice(skus.stream().mapToLong(NormalizedSku::price).min().orElse(0L));
         spu.setMaxPrice(skus.stream().mapToLong(NormalizedSku::price).max().orElse(0L));
         spu.setSellerId(ownerUserId);
+
+        // ★ 审核维度**放在最后**定：自动放行判定要读上面那批内容字段
+        //   （标题 / 副标题 / 详情 / 类目 / 最低价）。提前落状态就会变成
+        //   「先判后写、判的全是空值」—— 而空值恰好不命中任何风险规则，
+        //   于是**所有商品都会被自动放行**，而且测试很难发现（因为它看起来"都过了"）。
+        AuditDecision decision = decideAudit(spu);
+        boolean autoApproved = decision.autoApprove();
+        spu.setAuditStatus(autoApproved ? AUDIT_APPROVED : AUDIT_PENDING);
+        spu.setAuditSource(autoApproved
+                ? (selfSupplied ? AUDIT_SOURCE_SELF : AUDIT_SOURCE_AUTO)
+                : null);
+        spu.setAuditReason(null);
+        // ★ 自动放行**也必须**写 audit_at —— 抽查的候选集就是「当天自动放行的第三方商品」，
+        //   筛的正是 `audit_at ∈ [当天, 次日)`（见 AuditSampleService.sweepOnce）。
+        //   这里留 null 不会报任何错：抽查任务照跑、返回 created=0，看起来只是「今天没有可抽的」，
+        //   实际上是这条制度的入口被自己堵死了 —— 而它恰恰是「免除事前人工审核」的全部对价。
+        spu.setAuditAt(autoApproved ? now : null);
+        spu.setAuditBy(null);
         spu.setCreatedAt(now);
         spu.setUpdatedAt(now);
         spuMapper.insert(spu);
@@ -356,9 +397,10 @@ public class SellerProductService {
             skuMapper.insert(toSkuEntity(spuId, ++seq, sku, now));
         }
 
-        log.info("{} 提交商品 {}「{}」（供货={} 归属={} 审核态={} 规格数={}）",
+        log.info("{} 提交商品 {}「{}」（供货={} 归属={} 审核态={} 来源={} 规格数={}）",
                 scope.staffMember() ? "店员" : (selfSupplied ? "运营" : "店主"),
-                spuId, title, spu.getSupplyType(), ownerUserId, spu.getAuditStatus(), skus.size());
+                spuId, title, spu.getSupplyType(), ownerUserId, spu.getAuditStatus(),
+                spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(), skus.size());
         return toView(spu, new int[]{skus.size(), skus.stream().mapToInt(NormalizedSku::stock).sum()});
     }
 
@@ -455,11 +497,23 @@ public class SellerProductService {
         if (!changed) {
             return toView(spu, skuStatsOf(spuId));
         }
-        applyContentReaudit(spu);
+        List<SpuRiskJudge.Hit> risks = applyContentReaudit(spu);
         spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
         spuMapper.updateById(spu);
-        log.info("商品 {} 由 {} 编辑：内容变更，审核态 -> {}",
-                spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"), spu.getAuditStatus());
+        // ★ updateById 的更新策略是 NOT_NULL —— 它**不写 null 字段**。
+        //   而「转人工」时 audit_source 恰恰要写回 NULL（上一次结论的来源已作废）。
+        //   不显式 set 的话，界面上会看到「待审 + 来源=AUTO」这种自相矛盾的组合：
+        //   接口 200、状态也变了，只有那一列悄悄留着旧值，无异常、无日志、断言也抓不到。
+        if (!risks.isEmpty() && isMerchantSupplied(spu)) {
+            spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, spuId)
+                    .set(SpuEntity::getAuditSource, null)
+                    .set(SpuEntity::getAuditAt, null));
+        }
+        log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={}）",
+                spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
+                spu.getAuditStatus(), spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(),
+                risks.stream().map(SpuRiskJudge.Hit::code).toList());
         return toView(spu, skuStatsOf(spuId));
     }
 
@@ -617,7 +671,18 @@ public class SellerProductService {
         spu.setStatus(STATUS_ON_SALE);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         spu.setUpdatedAt(now);
-        spuMapper.updateById(spu);
+        // ★ 用显式 set(null) 而不是 updateById：MyBatis-Plus 的更新策略是 NOT_NULL，
+        //   updateById 不会把 audit_source 写回 NULL，结果就是「待审 + 来源=上一次的结论」
+        //   这种自相矛盾的组合会一直挂在审核台上（接口 200，无异常，断言也抓不到）。
+        //   「重新提审」的语义是「上一次结论已作废」，来源标记必须跟着一起作废。
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .set(SpuEntity::getAuditStatus, AUDIT_PENDING)
+                .set(SpuEntity::getAuditReason, null)
+                .set(SpuEntity::getAuditSource, null)
+                .set(SpuEntity::getAuditAt, null)
+                .set(SpuEntity::getStatus, STATUS_ON_SALE)
+                .set(SpuEntity::getUpdatedAt, now));
         log.info("商品 {} 由卖家重新提审，回到待审核", spuId);
         return toView(spu, skuStatsOf(spuId));
     }
@@ -730,6 +795,9 @@ public class SellerProductService {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         spu.setAuditAt(now);
         spu.setAuditBy(operator.userId());
+        // E28：无论结论是通过还是驳回，来源都是「人工」—— 它回答的是
+        // 「这条结论是怎么来的」，而不是「结论是什么」。
+        spu.setAuditSource(AUDIT_SOURCE_MANUAL);
         spu.setUpdatedAt(now);
         spuMapper.updateById(spu);
 
@@ -747,20 +815,193 @@ public class SellerProductService {
     }
 
     /**
-     * 内容变更后的审核态重置（E14 的核心规则）。
+     * E28 · 事后抽查判违规：把商品打回 REJECTED 并强制下架。
      *
-     * <p>对第三方商品：回到 PENDING、清空驳回原因、并<b>恢复在售</b>
-     * （驳回时 status 被压成 OFF_SHELF，且「先驳回、再自己上架」被 changeStatus 的门禁堵死，
-     * 也就是说 REJECTED 件不可能停在 ON_SALE。若不在这里恢复，卖家改完并通过审核后
-     * 仍是不可见状态，且没有任何入口能把它放出来）。
+     * <p>与人工审核 {@link #audit} 落的是同一批列，但<b>来源记 SAMPLE</b>。
+     * 这个区分在复盘时是关键：人工驳回说明「送审时就该拦住」，
+     * 抽查驳回说明「自动放行把它判错了」—— 后者才是要拿去调规则的信号。
+     * 两者混记成一个值，就再也分不清「规则太松」与「商家太狡猾」。
      *
-     * <p>对自营商品：保持 APPROVED（平台免审，不存在「重新审核」这回事）。
+     * <p>不做 {@code OperatorGuard} 校验：调用方（抽查复核）是运营接口，已经校验过一次；
+     * 这里再校验一次会让「系统自动判定」这条路径没有合法调用方。
      */
-    private void applyContentReaudit(SpuEntity spu) {
-        if (isMerchantSupplied(spu)) {
+    public void rejectBySample(Long spuId, String reason) {
+        SpuEntity spu = spuId == null ? null : spuMapper.selectById(spuId);
+        if (spu == null || !isMerchantSupplied(spu)) {
+            return;             // 自营商品不进抽查队列；查不到就什么都不做
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // 显式 set 每一个要改的列（包括把 audit_source 写成 SAMPLE）：
+        // updateById 不写 null，而这里恰好要覆盖旧值 —— 用 UpdateWrapper 一次说清。
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .set(SpuEntity::getAuditStatus, AUDIT_REJECTED)
+                .set(SpuEntity::getAuditReason, trimToNull(reason))
+                .set(SpuEntity::getAuditSource, AUDIT_SOURCE_SAMPLE)
+                .set(SpuEntity::getAuditAt, now)
+                .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                .set(SpuEntity::getUpdatedAt, now));
+        log.info("商品 {} 抽查判违规 → 已驳回并强制下架（原因={}）", spuId, reason);
+    }
+
+    /**
+     * 内容变更后的审核态重置（E14 的核心规则，E28 起改为**先做自动放行判定**）。
+     *
+     * <p>对第三方商品：重跑一遍风险判定 ——
+     * <ul>
+     *   <li>未命中任何风险规则 → 直接 {@code APPROVED} + 来源 AUTO，
+     *       商品改完就还在前台卖（E28 的口径：人工审核不再是必经环节）；</li>
+     *   <li>命中 → 回到 {@code PENDING} 并清空来源标记，等运营看；</li>
+     *   <li><b>曾被判过违规（当前 {@code REJECTED}）→ 一律转人工</b>，
+     *       不看内容是否干净：一件已经被判定不合格的商品，卖家改完仍需人确认。</li>
+     * </ul>
+     * 两条路都会**恢复在售**（{@code status → ON_SALE}）：驳回时 status 被压成 OFF_SHELF，
+     * 且「先驳回、再自己上架」被 changeStatus 的门禁堵死，也就是说 REJECTED 件不可能停在
+     * ON_SALE。若不在这里恢复，卖家改完并通过审核后仍是不可见状态，且没有任何入口能把它放出来。
+     *
+     * <p>对自营商品：保持 APPROVED（平台免审，不存在「重新审核」这回事），返回空命中列表。
+     *
+     * @return 命中的风险（空列表 = 自动放行）。调用方据此决定要不要把 audit_source 显式清空
+     */
+    private List<SpuRiskJudge.Hit> applyContentReaudit(SpuEntity spu) {
+        if (!isMerchantSupplied(spu)) {
+            return List.of();
+        }
+        // ★ 曾被判过违规的商品（人工驳回 / 事后抽查判违规）改完内容**仍然转人工**。
+        //   不这么做的话，「随便改一个字」就能把 REJECTED 冲掉并重新自动上线 ——
+        //   人工驳回与抽查判违规就都成了摆设，而这恰恰是最容易被绕过的那种绕过：
+        //   接口不报错、状态看起来还更好了（待审 → 在售），没有断言盯着就发现不了。
+        boolean wasRejected = AUDIT_REJECTED.equals(spu.getAuditStatus());
+        AuditDecision decision = wasRejected
+                ? new AuditDecision(false, List.of(new SpuRiskJudge.Hit(
+                        "PREVIOUSLY_REJECTED", "该商品此前被驳回或判违规，修改后需人工确认")))
+                : decideAudit(spu);
+        spu.setStatus(STATUS_ON_SALE);
+        spu.setAuditReason(null);
+        if (decision.autoApprove()) {
+            spu.setAuditStatus(AUDIT_APPROVED);
+            spu.setAuditSource(AUDIT_SOURCE_AUTO);
+            // 同 create()：自动放行要留下「这次结论发生的时间」，抽查才有得抽
+            spu.setAuditAt(LocalDateTime.now(ZoneOffset.UTC));
+        } else {
+            // 回到「未审核」：audit_at 是「上一次结论的时间」，转人工后那段结论已作废，
+            // 留着它还会让这条商品被当成「今天刚自动放行」抽进复核队列（就自相矛盾了）
             spu.setAuditStatus(AUDIT_PENDING);
-            spu.setAuditReason(null);
-            spu.setStatus(STATUS_ON_SALE);
+            spu.setAuditSource(null);
+            spu.setAuditAt(null);
+        }
+        return decision.risks();
+    }
+
+    // ---------------- E28 · 自动放行判定 ----------------
+
+    /**
+     * 自动放行判定的结果。
+     *
+     * @param autoApprove 是否可以直接放行（自营恒 true）
+     * @param risks       命中的风险规则；{@code autoApprove} 为 true 时必为空
+     */
+    private record AuditDecision(boolean autoApprove, List<SpuRiskJudge.Hit> risks) {
+    }
+
+    /**
+     * 判定一个商品能不能自动放行（E28）。
+     *
+     * <p>规则本身在 {@link SpuRiskJudge} 里（纯函数、可单测），这里只负责**取数**：
+     * 类目名、同类在售均价、商家风险标记。三处取数都做了兜底 ——
+     * <b>取不到就当作「不构成风险」</b>，理由写在各私有方法上。
+     *
+     * <p>为什么判定结果不是「拒绝」而是「转人工」：自动放行是一次**押注** ——
+     * 押这件商品没问题。命中风险特征时，押注的期望收益变负，于是退回人工，
+     * 而不是拒绝商家。把「需要多看一眼」做成「发不出去」，是对商家最粗暴的一种处理。
+     */
+    private AuditDecision decideAudit(SpuEntity spu) {
+        if (!isMerchantSupplied(spu)) {
+            return new AuditDecision(true, List.of());     // 自营恒免审
+        }
+        Long categoryId = spu.getCategoryId();
+        List<SpuRiskJudge.Hit> hits = SpuRiskJudge.risks(new SpuRiskJudge.Context(
+                categoryNameOf(categoryId),
+                spu.getTitle(),
+                spu.getSubtitle(),
+                spu.getDetail(),
+                nz(spu.getMinPrice()),
+                categoryAvgMinPrice(categoryId),
+                sellerFlagged(spu.getSellerId())));
+        return new AuditDecision(hits.isEmpty(), hits);
+    }
+
+    /**
+     * 类目名。取不到返回 null —— {@link SpuRiskJudge#hitRestrictedCategory} 对 null 返回 false，
+     * 也就是「取不到类目名 = 不构成前置许可风险」。
+     *
+     * <p>为什么这个方向的兜底是对的：类目名只用来判「是不是前置许可类」，
+     * 而取不到名（类目被删、缓存未热）是**瞬时**状态。把它当成高风险，
+     * 会让一次缓存抖动把整批商品推进待审队列，而运营翻完发现全都没问题。
+     */
+    private String categoryNameOf(Long categoryId) {
+        if (categoryId == null) {
+            return null;
+        }
+        try {
+            return catalogLookup.categoryNames(List.of(categoryId)).get(categoryId);
+        } catch (Exception ex) {
+            log.warn("类目名查询失败，本次不按前置许可类判定 categoryId={} : {}", categoryId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 同类在售商品的均价（分）。样本不足返回 null（不参与「价格异常」判定）。
+     *
+     * <p>只取最近 {@value #PRICE_BENCHMARK_SAMPLE} 件：这条规则是加分项而不是判据，
+     * 不该让商品提交依赖一次全表聚合。取不到数据时判「不异常」是刻意的 ——
+     * 若把「算不出均价」也算异常，新类目下的**第一批商品永远进不了自动放行**，
+     * 而它们恰恰是最需要自动化的（新类目上架最密集）。
+     */
+    private Long categoryAvgMinPrice(Long categoryId) {
+        if (categoryId == null) {
+            return null;
+        }
+        try {
+            List<SpuEntity> peers = spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
+                    .select(SpuEntity::getMinPrice)
+                    .eq(SpuEntity::getCategoryId, categoryId)
+                    .eq(SpuEntity::getSupplyType, SUPPLY_MERCHANT)
+                    .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                    .gt(SpuEntity::getMinPrice, 0)
+                    .last("LIMIT " + PRICE_BENCHMARK_SAMPLE));
+            if (peers == null || peers.isEmpty()) {
+                return null;
+            }
+            long sum = peers.stream().mapToLong(p -> nz(p.getMinPrice())).sum();
+            return sum / peers.size();
+        } catch (Exception ex) {
+            log.warn("同类均价查询失败，本次不按价格异常判定 categoryId={} : {}", categoryId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 商家是否命中「此前有驳回或停业记录」。
+     *
+     * <p><b>查不到 / 查不通一律按「无标记」</b>：这是纵深防御式的加分项 ——
+     * 真正的防线是事后抽查与违规升级停业，它们不依赖用户域是否可用。
+     * 若这里在 Feign 抖动时改成「查不到就转人工」，用户域一次重启就会让
+     * 全平台的商品提交全部堆进待审队列 —— 一个可自愈的小问题换来一次审核积压。
+     * 故障以 WARN 留在日志里。
+     */
+    private boolean sellerFlagged(Long sellerId) {
+        if (sellerId == null || sellerId == 0L) {
+            return false;               // 平台自营：没有店铺，也就没有店铺风险画像
+        }
+        try {
+            MerchantRiskInfo risk = merchantRiskClient.of(sellerId).data();
+            return risk != null && risk.flagged();
+        } catch (Exception ex) {
+            log.warn("商家风险画像查询失败，本次按「无标记」处理 sellerId={} : {}",
+                    sellerId, ex.getMessage());
+            return false;
         }
     }
 

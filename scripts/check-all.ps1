@@ -3,15 +3,19 @@
     一条命令跑完全部自检（S2）：前端构建 → 后端单测 → 接口冒烟 → 浏览器 e2e → 汇总。
 
 .DESCRIPTION
-    为什么需要它：此前的自检分散在 4 类脚本里（23 套接口冒烟、17 套浏览器测试 654 项、
-    单元测试、前端构建），每类各有入口、各有前置 —— 每次交付都要靠记忆拼顺序，
+    为什么需要它：此前的自检分散在 4 类脚本里（接口冒烟、浏览器 e2e、单元测试、前端构建），
+    每类各有入口、各有前置 —— 每次交付都要靠记忆拼顺序，
     券的测试还要先建夹具。**容易漏跑；漏跑的检查等于没检查**（S2 立项的原因）。
+
+    ★ 本脚本里的套件数量**一律从目录实算**（见下面的 $smokeCount / $e2eCount），
+      不写死数字：写死的那个数会在「加了新套件」之后变成假话，而且没人会记得改它
+      —— 于是「23 套」这种文案会比实际少一套还照样报全绿（T-1 同型坑）。
 
     本脚本只做「串联与汇总」，不重复实现任何检查：
       [1/5] 前端构建        `npm run build`（= tsc 类型检查 + vite 打包）
-      [2/5] 后端单元测试     `mvn test`（228 项；最耗时，可 -SkipBackendTests）
-      [3/5] 接口冒烟         `run-all-smoke.ps1`（23 套）
-      [4/5] 浏览器 e2e       `run-ui-checks.ps1 -UiBase <入口>`（17 套 654 项；券夹具自动建/撤）
+      [2/5] 后端单元测试     `mvn test`（最耗时，可 -SkipBackendTests）
+      [3/5] 接口冒烟         `run-all-smoke.ps1`（脚本自发现）
+      [4/5] 浏览器 e2e       `run-ui-checks.ps1 -UiBase <入口>`（套件自发现；券夹具自动建/撤）
       [5/5] 汇总表           每段 PASS/FAIL + 总耗时；**全绿才 exit 0**
 
     e2e 默认打**正式版容器**（http://localhost:8088，S1 的产物）——
@@ -20,7 +24,7 @@
 
 .PARAMETER SkipFrontendBuild  跳过前端构建（改过后端没动前端时省 30 秒）
 .PARAMETER SkipBackendTests   跳过 mvn test（最耗时的一段）
-.PARAMETER SkipSmoke          跳过 23 套接口冒烟
+.PARAMETER SkipSmoke          跳过接口冒烟
 .PARAMETER SkipE2E            跳过浏览器 e2e
 .PARAMETER UiBase             e2e 被测入口，默认 http://localhost:8088
 
@@ -46,6 +50,13 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
+# 套件数量从目录**实算**（口径与两个 runner 的自发现规则一致）：
+#   冒烟 = scripts/*smoke.ps1 去掉 runner 自身；e2e = scripts/e2e/*-ui-check.mjs
+# ★ 通配符必须写 '*smoke.ps1' 而不是 '*-smoke.ps1'：后者要求名字里带连字符，
+#   会把最基础的那套 `smoke.ps1` 漏掉 —— 数量少报一套，而所有断言照旧全绿。
+$smokeCount = @(Get-ChildItem -Path (Join-Path $repo 'scripts') -Filter '*smoke.ps1' -File |
+    Where-Object { $_.Name -ne 'run-all-smoke.ps1' }).Count
+$e2eCount = @(Get-ChildItem -Path (Join-Path $repo 'scripts\e2e') -Filter '*-ui-check.mjs' -File).Count
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $results = @()
 $anyFail = $false
@@ -124,10 +135,10 @@ if (-not $SkipBackendTests) {
 
 # ---------- [3/5] 接口冒烟 ----------
 if (-not $SkipSmoke) {
-    Write-Host "`n[3/5] 接口冒烟（run-all-smoke.ps1，23 套）"
+    Write-Host "`n[3/5] 接口冒烟（run-all-smoke.ps1，$smokeCount 套）"
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\run-all-smoke.ps1') 2>&1 |
         Select-String -Pattern '通过|失败|ALL_EXIT|汇总' | Select-Object -Last 6 | Write-Host
-    Record '接口冒烟（23 套）' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+    Record "接口冒烟（$smokeCount 套）" ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 } else {
     Write-Host "`n[3/5] 接口冒烟：跳过（-SkipSmoke）"
     $results += @{ name = '接口冒烟'; ok = $true; detail = '跳过' }
@@ -135,10 +146,10 @@ if (-not $SkipSmoke) {
 
 # ---------- [4/5] 浏览器 e2e ----------
 if (-not $SkipE2E) {
-    Write-Host "`n[4/5] 浏览器 e2e（run-ui-checks.ps1，17 套 654 项，入口 $UiBase）"
+    Write-Host "`n[4/5] 浏览器 e2e（run-ui-checks.ps1，$e2eCount 套，入口 $UiBase）"
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\e2e\run-ui-checks.ps1') -UiBase $UiBase 2>&1 |
         Select-String -Pattern '=====|PASS|FAIL' | Select-Object -Last 24 | Write-Host
-    Record ('浏览器 e2e（17 套，入口 ' + $UiBase + '）') ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+    Record ("浏览器 e2e（$e2eCount 套，入口 $UiBase）") ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 } else {
     Write-Host "`n[4/5] 浏览器 e2e：跳过（-SkipE2E）"
     $results += @{ name = '浏览器 e2e'; ok = $true; detail = '跳过' }

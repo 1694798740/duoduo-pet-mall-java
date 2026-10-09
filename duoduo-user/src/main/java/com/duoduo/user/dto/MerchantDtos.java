@@ -197,4 +197,51 @@ public final class MerchantDtos {
             return "APPROVED".equals(status);
         }
     }
+
+    /**
+     * 商家风险画像（E28）：商品域判「这件商品能不能自动放行」时用。
+     *
+     * <p>与 {@link MerchantLicenseInfo} 分开而不是复用：那个回答「这家店现在能不能卖」，
+     * 这个回答「这家店值不值得重点看」。两件事的生命周期不同 ——
+     * 续期通过后 {@code status} 立刻变 APPROVED，但违规计数不会因此清零。
+     *
+     * <p>{@code hasRejectHistory} 是**可观测近似**：系统没有单独的「历史驳回」表，
+     * 唯一能读到的是「当前是否处于被驳回 / 被停业状态」加「违规计数」。
+     * 一个曾经被驳回、后来又通过的商家在这里会读成「没有历史」——
+     * 这是刻意的取舍：为此单独加一张历史表，收益远小于它带来的写路径复杂度。
+     */
+    public record MerchantRiskInfo(
+            String merchantId,
+            /** 商家级违规累计次数（只增不减） */
+            int violationCount,
+            /** 当前是否被停业 */
+            boolean suspended,
+            /** 当前是否处于「申请被驳回」状态 */
+            boolean rejected,
+            /**
+             * 是否处于「重新开业观察期」（最近一次审核通过 / 恢复营业在 7 天内）。
+             *
+             * <p>传布尔而不是传时间：商品域要用它做「恢复营业 7 天内发布的商品必抽」，
+             * 而那是个**时间窗口判定** —— 把时间传过去，两个服务就得各自维护同一个窗口长度，
+             * 改的时候必然漏一边。窗口的定义留在用户域这一处。
+             */
+            boolean recentlyResumed
+    ) {
+        /** 是否命中「此前有驳回或停业记录」这条风险规则 */
+        public boolean flagged() {
+            return violationCount > 0 || suspended || rejected;
+        }
+    }
+
+    /**
+     * 违规上报的结果（E28）：商品域判违规后回传，告知累计次数与是否触发停业。
+     */
+    public record MerchantViolationInfo(
+            String merchantId,
+            /** 累计违规次数（含本次） */
+            int violationCount,
+            /** 本次上报是否触发了商家级停业 */
+            boolean suspended
+    ) {
+    }
 }
