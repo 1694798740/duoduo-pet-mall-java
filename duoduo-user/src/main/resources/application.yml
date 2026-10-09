@@ -33,6 +33,17 @@ spring:
     init:
       mode: never
 
+  # E17 · 权限版本的感知副本（本服务写，网关读）。
+  # 连不上不影响启动与登录：PermVersionPublisher 全程 try/catch 并带 60 秒冷却，
+  # 写失败时角色变更会退化为「吊销刷新令牌」这条老路（详见该类注释）。
+  # 超时必须给短，否则"Redis 挂了"会变成"登录变慢"。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
+      connect-timeout: 500ms
+
   cloud:
     nacos:
       discovery:

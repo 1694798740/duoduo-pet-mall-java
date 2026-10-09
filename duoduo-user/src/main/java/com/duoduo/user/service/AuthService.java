@@ -6,6 +6,7 @@ import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
+import com.duoduo.common.security.perm.PermVersion;
 import com.duoduo.user.dto.UserDtos;
 import com.duoduo.user.dto.UserDtos.LoginRequest;
 import com.duoduo.user.dto.UserDtos.LoginResponse;
@@ -21,6 +22,7 @@ import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.PermVersionPublisher;
 import com.duoduo.user.support.WechatGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +68,8 @@ public class AuthService {
     /** E13 · 店铺成员/店铺查询：给 /users/me 下发成员身份简报用 */
     private final MerchantMapper merchantMapper;
     private final MerchantMemberMapper memberMapper;
+    /** E17 · 权限版本的感知副本发布（签发时顺手自愈，变更时由 AdminUserService 负责） */
+    private final PermVersionPublisher permVersionPublisher;
     /**
      * 新用户初始信用分（= 信用分模型的基础分，默认 60）。
      *
@@ -84,7 +88,8 @@ public class AuthService {
                        WechatGateway wechatGateway,
                        @Value("${duoduo.user.credit-default:60}") int creditDefault,
                        MerchantMapper merchantMapper,
-                       MerchantMemberMapper memberMapper) {
+                       MerchantMemberMapper memberMapper,
+                       PermVersionPublisher permVersionPublisher) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
@@ -94,6 +99,7 @@ public class AuthService {
         this.creditDefault = creditDefault;
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
+        this.permVersionPublisher = permVersionPublisher;
     }
 
     @Transactional
@@ -125,6 +131,9 @@ public class AuthService {
         // 信用分体现的是「已积累的履约表现」，刚注册的人还没有可评价的行为，
         // 给满分等于让空账号显示得比老卖家还可信。详见履约域 CreditModel 的权重表。
         entity.setCreditScore(creditDefault);
+        // E17：新账号从 INITIAL 起步，与 DDL 的 DEFAULT 0 同一个值 ——
+        // 这里显式写出来是为了让下面签发令牌时读到的是"确定的值"，而不是依赖 insert 后回读。
+        entity.setPermVersion(PermVersion.INITIAL);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
 
@@ -524,8 +533,13 @@ public class AuthService {
         }
         LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
                 entity.isRealNameVerified());
-        log.info("用户 {} 角色变更为 {}，重签访问令牌使新角色即时生效", userId, entity.getRole());
-        return jwtTokenService.createAccessToken(loginUser, entry);
+        long permVersion = PermVersion.orInitial(entity.getPermVersion());
+        log.info("用户 {} 角色变更为 {}，重签访问令牌使新角色即时生效（permVersion={}）",
+                userId, entity.getRole(), permVersion);
+        String token = jwtTokenService.createAccessToken(loginUser, entry, permVersion);
+        // 与登录同口径：顺手对齐副本，保证网关那边的版本与这枚令牌一致
+        permVersionPublisher.publishQuietly(entity.getId(), permVersion);
+        return token;
     }
 
     /** 访问令牌有效期（秒）：供控制器写 Cookie 的 max-age */
@@ -572,7 +586,12 @@ public class AuthService {
     private LoginResponse issueTokens(UserEntity entity, String userAgent, String entry) {
         LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
                 entity.isRealNameVerified());
-        String accessToken = jwtTokenService.createAccessToken(loginUser, entry);
+        // E17：版本**从库里现读**（不接受调用方传入），并在签发时顺手把 Redis 副本修回来。
+        // 这一步是"自愈"：变更时如果副本没写成功，对方下一次刷新就会把副本对齐，
+        // 于是"副本落后"最多持续到下一次刷新，不会永久卡住。
+        long permVersion = PermVersion.orInitial(entity.getPermVersion());
+        String accessToken = jwtTokenService.createAccessToken(loginUser, entry, permVersion);
+        permVersionPublisher.publishQuietly(entity.getId(), permVersion);
 
         String jti = UUID.randomUUID().toString().replace("-", "");
         String refreshToken = jwtTokenService.createRefreshToken(entity.getId(), jti, entry);

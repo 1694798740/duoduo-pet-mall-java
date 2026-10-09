@@ -26,6 +26,9 @@ CREATE TABLE t_user (
     credit_score    INT          NOT NULL DEFAULT 60,
     -- 微信 openid（A13）：绑定后写入；唯一索引兜底「同一微信并发绑到两个账号」（INV-1）。
     wx_openid       VARCHAR(64),
+    -- 权限版本（E17）：角色变更时 +1，访问令牌带签发时的值，网关比对不一致即拒绝。
+    -- 初始 0 与 PermVersion.INITIAL 对齐（避免"默认值是 0、起点却是 1"两套口径）。
+    perm_version    BIGINT       NOT NULL DEFAULT 0,
     last_login_at   TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL,
     updated_at      TIMESTAMP    NOT NULL,

@@ -6,7 +6,9 @@
  *
  * 关键口径（与后端一致）：
  *  - 列表不展示实名姓名 / 身份证 / 完整手机号 —— 管的是「账号与角色」，不是身份资料；
- *  - 改角色成功后展示后端下发的 notice（含「目标用户需重新登录后生效」）；
+ *  - 改角色成功后展示后端下发的 notice（E17 起为「…在下一个请求即生效（无需重新登录）」；
+ *    仅在极少数 Redis 不可用的情况下后端会退回「已吊销刷新令牌…将重新登录后生效」，
+ *    所以这里**原样展示、不要在本地拼文案** —— 两者的处置完全不同）；
  *  - 改角色入口只对 ADMIN 开放（OPERATOR 可看列表，点不动）—— 后端 403 是硬边界，
  *    前端隐藏只是少让人撞一次墙。
  */
@@ -82,7 +84,8 @@ export const AdminOperatorsPage: React.FC = () => {
     setBusy(true);
     try {
       const result = await adminApi.adminChangeRole(target.id, { role: newRole });
-      // 后端下发的 notice 含「需重新登录后生效」，原样展示给运营（验收②）
+      // 后端下发的 notice 说明这次变更生效到了哪一步（即时生效 / 退回强制重登），
+      // 原样展示给运营（验收②）—— 不要在这里改写或截断，文案本身就是处置依据
       setNotice(result.notice);
       push('角色已更新', 'success');
       closeModal();

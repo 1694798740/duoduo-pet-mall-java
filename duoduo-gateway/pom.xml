@@ -45,6 +45,22 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+
+    <!-- E17 · 权限版本（permVersion）的感知副本读通道。
+         网关要判断"这枚令牌是不是旧权限"，就得知道该用户当前的版本号；
+         权威值在用户库（网关刻意不连业务库），所以由用户服务在变更/签到时
+         复制一份到 Redis，网关只读它。
+
+         为什么引非 reactive 的那个 starter：spring-data-redis 一个 jar 里
+         同时带 imperative 与 reactive 实现，Boot 的 RedisReactiveAutoConfiguration
+         会按 ReactiveRedisConnectionFactory 装配出 reactiveStringRedisTemplate。
+         本模块是 WebFlux，**绝不能**用阻塞模板在事件循环里调用 —— 那会让整个网关卡住。
+
+         Redis 不可用不影响启动与放行：调用点全部 onErrorResume 成"未知"（见 PermVersion 的取舍段）。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
   </dependencies>
 
   <build>

@@ -10,7 +10,8 @@
 #   4. 闲置审核：待审列表可见、通过后公开可查、驳回留痕（原因 + 时间）且公开不可见；
 #   5. 订单干预：运营全平台列表、强制关单（含冻结释放）、重复关单被状态机拒绝、普通用户强关 403；
 #   6. 运营账号管理（A7）：普通用户 403 / 运营可查脱敏列表但改角色 403 / ADMIN 提权 200 +
-#      「需重新登录生效」提示 / 旧令牌角色快照不放大权限 / 审计日志落库 /
+#      「下一个请求即生效（无需重新登录）」提示（E17 口径）/ 旧令牌**下一个请求即 401** /
+#      审计日志落库 /
 #      同角色幂等不留痕 / 自己降自己 422 / 最后一个 ADMIN 不可降 422 / keyword + role 检索。
 #
 # 设计原则（沿用前几套脚本的教训）：
@@ -302,13 +303,23 @@ Check "A7 非法角色名返回 422" ($r.status -eq 422) $r.status
 $r = Call 'Post' "$Gateway/api/admin/users/$uidAd/role" $sessAd @{ role = 'USER' }
 Check "A7 管理员给自己降权返回 422" ($r.status -eq 422) $r.status
 
-# —— ADMIN 提权 + 验收②（重新登录才生效） ——
+# —— ADMIN 提权 + 验收②（E17 起：下一个请求即生效，无需重登） ——
 $r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'OPERATOR' }
 Check "A7 管理员提权返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress)
 Check "A7 响应角色已更新为 OPERATOR" ($r.body.data.user.role -eq 'OPERATOR') $r.body.data.user.role
-Check "A7 提示文案含『重新登录』" ("$($r.body.data.notice)" -match '重新登录') $r.body.data.notice
+# ★ 这条断言的**方向**在 E17 反过来了，必须写清否则会变成假绿：
+#   E17 之前文案是「已吊销刷新令牌…将重新登录后生效」，于是 `-match '重新登录'` 是有效的；
+#   E17 之后成功文案是「…在下一个请求即生效（**无需**重新登录）」—— 里面**同样含**这四个字。
+#   继续用 `-match '重新登录'` 会让它无条件通过（连"要不要重登"这件事都没在测）。
+Check "A7 提示文案含『下一个请求即生效』" ("$($r.body.data.notice)" -match '下一个请求即生效') $r.body.data.notice
+Check "A7 成功路径的文案明确『无需重新登录』（不能反过来命中『重新登录』）" `
+    ("$($r.body.data.notice)" -match '无需重新登录' -and "$($r.body.data.notice)" -notmatch '将重新登录') $r.body.data.notice
+# 旧令牌现在被**直接拒绝**（401），而不是"保留旧角色、只是拿不到新权限"（403）。
+# 这是更强的保证：旧令牌不再有任何作用面。断言必须跟着改成 401 —— 否则这条会一直红，
+# 而且红的样子像是"越权（403 变 401 了？）"，容易被误判成缺陷。
 $r = Call 'Get' "$Gateway/api/admin/users" $sessU $null $null
-Check "A7 被提权用户旧令牌仍 403（角色快照不放大权限）" ($r.status -eq 403) $r.status
+Check "A7 被提权用户旧令牌下一个请求即失效 → 401（E17 收口，比『仅不放大』更强）" ($r.status -eq 401) `
+    "status=$($r.status) raw=$($r.raw)"
 $sessU2 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $r = Call 'Post' "$Gateway/api/auth/login" $sessU2 @{ phone = $phoneU; password = $Password }
 Check "A7 被提权用户重新登录拿到 OPERATOR 角色" ($r.status -eq 200 -and $r.body.data.role -eq 'OPERATOR') ($r.body | ConvertTo-Json -Compress -Depth 6)

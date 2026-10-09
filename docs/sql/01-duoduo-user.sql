@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     `id_card_masked`  VARCHAR(30)           DEFAULT NULL COMMENT '仅存掩码，完整号码不落库',
     `wx_openid`       VARCHAR(64)           DEFAULT NULL COMMENT '微信 openid（A13，绑定后写入；未绑定为 NULL）',
     `credit_score`    INT          NOT NULL DEFAULT 60 COMMENT '信用分（A4），默认 = CreditModel 基础分，与「无数据用户得基础分」对齐',
+    `perm_version`    BIGINT       NOT NULL DEFAULT 0 COMMENT '权限版本（E17）：角色变更时 +1；访问令牌带签发时的值，网关比对不一致即 401。初始 0 与 PermVersion.INITIAL 对齐',
     `last_login_at`   TIMESTAMP             DEFAULT NULL,
     `created_at`      TIMESTAMP    NOT NULL,
     `updated_at`      TIMESTAMP    NOT NULL,

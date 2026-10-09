@@ -5,6 +5,7 @@ import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.security.ClientEntry;
 import com.duoduo.common.security.JwtTokenService;
 import com.duoduo.gateway.config.GatewaySecurityProperties;
+import com.duoduo.gateway.support.PermVersionChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -39,6 +40,10 @@ import java.util.Map;
  *       命中"跨端专属路径族"（{@code /api/admin/**}、{@code /api/seller/**}）时按入口放行/拒绝，
  *       不匹配返回 403。<b>没有 ent 声明的老令牌不受限制</b>（见 {@link ClientEntry}）——
  *       这是纵深防御，不是角色校验的替代品，边界写在 ClientEntry 的类注释里</li>
+ *   <li><b>权限版本（E17）</b>：令牌里的 {@code pv} 与 Redis 里的当前版本不一致 → 401，
+ *       让"角色已改、旧令牌还在用"的窗口从 15 分钟收敛到<b>下一个请求</b>。
+ *       老令牌（无 pv）不校验；Redis 查不到放行 —— 判据与取舍见
+ *       {@link com.duoduo.common.security.perm.PermVersion} 与 {@code PermVersionChecker}</li>
  * </ul>
  */
 @Component
@@ -67,11 +72,15 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private final JwtTokenService jwtTokenService;
     private final GatewaySecurityProperties properties;
+    private final PermVersionChecker permVersionChecker;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
-    public JwtAuthGlobalFilter(JwtTokenService jwtTokenService, GatewaySecurityProperties properties) {
+    public JwtAuthGlobalFilter(JwtTokenService jwtTokenService,
+                               GatewaySecurityProperties properties,
+                               PermVersionChecker permVersionChecker) {
         this.jwtTokenService = jwtTokenService;
         this.properties = properties;
+        this.permVersionChecker = permVersionChecker;
     }
 
     @Override
@@ -159,7 +168,58 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             builder.header(HEADER_REQUEST_ID, requestId);
         }
 
-        return chain.filter(exchange.mutate().request(builder.build()).build());
+        ServerHttpRequest mutated = builder.build();
+
+        /*
+         * E17 · 权限版本校验：令牌里带的版本 vs 该用户当前版本，不一致即 401。
+         *
+         * 触发条件是"令牌**声明了**版本"（pv 非空）。老令牌没有这个声明 → 不校验，
+         * 让它活到自然过期 —— 与 ent 的向后兼容同一姿势：上线时线上有活跃会话，
+         * 不能因为"没有声明"就把人踢下线。这也让本判断在兼容窗口内是**零成本**的
+         * （连 Redis 都不读）。
+         *
+         * 三种情形分别怎么处理，是这段代码的全部内容，逐条写下来免得日后被"简化"掉：
+         *   · 查不到当前版本（Redis 不可用 / 键过期 / 值不是数字）→ **放行**。
+         *     一次缓存抖动不该等于"全站已登录用户集体掉线"；代价只是退回 E17 之前的行为。
+         *   · 查到了且相等 → 放行。
+         *   · 查到了且不等 → 401（不是 403）。为什么是 401：**身份本身过期了**，
+         *     而不是"你是谁我清楚但这事不该你做"。前端对 401 的处理正是"刷新令牌后重试"，
+         *     刷新会从库里现读最新角色，于是这次刷新就把人带到新权限上，无需重新登录。
+         *     若写成 403，前端只会报"没有权限"而不会去刷新 —— 用户就得自己重登。
+         */
+        if (shouldCheckPermVersion(payload)) {
+            Mono<Boolean> allowed = permVersionChecker.currentVersion(payload.userId())
+                    .map(current -> !current.isPresent() || current.get().equals(payload.permVersion()))
+                    // 契约上实现不会返回空 Mono；这里仍给一个兜底值，避免"实现改了、请求挂住"：
+                    // 注意**不能**用 switchIfEmpty(chain.filter(...)) —— chain.filter 返回的
+                    // Mono<Void> 本身就不 emit 任何元素，会被 switchIfEmpty 当成"源是空的"从而**再执行一次**，
+                    // 变成下游收到两次请求。
+                    .defaultIfEmpty(true);
+
+            return allowed.flatMap(ok -> {
+                if (!ok) {
+                    log.warn("网关拒绝权限版本过期的令牌 requestId={} userId={} tokenVersion={} path={}",
+                            requestId, payload.userId(), payload.permVersion(), path);
+                    return permVersionStale(exchange);
+                }
+                return chain.filter(exchange.mutate().request(mutated).build());
+            });
+        }
+
+        return chain.filter(exchange.mutate().request(mutated).build());
+    }
+
+    /**
+     * 是否需要对这枚令牌做版本校验。
+     *
+     * <p>三道门缺一不可：令牌有效、令牌声明了 pv、开关打开。
+     * 把判定抽成一个方法而不是内联，是为了让单测能直接钉住"什么时候**不**校验"——
+     * 在校验逻辑上，"少校验"和"校验错"是同样严重的缺陷，但只有前者难以从外部察觉。
+     */
+    private boolean shouldCheckPermVersion(JwtTokenService.TokenPayload payload) {
+        return payload.valid()
+                && payload.permVersion() != null
+                && properties.isPermVersionEnabled();
     }
 
     /** 令牌来源：Authorization: Bearer 优先，其次 httpOnly Cookie */
@@ -234,6 +294,22 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
         return reject(exchange, ErrorCode.UNAUTHORIZED, "UNAUTHORIZED", message);
+    }
+
+    /**
+     * E17 · 权限版本过期（令牌合法、但它是旧权限的快照）→ 401，但 code 单独区分。
+     *
+     * <p>为什么 HTTP 状态必须是 401 而不能是 403：401 才是"你的身份凭证需要换一张"，
+     * 前端据此自动刷新并重放请求；403 是"你是谁我清楚，但这事你不该做"，
+     * 前端不会刷新 —— 结果就是用户得手动重新登录，正好丢掉 E17 想要的"无需重登"。
+     *
+     * <p>为什么还要一个独立的 code：401 的文案默认是"登录已过期"，容易被误当成
+     * "账号有问题"；带 {@code PERM_VERSION_STALE} 之后，排障时一眼能分清
+     * "权限被改了"和"令牌真过期了"——这两件事的处置完全不同。
+     */
+    private Mono<Void> permVersionStale(ServerWebExchange exchange) {
+        return reject(exchange, ErrorCode.UNAUTHORIZED, "PERM_VERSION_STALE",
+                "账号权限已变更，请刷新登录态后重试");
     }
 
     /** E8 · 入口不匹配（令牌合法、但这一端不该访问这个路径族）→ 403 而不是 401 */

@@ -140,6 +140,9 @@ services:
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
       DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
+      # E17 · 权限版本的感知副本写通道（角色变更时广播给网关）
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
     volumes:
       # E12 · 入驻资质材料私有卷（读取一律走鉴权端点，不挂公开路径）
       - merchant-materials:/data/merchant-materials
@@ -147,6 +150,8 @@ services:
       - '8081:8081'
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       nacos:
         condition: service_healthy
@@ -452,9 +457,17 @@ services:
       NACOS_PASSWORD: nacos
       DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      # E17 · 权限版本副本（用户服务写、网关读）。读不到一律放行，故不是硬依赖，
+      # 但一起起来才能让「改完角色下一个请求即生效」这条链路在容器里可验证。
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      # 一键退回旧行为（等令牌自然过期）的开关；排障用，平时不要动
+      DUODUO_PERM_VERSION_ENABLED: ${DUODUO_PERM_VERSION_ENABLED:-true}
     ports:
       - '8080:8080'
     depends_on:
+      redis:
+        condition: service_healthy
       duoduo-user-app:
         condition: service_healthy
       duoduo-product-app:

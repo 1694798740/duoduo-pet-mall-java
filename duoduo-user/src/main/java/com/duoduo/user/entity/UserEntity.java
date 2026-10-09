@@ -33,6 +33,17 @@ public class UserEntity {
     /** 微信 openid（A13）：绑定后写入；唯一索引兜底「同一微信并发绑到两个账号」。未绑定为 null */
     private String wxOpenid;
     private Integer creditScore;
+    /**
+     * E17 · 权限版本（权威值）。
+     *
+     * <p>任何权限相关变更（角色调整）都让它 +1；访问令牌里带着签发时的值，
+     * 网关比对不一致即拒绝 —— 于是「刚被撤销的权限」下一个请求就失效，
+     * 不必等令牌自然过期，也不必强制对方重新登录。
+     *
+     * <p>DDL 上是 {@code NOT NULL DEFAULT 0}，但老库可能为 NULL，读取一律走
+     * {@code PermVersion.orInitial(...)}，不在这里做"看起来非空"的假设。
+     */
+    private Long permVersion;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -123,6 +134,14 @@ public class UserEntity {
 
     public void setCreditScore(Integer creditScore) {
         this.creditScore = creditScore;
+    }
+
+    public Long getPermVersion() {
+        return permVersion;
+    }
+
+    public void setPermVersion(Long permVersion) {
+        this.permVersion = permVersion;
     }
 
     public LocalDateTime getLastLoginAt() {

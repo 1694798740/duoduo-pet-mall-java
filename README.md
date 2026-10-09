@@ -706,9 +706,9 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（24 套接口断言 = 23 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
+### 端到端冒烟（25 套接口断言 = 24 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
 
-> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（23 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
+> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（24 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
 > 外加 node 冒烟 `scripts/e8-entry-scope-smoke.mjs`；
 > 浏览器 e2e 由 `scripts/e2e/*-ui-check.mjs` **自发现**（22 套）。
 > `scripts/check-all.ps1` 里的套件数**从目录实算**，不再写死 —— 写死的数字在加套件之后会变成假话，而没人会记得改它。
@@ -738,7 +738,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
-> CI 子集（本地 / GitHub Actions 同一入口，**12 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1`。
+> CI 子集（本地 / GitHub Actions 同一入口，**13 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1`。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
@@ -757,6 +757,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 62 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁 / **E16 权限点：直连服务端口做双向断言（USER·SELLER→403、OPERATOR→200、未登录→401、商家端门槛）**）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\perm-version-smoke.ps1 # 34 项：权限即时生效（改角色→旧令牌**下一个请求**即 401 / 刷新一次就换到新角色且**无需重新登录** / 收权后 403 与 401 分得清 / **无 pv 的老令牌不被拦下**（对照令牌只差一个 pv）/ 副本自愈 / 幂等不推进版本 / 收尾复原 ADMIN 计数）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -861,7 +862,7 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 + 01~05 从零建库）与 incremental/（06~08 存量库增量，不进容器初始化目录，T-46）
-├── scripts/                    一键启动、冒烟测试（24 套接口断言 + 21 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
+├── scripts/                    一键启动、冒烟测试（25 套接口断言 + 22 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
 ├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
 ├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
@@ -1646,7 +1647,82 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
-### 2026-10-09（E16 · RBAC 权限点体系：判权口径收敛到一处）
+### 2026-10-09（E17 · 权限即时生效：角色变更从「最长 15 分钟」收敛到「下一个请求」）
+
+**这一步在做什么**：访问令牌里带的是**签发那一刻的角色快照**。改完库里的角色，对方手上的旧令牌
+仍然写着旧角色，直到自然过期（15 分钟）才收敛。升级场景下这是「不方便」，
+**降级场景下这是「权限收不回来」** —— 一个刚被撤销运营权限的账号，还能继续以更高角色调后台接口。
+
+E17 给令牌加一个版本号 `pv`（权限版本），任何权限相关的变更都让该用户的版本 +1，
+网关比对「令牌里的版本」与「当前版本」，**不一致即 401**，客户端刷新一次就换到新角色。
+
+**① 为什么不是"改角色时把令牌全吊销"**：那是 E17 之前的口径（第五十八轮 P1-6），只能保证
+「不能静默续期」，旧访问令牌仍带旧角色活满 15 分钟 —— **窗口没关，只是不再延期**。
+而且它把人**强制踢去重新登录**。现在改成版本号精确收口：窗口 ≈ 0，且**无需重登**。
+`AdminUserService.changeRole` 现在只在**广播失败**时才退回吊销（见 ③）。
+
+**② 权威值在库里，Redis 只是"感知副本"**（`duoduo-common` 的 `PermVersion` 是唯一口径）
+
+| 组件 | 位置 | 作用 |
+|---|---|---|
+| `t_user.perm_version` | 用户库（`docs/sql/incremental/30-e17-perm-version.sql`） | **权威值**：可审计、重启不丢、与变更同事务 |
+| `duoduo:perm:ver:{userId}` | Redis（用户服务写、网关读） | **感知副本**：网关不连业务库，读它做比对 |
+| `pv` 声明 | 访问令牌 | 签发时从库内现读；**刷新令牌刻意不带** —— 若刷新也校验，版本过期时连刷新都做不了，客户端会陷入「401 → 刷新 → 401」死循环 |
+
+★ **键名 / TTL / 解析规则只允许有一处定义**（`PermVersion`）。写的一方在用户服务、读的一方在网关，
+键名写错的两种情况下**都不会报错**，只表现为「权限变更没即时生效」——正是本机制要解决的问题本身，
+却比不引入它更难排查。单测把键名钉成**字面量**（改动即红，逼人停下想一次"线上那些键还要不要认"）。
+
+**③ 三类失败/边界情形的处置（这是本机制唯一的新失败面，逐条写死）**
+
+| 情形 | 处置 | 理由 |
+|---|---|---|
+| Redis 里**查不到**当前版本（不可用 / 键过期 / 值不是数字） | **放行** | 失败方向要指向可用：一次缓存抖动不该等于「全站已登录用户集体掉线」。代价只是退回 E17 之前的行为（旧令牌最多再多活 15 分钟） |
+| 变更时**副本写不进去** | **退回吊销刷新令牌**，并把结果如实写进响应文案 | 不退回就会出现「运营界面写着权限已收回、实际旧令牌还能用」的假象。宁可让人重登一次 |
+| 副本**落后**（写失败 / 被人删了） | **签发时自愈**：每次登录 / 刷新 / 重签都按库内最新值覆盖写一次 | 「落后」最多持续到对方下一次刷新，不会永久卡住 |
+
+★ **Redis 不可用时为什么要冷却**（`PermVersionPublisher`，与 AI 域 `IpRateLimiter` 同一考虑）：
+连不上时每次都去等连接超时，会直接叠到**登录**延迟上 —— 用户感到"登录变慢了"，而这只是为写一个数字。
+
+**④ 网关侧：401 而不是 403，且 code 单独区分**
+
+- **必须 401**：401 才是「你的身份凭证需要换一张」，前端据此自动刷新并重放请求；
+  403 是「你是谁我清楚、这事你不该做」，前端**不会**刷新 —— 写成 403 的结果是用户得手动重登，
+  正好丢掉 E17 想要的「无需重登」。
+- **code = `PERM_VERSION_STALE`**：401 的默认文案是"登录已过期"，容易被误当成账号有问题；
+  带独立 code 之后，排障时一眼能分清「权限被改了」与「令牌真过期了」——两者的处置完全不同。
+- **老令牌（无 `pv`）不校验**：与 E8 的 `ent` 同一姿势 —— 加字段不能等于上线当天把在线用户全踢下线。
+  这条也让兼容窗口内**零成本**（连 Redis 都不读）。反过来说，把「没有声明」当成版本 0 是**最危险**的错法：
+  所有老令牌会因「0 ≠ 当前版本」被判过期。
+- **判定与 I/O 分离**：`PermVersionChecker` 返回 `Mono<Optional<Long>>` 而不是「可空值 / 空 Mono」。
+  ★ Reactor 里 `Mono.empty()` 是一个**会被 downstream 跳过**的信号，用它表示"未知"会让"放行"这条分支
+  根本不执行（请求既不通过也不被拒，直接挂住）；用 `Optional` 把"未知"变成真实信号值就没有这个歧义。
+
+**⑤ 有意不做的两件事**
+
+- **命令式调用点（约 55 处 `requireOperator()`）不逐个改成注解**：改名制造大面积 diff 与漏验证风险，
+  收益为零 —— 判权口径在 E16 已经收敛到矩阵一处，E17 改的是"生效时机"，与它正交。
+- **不做本地缓存**：哪怕只缓存 1 秒，也会直接削弱本机制要保证的「下一个请求即生效」。
+  宁可每个已认证请求多读一次 Redis（`timeout` 150ms 硬上限，只在 Redis 假死时出现）。
+
+**⑥ 顺带修掉的一个"看起来更安全"的陷阱**：`changeRole` 原来的吊销逻辑是**无条件**执行的。
+E17 之后若顺手保留它，表现就是「版本收口已经生效了，却还是把人踢去重登」——
+**这行代码是很容易被当成"多加一道保险"而加回来的**，所以单测里专门有一条
+`广播成功时不吊销刷新令牌`（反向验证时恰好红它 + 提权那条，共 2 条）。
+
+**验证（全部实测）**：
+- 单测 **506/0**（新增 31：`common` +14 / `gateway` +7 / `user` +10）；**三处反向验证**，均"恰好红对应条数"：① 网关不比对版本 → 恰好 2 条（两处"应被拒"）；② 无条件吊销刷新令牌 → 恰好 2 条；③ 无版本声明当成 0 → `common` 2 条 + `gateway` 1 条；
+- 新增冒烟 `scripts/perm-version-smoke.ps1` **34/34**（含断言总数守卫），并纳入 CI 子集（**13 套**）；
+- ★ **对照式断言**：`scripts/lib/legacy-jwt.mjs` 独立用 Node 按 JWT 规范手签两枚令牌，
+  **只差一个 `pv` 声明** —— 无 pv → 403（放行到服务端判权），pv 落后 → 401（被网关拦下）。
+  差异只可能来自 `pv`，排除了"另找一枚旧令牌"时其它字段干扰的可能。
+  ⚠️ 签名算法**从一枚真实令牌的头部读出来**，不写死 HS256：jjwt 的 `signWith(key)` 会按密钥长度
+  自动挑最强算法（本项目默认密钥 54 字节 → 实际是 **HS384**），写死 HS256 会导致一律验签失败，
+  而那种失败看起来像"网关拒绝老令牌"，会把兼容性问题误判成别的东西；
+- 另：本轮实测暴露并记住的打包陷阱 —— `mvn -pl <模块>` **不带 `-am`** 会用本地仓库里的**过期 `duoduo-common` jar**，
+  表现是一串"找不到符号 `PermVersion`"（像是新写的类不存在）。反向验证时踩到一次，已按纪律改回 `-am`。
+
+
 
 **这一步在做什么**：把「谁能做什么」从**散落在 6 个模块的 20+ 处判权**收敛成**一张「角色 → 权限点」矩阵**，
 并提供**声明式判权**（`@RequirePerm`）。**硬约束是行为零变化** —— 谁原来能做什么，改完一模一样。

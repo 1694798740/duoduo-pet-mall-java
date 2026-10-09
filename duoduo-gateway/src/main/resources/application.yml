@@ -11,6 +11,17 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+  # E17 · 权限版本的感知副本（用户服务写入，网关只读）。
+  # 只在"令牌声明了 pv"时才读一次，老令牌不读。连不上不影响启动、不影响放行：
+  # RedisPermVersionChecker 全程 onErrorResume 成"未知"，最坏是每个请求多花 150ms。
+  # 超时必须给短：本机零依赖开发没起 Redis 时，也不能让登录/鉴权链路等 TCP 超时。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 300ms
+      connect-timeout: 300ms
+
   cloud:
     nacos:
       discovery:
@@ -142,6 +153,8 @@ duoduo:
     jwt-secret: ${DUODUO_JWT_SECRET:duoduo-local-dev-secret-please-change-in-production-32b}
     access-token-ttl: 15m
     refresh-token-ttl: 7d
+    # E17 · 权限版本校验开关。默认开；置 false 即退回「等令牌自然过期」的旧行为（排障/回滚用）
+    perm-version-enabled: ${DUODUO_PERM_VERSION_ENABLED:true}
 
 management:
   endpoints:

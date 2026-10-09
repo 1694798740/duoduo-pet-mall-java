@@ -140,8 +140,21 @@ public class GatewaySecurityProperties {
      */
     private boolean entryScopeEnabled = true;
 
+    // ---------------- E17 · 权限版本校验（角色变更即时生效） ----------------
+
     /**
-     * 路径族 → 允许访问该族路径的入口列表。
+     * 是否启用「权限版本校验」。
+     *
+     * <p>与 {@link #entryScopeEnabled} 同理留一个一行配置退回原行为的开关：
+     * 这是在**认证链路上**新增的一道判断，判定写错的后果是"改完角色的人被挡在门外"，
+     * 或者在 Redis 异常时表现怪异。有开关，处置时间就从"改代码 + 发版"降到"改配置 + 重启"。
+     *
+     * <p>关掉之后**不会**让权限变更失去保护：授权仍然由角色 + 权限点（E16）判定，
+     * 只是变更的生效时间退回"等令牌自然过期（≤15 分钟）"。
+     */
+    private boolean permVersionEnabled = true;
+
+    /** 路径族 → 允许访问该族路径的入口列表。
      *
      * <p><b>刻意用"只列专属族"的方式，而不是给每个入口列白名单</b>：
      * <ul>
@@ -217,5 +230,13 @@ public class GatewaySecurityProperties {
 
     public void setEntryRules(Map<String, List<String>> entryRules) {
         this.entryRules = entryRules;
+    }
+
+    public boolean isPermVersionEnabled() {
+        return permVersionEnabled;
+    }
+
+    public void setPermVersionEnabled(boolean permVersionEnabled) {
+        this.permVersionEnabled = permVersionEnabled;
     }
 }

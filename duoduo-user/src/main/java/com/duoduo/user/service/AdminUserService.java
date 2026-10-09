@@ -17,6 +17,7 @@ import com.duoduo.user.entity.UserEntity;
 import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
+import com.duoduo.user.support.PermVersionPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -49,8 +50,11 @@ import java.util.Set;
  *       权限变更是审计的第一等公民，出事时这是唯一能回答「当时谁干的」的证据。</li>
  * </ol>
  *
- * <p>生效语义：访问令牌里的角色是<b>签发时的快照</b>，被改用户重新登录后才拿到新角色。
- * 服务层把这一点拼进返回的提示文案，让运营界面能原样展示（验收②）。
+ * <p>生效语义（E17 起）：访问令牌里的角色是<b>签发时的快照</b>，但令牌同时带一个权限版本；
+ * 改角色会让版本 +1 并广播给网关，因此被改用户手上的旧令牌
+ * <b>在下一个请求就被判过期（401）</b>，客户端刷新一次即换到新角色 ——
+ * 既不用等 15 分钟自然过期，也不需要重新登录。服务层把这个结果拼进返回文案，
+ * 让运营界面能原样展示（验收②）。
  */
 @Service
 public class AdminUserService {
@@ -76,15 +80,18 @@ public class AdminUserService {
     private final AuditLogMapper auditLogMapper;
     private final RefreshTokenMapper refreshTokenMapper;
     private final SnowflakeIdGenerator idGenerator;
+    private final PermVersionPublisher permVersionPublisher;
 
     public AdminUserService(UserMapper userMapper,
                             AuditLogMapper auditLogMapper,
                             RefreshTokenMapper refreshTokenMapper,
-                            SnowflakeIdGenerator idGenerator) {
+                            SnowflakeIdGenerator idGenerator,
+                            PermVersionPublisher permVersionPublisher) {
         this.userMapper = userMapper;
         this.auditLogMapper = auditLogMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.idGenerator = idGenerator;
+        this.permVersionPublisher = permVersionPublisher;
     }
 
     /**
@@ -162,19 +169,47 @@ public class AdminUserService {
         target.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
         userMapper.updateById(target);
 
-        // 吊销目标用户**所有**刷新令牌（第五十八轮 P1-6）：
-        //   访问令牌里带角色快照，改完库里的角色，对方手上的旧令牌仍是旧角色 ——
-        //   降级场景下这意味着「已经被收回的权限还能继续用」，比升级不生效危险得多。
-        //   吊销刷新令牌后旧访问令牌最多活到自然过期，且无法静默续期，等于强制重登。
-        int revoked = refreshTokenMapper.revokeAllByUser(targetUserId);
+        /*
+         * E17 · 权限版本 +1，把新版本广播给网关。
+         *
+         * 为什么不再"一律吊销刷新令牌"：那是 E17 之前的止血办法 —— 只能保证
+         * **不能静默续期**，旧访问令牌仍可带旧角色活到自然过期（≤15 分钟）。
+         * 降级场景下这 15 分钟是实打实的越权窗口。现在改为版本号精确收口：
+         * 旧令牌下一个请求即 401，客户端刷新一次就换到新角色，**不需要重新登录**。
+         *
+         * 为什么"自增"要写进 SQL：读出来 +1 再写回，在并发改同一用户时会有丢失更新 ——
+         * 两个人各读到 v，都写 v+1，最终只加了一次。自增交给数据库，一次语句就是一次原子的。
+         */
+        userMapper.update(null, Wrappers.<UserEntity>lambdaUpdate()
+                .eq(UserEntity::getId, targetUserId)
+                .setSql("perm_version = perm_version + 1"));
+
+        // 回读新版本：不自己算 old+1，避免与上面的原子自增产生第二份口径
+        UserEntity refreshed = userMapper.selectById(targetUserId);
+        Long newVersion = refreshed == null ? target.getPermVersion() : refreshed.getPermVersion();
+        target.setPermVersion(newVersion);
+
+        /*
+         * 广播失败必须退回老路（吊销刷新令牌）。
+         * 不退回的话：网关照旧读不到新版本 → 继续放行旧令牌 → 运营界面上写着"权限已收回"、
+         * 实际上还能用。宁可让被改的人重新登录一次，也不能留下"看起来收回了"的假象。
+         * 两个响应文案因此是**有意**分开的：它是运营判断"这次变更到底生效到哪一步"的唯一线索。
+         */
+        boolean broadcast = permVersionPublisher.publish(targetUserId, newVersion);
+
+        // 吊销刷新令牌：**仅在广播失败时**作为兜底（见上）
+        int revoked = broadcast ? 0 : refreshTokenMapper.revokeAllByUser(targetUserId);
 
         writeAudit(actor, target, oldRole, newRole);
 
-        log.info("角色变更 actorId={} targetId={} {} -> {}，吊销刷新令牌 {} 条",
-                actor.userId(), targetUserId, oldRole, newRole, revoked);
-        return new RoleChangeResult(toAdminView(target),
-                "角色已更新为 " + newRole + "；已吊销该用户的刷新令牌（" + revoked
-                        + " 条），其在线会话将重新登录后生效");
+        log.info("角色变更 actorId={} targetId={} {} -> {}，permVersion={}，副本广播={}，吊销刷新令牌 {} 条",
+                actor.userId(), targetUserId, oldRole, newRole, newVersion, broadcast, revoked);
+
+        String notice = broadcast
+                ? "角色已更新为 " + newRole + "；该用户在线会话将在下一个请求即生效（无需重新登录）"
+                : "角色已更新为 " + newRole + "；权限版本副本同步失败（Redis 不可用），已吊销该用户的刷新令牌（"
+                + revoked + " 条），其在线会话将重新登录后生效";
+        return new RoleChangeResult(toAdminView(target), notice);
     }
 
     private void writeAudit(LoginUser actor, UserEntity target, String oldRole, String newRole) {

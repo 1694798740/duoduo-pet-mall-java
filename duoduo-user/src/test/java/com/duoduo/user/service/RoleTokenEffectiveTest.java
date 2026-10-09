@@ -63,9 +63,12 @@ class RoleTokenEffectiveTest {
     private final com.duoduo.user.mapper.MerchantMapper merchantMapper = mock(com.duoduo.user.mapper.MerchantMapper.class);
     private final com.duoduo.user.mapper.MerchantMemberMapper merchantMemberMapper =
             mock(com.duoduo.user.mapper.MerchantMemberMapper.class);
+    /** E17：版本副本发布（此处只关注"签发时带上了版本"，发布本身由 AdminUserServiceRoleChangeTest 钉） */
+    private final com.duoduo.user.support.PermVersionPublisher permVersionPublisher =
+            mock(com.duoduo.user.support.PermVersionPublisher.class);
 
     private final AuthService authService = new AuthService(userMapper, refreshTokenMapper, passwordEncoder,
-            jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper);
+            jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper, permVersionPublisher);
     /** 控制器多了一个宠物档案依赖（第五十八轮 S1），这两条断言用不到它 */
     private final PetProfileService petProfileService = mock(PetProfileService.class);
 
@@ -101,6 +104,34 @@ class RoleTokenEffectiveTest {
         assertThat(payload.valid()).isTrue();
         assertThat(payload.role()).isEqualTo("SELLER");
         assertThat(payload.userId()).isEqualTo(USER_ID);
+    }
+
+    // ================= E17 · 权限版本 =================
+
+    @Test
+    void 重签的令牌带库里的权限版本_并把副本对齐() {
+        // 库里已经有两次变更（版本 2）→ 重签出来的令牌必须是 2，
+        // 否则这枚"新"令牌会被网关当成旧权限直接 401 —— 也就是"重签之后反而更进不去"
+        UserEntity entity = user("SELLER", "ACTIVE");
+        entity.setPermVersion(2L);
+        when(userMapper.selectById(USER_ID)).thenReturn(entity);
+
+        String token = authService.renewAccessToken(USER_ID);
+
+        assertThat(jwt.parse(token, JwtTokenService.TYPE_ACCESS).permVersion()).isEqualTo(2L);
+        // 顺便把 Redis 副本对齐（自愈）：副本落后时靠这一步收敛，不必等重新登录
+        verify(permVersionPublisher).publishQuietly(USER_ID, 2L);
+    }
+
+    @Test
+    void 库内版本为NULL时按初始版本0处理() {
+        // 老库 / 手工插入的数据可能没有这个值。这里刻意断言"按 0 处理"而不是"写 null"：
+        // 令牌里不写版本 = 该令牌从此不参与版本校验，等于这次的加固对它静默失效
+        when(userMapper.selectById(USER_ID)).thenReturn(user("USER", "ACTIVE"));
+
+        String token = authService.renewAccessToken(USER_ID);
+
+        assertThat(jwt.parse(token, JwtTokenService.TYPE_ACCESS).permVersion()).isEqualTo(0L);
     }
 
     @Test
