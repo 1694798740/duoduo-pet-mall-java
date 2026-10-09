@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.common.security.perm.Permission;
 import com.duoduo.user.dto.MerchantDtos.ApplicationSummary;
 import com.duoduo.user.dto.MerchantDtos.ApplicationView;
 import com.duoduo.user.dto.MerchantDtos.MerchantLicenseInfo;
@@ -543,11 +544,12 @@ public class MerchantOnboardingService {
     public MerchantMaterialStorage.ReadResult readMaterial(Long readerId, long merchantId, String storedName) {
         MerchantEntity entity = requireMerchant(merchantId);
         com.duoduo.common.context.LoginUser reader = com.duoduo.common.context.UserContext.require();
-        String role = reader.role() == null ? "USER" : reader.role().toUpperCase();
-        boolean isOperator = "OPERATOR".equals(role) || "ADMIN".equals(role);
+        // E16：原先这里手拼 "OPERATOR".equals(role) || "ADMIN".equals(role)，
+        // 与 OperatorGuard / LoginUser 各写一份。改问权限点，口径回到矩阵一处。
+        boolean isOperator = reader.hasPerm(Permission.MERCHANT_MATERIAL_READ);
         boolean isOwner = entity.getOwnerUserId() != null && entity.getOwnerUserId().equals(readerId);
         if (!isOperator && !isOwner) {
-            log.warn("越权读取入驻材料被拒 reader={} merchantId={} role={}", readerId, merchantId, role);
+            log.warn("越权读取入驻材料被拒 reader={} merchantId={} role={}", readerId, merchantId, reader.role());
             throw BizException.forbidden("无权查看该入驻材料");
         }
         MerchantMaterialStorage.ReadResult result = materialStorage.read(merchantId, storedName);

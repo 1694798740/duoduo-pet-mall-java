@@ -22,7 +22,11 @@ public class UserEntity {
     private String avatar;
     /** ACTIVE / BANNED（ACC-05：封禁账号仅保留浏览与问答能力） */
     private String status;
-    /** USER / OPERATOR / ADMIN */
+    /**
+     * 系统角色。取值 {@code USER / SELLER / OPERATOR / ADMIN} ——
+     * 唯一口径见 {@code RolePermissionMatrix.KNOWN_ROLES}（E16 起不再各处自列一份；
+     * 本注释此前只写 {@code USER/OPERATOR/ADMIN}，漏了实际在用的 SELLER）。
+     */
     private String role;
     private String realName;
     private String idCardMasked;

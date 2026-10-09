@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     `nickname`        VARCHAR(50)  NOT NULL,
     `avatar`          VARCHAR(500)          DEFAULT NULL,
     `status`          VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/BANNED（ACC-05）',
-    `role`            VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT 'USER/OPERATOR/ADMIN',
+    `role`            VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT 'USER/SELLER/OPERATOR/ADMIN（E16：取值集合以 RolePermissionMatrix.KNOWN_ROLES 为唯一口径）',
     `real_name`       VARCHAR(50)           DEFAULT NULL,
     `id_card_masked`  VARCHAR(30)           DEFAULT NULL COMMENT '仅存掩码，完整号码不落库',
     `wx_openid`       VARCHAR(64)           DEFAULT NULL COMMENT '微信 openid（A13，绑定后写入；未绑定为 NULL）',

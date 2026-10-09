@@ -14,6 +14,8 @@
 #   7. SLA 指标：抽中违规率 / 平均复核时长 / 误判率 / 当前比例，且违规率与计数自洽；
 #   8. 入驻侧同链路：复核判违规 → 店铺直接停业（不攒次数）+ 联动下架其商品；
 #   9. 夹具自建自毁：结尾删除本次直插的抽查任务、商品与店铺，并复位抽样比例。
+#  10. E16 权限点：直连服务端口做双向断言 —— USER/SELLER 403、OPERATOR 200、未登录 401，
+#      验证「注解式判权」与「命令式判权」都真的拦得住（注解失效 = 静默变成公开接口）。
 #
 # 设计原则：
 #   1. **端到端不赌概率**：抽样命中是概率事件，所以「任务 → 复核 → 处置」这条链
@@ -323,6 +325,50 @@ Check "自证：两侧抽样比例已复位为 5" ("$rateP" -eq '5' -and "$rateU
 # 临时提权必须收回：不收尾的话，每跑一轮就在库里多一个永久能进后台的账号
 $roleAfter = Remove-PlatformOperatorPrivilege -Phone $op.phone
 Check "自证：临时运营角色已收回（不留后台入口）" ($roleAfter -eq 'USER') "role=$roleAfter"
+
+# ---------- 9. E16 · 权限点与注解式判权 ----------
+Write-Host ""
+Write-Host "> E16 权限点：注解式判权是否真的拦得住（**直连服务端口**）"
+# ★ 为什么必须直连 8082/8081 而不是走网关：
+#   E8 的入口收窄会让「非 admin 入口」的令牌在**网关**就被 403 —— 那个 403 与
+#   「服务端注解有没有生效」毫无关系。只断言网关态的话，注解压根没注册也会「看起来通过」。
+#   直连服务端口 + 伪造网关头（服务端口不对外，这里只为自证），问的才是真问题。
+#   ★ 失效方向：注解失效 = 接口静默变成任何人可调（200），不会报错、不会变红 ——
+#   所以这组断言里 **SELLER → 403** 是最关键的一条（命令式那行已被删掉，
+#   若拦截器没挂上，这里会 200）。
+#   用只读的 /samples 而不是 /metrics：后者会顺带评估并执行自动收紧（会写库），
+#   而此刻自毁刚把抽样比例复位，不该再被这次探测改动。
+$svcProduct = 'http://localhost:8082'
+$svcUser = 'http://localhost:8081'
+$svcSamples = "$svcProduct/api/admin/audit-sla/samples?page=1&pageSize=1"
+
+$r1 = Call 'Get' $svcSamples $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'USER' }
+Check "E16 · USER 直连抽查队列 → 403（注解拦得住）" ($r1.status -eq 403) "status=$($r1.status) raw=$($r1.raw)"
+
+$r2 = Call 'Get' $svcSamples $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'SELLER' }
+Check "E16 · SELLER 直连抽查队列 → 403（注解拦得住，命令式那行已删）" ($r2.status -eq 403) "status=$($r2.status) raw=$($r2.raw)"
+
+$r3 = Call 'Get' $svcSamples $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'OPERATOR' }
+Check "E16 · OPERATOR 直连抽查队列 → 200（注解不误拦）" ($r3.status -eq 200) "status=$($r3.status) raw=$($r3.raw)"
+
+$r4 = Call 'Get' $svcSamples $null $null $null
+Check "E16 · 未登录直连 → 401（与 403 分得清）" ($r4.status -eq 401) "status=$($r4.status) raw=$($r4.raw)"
+
+# 命令式路径（OperatorGuard → 权限矩阵）同时回归：抽一个未改注解的老端点
+$svcUsers = "$svcUser/api/admin/users?page=1&pageSize=5"
+$r5 = Call 'Get' $svcUsers $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'USER' }
+Check "E16 · 命令式路径：USER 直连用户列表 → 403" ($r5.status -eq 403) "status=$($r5.status) raw=$($r5.raw)"
+
+$r6 = Call 'Get' $svcUsers $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'OPERATOR' }
+Check "E16 · 命令式路径：OPERATOR 直连用户列表 → 200" ($r6.status -eq 200) "status=$($r6.status) raw=$($r6.raw)"
+
+# 商家端门槛同源：SELLER 能进商家端（有 seller:console），USER 不能
+$svcSellerSpus = "$svcProduct/api/seller/products?page=1&pageSize=1"
+$r7 = Call 'Get' $svcSellerSpus $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'SELLER' }
+Check "E16 · SELLER 直连商家商品 → 非 403（有 seller:console）" ($r7.status -ne 403) "status=$($r7.status) raw=$($r7.raw)"
+
+$r8 = Call 'Get' $svcSellerSpus $null $null @{ 'X-User-Id' = '1'; 'X-User-Role' = 'USER' }
+Check "E16 · USER 直连商家商品 → 403" ($r8.status -eq 403) "status=$($r8.status) raw=$($r8.raw)"
 
 Write-Host ""
 Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="

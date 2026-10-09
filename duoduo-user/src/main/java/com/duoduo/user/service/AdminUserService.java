@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
+import com.duoduo.common.security.perm.Permission;
+import com.duoduo.common.security.perm.RolePermissionMatrix;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.UserDtos.AdminUserView;
@@ -55,8 +57,14 @@ public class AdminUserService {
 
     private static final Logger log = LoggerFactory.getLogger(AdminUserService.class);
 
-    /** 角色白名单：与 {@code LoginUser} 的判定口径一致，库里统一大写存储 */
-    private static final Set<String> ALLOWED_ROLES = Set.of("USER", "SELLER", "OPERATOR", "ADMIN");
+    /**
+     * 角色白名单（E16 起改为引用矩阵的 {@code KNOWN_ROLES}）。
+     *
+     * <p>原先这里独立硬编码一份 {@code Set.of("USER","SELLER","OPERATOR","ADMIN")}，
+     * 与 {@code RolePermissionMatrix} 各持一份角色清单 —— 加角色时必然漏一处。
+     * 现在「系统角色有哪些」只有矩阵一个来源。
+     */
+    private static final Set<String> ALLOWED_ROLES = RolePermissionMatrix.KNOWN_ROLES;
 
     /** 权能从高到低（用于「给自己降权」判定）：数值越小权能越高 */
     private static final Map<String, Integer> ROLE_RANK =
@@ -110,10 +118,11 @@ public class AdminUserService {
      */
     @Transactional
     public RoleChangeResult changeRole(Long targetUserId, String newRoleRaw) {
-        // 第一层门：进后台；第二层门：改角色仅限 ADMIN —— 两句独立报错，
-        // 运营看到 403 时能分清是「没进后台」还是「进了但级别不够」
+        // 第一层门：进后台；第二层门：改角色需权限点 user:role:manage（矩阵里仅 ADMIN）——
+        // 两句独立报错，运营看到 403 时能分清是「没进后台」还是「进了但级别不够」。
+        // E16 起不再写 actor.isAdmin()：判权只认权限点，角色名比较是上一代的写法。
         LoginUser actor = OperatorGuard.requireOperator();
-        if (!actor.isAdmin()) {
+        if (!actor.hasPerm(Permission.USER_ROLE_MANAGE)) {
             throw BizException.forbidden("变更用户角色仅限超级管理员操作");
         }
 

@@ -147,7 +147,12 @@ try {
   await page.getByRole('button', { name: /发布商品/ }).click();
   await page.getByText('发布商品', { exact: true }).waitFor({ timeout: 10000 });
 
-  const title = `E14审核夹具商品-${Date.now()}`;
+  // ★ E28 起：内容干净的商品会**自动放行**（不再进人工队列）。本套件测的是「审核台」，
+  // 所以夹具必须**故意命中风险规则**（标题里放联系方式）→ 转人工 → 才落 PENDING。
+  // 用「微信abc12345」：既命中 SpuRiskJudge 的 CONTACT_PATTERN（微信 + 4 位以上 \w），
+  // 又保持标题主体是中文（后面多处断言按 title 变量匹配，不受影响）。
+  // 若哪天这条不再转人工，下面第一条断言就会红 —— 那正是我们要的提醒。
+  const title = `E14审核夹具商品-微信abc12345-${Date.now()}`;
   await page.locator('input[placeholder*="麦富迪"]').fill(title);
   // 类目 / 品牌是两个 <select>（顺序：类目在前）
   const selects = page.locator('.modal select, [role="dialog"] select');

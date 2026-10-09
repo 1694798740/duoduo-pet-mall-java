@@ -130,7 +130,11 @@ try {
   const app1 = await call('GET', '/api/users/me/merchant-application', undefined, seller.jar);
   check('查看建草稿', app1.status === 200 && app1.data?.status === 'DRAFT', app1.data?.status);
   const merchantId = app1.data.merchantId;
-  const storeName = `审核台夹具店-${Date.now()}`;
+  // ★ E28 起：干净的入驻申请会**自动放行并直接开店**（不再进人工队列）。本套件测的是「入驻审核台」，
+  // 所以店名要**故意命中风险规则** —— 含「官方」这类冒用 / 误导词会被 MerchantRiskRules 判为
+  // IMPERSONATION_NAME → 转人工 → 才落 SUBMITTED 供审核台处置。
+  // （店名后面的「-时间戳」保证每轮唯一，不受 RegExp 匹配影响。）
+  const storeName = `审核台官方夹具店-${Date.now()}`;
 
   // E12：材料走**私有通道**真实上传（multipart → 私有卷），不再用 /uploads 假路径
   const materials = {};

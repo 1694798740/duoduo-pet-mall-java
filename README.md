@@ -756,7 +756,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 54 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 62 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁 / **E16 权限点：直连服务端口做双向断言（USER·SELLER→403、OPERATOR→200、未登录→401、商家端门槛）**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -1645,6 +1645,58 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-09（E16 · RBAC 权限点体系：判权口径收敛到一处）
+
+**这一步在做什么**：把「谁能做什么」从**散落在 6 个模块的 20+ 处判权**收敛成**一张「角色 → 权限点」矩阵**，
+并提供**声明式判权**（`@RequirePerm`）。**硬约束是行为零变化** —— 谁原来能做什么，改完一模一样。
+
+**① 新增（`duoduo-common`）**
+
+| 类 | 作用 | 关键口径 |
+|---|---|---|
+| `security/perm/Permission` | 18 个权限点常量，命名 `域:对象:动作` | 清单 `ALL` 用 `LinkedHashSet + unmodifiableSet` —— `Set.of` / `Set.copyOf` 的**迭代顺序不稳定**，而测试要按序遍历（失败信息要能读成"第几条挂掉"） |
+| `security/perm/RolePermissionMatrix` | **唯一权威矩阵** | ADMIN=全部；OPERATOR=全部**减去「改角色 + 资金」**（与旧 `isAdmin()` 门等价）；SELLER=仅商家端；USER=空。**未知角色折叠为 USER**（失败方向必须指向拒绝）。角色归一化只做一次（旧代码 `equalsIgnoreCase` 与 `toUpperCase` 混用） |
+| `security/perm/RequirePerm` | 注解（**方法级优先于类级**） | 刻意**不提供**「类级默认 + 方法级豁免」—— 豁免语义最容易变成绕过漏洞 |
+| `web/PermissionInterceptor` | 注解校验 | **必须注册在 `UserContextInterceptor` 之后**：颠倒的表现是「所有带注解的端点一律 401」，很容易被误读成"鉴权更严了" |
+
+**② 改造点（口径收敛；调用点**刻意不动**）**
+
+- `LoginUser.isOperator()` / `canAccessSellerConsole()` / 新增 `hasPerm()`：全部改为查矩阵 —— **约 55 处 `OperatorGuard.requireOperator()` 调用点一行未改，语义已统一到矩阵**
+- `OperatorGuard.requireOperator()` → 委托 `requirePerm(platform:console)`；**403 文案逐字保留**（`SellerProductServiceTest` 断言了原句）
+- `AdminUserService.changeRole`：`actor.isAdmin()` → `hasPerm(user:role:manage)`
+- `MerchantOnboardingService.readMaterial`：手拼 `"OPERATOR".equals(role) || "ADMIN".equals(role)` → `hasPerm(merchant:material:read)`
+- `AdminUserService.ALLOWED_ROLES` → 引用 `RolePermissionMatrix.KNOWN_ROLES`（消掉重复的一份角色清单）
+- `AdminAuditSlaController`：4 处命令式判权 → 类级 `@RequirePerm(Permission.AUDIT_SLA)`（**首个注解式落地**）
+
+**③ 测试（`RolePermissionMatrixTest`，17 条）**
+
+- **真值表独立于实现书写**（不复用 `Permission.ALL`）：4 角色 × 18 权限点逐条钉死；真值表的 key 必须与 `Permission.ALL` 一一对应
+- **反射校验**：`Permission` 里声明的每个常量都必须进了 `ALL`（防「加了常量忘了登记 → ADMIN 少一项能力」）
+- **★ 等价性**：矩阵 vs 旧 `isOperator` / `isAdmin` / `canAccessSellerConsole` **逐角色一致**（改矩阵多给一个权限点就会红）
+- 归一化 / 未知角色降级 / `null` 权限点一律拒绝 / 不可变性
+
+**④ ★ 反向验证**：故意让 SELLER 拿到 `platform:console` → 测试**恰好红 3 条**（真值表 / 等价性 / SELLER 范围），改回即全绿 —— 证明守门断言不是恒真。
+
+**⑤ ★ 验证方式上的坑（可复用）**：验「注解到底生效没」**不能走网关** —— E8 的入口收窄会让非 admin 令牌在**网关**先返 403，**那个 403 与注解无关**，只断言网关态会"看起来通过"。因此改为**直连服务端口**（product `8082` / user `8081`）做 8 条双向断言：USER / SELLER → 403、OPERATOR → 200、未登录 → 401（与 403 分得清）、商家端门槛（卖家进得去 / 普通用户进不去）。探测用**只读的 `/samples`** 而非 `/metrics` —— 后者会顺带写库（自动收紧），而此刻自毁刚把比例复位。
+
+**⑥ 顺手修**：`t_user.role` 的 DDL 注释与 `UserEntity` 注释**都漏了实际在用的 `SELLER`**（同一块事实两个说法）。
+
+**⑦ 刻意不做**：其余命令式调用点**不逐个改注解**（改名制造大面积 diff 与漏验证风险，收益为零 —— 口径已统一在矩阵）；前端 `roles.ts` 保持角色判定（**体验层**，真正的边界始终在后端）。
+
+**⑧ 顺带修掉 E28 的一处遗留（全量回归抓出来的）**：全量 e2e 跑出 `merchant-audit` / `product-audit` **两套红**，归因是
+**E28 把审核改成「默认放行」后，这两套的夹具假设（"提交后必落 PENDING"）失效** —— 内容干净的商品 / 入驻申请现在直接 APPROVED，
+审核台队列空了，后续断言链（「待审核」标签、上架门禁、驳回 → 重提）**全部落空**。
+**这不是 E16 引入的**（E16 行为零变化），而是 E28 提交时**没跑全量 e2e** 留下的欠账 ——
+与「套件不在 CI 里 = 迟早静默腐烂」是同一类病（CI 至今没有 e2e 作业）。
+**修法**：让夹具**故意命中风险规则** → 走转人工 → 才落 PENDING，审核台的断言链恢复有效。
+· `product-audit`：商品标题改为 `E14审核夹具商品-微信abc12345-<ts>` → 命中 `SpuRiskJudge.CONTACT_INFO`
+· `merchant-audit`：店铺名改为 `审核台官方夹具店-<ts>` → 命中 `MerchantRiskRules.IMPERSONATION_NAME`
+两套单独重跑：`product-audit` **36/0**、`merchant-audit` **27/0**。
+
+**验证**：单测 **475/0**（新增 17）；冒烟 `audit-sla-smoke.ps1` **62/0**（新增 8 条权限断言）；**全量冒烟 24 套 0 失败**；**全量 e2e 22 套全绿**（含上面修复的两套）；改的是**被所有服务共用的判权组件** → 按纪律跑**全量回归**；容器重建后**拆包核验**（直接看包内的类，不比大小 / 时间 / 哈希）确认新代码确实在容器里跑。
+
+---
 
 ### 2026-10-09（E28 · 审核 SLA 落地：默认放行 + 事后抽查）
 

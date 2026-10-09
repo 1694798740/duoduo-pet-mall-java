@@ -133,6 +133,20 @@ public class WebAutoConfiguration {
                                 "/doc.html",
                                 "/h2-console/**"
                         );
+                // E16 · 声明式判权。★ 必须注册在 UserContextInterceptor **之后**：
+                // 它读 UserContext，而上下文由前一个拦截器从网关头还原。
+                // 顺序颠倒的表现是「带注解的端点一律 401」，很容易被误读成鉴权更严。
+                registry.addInterceptor(new PermissionInterceptor())
+                        .addPathPatterns("/**")
+                        .excludePathPatterns(
+                                "/actuator/**",
+                                "/health/**",
+                                "/error",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/doc.html",
+                                "/h2-console/**"
+                        );
             }
 
             /**
