@@ -194,6 +194,9 @@ public class SearchIndexer {
         doc.put("supplyType", spu.getSupplyType());
         // 上下架状态进文档：查询侧与 MySQL 的 status='ON_SALE' 同口径过滤（验收③）
         doc.put("status", spu.getStatus());
+        // E14 · 审核状态同样进文档：ES 是独立于 MySQL 的可见性出口，
+        // 查询侧靠它排除未过审商品（见 EsSearchEngine.searchProducts 的对应 filter）。
+        doc.put("auditStatus", spu.getAuditStatus());
         doc.put("speciesList", species);
         doc.put("lifeStageList", lifeStages);
         doc.put("inStock", inStock);

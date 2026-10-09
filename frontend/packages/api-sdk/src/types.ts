@@ -488,7 +488,16 @@ export interface ShipRequest {
   logisticsNo?: string;
 }
 
-/** 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存） */
+/** 平台商品的审核维度（与交易维度 status 正交，口径同闲置 ListingAuditStatus） */
+export type ProductAuditStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/**
+ * 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存）。
+ *
+ * E14 起带出**审核维度**：列表里必须看得到「待审 / 已通过 / 已驳回」，
+ * 否则卖家提交完就查无此项，只能反复重发；驳回原因更是刚需 ——
+ * 不告诉他为什么被拒，他只能猜着改。
+ */
 export interface SellerProductView {
   id: string;
   title: string;
@@ -496,12 +505,125 @@ export interface SellerProductView {
   status: 'ON_SALE' | 'OFF_SHELF' | string;
   /** 状态中文文案由服务端给出，前端不维护映射表 */
   statusLabel: string;
+  /** 审核态：自营商品恒 APPROVED（平台免审） */
+  auditStatus: ProductAuditStatus | string;
+  /** 审核态中文文案，同样由服务端下发 */
+  auditLabel: string;
+  /** 被驳回的原因；非驳回态为 null */
+  auditReason: string | null;
   sellerId: string;
   minPrice: number;
   maxPrice: number;
   salesCount: number;
   skuCount: number;
   totalStock: number;
+}
+
+/** 提交商品时的规格项；价格单位是**分**（表单填元，提交前 ×100） */
+export interface SellerSkuInput {
+  specName?: string | null;
+  price: number;
+  stock?: number | null;
+  image?: string | null;
+}
+
+/**
+ * 提交商品请求（E14）。
+ *
+ * 刻意**没有** sellerId / supplyType / auditStatus：
+ * 归属由登录态推导、供货类型与审核态由服务端判定 ——
+ * 请求体里给出任何一个，都等于让客户端自证「我该不该被审核」。
+ */
+export interface SellerProductCreateRequest {
+  title: string;
+  subtitle?: string | null;
+  categoryId: string;
+  brandId?: string | null;
+  mainImage: string;
+  images?: string[] | null;
+  detail?: string | null;
+  skus: SellerSkuInput[];
+}
+
+/**
+ * 编辑商品请求（E14 扩展为全部内容字段）。
+ *
+ * 三态语义：不传 = 不改；空串 = 清空（副标题 / 详情 / 详情图可清空）；
+ * 有值 = 替换。**内容变更会触发重新审核**（第三方商品），
+ * 表单提交前要把「用户没填」显式转成 undefined。
+ */
+export interface SellerProductUpdateRequest {
+  title?: string;
+  subtitle?: string;
+  mainImage?: string;
+  images?: string[];
+  detail?: string;
+  categoryId?: string;
+  brandId?: string;
+}
+
+/** 规格视图（商家侧编辑回填 / 审核台核对） */
+export interface SellerSkuView {
+  id: string;
+  specName: string | null;
+  price: number;
+  stock: number;
+  image: string | null;
+  status: string;
+}
+
+/** 商家视角商品详情（编辑回填来源；公开详情对未过审商品一律 404） */
+export interface SellerProductDetailView {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  categoryId: string | null;
+  brandId: string | null;
+  mainImage: string | null;
+  images: string[];
+  detail: string | null;
+  supplyType: string;
+  status: string;
+  statusLabel: string;
+  auditStatus: ProductAuditStatus | string;
+  auditLabel: string;
+  auditReason: string | null;
+  auditAt: string | null;
+  sellerId: string;
+  minPrice: number;
+  maxPrice: number;
+  skus: SellerSkuView[];
+}
+
+/** 平台审核台条目（E14）：带全部背审材料，运营不必点进二级页就能判断 */
+export interface AdminProductAuditView {
+  id: string;
+  sellerId: string;
+  title: string;
+  subtitle: string | null;
+  mainImage: string | null;
+  images: string[];
+  detail: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  brandId: string | null;
+  brandName: string | null;
+  supplyType: string;
+  status: string;
+  auditStatus: ProductAuditStatus | string;
+  auditLabel: string;
+  auditReason: string | null;
+  auditAt: string | null;
+  minPrice: number;
+  maxPrice: number;
+  skus: SellerSkuView[];
+  createdAt: string | null;
+}
+
+/** 商品审核请求；驳回时 reason 必填（服务端会 400） */
+export interface AdminProductAuditRequest {
+  action: 'APPROVE' | 'REJECT';
+  reason?: string;
 }
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------

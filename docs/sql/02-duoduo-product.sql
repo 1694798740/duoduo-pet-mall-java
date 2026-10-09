@@ -71,6 +71,14 @@ CREATE TABLE t_spu (
     images       VARCHAR(2000),
     detail       VARCHAR(4000),
     status       VARCHAR(20)  NOT NULL DEFAULT 'ON_SALE',
+    -- E14 · 审核维度（与 status 正交，口径同 t_listing）：
+    --   交易维度 status 归卖家（在售 / 下架），审核维度 audit_status 归平台（合规判定）。
+    --   默认 APPROVED 的理由见 incremental/27-e14-spu-audit.sql 的注释：
+    --   存量商品在售、自营商品免审，只有第三方商家新建/重大变更才显式落 PENDING。
+    audit_status VARCHAR(20)  NOT NULL DEFAULT 'APPROVED',
+    audit_reason VARCHAR(200),
+    audit_at     DATETIME,
+    audit_by     BIGINT,
     sales_count  INT          NOT NULL DEFAULT 0,
     rating       DECIMAL(3,2) NOT NULL DEFAULT 5.00,
     rating_count INT          NOT NULL DEFAULT 0,
@@ -88,6 +96,8 @@ CREATE INDEX idx_spu_brand ON t_spu (brand_id);
 CREATE INDEX idx_spu_sales ON t_spu (sales_count);
 CREATE INDEX idx_spu_price ON t_spu (min_price);
 CREATE INDEX idx_spu_seller ON t_spu (seller_id, status);
+-- E14：审核台按「审核状态 + 交易状态」筛（增量脚本 27-e14-spu-audit.sql）
+CREATE INDEX idx_spu_audit ON t_spu (audit_status, status);
 
 -- ---------- SKU：可售最小单元（库存与价格落在这一层） ----------
 CREATE TABLE t_sku (

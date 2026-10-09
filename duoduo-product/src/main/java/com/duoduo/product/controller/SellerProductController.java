@@ -2,6 +2,9 @@ package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
+import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
+import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.service.SellerProductService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,9 +17,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 商家端 · 商品管理接口（{@code /api/seller/products/**}，M9 商品侧）。
+ * 商家端 · 商品管理接口（{@code /api/seller/products/**}，M9 商品侧 + E14 上架审核）。
  *
- * <p>与交易侧 {@code /api/seller/**} 同一套准入模型：卖家或运营 / 管理员；
+ * <p>与交易侧 {@code /api/seller/**} 同一套准入模型：卖家 / 店员 / 运营 / 管理员；
  * 可见范围由登录态推导，接口不接受普通卖家指定的 sellerId。
  *
  * <p>网关与过滤器注意（踩过一次的坑）：
@@ -38,14 +41,42 @@ public class SellerProductController {
         this.sellerProductService = sellerProductService;
     }
 
-    /** 我的商品列表（分页 + 标题关键词）；运营 / 管理员可显式按 sellerId 筛选 */
+    /**
+     * 我的商品列表（分页 + 标题关键词 + 审核状态）；
+     * 运营 / 管理员可显式按 sellerId 筛选（不传＝全部），其余账号一律强制自己的店铺。
+     */
     @GetMapping
     public ApiResponse<PageResult<SellerProductView>> list(
             @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String auditStatus,
             @RequestParam(required = false) Long sellerId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sellerProductService.list(keyword, sellerId, page, pageSize));
+        return ApiResponse.ok(sellerProductService.list(keyword, auditStatus, sellerId, page, pageSize));
+    }
+
+    /**
+     * 商品详情（商家视角，编辑回填用）。
+     *
+     * <p>路径用 {@code \d+} 限定：不加限定的话，任何一段非数字路径都会落到这里，
+     * 然后倒在为它转 Long 上 → {@code NumberFormatException} → 500，
+     * 而正确答案是 404（没有这个路径）。500 会把「拼错 URL」记成服务器故障。
+     * 与公开详情 {@code ProductController} 同一处理。
+     */
+    @GetMapping("/{spuId:\\d+}")
+    public ApiResponse<SellerProductDetailView> detail(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.ownerDetail(spuId));
+    }
+
+    /**
+     * 提交商品（E14）。
+     *
+     * <p>归属、供货类型、审核态全部由服务端决定（详见服务层注释）——
+     * 请求体里给的 {@code sellerId} / {@code auditStatus} 一律不接受。
+     */
+    @PostMapping
+    public ApiResponse<SellerProductView> create(@RequestBody SellerProductCreateRequest request) {
+        return ApiResponse.ok(sellerProductService.create(request));
     }
 
     /** 上下架请求体：{@code {"action": "ON_SALE" | "OFF_SHELF"}} */
@@ -58,21 +89,24 @@ public class SellerProductController {
         return ApiResponse.ok(sellerProductService.changeStatus(spuId, request == null ? null : request.action()));
     }
 
-    /**
-     * 编辑请求体（第五十八轮 · P1-4）：{@code {"title": "...", "mainImage": "..."}}
-     *
-     * <p>字段<b>三态</b>：不传 / {@code null} = 不改；{@code ""} = 清空（只有主图允许）；
-     * 有值 = 替换。前端要把「用户没填」显式归一成 {@code null} 再上行 ——
-     * 把「不改」传成空串，用户的原有主图会被清掉。
-     */
-    public record UpdateRequest(String title, String mainImage) {
+    /** 重新提审（E14）：被驳回且无需改内容的商品回到审核队列（申请复核） */
+    @PostMapping("/{spuId}/resubmit")
+    public ApiResponse<SellerProductView> resubmit(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.resubmit(spuId));
     }
 
+    /**
+     * 编辑请求体（E14 扩展为全部内容字段）。
+     *
+     * <p>字段<b>三态</b>：不传 / {@code null} = 不改；{@code ""} = 清空（副标题 / 详情 / 详情图可清空）；
+     * 有值 = 替换。前端要把「用户没填」显式归一成 {@code null} 再上行 ——
+     * 把「不改」传成空串，用户的原有内容会被清掉。
+     *
+     * <p><b>内容变更会触发重新审核</b>（第三方商品）：审核结论是针对「当时那段内容」作出的。
+     */
     @PutMapping("/{spuId}")
     public ApiResponse<SellerProductView> update(@PathVariable Long spuId,
-                                                 @RequestBody(required = false) UpdateRequest request) {
-        return ApiResponse.ok(sellerProductService.update(spuId,
-                request == null ? null : request.title(),
-                request == null ? null : request.mainImage()));
+                                                 @RequestBody(required = false) SellerProductUpdateRequest request) {
+        return ApiResponse.ok(sellerProductService.update(spuId, request));
     }
 }

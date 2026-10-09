@@ -203,6 +203,61 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-10-09（E14 · P2 第 6 项：第三方商品上架审核）
+
+**问题**：E14 之前，"商品能否被买家看到"只有 `t_spu.status` 一个开关，而它由**卖家自己**控制 ——
+上架即在售。P2 引入第三方商家后，任何入驻商家都能直接上架任意商品，平台无人工把关环节。
+
+**方案：审核维度与交易维度正交 + 可见性单点收口**
+
+| 维度 | 字段 | 谁控制 | 取值 |
+|---|---|---|---|
+| 交易 | `status` | 卖家 | `ON_SALE` / `OFF_SHELF` |
+| 审核 | `audit_status` | 平台 | `PENDING` / `APPROVED` / `REJECTED` |
+
+- 可见性判据 = **在售 且 已过审**，由 `ProductService.visibleSpuWrapper()` **单点定义**，
+  覆盖 MySQL 7 条读路径 + ES 文档与查询过滤 + 交易侧采购视图；
+- 未过审商品 **详情返 404**（与"不存在"同码，防状态码探测）；
+- **平台自营免审**：判据是供货类型（`supplyType='self'`）而非"谁在操作"，`auditStatus` 恒 `APPROVED`；
+- 增量脚本 `docs/sql/incremental/27-e14-spu-audit.sql`（+4 列 + `idx_spu_audit`）。
+  列默认 `APPROVED`（**不是** `t_listing` 的 `PENDING`）：存量商品在售中、审核是新增能力、自营免审；
+  第三方由服务端**显式**写 `PENDING`，不依赖列默认值。
+
+**三条业务规则（每条对应一种真实绕过手法）**
+
+1. **内容变更再审** —— 审核结论针对"当时那段内容"。不重审＝允许"先过审、再改违规内容"。
+2. **上架门禁** —— 目标态为在售时要求已过审，否则 422。没有它，"先提交 `PENDING`、再自己上架"即绕过整条链。
+   422 提示语区分"去等审核"与"去改内容"，不能只说"不行"。
+3. **驳回必须填原因** —— 否则卖家不知为何被拒，也留不下可追溯的解释。
+
+**两个刻意的取舍**：审核**可重入**（允许改判；堵死只会把改判逼成改库，留下无法追溯的结论）；
+**通过时不动 `status`**（卖家提交时期望在售；若他自己下架过就保持下架，尊重其选择）。
+
+**侧写**：商品域新增 Feign 客户端（实时查成员身份 —— 店员停用必须即时生效，故不进令牌快照、不缓存）；
+`SellerProductService` 新增 `SellerScope`/`requireSellerScope()`/`requireOwned()`（自营商品 `seller_id=0` 显式拦截
+—— 归属快照在令牌里，`userId==sellerId` 判定会因令牌未轮转而误判）；平台侧审核台 `listForAudit/auditDetail/audit`
+（`OperatorGuard.requireOperator()`），网关新增 `/api/admin/products/**` 路由（不进白名单）。
+
+**顺带修掉两个既有缺陷**：`list()` 把 null 塞进 `wrapper.eq(sellerId)` 生成 `seller_id = NULL`（永不匹配 → 空列表）；
+主图清空原本静默通过 → 改为 400。
+
+**★ 只在"真启动"才现形的缺陷**：漏 `spring-cloud-starter-loadbalancer`。**单测全绿、`package` 全绿** ——
+Mockito 打桩不解析服务发现；只有容器启动炸 `No Feign Client for loadBalancing defined`，服务 unhealthy。
+（与 R52「改共用模块必须重建依赖方」、R57「只 compile 不 package 会进旧 jar」同属"验证产物本身"家族。）
+
+**验证**：`mvn test` **305/0**（+45：`SellerProductServiceTest` 36 + `ProductVisibilityTest` 9）；
+`scripts/e2e/product-audit-ui-check.mjs` **36/36**（发布→不可见→**先 reindex 让索引确有文档再断言检索不命中**
+→门禁 422→通过→上架后可见→改内容回待审→驳回→重提→再通过；收尾删夹具商品，避免在审核队列留永久待办）；
+**全量 e2e 20 套全 PASS**；`check-frontend-imports`（438 条）/`check-bundle-isolation` 通过；
+三端 `tsc --noEmit` 零错误、`vite build` 通过；容器与宿主 jar **逐模块 md5 一致**。
+
+**★ 自测暴露的遗留（非本轮引入，登记 E27）**：本机 24 套接口冒烟中 **9 套红**，逐套归因后确认与 E14 无关 ——
+① `seller`/`aftersale`/`logistics`/`credit` 仍调用 **E10 已删除**的 `POST /api/users/me/merchant`（夹具 404 → 全链级联，
+且这 4 套**不在 CI 子集内**，自 E10 起一直未被发现）；② `smoke`/`trade`/`order`/`ai`/`review` 的断言依赖固定种子数据，
+而本机库经多轮清理后种子 SPU 由 8+ 件降到 **2 件**、`t_listing` **0 条**、SKU `2004/2005` 与 SPU `1003/1004` 已不存在
+（CI 用全新库初始化，不受影响）。判定依据：失败项无一落在本轮改动文件上，且均可用"库内数据不存在"直接解释。
+
 ### 2026-10-07（S1：网页端「正式版」容器 —— 不再依赖开发服务器）
 
 > 来源：《优化建议与待确认事项》**S1**。目标：网页**一条命令长期可用**，不再需要命令行窗口，

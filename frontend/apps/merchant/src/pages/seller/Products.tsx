@@ -1,21 +1,23 @@
 /**
- * 商家端 · 商品管理（M9 商品侧）。
+ * 商家端 · 商品管理（M9 商品侧 + E14 上架审核）。
  *
- * 数据来源：GET /api/seller/products?keyword=&page=&pageSize= + POST /{spuId}/status
+ * 数据来源：GET /api/seller/products + POST /{spuId}/status + POST /{spuId}/resubmit
+ *          + POST /api/seller/products（发布）+ GET /{spuId}（编辑回填）
  *
- * 两个口径：
- *  · 这里看到的是<b>归属自己的商品</b>（t_spu.seller_id），运营 / 管理员可见全部 ——
- *    与订单侧同一套准入模型，前端不重复做归属过滤；
- *  · 上下架是<b>幂等开关</b>：重复点击、并发点击都安全，失败时以服务端返回为准再刷新。
- *
- * 本期刻意不做「新建商品」：那涉及类目 / 品牌 / SKU / 价格 / 库存的完整表单与审核，
- * 属于商家入驻运营流程（见 docs/PLAN.md 的排期说明）。
+ * 三个口径：
+ *  · 这里看到的是<b>归属自己店铺的商品</b>（t_spu.seller_id = 店铺主体）——
+ *    店主与店员看到的是同一批，店员以店铺主体行动，前端不重复做归属过滤；
+ *  · <b>交易维度（在售 / 下架）与审核维度（待审 / 通过 / 驳回）是两件事</b>，
+ *    所以列表里是两列、筛选是两组标签：一件商品完全可以「已过审但被自己下架」，
+ *    也会出现「驳回件等卖家改内容」；
+ *  · <b>上架要过审，内容变更要再审</b>：这两条会让卖家困惑（「我点了上架怎么没反应」
+ *    「我就改了个标题怎么商品不见了」），所以提示语必须说清下一步，而不是只说「不行」。
  */
 
 import React, { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { sellerApi } from '@duoduo/api-sdk/endpoints';
-import type { PageResult, SellerProductView } from '@duoduo/api-sdk/types';
+import type { PageResult, SellerProductDetailView, SellerProductView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import {
   Alert,
@@ -28,6 +30,7 @@ import {
   useToast,
 } from '@duoduo/shared/components/ui';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
+import { ProductPublishModal } from './ProductPublishModal';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 function num(value: string | null): number | undefined {
@@ -36,29 +39,53 @@ function num(value: string | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** 审核维度筛选标签（与交易维度分开的第二组标签） */
+const AUDIT_TABS: { key: string; label: string }[] = [
+  { key: '', label: '全部' },
+  { key: 'PENDING', label: '待审核' },
+  { key: 'APPROVED', label: '已通过' },
+  { key: 'REJECTED', label: '已驳回' },
+];
+
+interface EditDraft {
+  title: string;
+  subtitle: string;
+  mainImage: string;
+  imagesText: string;
+  detail: string;
+}
+
 export const SellerProductsPage: React.FC = () => {
   const { user } = useAuth();
   const { push } = useToast();
   const [params, setParams] = useSearchParams();
 
   const keyword = params.get('keyword') ?? '';
+  const auditStatus = params.get('auditStatus') ?? '';
   const page = num(params.get('page')) ?? 1;
   const allowed = canAccessSellerConsole(user?.role);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keywordDraft, setKeywordDraft] = useState(keyword);
+  const [publishing, setPublishing] = useState(false);
   const [editing, setEditing] = useState<SellerProductView | null>(null);
-  const [titleDraft, setTitleDraft] = useState('');
-  const [imageDraft, setImageDraft] = useState('');
+  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
 
   const fetcher = useCallback(
-    () => sellerApi.products({ keyword: keyword || undefined, page, pageSize: 20 }),
-    [keyword, page],
+    () =>
+      sellerApi.products({
+        keyword: keyword || undefined,
+        auditStatus: auditStatus || undefined,
+        page,
+        pageSize: 20,
+      }),
+    [keyword, auditStatus, page],
   );
   const { data, loading, error, reload } = useAsync<PageResult<SellerProductView>>(
     fetcher,
     allowed,
-    [allowed, keyword, page],
+    [allowed, keyword, auditStatus, page],
   );
 
   const setQuery = (patch: Record<string, string | undefined>) => {
@@ -89,34 +116,95 @@ export const SellerProductsPage: React.FC = () => {
     }
   };
 
-  const closeEdit = () => setEditing(null);
+  const resubmit = async (item: SellerProductView) => {
+    setBusyId(item.id);
+    try {
+      await sellerApi.resubmitProduct(item.id);
+      push(`「${item.title}」已重新提交，请等待平台审核`, 'success');
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '提交失败，请重试', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
-  const openEdit = (item: SellerProductView) => {
+  const closeEdit = () => {
+    setEditing(null);
+    setDraft(null);
+  };
+
+  /**
+   * 打开编辑弹窗：**必须拉一次详情**才知道副标题 / 详情图 / 详情正文
+   * （列表项只带摘要字段）。同时这一步也是「卖家能读回自己被驳回的商品」的入口。
+   */
+  const openEdit = async (item: SellerProductView) => {
     setEditing(item);
-    setTitleDraft(item.title);
-    setImageDraft(item.mainImage ?? '');
+    setDraft(null);
+    setDraftLoading(true);
+    try {
+      const detail: SellerProductDetailView = await sellerApi.productDetail(item.id);
+      setDraft({
+        title: detail.title ?? '',
+        subtitle: detail.subtitle ?? '',
+        mainImage: detail.mainImage ?? '',
+        imagesText: (detail.images ?? []).join('\n'),
+        detail: detail.detail ?? '',
+      });
+    } catch (err) {
+      push(err instanceof Error ? err.message : '读取商品详情失败', 'error');
+      setEditing(null);
+    } finally {
+      setDraftLoading(false);
+    }
   };
 
   const submitEdit = async () => {
-    if (!editing) return;
-    const title = titleDraft.trim();
+    if (!editing || !draft) return;
+    const title = draft.title.trim();
     if (!title) {
       push('商品标题不能为空', 'error');
       return;
     }
-    // 「用户没填」= 不改：该字段根本不出现在请求体里（服务端按三态语义处理）
-    const body: { title?: string; mainImage?: string } = {};
+    const mainImage = draft.mainImage.trim();
+    if (!mainImage) {
+      push('商品主图不能为空', 'error');
+      return;
+    }
+
+    // 「用户没填」= 不改：该字段根本不出现在请求体里（服务端按三态语义处理）。
+    // 直接传空串会把卖家的原有内容清掉 —— 那是线上事故，不是容错。
+    const body: Record<string, unknown> = {};
     if (title !== editing.title) body.title = title;
-    const image = imageDraft.trim();
-    if (image !== (editing.mainImage ?? '')) body.mainImage = image;
-    if (!body.title && body.mainImage === undefined) {
+    if (mainImage !== (editing.mainImage ?? '')) body.mainImage = mainImage;
+
+    const detailItem: SellerProductDetailView = await sellerApi.productDetail(editing.id).catch(() => null as never);
+    const originals = detailItem
+      ? {
+          subtitle: detailItem.subtitle ?? '',
+          detail: detailItem.detail ?? '',
+          images: (detailItem.images ?? []).join('\n'),
+        }
+      : null;
+    if (originals) {
+      if (draft.subtitle.trim() !== originals.subtitle) body.subtitle = draft.subtitle.trim();
+      if (draft.detail.trim() !== originals.detail) body.detail = draft.detail.trim();
+      const images = draft.imagesText
+        .split(/[\n,，]/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (images.join('\n') !== originals.images) body.images = images;
+    }
+
+    if (Object.keys(body).length === 0) {
       push('没有需要保存的修改', 'info');
       return;
     }
+
     setBusyId(editing.id);
     try {
       await sellerApi.updateProduct(editing.id, body);
-      push('商品已更新，买家端列表随之刷新', 'success');
+      push('商品已更新。内容变更已重新提交审核，审核通过后自动恢复展示', 'success');
       closeEdit();
       reload();
     } catch (err) {
@@ -145,10 +233,15 @@ export const SellerProductsPage: React.FC = () => {
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
         <h2 className="section-title">商品管理</h2>
-        <span className="section-sub">{data ? `共 ${total} 件商品` : ''}</span>
+        <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+          <span className="section-sub">{data ? `共 ${total} 件商品` : ''}</span>
+          <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>
+            + 发布商品
+          </button>
+        </div>
       </div>
 
-      <div className="row" style={{ marginBottom: 16, gap: 8 }}>
+      <div className="row" style={{ marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
         <input
           className="input"
           style={{ maxWidth: 320 }}
@@ -179,6 +272,19 @@ export const SellerProductsPage: React.FC = () => {
         ) : null}
       </div>
 
+      {/* 审核维度筛选：与交易维度是两个维度，不能合并成一组标签 */}
+      <div className="row" style={{ marginBottom: 16, gap: 8, flexWrap: 'wrap' }}>
+        {AUDIT_TABS.map((tab) => (
+          <button
+            key={tab.key || 'all'}
+            className={`btn btn-sm ${auditStatus === tab.key ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setQuery({ auditStatus: tab.key || undefined, page: undefined })}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {error ? (
         <Alert kind="error">
           {error}
@@ -201,7 +307,8 @@ export const SellerProductsPage: React.FC = () => {
                   <th style={{ textAlign: 'right' }}>SKU</th>
                   <th style={{ textAlign: 'right' }}>库存</th>
                   <th style={{ textAlign: 'right' }}>销量</th>
-                  <th>状态</th>
+                  <th>交易状态</th>
+                  <th>审核</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -233,7 +340,24 @@ export const SellerProductsPage: React.FC = () => {
                       <span className="tag">{item.statusLabel}</span>
                     </td>
                     <td>
-                      <div className="row" style={{ gap: 8 }}>
+                      <span
+                        className="tag"
+                        style={
+                          item.auditStatus === 'REJECTED'
+                            ? { color: '#c0392b', borderColor: '#c0392b' }
+                            : undefined
+                        }
+                      >
+                        {item.auditLabel}
+                      </span>
+                      {item.auditStatus === 'REJECTED' && item.auditReason ? (
+                        <div className="small muted" style={{ marginTop: 4, maxWidth: 220 }}>
+                          驳回原因：{item.auditReason}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td>
+                      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                         <button
                           className="btn btn-ghost btn-sm"
                           disabled={busyId === item.id}
@@ -241,6 +365,15 @@ export const SellerProductsPage: React.FC = () => {
                         >
                           编辑
                         </button>
+                        {item.auditStatus === 'REJECTED' ? (
+                          <button
+                            className="btn btn-sm btn-primary"
+                            disabled={busyId === item.id}
+                            onClick={() => resubmit(item)}
+                          >
+                            重新提交
+                          </button>
+                        ) : null}
                         <button
                           className={`btn btn-sm ${item.status === 'ON_SALE' ? 'btn-ghost' : 'btn-primary'}`}
                           disabled={busyId === item.id}
@@ -266,14 +399,15 @@ export const SellerProductsPage: React.FC = () => {
       ) : (
         <Empty
           icon="📦"
-          title={keyword ? '没有匹配的商品' : '名下还没有商品'}
+          title={keyword || auditStatus ? '没有匹配的商品' : '名下还没有商品'}
           desc={
-            keyword
-              ? '换个关键词试试，或清除筛选条件。'
-              : '第三方商家商品由入驻运营流程创建；平台自营商品对运营账号可见。'
+            keyword || auditStatus
+              ? '换个关键词或切换审核状态试试。'
+              : '点右上角「发布商品」提交第一件商品，平台审核通过后自动上架。'
           }
         />
       )}
+
       <Modal
         open={editing !== null}
         title="编辑商品"
@@ -283,39 +417,77 @@ export const SellerProductsPage: React.FC = () => {
             <button className="btn btn-ghost" onClick={closeEdit}>
               取消
             </button>
-            <button className="btn btn-primary" disabled={busyId !== null} onClick={submitEdit}>
+            <button className="btn btn-primary" disabled={busyId !== null || !draft} onClick={submitEdit}>
               {busyId !== null ? '保存中…' : '保存'}
             </button>
           </>
         }
       >
-        {editing ? (
+        {draftLoading || !draft ? (
+          <LoadingBlock text="正在读取商品…" />
+        ) : (
           <div>
             <Field label="商品标题">
               <input
                 className="input"
-                value={titleDraft}
+                value={draft.title}
                 maxLength={60}
-                onChange={(e) => setTitleDraft(e.target.value)}
+                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 placeholder="最多 60 个字"
+              />
+            </Field>
+            <Field label="副标题">
+              <input
+                className="input"
+                value={draft.subtitle}
+                maxLength={60}
+                onChange={(e) => setDraft({ ...draft, subtitle: e.target.value })}
+                placeholder="选填"
               />
             </Field>
             <Field label="主图地址">
               <input
                 className="input"
-                value={imageDraft}
+                value={draft.mainImage}
                 maxLength={500}
-                onChange={(e) => setImageDraft(e.target.value)}
-                placeholder="留空表示不显示图片"
+                onChange={(e) => setDraft({ ...draft, mainImage: e.target.value })}
+                placeholder="主图是列表页唯一的视觉锚点，不能为空"
+              />
+            </Field>
+            <Field label="详情图（每行一个地址）">
+              <textarea
+                className="input"
+                rows={2}
+                value={draft.imagesText}
+                onChange={(e) => setDraft({ ...draft, imagesText: e.target.value })}
+              />
+            </Field>
+            <Field label="商品详情">
+              <textarea
+                className="input"
+                rows={4}
+                maxLength={4000}
+                value={draft.detail}
+                onChange={(e) => setDraft({ ...draft, detail: e.target.value })}
               />
             </Field>
             <p className="small muted" style={{ marginTop: 8 }}>
-              只开放标题与主图：价格 / 库存牵动 SKU 与在途订单金额，不做成随手可改的字段。
-              标题改完后由检索同步任务收敛到搜索结果，可能有短暂延迟。
+              保存后商品会<b>重新进入审核</b>（审核结论是针对修改前那段内容作出的），
+              审核期间前台不可见、审核通过后自动恢复展示。价格与库存牵动 SKU 与在途订单金额，
+              不在编辑范围内。
             </p>
           </div>
-        ) : null}
+        )}
       </Modal>
+
+      <ProductPublishModal
+        open={publishing}
+        onClose={() => setPublishing(false)}
+        onSuccess={() => {
+          setQuery({ auditStatus: 'PENDING', page: undefined });
+          reload();
+        }}
+      />
     </div>
   );
 };

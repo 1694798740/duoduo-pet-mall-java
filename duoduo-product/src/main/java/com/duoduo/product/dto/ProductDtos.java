@@ -215,19 +215,164 @@ public final class ProductDtos {
     ) {
     }
 
-    /** 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存），管理列表够用 */
+    /**
+     * 商家端「我的商品」视图：SPU 主档 + SKU 汇总（数量与总库存），管理列表够用。
+     *
+     * <p><b>审核字段是 E14 新增的刚需</b>（与 {@code ListingMineView} 同一考虑）：
+     * 列表只暴露「在售且已过审」的商品，但卖家必须看得到自己那些
+     * 「待审 / 被驳回」的条目 —— 否则提交完就查无此项，卖家只能反复重发。
+     * 驳回原因更是刚需：不告诉他为什么被拒，他就只能猜着改。
+     */
     public record SellerProductView(
             Long id,
             String title,
             String mainImage,
             String status,
             String statusLabel,
+            /** PENDING / APPROVED / REJECTED（自营商品恒 APPROVED） */
+            String auditStatus,
+            /** 审核状态中文文案，由服务端下发（前端不维护映射表） */
+            String auditLabel,
+            /** 最近一次驳回原因；非驳回态为 null */
+            String auditReason,
             Long sellerId,
             long minPrice,
             long maxPrice,
             int salesCount,
             int skuCount,
             int totalStock
+    ) {
+    }
+
+    // ---------------- 商品提交与审核（E14） ----------------
+
+    /**
+     * SKU 提交项（新建 / 展示共用）。
+     *
+     * <p>{@code specName} 会被写成 {@code {"规格": "<值>"}} —— 与既有
+     * {@code t_sku.spec_json} 的展示口径一致（{@code ProductService.specText} 把它渲染成
+     * 「规格:2kg」）。把「规格」做成一维而不是任意键值对，是因为商家的真实需求里
+     * 99% 是「一份商品有几种规格」（2kg / 5kg、单包 / 三包装），
+     * 任意键值对表单会让发布页复杂到没人愿意填。
+     */
+    public record SellerSkuInput(
+            String specName,
+            Long price,
+            Integer stock,
+            String image
+    ) {
+    }
+
+    /**
+     * 新建商品请求（E14）。
+     *
+     * <p>{@code sellerId} / {@code supplyType} / {@code status} / {@code auditStatus}
+     * <b>刻意都不在这里</b>（与 {@code ListingPublishRequest} 同一纪律）：
+     * 归属由登录态推导、供货类型由服务端判定（运营建的算平台自营、免审；
+     * 商家建的算第三方、必审）、审核态一律由服务端决定。
+     * 请求体里给出任何一个，都等于让客户端自证「我该不该被审核」。
+     */
+    public record SellerProductCreateRequest(
+            String title,
+            String subtitle,
+            Long categoryId,
+            Long brandId,
+            String mainImage,
+            List<String> images,
+            String detail,
+            List<SellerSkuInput> skus
+    ) {
+    }
+
+    /** 编辑请求（E14 扩展）：内容任意字段不传即不改（三态语义同旧版 title / mainImage） */
+    public record SellerProductUpdateRequest(
+            String title,
+            String subtitle,
+            String mainImage,
+            List<String> images,
+            String detail,
+            Long categoryId,
+            Long brandId
+    ) {
+    }
+
+    /** SKU 视图（商家侧编辑回填 / 审核台核对用） */
+    public record SellerSkuView(
+            Long id,
+            String specName,
+            long price,
+            int stock,
+            String image,
+            String status
+    ) {
+    }
+
+    /**
+     * 商家视角商品详情（E14）：编辑回填的唯一数据源。
+     *
+     * <p>为什么不复用公开的 {@code ProductDetail}：公开详情对未过审商品一律 404
+     * （防状态码探测），而卖家必须能读回自己被驳回的商品才能修改重提 ——
+     * 这是两个完全不同的可见性规则，共用一个 DTO 迟早会把其中一条弄错。
+     */
+    public record SellerProductDetailView(
+            Long id,
+            String title,
+            String subtitle,
+            Long categoryId,
+            Long brandId,
+            String mainImage,
+            List<String> images,
+            String detail,
+            String supplyType,
+            String status,
+            String statusLabel,
+            String auditStatus,
+            String auditLabel,
+            String auditReason,
+            String auditAt,
+            Long sellerId,
+            long minPrice,
+            long maxPrice,
+            List<SellerSkuView> skus
+    ) {
+    }
+
+    /**
+     * 平台审核台条目（E14）。
+     *
+     * <p>比商家视角多带<b>全部背审材料</b>（详情正文、全部图片、类目名、品牌名、SKU 明细）——
+     * 审核是「看着内容下判定」，让运营点进二级页才看得到图片，是最容易导致
+     * 「看都不看直接通过」的产品设计。
+     */
+    public record AdminProductAuditView(
+            Long id,
+            Long sellerId,
+            String title,
+            String subtitle,
+            String mainImage,
+            List<String> images,
+            String detail,
+            Long categoryId,
+            String categoryName,
+            Long brandId,
+            String brandName,
+            String supplyType,
+            String status,
+            String auditStatus,
+            String auditLabel,
+            String auditReason,
+            String auditAt,
+            long minPrice,
+            long maxPrice,
+            List<SellerSkuView> skus,
+            String createdAt
+    ) {
+    }
+
+    /** 商品审核请求；action = APPROVE / REJECT，驳回时 reason 必填 */
+    public record AdminProductAuditRequest(
+            String action,
+            String reason
     ) {
     }
 

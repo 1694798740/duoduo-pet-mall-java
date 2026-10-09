@@ -68,7 +68,11 @@ spring:
             # /api/listings/** = C2C 闲置全部读写（search 列表 / {id} 详情 / 发布 / mine/list / {id}/status）。
             # 路由用通配没问题，但**白名单绝不能跟着写通配** —— 白名单不区分方法，
             # /api/listings/** 会把发布写端点一起放行（详见 GatewaySecurityProperties 的 listings 段注释）
-            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/search/**
+            # /api/admin/products/** = 第三方商品上架审核台（E14）：商品数据在商品库，
+            #   必须显式列出（本路由是按具体子路径列举的，不是 /api/admin/** 兜底，
+            #   漏了这段会静默 404 而不是报错）。不进白名单：运营审核必须登录，
+            #   权限由服务端 OperatorGuard 把关（网关那层只管登录与入口收窄）。
+            - Path=/api/categories/**,/api/products/**,/api/seller/products/**,/api/listings/**,/api/home/**,/api/meta/**,/api/admin/categories/**,/api/admin/brands/**,/api/admin/listings/**,/api/admin/products/**,/api/admin/search/**
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:

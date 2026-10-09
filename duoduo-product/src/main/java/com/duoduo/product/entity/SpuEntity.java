@@ -29,6 +29,23 @@ public class SpuEntity {
     private String detail;
     /** ON_SALE / OFF_SHELF */
     private String status;
+    /**
+     * 审核维度（E14）：PENDING / APPROVED / REJECTED。
+     *
+     * <p>与 {@link #status} <b>正交</b>：status 是交易维度（在售 / 下架，卖家可控），
+     * 本字段是合规维度（平台判定）。公开可见性要求<b>两者同时满足</b>
+     * （{@code status=ON_SALE 且 audit_status=APPROVED}），
+     * 与 C2C 闲置（t_listing）同一套口径 —— 全站的商品审核只有一种解释。
+     *
+     * <p>平台自营商品（{@code supplyType='self'}）恒为 APPROVED（免审）；
+     * 第三方商家新建或内容发生重大变更时由服务端显式落 PENDING。
+     */
+    private String auditStatus;
+    /** 最近一次驳回原因（仅 REJECTED 有值；通过时清空） */
+    private String auditReason;
+    private LocalDateTime auditAt;
+    /** 最近一次审核人（运营 / 管理员 user id），留痕 */
+    private Long auditBy;
     private Integer salesCount;
     private BigDecimal rating;
     private Integer ratingCount;
@@ -125,6 +142,38 @@ public class SpuEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getAuditStatus() {
+        return auditStatus;
+    }
+
+    public void setAuditStatus(String auditStatus) {
+        this.auditStatus = auditStatus;
+    }
+
+    public String getAuditReason() {
+        return auditReason;
+    }
+
+    public void setAuditReason(String auditReason) {
+        this.auditReason = auditReason;
+    }
+
+    public LocalDateTime getAuditAt() {
+        return auditAt;
+    }
+
+    public void setAuditAt(LocalDateTime auditAt) {
+        this.auditAt = auditAt;
+    }
+
+    public Long getAuditBy() {
+        return auditBy;
+    }
+
+    public void setAuditBy(Long auditBy) {
+        this.auditBy = auditBy;
     }
 
     public Integer getSalesCount() {

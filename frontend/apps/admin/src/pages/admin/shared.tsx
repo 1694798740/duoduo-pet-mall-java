@@ -21,6 +21,7 @@ export { isAdminRole, isOperator } from '@duoduo/shared/lib/roles';
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
   { to: '/admin/audits', label: '内容审核', end: false },
+  { to: '/admin/product-audits', label: '商品审核', end: false },
   { to: '/admin/share-reports', label: '举报处理', end: false },
   { to: '/admin/categories', label: '类目管理', end: false },
   { to: '/admin/brands', label: '品牌管理', end: false },

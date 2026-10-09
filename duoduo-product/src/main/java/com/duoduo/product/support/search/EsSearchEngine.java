@@ -60,6 +60,10 @@ public class EsSearchEngine {
         List<Object> filters = new ArrayList<>();
         filters.add(term("docType", SearchIndexer.TYPE_PRODUCT));
         filters.add(term("status", "ON_SALE"));   // 与 MySQL 的 status='ON_SALE' 同口径
+        // E14：审核维度必须一起过滤 —— ES 是**独立于 MySQL 的第二个可见性出口**，
+        // 只在 MySQL 侧加条件会让「开 ES 就漏、关 ES 才对」这种最难复现的形态出现
+        // （检索命中未过审商品，详情页却 404）。两边条件必须逐字对应。
+        filters.add(term("auditStatus", "APPROVED"));
         if (expandedCategoryIds != null && !expandedCategoryIds.isEmpty()) {
             filters.add(termsLong("categoryId", expandedCategoryIds));
         }

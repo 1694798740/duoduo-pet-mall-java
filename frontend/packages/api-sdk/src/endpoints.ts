@@ -24,6 +24,8 @@ import { api } from './client';
 import type {
   AbnormalSettlement,
   AdminCharts,
+  AdminProductAuditRequest,
+  AdminProductAuditView,
   AdminReport,
   AdminSettlementSummary,
   AdminUserView,
@@ -72,6 +74,9 @@ import type {
   RefundResult,
   RoleChangeRequest,
   RoleChangeResult,
+  SellerProductCreateRequest,
+  SellerProductDetailView,
+  SellerProductUpdateRequest,
   SellerProductView,
   FollowCounts,
   FollowState,
@@ -371,22 +376,61 @@ export const sellerApi = {
 
   // ---- 商品管理（/api/seller/products/**，落在 duoduo-product 服务） ----
 
-  /** 我的商品列表；运营 / 管理员可显式按 sellerId 筛选（普通卖家传了也会被服务端忽略） */
-  products: (query?: { keyword?: string; sellerId?: number; page?: number; pageSize?: number }) =>
+  /**
+   * 我的商品列表。
+   *
+   * auditStatus 按**审核维度**筛（PENDING / APPROVED / REJECTED），
+   * 与交易维度的 status 是两件事：一件商品可以「已过审但被自己下架」，
+   * 也会出现「驳回件等卖家改内容」。列表页把两个维度做成两组标签。
+   *
+   * 运营 / 管理员可显式按 sellerId 筛选（普通卖家传了也会被服务端忽略）。
+   */
+  products: (query?: { keyword?: string; auditStatus?: string; sellerId?: number; page?: number; pageSize?: number }) =>
     api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
+
+  /**
+   * 商品详情（商家视角，编辑回填用）。
+   *
+   * 为什么不复用公开的 `/api/products/{id}`：公开详情对未过审商品一律 404
+   * （防状态码探测），而卖家必须能读回自己被驳回的商品才能修改重提。
+   */
+  productDetail: (spuId: string) => api.get<SellerProductDetailView>(`/api/seller/products/${spuId}`),
+
+  /**
+   * 提交商品（E14）。
+   *
+   * 归属 / 供货类型 / 审核态**全部由服务端决定**：第三方商家提交的落 PENDING（必须审核），
+   * 运营提交的落 APPROVED（自营免审）。请求体里不要带这三个字段。
+   *
+   * 提交后商品即处于「在售 + 待审核」：前台看不见，审核通过的那一刻自动出现 ——
+   * 商家不需要再点一次上架。
+   */
+  createProduct: (body: SellerProductCreateRequest) =>
+    api.post<SellerProductView>('/api/seller/products', body),
 
   /** 上下架（幂等开关）：action = ON_SALE | OFF_SHELF；越权操作别人的商品返回 403 */
   changeProductStatus: (spuId: string, action: 'ON_SALE' | 'OFF_SHELF') =>
     api.post<SellerProductView>(`/api/seller/products/${spuId}/status`, { action }),
 
   /**
-   * 编辑自己的商品（标题 / 主图）。
+   * 重新提审（E14）：被驳回且**无需改内容**的商品回到审核队列。
    *
-   * 字段三态：不传 = 不改；空串 = 清空（只有 mainImage 允许）；有值 = 替换。
-   * 这里**必须把「用户没填」显式转成 undefined**，让 JSON 里根本不出现该字段 ——
-   * 直接传 '' 会把卖家的主图清掉（服务端按三态语义处理，不是容错）。
+   * 用途是「申请复核」—— 驳回可能是误判（图片被判违规但实际合规），
+   * 此时卖家没有内容可改；只给「改内容才能重提」会逼他随便改一个字来凑。
    */
-  updateProduct: (spuId: string, body: { title?: string; mainImage?: string }) =>
+  resubmitProduct: (spuId: string) => api.post<SellerProductView>(`/api/seller/products/${spuId}/resubmit`),
+
+  /**
+   * 编辑自己的商品（内容字段）。
+   *
+   * 字段三态：不传 = 不改；空串 = 清空（副标题 / 详情 / 详情图可清空，主图不允许）；
+   * 有值 = 替换。这里**必须把「用户没填」显式转成 undefined**，
+   * 让 JSON 里根本不出现该字段 —— 直接传 '' 会把卖家的内容清掉（服务端按三态语义处理，不是容错）。
+   *
+   * ⚠️ **内容变更会触发重新审核**（第三方商品）：审核结论是针对「当时那段内容」作出的。
+   * 界面上必须提前告知卖家「保存后商品将重新进入审核，期间前台不可见」。
+   */
+  updateProduct: (spuId: string, body: SellerProductUpdateRequest) =>
     api.put<SellerProductView>(`/api/seller/products/${spuId}`, body),
 };
 
@@ -473,6 +517,17 @@ export const adminApi = {
     api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
   auditListing: (id: string, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
+
+  // ---- 第三方商品上架审核（E14，落在 duoduo-product） ----
+  // 只列第三方商品：平台自营免审（auditStatus 恒 APPROVED），混进队列只会干扰待办。
+  // 与闲置审核同一套状态口径（PENDING / APPROVED / REJECTED + 驳回必填原因），
+  // 运营在两处不需要学两套规则。
+  productsForAudit: (query?: { auditStatus?: string; sellerId?: number; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AdminProductAuditView>>('/api/admin/products', { query }),
+  productAuditDetail: (spuId: string) => api.get<AdminProductAuditView>(`/api/admin/products/${spuId}`),
+  /** 审核结论：驳回时 reason 必填（服务端会 400）；审核可重入（允许改判） */
+  auditProduct: (spuId: string, body: AdminProductAuditRequest) =>
+    api.post<AdminProductAuditView>(`/api/admin/products/${spuId}/audit`, body),
 
   // ---- 运营账号管理（A7，落在 duoduo-user；改角色仅 ADMIN） ----
   adminUsers: (query?: { role?: string; keyword?: string; page?: number; pageSize?: number }) =>

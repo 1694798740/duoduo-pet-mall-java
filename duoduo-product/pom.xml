@@ -42,6 +42,21 @@
       <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
     </dependency>
 
+    <!-- E14 · 服务间调用：商品域要实时查「这个账号是不是某家店的店员」
+         （成员身份在用户域，且**停用必须即时生效**，不进令牌快照、不做缓存）。
+         与交易域同一套做法（InternalCallConfig 注入内部签名凭据）。
+         ★ loadbalancer 不能省：@FeignClient(name="duoduo-user") 走 Nacos 服务发现，
+           缺了它启动即失败（No Feign Client for loadBalancing defined）——
+           这个错只在**容器启动**时炸，单元测试用 Mockito 打桩看不到。 -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-openfeign</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+    </dependency>
+
     <!-- A10 · Elasticsearch 检索加速。只用底层 ElasticsearchClient（Java API Client），
          不用 Spring Data 仓储 —— 检索失败必须能「原地降级回 MySQL」，仓储抽象只会碍事。 -->
     <dependency>

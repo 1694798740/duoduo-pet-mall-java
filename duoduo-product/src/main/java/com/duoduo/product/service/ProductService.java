@@ -60,6 +60,8 @@ public class ProductService {
     private static final Logger log = LoggerFactory.getLogger(ProductService.class);
 
     private static final String STATUS_ON_SALE = "ON_SALE";
+    /** E14 · 审核通过（公开可见的必要条件之一，与 status=ON_SALE 同时成立） */
+    private static final String AUDIT_APPROVED = "APPROVED";
     private static final String SKU_ACTIVE = "ACTIVE";
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
@@ -195,9 +197,8 @@ public class ProductService {
         Set<String> words = new LinkedHashSet<>();
         categoryService.brands().forEach(b -> addCorrectionWord(words, b.name()));
         categoryService.flat().forEach(c -> addCorrectionWord(words, c.name()));
-        List<SpuEntity> spus = spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
+        List<SpuEntity> spus = spuMapper.selectList(visibleSpuWrapper()
                 .select(SpuEntity::getTitle)
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
                 .last("LIMIT 300"));
         for (SpuEntity spu : spus) {
             String title = spu.getTitle() == null ? "" : spu.getTitle();
@@ -319,8 +320,7 @@ public class ProductService {
 
     /** MySQL 权威路径（ES 未启用 / 降级时的实现，与 ES 查询语义一一对应） */
     private PageResult<ProductCard> searchByMysql(ProductQuery query, int pageNo, int pageSize) {
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SpuEntity::getStatus, STATUS_ON_SALE);
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper();
 
         String keyword = trimToNull(query.keyword());
         if (keyword != null) {
@@ -369,9 +369,20 @@ public class ProductService {
 
     // ---------------- 详情 ----------------
 
+    /**
+     * 商品详情（公开）。
+     *
+     * <p><b>可见性判定与检索完全一致</b>（E14）：在售 <b>且</b> 审核通过。
+     * 详情必须自己做这道闸 —— 否则「商品没过审、但把 {@code /api/products/{id}} 的链接
+     * 直接发出去」就绕过了审核，公开列表里看不到的东西照样能被打开。
+     * 未过审与不存在<b>同样返回 404</b>（而不是 403）：状态码差异会让人用
+     * 「404 与 403 的区别」探测出「这个 id 存在但没过审」，等于把审核结论泄漏出去。
+     */
     public ProductDetail detail(Long spuId) {
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null || !STATUS_ON_SALE.equals(spu.getStatus())) {
+        if (spu == null
+                || !STATUS_ON_SALE.equals(spu.getStatus())
+                || !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
             throw BizException.notFound("商品");
         }
 
@@ -403,8 +414,7 @@ public class ProductService {
 
     /** 按销量取热门商品；{@code excludeSpuId} 用于详情页「同类推荐」排除自身 */
     public List<ProductCard> topBySales(int limit, Long excludeSpuId) {
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE);
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper();
         if (excludeSpuId != null) {
             wrapper.ne(SpuEntity::getId, excludeSpuId);
         }
@@ -414,8 +424,7 @@ public class ProductService {
     }
 
     public List<ProductCard> newest(int limit) {
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper()
                 .orderByDesc(SpuEntity::getCreatedAt)
                 .orderByDesc(SpuEntity::getId);
         return toCards(selectTop(wrapper, limit));
@@ -426,8 +435,7 @@ public class ProductService {
      * 这里用 EXISTS 子查询而不是 JOIN，是为了避免同一 SPU 有多个匹配 SKU 时出现重复行。
      */
     public List<ProductCard> bySpecies(String species, int limit) {
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper()
                 .apply("EXISTS (SELECT 1 FROM t_sku s WHERE s.spu_id = t_spu.id"
                         + " AND s.status = 'ACTIVE' AND s.target_species LIKE {0})", "%" + species + "%")
                 .orderByDesc(SpuEntity::getSalesCount)
@@ -439,8 +447,7 @@ public class ProductService {
         if (categoryId == null) {
             return List.of();
         }
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper()
                 .in(SpuEntity::getCategoryId, categoryService.expandCategoryIds(categoryId));
         if (excludeSpuId != null) {
             wrapper.ne(SpuEntity::getId, excludeSpuId);
@@ -450,6 +457,17 @@ public class ProductService {
         return toCards(selectTop(wrapper, limit));
     }
 
+    /**
+     * 按 id 批量取卡片（<b>内部取数口，刻意不做可见性过滤</b>）。
+     *
+     * <p>与 {@link #internalCards} 同一口径：调用方要的是「这些 id 对应什么」，
+     * 而不是「这些 id 现在对买家可见吗」。已下单 / 已收藏的商品即便后来下架或
+     * 被驳回，历史记录里仍要显示它的标题与图片 —— 在这里按在售过滤会让那些
+     * 页面出现「查无此物」的空白。是否需要过滤由调用方按场景决定。
+     *
+     * <p>因此：<b>新增前台读路径时不要直接复用它</b>，公开检索 / 详情一律走
+     * {@link #visibleSpuWrapper}（那条闸门上过测试，见 ProductVisibilityTest）。
+     */
     public List<ProductCard> byIds(Collection<Long> spuIds) {
         if (spuIds == null || spuIds.isEmpty()) {
             return List.of();
@@ -556,7 +574,13 @@ public class ProductService {
             int frozen = sku.getFrozenStock() == null ? 0 : sku.getFrozenStock();
             int available = Math.max(0, stock - frozen);
             String spuStatus = spu == null ? "OFF_SHELF" : spu.getStatus();
+            // E14：可售还要求**审核通过**。前台本来就看不见未过审商品，
+            // 但购物车里可能躺着「加购后商品被驳回」的条目 —— 加购校验与下单快照
+            // 都读这个字段，把审核维度一起算进来，那种条目就会自然变成「不可售」，
+            // 而不是等到下单时才在交易域炸一个语焉不详的错误。
+            String spuAudit = spu == null ? null : spu.getAuditStatus();
             boolean sellable = STATUS_ON_SALE.equals(spuStatus)
+                    && AUDIT_APPROVED.equals(spuAudit)
                     && SKU_ACTIVE.equals(sku.getStatus())
                     && available > 0;
             String image = sku.getImage() != null && !sku.getImage().isBlank()
@@ -596,6 +620,29 @@ public class ProductService {
     }
 
     // ---------------- 内部实现 ----------------
+
+    /**
+     * <b>公开可见性的唯一一处定义</b>（E14）：在售 <b>且</b> 审核通过。
+     *
+     * <p>为什么必须收口成一个方法而不是在各查询里各写一遍：
+     * 公开读路径有 7 条（检索 / 详情 / 热门 / 最新 / 物种精选 / 同类推荐 / AI 召回）外加
+     * ES 一条 —— 任何人新增一条路径时漏掉审核条件，未过审商品就会从前台冒出来，
+     * 而这类缺陷<b>没有任何报错、也不影响其他页面</b>，只能靠用户投诉发现。
+     * 收口之后「加过滤」是一个不动脑的动作（起手用这个方法），
+     * 并由 ProductVisibilityTest 反向钉住：往库里塞一条 PENDING 商品，
+     * 每条路径都必须查不到它。
+     *
+     * <p>与 C2C 闲置 {@code ListingService.visibleWrapper()} 同一范式、同一口径
+     * （status=ON_SALE 且 auditStatus=APPROVED），全站商品可见性只有一种解释。
+     *
+     * <p>平台自营商品（supply_type='self'）的 audit_status 恒为 APPROVED，
+     * 所以本方法对自营商品等价于「只看在售」—— 免审商品不会被这道闸挡住。
+     */
+    private LambdaQueryWrapper<SpuEntity> visibleSpuWrapper() {
+        return new LambdaQueryWrapper<SpuEntity>()
+                .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                .eq(SpuEntity::getAuditStatus, AUDIT_APPROVED);
+    }
 
     /** 只取前 N 条，不执行 count 查询（列表页之外的场景不需要总数） */
     private List<SpuEntity> selectTop(LambdaQueryWrapper<SpuEntity> wrapper, int limit) {
@@ -793,8 +840,7 @@ public class ProductService {
         }
         List<String> tokens = grams.stream().limit(15).toList();
 
-        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getStatus, STATUS_ON_SALE);
+        LambdaQueryWrapper<SpuEntity> wrapper = visibleSpuWrapper();
         // ★ 约束（第五十七轮）：在 SQL 层过滤，模型看不到不符合条件的商品
         if (budgetMax != null) {
             wrapper.le(SpuEntity::getMinPrice, budgetMax);

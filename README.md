@@ -706,7 +706,19 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（二十三套 1551 项接口断言 + 十七套真实浏览器 UI 断言 661 项 + 小程序无浏览器 72 项）
+### 端到端冒烟（24 套接口断言 + 20 套真实浏览器 UI 断言 + 小程序无浏览器 72 项）
+
+> **⚠️ 本地库数据漂移提示（2026-10-09 复核）**：一键全量冒烟在**当前本地库**上有 9 套红，
+> **均非代码回归**，而是两类历史原因：
+> ① **4 套夹具过期**（`seller` / `aftersale` / `logistics` / `credit`）——它们仍调用 **E10 已删除**的
+> `POST /api/users/me/merchant`（"实名即开店"旧路径），夹具 404 后全链级联；这 4 套**不在 CI 子集内**，
+> 所以自 E10 起一直未被发现；
+> ② **5 套依赖固定种子数据**（`smoke` / `trade` / `order` / `ai` / `review`）——本地库经多轮清理后
+> 种子商品由 8+ 件降到 **2 件**、`t_listing` 为 **0 条**、SKU `2004/2005` 与 SPU `1003/1004` 已不存在；
+> **CI 用全新库初始化，不受影响**。
+> 修复已登记为 **E27**（抽 `scripts/lib/seller-fixture.ps1` 供 4 套共用 + 断言改数据驱动 + 纳入 CI 子集）。
+> 判断"是否本轮引入"的方法：看失败项是否落在本轮改动文件上（`git status` 逐条比对），
+> 以及失败是否可由「库内数据不存在」直接解释（例如 `SELECT COUNT(*) FROM t_spu` 只有 2 行）。
 
 > **完整自测流程（环境/数据准备 → 功能点清单 → 逐项步骤与预期 → 排障表）见 [`docs/SELFTEST.md`](docs/SELFTEST.md)。**
 > 改了 Java 代码请按 §「交付物核对」比对容器内 jar md5，别只看 `package` 的退出码。
@@ -747,8 +759,8 @@ python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
 python scripts/coupon-window-smoke.py               # 6 项：券领取窗口不变式（**列表可见 ⇒ 当下必可领**；未到开抢时间的券不得提前出现）
 
-# ================= 前端真实浏览器 UI 自测（17 套） =================
-# 一键跑：起 dev server → 跑 17 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
+# ================= 前端真实浏览器 UI 自测（20 套） =================
+# 一键跑：起 dev server → 跑 20 套 → 建/拆券夹具 → 收尾关进程，一条命令即可
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -Only home   # 只跑自包含那套
 # 打**容器入口**（真应用，而不是开发态）：给了 -UiBase 就不再启 dev server
@@ -775,6 +787,10 @@ node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项�
 node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 32 项（后台独立站点；**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403 + 夹具收尾降权）
 node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 21 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 未登录入口可发现性 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
+node scripts/e2e/product-detail-ui-check.mjs          # 商品详情页 20 项（主图可放大切图 / 包装规格 / 同类推荐 / 两端标签一致 / 无非预期接口错误）
+node scripts/e2e/merchant-audit-ui-check.mjs          # 入驻审核台 27 项（提交→驳回→重提→通过→开店全链路；材料大图与 PDF 链接；**运营用主运营账号，不新建运营夹具**）
+node scripts/e2e/merchant-staff-ui-check.mjs          # 商家子账号 24 项（邀请→店员干活→结算 403→停用即时失效→平台跨租户处置→恢复；收尾删成员行）
+node scripts/e2e/product-audit-ui-check.mjs           # 商品上架审核 36 项（真实发布弹窗→前台不可见→**索引有文档但检索不命中**→上架门禁 422→后台通过→上架后可见→改内容回待审→驳回→重提→再通过；**先 reindex 让断言真正测到 ES 过滤**；收尾删夹具商品）
 UI_BASE=http://localhost:8088 node scripts/e2e/home-ui-check.mjs   # 网页容器验收（S1）：同一套测试换个入口跑，证明容器承载的是**真应用**（另可跑 header-layout / notice-chat-follow）
 # 优惠券 43 项：夹具由一键运行器自动建/拆；手工跑则自己执行 coupon-ui-fixture.ps1 -Action create / drop
 
@@ -789,7 +805,7 @@ node scripts/mp-harness/behavior.test.js             # 页面行为 31 项：长
 # 前置：网关在跑（http://127.0.0.1:8080）
 ```
 
-十四套脚本的共同约定（踩过坑才有的）：
+二十套脚本的共同约定（踩过坑才有的）：
 - 每次运行使用**随机手机号**，可重复执行；
 - 夹具（价格、库存、佣金）一律**从接口动态取**，不硬编码 —— 否则种子数据一改，测试就会「通过但其实是错的」；
 - 凡改库必**先记录原值、复原写回原值**，并在结尾**自证**「库内数据已复原」；
@@ -827,7 +843,7 @@ duoduo-pet-mall-java/
 │   ├── PLAN.md                 开发看板：里程碑 / 端形态 / 支付渠道 / 问题与协助区 / 已知边界
 │   ├── GITHUB-PUSH-GUIDE.md    推送指南
 │   └── sql/                    容器初始化 SQL（00 建库授权 + 01~05 从零建库）与 incremental/（06~08 存量库增量，不进容器初始化目录，T-46）
-├── scripts/                    一键启动、冒烟测试（22 套接口断言 + 7 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
+├── scripts/                    一键启动、冒烟测试（24 套接口断言 + 20 套真实浏览器 UI 断言；run-all-smoke.ps1 一键全量 / ci-run.ps1 子集 / export-openapi.ps1 契约导出 / search-smoke.ps1 需 ES）
 ├── .github/workflows/ci.yml    GitHub Actions：编译 + 冒烟子集（A6）
 ├── miniprogram/                A13 买家端小程序骨架（测试号阶段，主链路复用网关契约；后端微信登录已就绪）
 ├── docs/openapi/               各服务 OpenAPI JSON + endpoints.md 端点摘要（A6 产物）
@@ -900,6 +916,23 @@ duoduo-pet-mall-java/
 | GET | `/api/listings/internal/cards` | **闲置卡批量视图**（供社交域取 `sellerId` 等事实；`X-Internal-Token` 保护） | 内部凭据 |
 | POST | `/api/listings/internal/{id}/want?buyerId=` | **「想要」上报**（供社交域在买家**首次**发咨询消息时调用；`INSERT IGNORE` 去重表，**重复上报返回 `counted=false` 且不重复计数**；闲置不存在 404。**刻意用 POST**：这是写操作，GET 会被预取/重试刷歪计数） | 内部凭据 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
+
+**第三方商品上架审核（E14）** —— 商品有**两个正交维度**：交易维度 `status`（在售 / 下架，卖家可控）与
+审核维度 `auditStatus`（`PENDING`/`APPROVED`/`REJECTED`，平台判定）。对外可见的唯一口径是**两者同时满足**，
+由 `ProductService.visibleSpuWrapper()` 单点收口（MySQL 7 条读路径 + ES 索引/查询 + 采购视图），
+未过审商品详情一律 **404**（与不存在同码，防状态码探测）。**平台自营免审**：`supplyType=self` 的商品恒 `APPROVED`。
+
+| 方法 | 路径 | 说明 | 认证 |
+|---|---|---|---|
+| GET | `/api/seller/products` | **我的商品**（按**审核维度** `auditStatus` 筛选；店主与店员看到同一批，归属店铺主体） | 需登录（SELLER / 店员 / 运营） |
+| POST | `/api/seller/products` | **提交商品**（SPU + SKU 一事务落库；价格按**分**存储、SKU 编码服务端生成）。归属 / 供货类型 / 审核态**全部由服务端判定**——第三方落 `PENDING`，运营落 `APPROVED`；请求体带这三个字段无效 | 需登录 |
+| GET | `/api/seller/products/{spuId}` | **商家视角详情**（编辑回填用；公开详情对未过审一律 404，但卖家必须读得回自己被我驳回的商品；非本店 403） | 需登录 |
+| PUT | `/api/seller/products/{spuId}` | **编辑商品**（全内容字段；**内容变更即回 `PENDING` 并恢复在售**——审核结论针对「当时那段内容」，放它继续挂着过审等于允许「先过审、再改违规内容」；非本店 403） | 需登录 |
+| POST | `/api/seller/products/{spuId}/status` | **上下架**（`ON_SALE`/`OFF_SHELF`）。**上架门禁**：目标态为在售时要求已过审，否则 **422** 并给出下一步提示（是「等审核」还是「去改内容」）；平台自营不受限 | 需登录 |
+| POST | `/api/seller/products/{spuId}/resubmit` | **重新提交审核**（仅 `REJECTED` 可调，`PENDING`/`APPROVED` 均 422） | 需登录 |
+| GET | `/api/admin/products` | **商品审核台**（只列**第三方**商品：自营免审，混进队列只会干扰待办；待审排最前；可按 `sellerId` 筛选） | 运营 / 管理员 |
+| GET | `/api/admin/products/{spuId}` | **审核详情**（带全部背审材料，运营不必点进二级页） | 运营 / 管理员 |
+| POST | `/api/admin/products/{spuId}/audit` | **审核结论**（`action=APPROVE`/`REJECT`；**驳回必填原因**，否则 400；**可重入**——允许改判，把改判逼成改库才会留下无法追溯的结论；驳回同时把 `status` 压成 `OFF_SHELF`） | 运营 / 管理员 |
 
 `GET /api/products` 查询参数：
 
@@ -1448,6 +1481,9 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 | `/seller/orders` | 订单管理 | 状态页签过滤；列表卡片带买家收货信息；**立即发货**弹窗（物流公司 / 单号） |
 | `/seller/orders/:orderNo` | 订单详情 | 状态步骤条 + 履约信息 + 资金区 + 发货 / 退款表单 |
 | `/seller/settlements` | 结算对账 | 分页表格 + **全量汇总三栏**（过滤不变）；与买家端口径同源 |
+| `/seller/products` | 商品管理（E14） | **「+ 发布商品」弹窗**（类目 / 品牌 / 主图 / 详情图 / 详情 / 多规格；价格填**元**、提交按分换算）+ 列表**两个正交维度各一列**（交易状态 / 审核状态）+ 审核维度筛选 + 驳回原因展示 + 编辑（**提示「内容变更会重新送审」**）+ 驳回件的「重新提交」+ 上下架（未过审上架被后端 422，页面把原因说清） |
+| `/seller/staff` | 店员管理（E13） | 店主按手机号邀请 / 停用店员；店员进入本页 403 |
+| `/seller/after-sales` | 售后处理 | 同意即退款 / 拒绝必填原因 |
 
 **成为卖家**：实名认证后，在「我的」页点「申请成为卖家」（`POST /api/users/me/merchant`）。
 角色快照写在 access token 内，**需重新登录**才能看到商家端入口（前端已在提示里写明，见 `docs/PLAN.md` B-08）。
@@ -1478,12 +1514,13 @@ Web 端 `/ai` 与小程序 `pages/ai` 均已上线、未登录也可问答（限
 
 运营 / 管理员登录后，**两条入口**同时出现（共用 `isOperator()` 判定，见第六十三轮）：
 顶栏导航的「管理后台」+ 头像下拉菜单的「进入管理后台」，都指向 `/admin`（运营概览）。
-九个工作台共用一条标签导航：
+十个工作台共用一条标签导航：
 
 | 路由 | 工作台 | 内容 |
 |---|---|---|
 | `/admin` | 运营概览 | 经营报表（GMV / 订单量 / 退款率 / 转化率）+ 资金对账三栏 + **异常挂账表**（已付款却缺托管单，需人工回补） |
 | `/admin/audits` | 内容审核 | 待审 / 已通过 / 已驳回三视图；通过后公开可见，驳回必须填原因（留痕：原因 + 时间） |
+| `/admin/product-audits` | 商品审核（E14） | 第三方商品待审队列（**自营免审不混入待办**）；卡片直接摊开背审材料（主图 / 标题 / 类目品牌 / 规格价格 / 详情摘要）；通过 / 驳回（**必填原因**）/ **驳回改判**（审核可重入）；可按卖家 ID 筛选 |
 | `/admin/categories` | 类目管理 | 增改删 + 启停用；状态列 + 按状态切换按钮；**停用项仍可见可恢复** |
 | `/admin/brands` | 品牌管理 | 同类目 |
 | `/admin/orders` | 订单干预 | 全平台订单（状态过滤 + 订单号前缀搜索）；**仅待付款**可强制关单（确认弹窗说明后果：作废支付单、释放冻结、写状态日志） |
@@ -1580,6 +1617,69 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-09（E14 · P2 第 6 项：第三方商品上架审核）
+
+**为什么要有这一轮**：在 E14 之前，「商品能不能被买家看到」只有**一个**开关 —— `t_spu.status`，
+而它是**卖家自己**控制的。也就是说卖家只要把商品放到在售，前台立刻可见，平台没有任何人工把关环节。
+P2 引入第三方商家（E9–E13 的租户 / 入驻 / 子账号）之后，这条缺口从"无所谓"变成"必须堵"：
+任何入驻商家都能直接上架任意商品，包括违规的。
+
+**核心设计：两个正交维度，可见性单点收口。**
+
+- 交易维度 `status`（`ON_SALE`/`OFF_SHELF`，**卖家可控**）与审核维度 `auditStatus`
+  （`PENDING`/`APPROVED`/`REJECTED`，**平台判定**）各管一件事。一件商品可以「已过审但被自己下架」，
+  也会出现「驳回件等卖家改内容」——两个维度不能合并成一条状态线（与 C2C 闲置 `t_listing` 同一口径）。
+- 对外可见的**唯一**判据是「在售 **且** 已过审」，由 `ProductService.visibleSpuWrapper()` 单点定义，
+  覆盖 MySQL 的 7 条读路径 + ES 索引文档与查询过滤 + 交易侧采购视图。**未过审商品详情一律 404**
+  （与"不存在"同码，防用状态码差异探测别人的商品）。
+- **平台自营免审**：判据是**供货类型**（`supplyType='self'`）而不是"谁在操作"，自营商品 `auditStatus` 恒 `APPROVED`。
+
+**三条业务规则是本轮的主要价值**（每条都对应一种真实绕过手法）：
+
+1. **内容变更再审** —— 审核结论是针对"当时那一段内容"作出的。放它继续挂着 `APPROVED`，
+   等于允许卖家**先过审、再改成违规内容**。所以内容有实质变化即回 `PENDING`。
+2. **上架门禁** —— 目标态为在售时要求已过审。没有它，"先提交 `PENDING`、再自己上架"就直接绕过了整条审核链；
+   428 提示语还会说清下一步（是"去等审核"还是"去改内容"，不能只说"不行"）。
+3. **驳回必须填原因** —— 否则卖家不知道自己为什么被拒，也留不下可追溯的解释。
+
+**两个刻意的取舍**：① 审核**可重入**（重复通过 / 驳回覆盖上一次结论）——运营改判是真实场景，
+"已审过就不能再改"会把改判逼成直接改库，反过来留下无法追溯的结论；② **通过时不动 `status`** ——
+卖家提交时期望的就是在售，若它同时被卖家手动下架过就保持下架（尊重卖家的选择），
+所以审核台通过后商品**不会**因为"审核过了"就自己重新上架。
+
+**顺带修掉两个既有缺陷**：商家商品列表里 `seller_id = NULL` 的空列表问题（null 塞进 `eq` 生成
+`seller_id = NULL`，永不匹配）；主图清空原本静默通过，改为 400。
+
+**★ 一个只在"真启动"时才现形的缺陷**：新增的 Feign 客户端（商品域要实时查"这个账号是不是某家店的店员"，
+成员身份在用户域且**停用必须即时生效**，所以不进令牌、不缓存）漏了 `spring-cloud-starter-loadbalancer`。
+**单元测试全绿、`package` 也全绿** —— 因为单测用 Mockito 打桩，根本不会去解析服务发现；
+只有容器启动那一刻才炸 `No Feign Client for loadBalancing defined`，服务 unhealthy 起不来。
+教训记进 `duoduo-product/pom.xml` 注释：**凡是 `@FeignClient(name=...)` 走服务发现，loadbalancer 就不能省。**
+
+**验证**：后端单测 **305/0**（本轮 +45：`SellerProductServiceTest` 36 + `ProductVisibilityTest` 9；
+后者专门钉"7 条 MySQL 读路径都带 `audit_status` 过滤"）；真实浏览器 e2e
+`scripts/e2e/product-audit-ui-check.mjs` **36/36**（发布 → 前台不可见 → **先 reindex 让索引里确实有文档、
+再断言检索不命中** → 上架门禁 422 → 后台通过 → 上架后可见 → 改内容回待审 → 驳回 → 重提 → 再通过；
+收尾删除夹具商品，**避免在审核队列里留一条永久待办**）；**全量 e2e 20 套全 PASS**；
+前端两个校验工具（import 解析 438 条 / 产物隔离）通过；`tsc --noEmit` 三端零错误、`vite build` 三端通过；
+镜像重建后**逐模块比对容器与宿主 jar 的 md5 一致**。
+
+### 2026-10-08~09（P2 前五项补记：E9 租户实体 / E10 入驻申请 / E11 审核台 / E12 材料私有通道 / E13 子账号）
+
+> 这五项此前只记在《开发执行总纲》与《项目简报》，本仓 README 未同步 —— 补记在此，避免文档落后于代码。
+
+- **E9** `t_merchant` / `t_merchant_member` 建表（user 库）；`duoduo-common` 新增 `SellerOwnership`
+  把"自营"语义集中成单一权威（`SELF_SELLER_ID=0` + 判定），trade 域常量改为引用。
+- **E10** 入驻改成状态机（草稿 → 送审 → 通过 / 驳回 → 重提）：6 类材料清单校验、驳回原因结构化
+  （`[{scope,code,note}]`）、重复提交幂等；**封死"实名即开卖家"的旧端点**（无审核开店路径不复存在）。
+- **E11** 后台 `/admin/merchants` 入驻审核台：材料大图预览 + 一致性核对提示 + 逐条结构化驳回；
+  概览页待办入口卡（**刻意不进顶栏** —— 顶栏宽度已到上限，再加一项会静默截断）。
+- **E12** 资质材料私有通道：独立私有卷 + 按租户分目录 + 鉴权代理（店主 / 运营可读，其余 403）+
+  **每次下载留痕**（`t_audit_log`）+ 借用他人材料路径被拒。
+- **E13** 商家子账号：店主按手机号邀请店员，**成员身份不写进令牌**（否则"停用"要等令牌 15 分钟过期），
+  改为每请求实时查 → 停用零延迟生效；店员以店铺主体行动、**结算与提现对其 403**；
+  平台侧跨租户总览与处置（审计可区分"店主自停"与"平台处置"）。
 
 ### 2026-10-05（第六十六轮 · 图表体系重建：悬停即时 / 换主流图表组件 / 多维度 / 后台补图 + A 方案）
 
