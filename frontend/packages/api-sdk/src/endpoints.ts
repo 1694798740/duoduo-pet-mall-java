@@ -104,6 +104,8 @@ import type {
   MerchantApplicationSummary as ApplicationSummary,
   MerchantApplicationView,
   MerchantRejectReason,
+  StaffView,
+  StaffAdminView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -397,6 +399,27 @@ export const sellerApi = {
  * 全部接口由服务端 OperatorGuard.requireOperator() 把关，非运营返回 403；
  * 前端据此把入口藏给运营 / 管理员，但那只是体验优化，不是安全边界。
  */
+/** 店员管理（E13，店主侧；OWNER-only —— 店员调用一律 403） */
+export const merchantStaffApi = {
+  list: () => api.get<StaffView[]>('/api/seller/staff'),
+  invite: (phone: string) =>
+    api.post<StaffView>('/api/seller/staff', { phone }),
+  disable: (memberId: string) =>
+    api.post<StaffView>(`/api/seller/staff/${memberId}/disable`),
+  enable: (memberId: string) =>
+    api.post<StaffView>(`/api/seller/staff/${memberId}/enable`),
+};
+
+/** 平台侧成员总览（E13；跨租户 + 平台处置） */
+export const adminMerchantStaffApi = {
+  page: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<StaffAdminView>>('/api/admin/merchant-staff', { query }),
+  disable: (memberId: string) =>
+    api.post<StaffAdminView>(`/api/admin/merchant-staff/${memberId}/disable`),
+  enable: (memberId: string) =>
+    api.post<StaffAdminView>(`/api/admin/merchant-staff/${memberId}/enable`),
+};
+
 /** 入驻审核台（E11；落在 duoduo-user，路径属 E8 的 admin 专属族） */
 export const adminMerchantApi = {
   page: (query?: { status?: string; page?: number; pageSize?: number }) =>

@@ -12,6 +12,14 @@ import { useAuth } from '@duoduo/shared/store/auth';
 
 export { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
 
+/** 店员/无权限访问经营页时的拦截提示（E13） */
+export const SellerDenied: React.FC<{ reason?: string }> = ({ reason }) => (
+  <div className="card card-pad" style={{ marginTop: 24 }}>
+    <h3 style={{ marginBottom: 10 }}>需要店主身份</h3>
+    <Alert kind="error">{reason ?? '该页面仅对店主开放'}</Alert>
+  </div>
+);
+
 export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const { user } = useAuth();
 

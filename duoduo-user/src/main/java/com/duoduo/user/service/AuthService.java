@@ -14,7 +14,11 @@ import com.duoduo.user.dto.UserDtos.RegisterRequest;
 import com.duoduo.user.dto.UserDtos.UpdateProfileRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
 import com.duoduo.user.entity.RefreshTokenEntity;
+import com.duoduo.user.entity.MerchantEntity;
+import com.duoduo.user.entity.MerchantMemberEntity;
 import com.duoduo.user.entity.UserEntity;
+import com.duoduo.user.mapper.MerchantMapper;
+import com.duoduo.user.mapper.MerchantMemberMapper;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
 import com.duoduo.user.support.WechatGateway;
@@ -59,6 +63,9 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final SnowflakeIdGenerator idGenerator;
     private final WechatGateway wechatGateway;
+    /** E13 · 店铺成员/店铺查询：给 /users/me 下发成员身份简报用 */
+    private final MerchantMapper merchantMapper;
+    private final MerchantMemberMapper memberMapper;
     /**
      * 新用户初始信用分（= 信用分模型的基础分，默认 60）。
      *
@@ -75,7 +82,9 @@ public class AuthService {
                        JwtTokenService jwtTokenService,
                        SnowflakeIdGenerator idGenerator,
                        WechatGateway wechatGateway,
-                       @Value("${duoduo.user.credit-default:60}") int creditDefault) {
+                       @Value("${duoduo.user.credit-default:60}") int creditDefault,
+                       MerchantMapper merchantMapper,
+                       MerchantMemberMapper memberMapper) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
@@ -83,6 +92,8 @@ public class AuthService {
         this.idGenerator = idGenerator;
         this.wechatGateway = wechatGateway;
         this.creditDefault = creditDefault;
+        this.merchantMapper = merchantMapper;
+        this.memberMapper = memberMapper;
     }
 
     @Transactional
@@ -600,8 +611,31 @@ public class AuthService {
                 entity.getIdCardMasked(),
                 entity.getCreditScore(),
                 entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
-                entity.getWxOpenid() != null && !entity.getWxOpenid().isBlank()
+                entity.getWxOpenid() != null && !entity.getWxOpenid().isBlank(),
+                merchantBriefOf(entity.getId())
         );
+    }
+
+    /**
+     * E13 · 店铺成员身份简报：只给 **ACTIVE 的 STAFF** 下发（店主走 role=SELLER 通道，
+     * 下发反而会让前端判定漂移出第二份口径）；DISABLED 不下发 —— 前端看到的 null 就是"进不去"。
+     */
+    private UserDtos.MerchantBrief merchantBriefOf(Long userId) {
+        MerchantMemberEntity member = memberMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MerchantMemberEntity>()
+                        .eq(MerchantMemberEntity::getUserId, userId)
+                        .eq(MerchantMemberEntity::getRole, "STAFF")
+                        .eq(MerchantMemberEntity::getStatus, "ACTIVE")
+                        .last("LIMIT 1"));
+        if (member == null) {
+            return null;
+        }
+        MerchantEntity store = merchantMapper.selectById(member.getMerchantId());
+        if (store == null) {
+            return null;
+        }
+        return new UserDtos.MerchantBrief(String.valueOf(store.getId()), store.getName(),
+                member.getRole(), member.getStatus());
     }
 
     private static String maskPhone(String phone) {

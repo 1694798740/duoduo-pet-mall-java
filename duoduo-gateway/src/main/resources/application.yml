@@ -51,7 +51,10 @@ spring:
             # /api/admin/users/** = 运营账号管理（A7）。同样必须显式列出（漏了只会 404）：
             #   用户与角色数据就在用户库，运营管理视图落回 user 服务；不进白名单（需登录，
             #   operator/admin 角色由服务端 OperatorGuard + 仅 ADMIN 可改角色两层把关）。
-            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/merchant-materials/**
+            # /api/seller/staff/** = 店员管理（E13）：落在 user 服务（成员是账号域事实），
+            #   必须列在 trade 的 /api/seller/** 兜底**之前** —— 不加这段会被 trade 捕获后 404
+            #   （与 product 的 /api/seller/products 同一优先级陷阱）
+            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product

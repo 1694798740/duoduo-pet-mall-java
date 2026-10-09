@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RequestParam;
  *
  * <p>内部凭据由 {@code InternalCallConfig} 统一注入 {@code X-Internal-Token}。
  */
-@FeignClient(name = "duoduo-user", path = "/api/addresses")
+@FeignClient(name = "duoduo-user", contextId = "userAddressClient", path = "/api/addresses")
 public interface UserAddressClient {
 
     /** 按用户 + 地址 ID 取收货快照；地址不存在或不属于该用户时用户域返回 404 */

@@ -32,8 +32,11 @@ public class UserController {
 
     private final AuthService authService;
     private final PetProfileService petProfileService;
+    private final com.duoduo.user.service.MerchantStaffService staffService;
 
-    public UserController(AuthService authService, PetProfileService petProfileService) {
+    public UserController(AuthService authService, PetProfileService petProfileService,
+                          com.duoduo.user.service.MerchantStaffService staffService) {
+        this.staffService = staffService;
         this.authService = authService;
         this.petProfileService = petProfileService;
     }
@@ -79,6 +82,18 @@ public class UserController {
      * <p>返回裁剪过的 {@link com.duoduo.user.dto.UserDtos.UserBrief}：只有 id / 昵称 / 头像，
      * 不含手机号、实名信息与角色。
      */
+    /**
+     * E13 · 成员身份查询（内部端点，交易 / 商品域做归属判定用）。
+     *
+     * <p>查不到（店主 / 无店 / 已停用）返回 null —— **停用即查不到**，
+     * 这就是"停用店员即时生效"的实现机制：成员身份不进令牌快照，每次实时查。
+     */
+    @GetMapping("/internal/merchant-membership")
+    public ApiResponse<com.duoduo.user.dto.MerchantDtos.MembershipInfo> merchantMembership(
+            @org.springframework.web.bind.annotation.RequestParam("userId") Long userId) {
+        return ApiResponse.ok(staffService.membershipOf(userId));
+    }
+
     @GetMapping("/internal/briefs")
     public ApiResponse<java.util.List<com.duoduo.user.dto.UserDtos.UserBrief>> briefs(
             @org.springframework.web.bind.annotation.RequestParam("ids") String ids) {

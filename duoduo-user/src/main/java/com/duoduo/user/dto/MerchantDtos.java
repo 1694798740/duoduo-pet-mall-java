@@ -72,4 +72,49 @@ public final class MerchantDtos {
     /** 商家侧激活（审核通过后取新令牌用） */
     public record MerchantTokenResponse(String accessToken, long expiresInSeconds) {
     }
+
+    // ---------------- E13 · 子账号体系 ----------------
+
+    /** 成员视图（店主管理页） */
+    public record StaffView(
+            String memberId,
+            String userId,
+            String phoneMasked,
+            String nickname,
+            String role,
+            String status,
+            String invitedBy,
+            String createdAt
+    ) {
+    }
+
+    /** 平台侧成员总览项（跨租户） */
+    public record StaffAdminView(
+            String memberId,
+            String merchantId,
+            String storeName,
+            String userId,
+            String phoneMasked,
+            String role,
+            String status,
+            String createdAt
+    ) {
+    }
+
+    /**
+     * 成员身份（内部端点下发，供交易/商品域做归属判定）。
+     *
+     * <p>刻意**只回四个字段**：交易域需要的是「这个人以哪家店的身份行动」，
+     * 不是这个人是谁 —— 手机号、实名等不跨域扩散（与 briefs 同一裁剪纪律）。
+     */
+    public record MembershipInfo(
+            String merchantId,
+            String ownerUserId,
+            String memberRole,
+            String status
+    ) {
+        public boolean activeStaff() {
+            return "STAFF".equals(memberRole) && "ACTIVE".equals(status);
+        }
+    }
 }

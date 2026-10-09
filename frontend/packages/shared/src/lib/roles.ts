@@ -40,3 +40,19 @@ export function canAccessSellerConsole(role: string | null | undefined): boolean
   const upper = role.toUpperCase();
   return upper === 'SELLER' || upper === 'OPERATOR' || upper === 'ADMIN';
 }
+
+/**
+ * 能否进入商家工作台（E13）：卖家本人 / 运营，**或现役店员**。
+ *
+ * <p>与 {@link canAccessSellerConsole} 的关系：后者只看角色快照；
+ * 店员的角色是 USER，其准入依据是 {@code me.merchant}（后端只对 ACTIVE STAFF 下发，
+ * 被停用后字段消失 → 前端与后端同时失效，没有"页面还亮着、接口全 403"的窗口期）。
+ * 新代码请用本函数；旧函数保留给只有 role 的调用点。
+ */
+export function canAccessMerchantWorkspace(
+  role: string | null | undefined,
+  merchant?: { status: string } | null,
+): boolean {
+  if (canAccessSellerConsole(role)) return true;
+  return merchant?.status === 'ACTIVE';
+}

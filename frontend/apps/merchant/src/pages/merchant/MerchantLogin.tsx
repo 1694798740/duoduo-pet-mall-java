@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
+import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 export const MerchantLoginPage: React.FC = () => {
@@ -34,7 +34,7 @@ export const MerchantLoginPage: React.FC = () => {
       const me = await login(phone.trim(), password);
       // 与平台后台**刻意不同**：这里不拒绝非商家账号，而是进入工作台由外壳渲染**入驻引导**
       // （"先实名 → 申请入驻"）—— 商家平台的登录页本身就是招商入口，拒登录会把漏斗掐断。
-      if (!canAccessSellerConsole(me.role)) {
+      if (!canAccessMerchantWorkspace(me.role, me.merchant)) {
         void me; // 角色仅用于日志/排查，准入由外壳与后端共同判定
       }
       navigate('/seller', { replace: true });

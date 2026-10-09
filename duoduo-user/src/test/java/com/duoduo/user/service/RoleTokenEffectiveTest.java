@@ -60,8 +60,12 @@ class RoleTokenEffectiveTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final WechatGateway wechatGateway = mock(WechatGateway.class);
 
+    private final com.duoduo.user.mapper.MerchantMapper merchantMapper = mock(com.duoduo.user.mapper.MerchantMapper.class);
+    private final com.duoduo.user.mapper.MerchantMemberMapper merchantMemberMapper =
+            mock(com.duoduo.user.mapper.MerchantMemberMapper.class);
+
     private final AuthService authService = new AuthService(userMapper, refreshTokenMapper, passwordEncoder,
-            jwt, idGenerator, wechatGateway, 60);
+            jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper);
     /** 控制器多了一个宠物档案依赖（第五十八轮 S1），这两条断言用不到它 */
     private final PetProfileService petProfileService = mock(PetProfileService.class);
 

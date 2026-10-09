@@ -11,7 +11,7 @@
  * <p>页面之间的跳转：商家各页内部用的是站内链接（`/seller/...`），在本商家应用内依然成立。
  */
 import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
-import { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
+import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { MerchantLoginPage } from './MerchantLogin';
 import { SellerDashboardPage } from '../seller/Dashboard';
@@ -22,15 +22,29 @@ import { SellerSettlementsPage } from '../seller/Settlements';
 import { SellerAfterSalesPage } from '../seller/AfterSales';
 import { SellerApplyCard } from '../seller/shared';
 import { MerchantApplyPage } from '../seller/Apply';
+import { SellerStaffPage } from '../seller/Staff';
 
 /** 商家工作台导航（商家页面自身没有导航栏，这份是**唯一**的一份） */
-const TABS = [
+// E13 · 页签按身份过滤：店员不可见「结算对账」（后端同样 403，前端隐藏只是体验，
+// 真正的门在 SellerService.settlements 里）。店主额外多「店员管理」。
+const TABS_FOR_OWNER = [
   { to: '/seller', label: '经营概览', end: true },
   { to: '/seller/products', label: '商品管理', end: false },
   { to: '/seller/orders', label: '订单管理', end: false },
   { to: '/seller/after-sales', label: '售后处理', end: false },
   { to: '/seller/settlements', label: '结算对账', end: false },
+  { to: '/seller/staff', label: '店员管理', end: false },
 ];
+const TABS_FOR_STAFF = [
+  { to: '/seller', label: '经营概览', end: true },
+  { to: '/seller/products', label: '商品管理', end: false },
+  { to: '/seller/orders', label: '订单管理', end: false },
+  { to: '/seller/after-sales', label: '售后处理', end: false },
+];
+const tabsFor = (role: string | undefined, merchant: { memberRole: string } | null | undefined) =>
+  merchant?.memberRole === 'STAFF' || role?.toUpperCase() !== 'SELLER'
+    ? TABS_FOR_STAFF
+    : TABS_FOR_OWNER;
 
 const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
 
@@ -55,7 +69,7 @@ const MerchantShell: React.FC = () => {
     // 商家平台不依赖商城登录：未登录 → 本平台自有登录页
     return <Navigate to="/login" replace />;
   }
-  if (!canAccessSellerConsole(user.role)) {
+  if (!canAccessMerchantWorkspace(user.role, user.merchant)) {
     // 已登录但还不是商家：给**入驻引导**（沿用原商家端行为）—— 商家平台的登录页是招商入口，
     // 这里正是"实名 → 申请入驻"的落地页；不显示生硬的"无权限"。
     return (
@@ -92,7 +106,7 @@ const MerchantShell: React.FC = () => {
       </header>
 
       <nav className="row row-wrap" style={{ gap: 8, marginBottom: 16 }}>
-        {TABS.map((tab) => (
+        {tabsFor(user?.role, user?.merchant).map((tab) => (
           <NavLink
             key={tab.to}
             to={tab.to}
@@ -120,6 +134,7 @@ export const MerchantRoot: React.FC = () => (
       <Route path="/seller/orders/:orderNo" element={<SellerOrderDetailPage />} />
       <Route path="/seller/products" element={<SellerProductsPage />} />
       <Route path="/seller/settlements" element={<SellerSettlementsPage />} />
+      <Route path="/seller/staff" element={<SellerStaffPage />} />
       <Route path="/seller/after-sales" element={<SellerAfterSalesPage />} />
       {/* 商家页面里指向商城的个人中心链接（/me）→ 跨站点跳回商城 */}
       <Route path="/me" element={<BackToMall />} />

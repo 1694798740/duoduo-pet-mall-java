@@ -55,6 +55,8 @@ export interface UserView {
   idCardMasked: string | null;
   creditScore: number | null;
   createdAt: string;
+  /** E13 · 店铺成员身份（ACTIVE STAFF 才下发；null = 店主或无店） */
+  merchant?: MerchantBrief | null;
 }
 
 export interface PetView {
@@ -1373,6 +1375,38 @@ export interface MerchantRejectReason {
   scope: string;
   code: string;
   note: string;
+}
+
+/** 店铺成员身份简报（E13）：null = 不属于任何店（店主走 role 通道） */
+export interface MerchantBrief {
+  merchantId: string;
+  storeName: string;
+  memberRole: 'OWNER' | 'STAFF';
+  status: 'ACTIVE' | 'DISABLED';
+}
+
+/** 店员视图（店主管理页，E13） */
+export interface StaffView {
+  memberId: string;
+  userId: string;
+  phoneMasked: string;
+  nickname: string;
+  role: 'OWNER' | 'STAFF';
+  status: 'ACTIVE' | 'DISABLED';
+  invitedBy: string | null;
+  createdAt: string | null;
+}
+
+/** 平台侧成员总览项（跨租户，E13） */
+export interface StaffAdminView {
+  memberId: string;
+  merchantId: string;
+  storeName: string;
+  userId: string;
+  phoneMasked: string;
+  role: 'OWNER' | 'STAFF';
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: string | null;
 }
 
 /** 审核台列表项（E11；无材料明细 —— 看材料请进详情） */

@@ -70,13 +70,16 @@ public class SellerService {
     private final SettlementMapper settlementMapper;
     private final OrderService orderService;
     private final SettlementService settlementService;
+    private final com.duoduo.trade.client.MembershipClient membershipClient;
 
     public SellerService(OrderMapper orderMapper, SettlementMapper settlementMapper,
-                         OrderService orderService, SettlementService settlementService) {
+                         OrderService orderService, SettlementService settlementService,
+                         com.duoduo.trade.client.MembershipClient membershipClient) {
         this.orderMapper = orderMapper;
         this.settlementMapper = settlementMapper;
         this.orderService = orderService;
         this.settlementService = settlementService;
+        this.membershipClient = membershipClient;
     }
 
     /**
@@ -86,7 +89,8 @@ public class SellerService {
      * @param platformScope 是否额外包含平台自营（{@code seller_id = 0}）
      * @param visibleSellerIds 归属校验用的卖家 ID 集合，至少含 {@code sellerId}
      */
-    public record SellerScope(Long sellerId, String role, boolean platformScope, List<Long> visibleSellerIds) {
+    public record SellerScope(Long sellerId, String role, boolean platformScope,
+                              List<Long> visibleSellerIds, boolean staffMember) {
     }
 
     // ---------------- 准入 ----------------
@@ -100,6 +104,14 @@ public class SellerService {
     public SellerScope requireSellerScope() {
         LoginUser user = UserContext.require();
         if (!user.canAccessSellerConsole()) {
+            // E13：角色快照不是卖家 → 再查一次成员身份（实时查，停用即时生效）。
+            // 店员（现役 STAFF）以**店铺主体**（店主 userId）行动 —— 订单挂在店主 userId 下，
+            // 店员的可见集合就是它。查不到（无店 / 已停用）→ 401 语义的 403。
+            com.duoduo.trade.client.dto.MembershipInfo membership = membershipOf(user.userId());
+            if (membership != null && membership.activeStaff()) {
+                Long ownerUserId = Long.valueOf(membership.ownerUserId());
+                return new SellerScope(ownerUserId, "STAFF", false, List.of(ownerUserId), true);
+            }
             throw BizException.forbidden("该账号不是卖家，无法进入商家端；请先在个人中心完成实名并申请成为卖家");
         }
         List<Long> visible = new ArrayList<>(2);
@@ -108,7 +120,20 @@ public class SellerService {
         if (platformScope) {
             visible.add(OrderService.PLATFORM_SELLER_ID);
         }
-        return new SellerScope(user.userId(), user.role(), platformScope, visible);
+        return new SellerScope(user.userId(), user.role(), platformScope, visible, false);
+    }
+
+    /**
+     * E13 · 查成员身份。Feign 调用失败按"非店员"处理 ——
+     * 认证链路的下游故障不能把「拒绝」变成「放行」。
+     */
+    private com.duoduo.trade.client.dto.MembershipInfo membershipOf(Long userId) {
+        try {
+            return membershipClient.of(userId).data();
+        } catch (Exception ex) {
+            log.warn("成员身份查询失败，按非店员处理 userId={}", userId, ex);
+            return null;
+        }
     }
 
     // ---------------- 卖出订单 ----------------
@@ -181,6 +206,11 @@ public class SellerService {
      */
     public SettlementPage settlements(String status, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
+        if (scope.staffMember()) {
+            // E13 · 店员不可见结算：托管资金是「钱」的视图，店员是「干活的人」。
+            // 在准入层一刀切，而不是每个字段做脱敏 —— 部分可见的数字拼起来还是全景。
+            throw BizException.forbidden("店员账号不可查看结算与提现信息，请联系店主");
+        }
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
         String normalized = normalizeSettlementStatus(status);
