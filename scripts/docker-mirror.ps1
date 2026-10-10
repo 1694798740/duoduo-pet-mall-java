@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     一条命令给 Docker Desktop 配置国内镜像源（解决「拉不到镜像」）。
 

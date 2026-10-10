@@ -30,6 +30,9 @@ import java.util.Map;
  *       让角色变更<b>下一个请求即生效</b>（而不是等 15 分钟自然过期）。
  *       口径（键名 / TTL / 放行规则）见 {@link com.duoduo.common.security.perm.PermVersion}；
  *       同样地，<b>没有该声明 = 老令牌 = 不校验</b></li>
+ *   <li><b>租户标识 tid（E20）</b>：这枚令牌代表哪个店铺（店铺主体 userId），
+ *       网关据此写入 {@code X-Tenant-Id}，各服务的数据层据此追加行级过滤条件。
+ *       口径与"为什么放令牌里"见 {@link #CLAIM_TENANT}；<b>刷新令牌不带它</b>（换新令牌时重算）</li>
  * </ul>
  *
  * <p>网关与服务端共用本类，保证签名逻辑只有一份实现。
@@ -53,6 +56,25 @@ public class JwtTokenService {
      * 加字段时线上有活跃会话，不能因为"没有声明"就把人踢下线。
      */
     private static final String CLAIM_PERM_VERSION = "pv";
+    /**
+     * E20 · 租户标识：这枚令牌**代表哪个店铺**（= 店铺主体 userId，见
+     * {@link com.duoduo.common.tenant.TenantContext}）。
+     *
+     * <p>为什么放在令牌里而不是让下游自己查：租户是"行级可见性"的过滤键，
+     * 它必须是**服务端可信、请求内稳定**的值。让每个服务各自解析（Feign 查成员表）
+     * 会把一个本可以只算一次的东西算五六次，且任何一处写错都表现为"某条链路没隔离"。
+     * 放进签名令牌后，网关转发、下游读取，全链路同一份事实。
+     *
+     * <p><b>没有该声明 = 老令牌 / 不属于任何店铺（买家、运营、管理员）→ 不追加租户条件。</b>
+     * 与 {@code ent} / {@code pv} 同一姿势：加字段时线上有活跃会话，
+     * 不能因为"没有声明"就把人踢下线；而"不追加条件"恰好等于 E20 之前的行为，是安全的降级方向。
+     *
+     * <p><b>刷新令牌刻意不带 tid</b>（与 {@code pv} 同理，但与 {@code ent} 不同）：
+     * 换新令牌时租户要**重新解析**一遍 —— 店员可能已经换了店铺、已被停用，
+     * 沿用旧值会让"停用/移店"在最长 7 天内不生效。{@code ent} 必须继承是因为入口是
+     * "你在哪个站点登录的"，换了反而把入口限制洗掉；租户是"你现在属于谁"，必须重算。
+     */
+    private static final String CLAIM_TENANT = "tid";
 
     private final SecretKey secretKey;
     private final Duration accessTtl;
@@ -90,7 +112,7 @@ public class JwtTokenService {
      *   <li>{@link #createAccessToken(LoginUser)} / {@link #createAccessToken(LoginUser, String)} ——
      *       <b>刻意</b>不写 {@code pv}（等价于"老令牌"）。保留它们是为了两件事：
      *       网关侧单测需要构造老令牌，以及本项目之外（小程序、脚本夹具）的历史调用方不被强制改造。</li>
-     *   <li>本方法 —— <b>真实签发路径必须走它</b>。目前只有两处：
+     *   <li>本方法与 4 参重载（E20 起）—— <b>真实签发路径必须走 4 参那个</b>。目前只有两处：
      *       {@code AuthService.issueTokens}（登录/注册/刷新）与
      *       {@code AuthService.renewAccessToken}（角色升级后重签）。两处都从库里现读版本，
      *       不接受调用方传入 —— 版本只有一个来源，不给第二份口径。</li>
@@ -99,6 +121,29 @@ public class JwtTokenService {
      * @param permVersion 权限版本；{@code null} 时不写声明（该令牌不参与版本校验，向后兼容）
      */
     public String createAccessToken(LoginUser user, String entry, Long permVersion) {
+        return createAccessToken(user, entry, permVersion, null);
+    }
+
+    /**
+     * 签发访问令牌（E20：带租户标识）。
+     *
+     * <p>{@code tenantId} 的取值规则只有一条：<b>由服务端从库里的店铺归属现读</b>，
+     * 绝不接受客户端传入。真实签发路径是 {@code AuthService.issueTokens} /
+     * {@code renewAccessToken}，两处都从 {@code t_merchant} 归属解析。
+     *
+     * <p>解析结果与 {@link #CLAIM_TENANT} 的三种取值：
+     * <ul>
+     *   <li>{@code null} —— 不属于任何店铺（买家 / 运营 / 管理员）→ 不写声明 → 下游不追加条件；</li>
+     *   <li>{@code 0} —— 平台自营。**是有效值**，写进声明；</li>
+     *   <li>{@code > 0} —— 第三方店铺主体 userId。</li>
+     * </ul>
+     * 注意 0 与 null 的区别必须由调用方用 {@code Long} 表达，不能用 {@code long} 默认值兜 —— 
+     * 那会把"买家"写成"自营"，等于给买家打开自营数据的门（见
+     * {@link com.duoduo.common.tenant.TenantContext} 的"为什么用 Optional"）。
+     *
+     * @param tenantId 租户标识；{@code null} 时不写声明（该令牌不参与租户过滤，向后兼容）
+     */
+    public String createAccessToken(LoginUser user, String entry, Long permVersion, Long tenantId) {
         Instant now = Instant.now();
         Map<String, Object> claims = new HashMap<>();
         claims.put(CLAIM_TYPE, TYPE_ACCESS);
@@ -111,6 +156,10 @@ public class JwtTokenService {
         }
         if (permVersion != null) {
             claims.put(CLAIM_PERM_VERSION, permVersion);
+        }
+        if (tenantId != null) {
+            // E20：自营（0）也会走到这里 —— 它是有效租户，不是"没有租户"
+            claims.put(CLAIM_TENANT, tenantId);
         }
         return Jwts.builder()
                 .subject(String.valueOf(user.userId()))
@@ -191,8 +240,13 @@ public class JwtTokenService {
             // 那一步在版本升级里改过行为，属于"能省一次却要赌依赖实现"的地方。
             Object rawPermVersion = claims.get(CLAIM_PERM_VERSION);
             Long permVersion = rawPermVersion instanceof Number number ? number.longValue() : null;
+            // E20：同样按 Number 取（理由同上，JSON 小整数是 Integer）。
+            // 取不到就是 null —— 可能是老令牌，也可能是"本就不属于任何店铺"，
+            // 两者在下游的处理**完全相同**（都不追加租户条件），所以不需要再区分。
+            Object rawTenant = claims.get(CLAIM_TENANT);
+            Long tenantId = rawTenant instanceof Number number ? number.longValue() : null;
             return new TokenPayload(userId, phone, role, Boolean.TRUE.equals(realName), claims.getId(), entry,
-                    permVersion, true);
+                    permVersion, tenantId, true);
         } catch (JwtException | IllegalArgumentException ex) {
             return TokenPayload.invalid();
         }
@@ -207,6 +261,8 @@ public class JwtTokenService {
      *
      * @param entry       E8 · 入口标识；{@code null} = 该令牌未声明入口（老令牌 / 小程序直连），不受入口路径限制
      * @param permVersion E17 · 权限版本；{@code null} = 该令牌未声明版本（老令牌），不参与版本校验
+     * @param tenantId    E20 · 租户标识（店铺主体 userId）；{@code null} = 不属于任何店铺（买家/运营/管理员）
+     *                    或老令牌，两者下游处理相同 —— 都不追加租户条件。{@code 0} = 平台自营，是有效值
      */
     public record TokenPayload(
             Long userId,
@@ -216,10 +272,11 @@ public class JwtTokenService {
             String jti,
             String entry,
             Long permVersion,
+            Long tenantId,
             boolean valid
     ) {
         public static TokenPayload invalid() {
-            return new TokenPayload(null, null, null, false, null, null, null, false);
+            return new TokenPayload(null, null, null, false, null, null, null, null, false);
         }
     }
 }

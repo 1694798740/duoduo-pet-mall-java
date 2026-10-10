@@ -412,8 +412,12 @@ if (-not $SkipDbCheck) {
 
     $r = Call 'Post' "$Gateway/api/orders/internal/sweep" $sessA $null $H_INTERNAL
     Check "带内部凭据触发补偿调度返回 200" ($r.status -eq 200) $r.status
-    Check "调度报告自动收货 ≥ 1 单" ([int]$r.body.data.autoCompleted -ge 1) $r.body.data.autoCompleted
-    Check "调度报告放款 ≥ 1 笔" ([int]$r.body.data.fundsReleased -ge 1) $r.body.data.fundsReleased
+    # 与 coupon 的「过期标记」同型：定时调度（自动收货 / 放款作业）可能在这两次调用之间抢先处理，
+    # 抢跑之后这一调用的计数自然就是 0 —— 但「超期订单会被自动收货并放款」这条不变式已经成立。
+    # 反向仍有力：调度真坏掉时订单会停在 SHIPPED、托管停在 CUSTODY，此处必然红（下面两行还钉着终态）。
+    $autoState = Sql 'duoduo_trade' "SELECT CONCAT(o.status,'/',IFNULL(s.status,'NULL')) FROM t_order o LEFT JOIN t_settlement s ON s.order_id=o.id WHERE o.order_no='$on5';"
+    Check "调度报告自动收货 ≥ 1 单（或定时调度已先行处理）" (([int]$r.body.data.autoCompleted -ge 1) -or ($autoState -eq 'COMPLETED/RELEASED')) $r.body.data.autoCompleted
+    Check "调度报告放款 ≥ 1 笔（或定时调度已先行放款）" (([int]$r.body.data.fundsReleased -ge 1) -or ($autoState -eq 'COMPLETED/RELEASED')) $r.body.data.fundsReleased
 
     $r = Call 'Get' "$Gateway/api/orders/$on5" $sessA $null
     Check "★ 超期订单已自动确认收货（COMPLETED）" ($r.body.data.status -eq 'COMPLETED') $r.body.data.status

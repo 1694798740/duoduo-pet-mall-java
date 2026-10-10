@@ -440,18 +440,26 @@ Check "★ 转人工时 audit_source 与 audit_at 都清空（上一次结论已
 
 # ---- 跨店（横向）----
 # 先立正对照：同一端点、同一动作，只有"是不是自己的商品"这一项不同。
-# 没有它的话，下面的 403 在"端点整个坏掉、谁都拿不到"时也照样绿。
+# 没有它的话，下面的 404 在"端点整个坏掉、谁都拿不到"时也照样绿。
+#
+# ★ E20 起口径变化：下面三条跨店断言由 403 改为 404。
+#   E19 写这套时，越权表现为「有权限检查、但归属不符」→ 403。
+#   E20 加了租户行级过滤后，卖家 B 的请求在 SQL 层就查不到卖家 A 的商品，
+#   系统眼里「这个商品不在你的可见范围内」→ 按既定防枚举口径返 404。
+#   被拒的事实并未改变（紧接着的「商品状态未被改动」仍是硬证据），
+#   变的是拒绝方式 —— 而 404 比 403 更不容易被拿去枚举他人的商品 id。
+#   注意：**不要**写成「403 或 404 都行」：那会在真正放开成 200 时失去判别力。
 $r = Call 'Get' "$Gateway/api/seller/products/$spuA" $null (Bearer $tokenSA)
 Check "正对照：卖家 A 看自己的商品详情 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Get' "$Gateway/api/seller/products/$spuA" $null (Bearer $tokenSB)
-Check "★ 横向：卖家 B 看卖家 A 的商品详情 → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
+Check "★ 横向：卖家 B 看卖家 A 的商品详情 → 404（E20 起：租户过滤让 B 查不到该商品，按防枚举返 404，被拒的事实不变）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Put' "$Gateway/api/seller/products/$spuA" @{ title = '被卖家B改掉的标题' } (Bearer $tokenSB)
-Check "★ 横向：卖家 B 改卖家 A 的商品 → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
+Check "★ 横向：卖家 B 改卖家 A 的商品 → 404（E20 起，同上）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" @{ action = 'OFF_SHELF' } (Bearer $tokenSB)
-Check "★ 横向：卖家 B 下架卖家 A 的商品 → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
+Check "★ 横向：卖家 B 下架卖家 A 的商品 → 404（E20 起，同上）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 $spuStill = Sql 'duoduo_product' "SELECT status FROM t_spu WHERE id=$spuA;"
 Check "★ 且卖家 A 的商品状态未被改动" ($spuStill -eq "$spuStatus") "now=$spuStill before=$spuStatus"
 

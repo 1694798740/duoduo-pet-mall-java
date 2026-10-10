@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
+import com.duoduo.common.web.tenant.TenantLineInterceptors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,6 +54,15 @@ public class UserServiceConfig {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        // E20 · 租户条件自动追加（用户域的两张租户表）。
+        //
+        // ★ 本域是**唯一**列名不统一的地方：t_audit_log 用 tenant_id，t_audit_sample 用 seller_id。
+        //   MP 的 TenantLineHandler 只能返回一个列名，所以 TenantLineInterceptors 会按列名
+        //   自动拆成两个拦截器实例（同一个清单里传两张表即可，不需要这里手工分组）。
+        //
+        // ★ 必须在分页插件之前 add（多租户 → 分页）。
+        TenantLineInterceptors.forTables("t_audit_log", "t_audit_sample")
+                .forEach(interceptor::addInnerInterceptor);
         PaginationInnerInterceptor pagination = new PaginationInnerInterceptor();
         pagination.setMaxLimit(100L);
         interceptor.addInnerInterceptor(pagination);

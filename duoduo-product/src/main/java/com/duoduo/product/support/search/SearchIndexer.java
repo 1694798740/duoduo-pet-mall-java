@@ -116,6 +116,7 @@ public class SearchIndexer {
                       "properties": {
                         "docType":       {"type": "keyword"},
                         "refId":         {"type": "long"},
+                        "sellerId":      {"type": "long"},
                         "title":         {"type": "text", "analyzer": "pet_text"},
                         "subtitle":      {"type": "text", "analyzer": "pet_text"},
                         "description":   {"type": "text", "analyzer": "pet_text"},
@@ -197,6 +198,11 @@ public class SearchIndexer {
         // E14 · 审核状态同样进文档：ES 是独立于 MySQL 的可见性出口，
         // 查询侧靠它排除未过审商品（见 EsSearchEngine.searchProducts 的对应 filter）。
         doc.put("auditStatus", spu.getAuditStatus());
+        // E20 · 租户维度进文档：ES 是**独立于 MySQL 的第三个可见性出口**
+        // （前两个是 MySQL 查询条件与 Service 的 visibleSpuWrapper）。
+        // 只在 MySQL 侧做租户过滤，等于"关掉 ES 才对、开了就漏"——
+        // 与 E14 把 auditStatus 塞进索引是同一条教训：可见性的每个出口都要各自说清楚。
+        doc.put("sellerId", spu.getSellerId());
         doc.put("speciesList", species);
         doc.put("lifeStageList", lifeStages);
         doc.put("inStock", inStock);
@@ -227,6 +233,8 @@ public class SearchIndexer {
         doc.put("conditionLevel", l.getConditionLevel());
         doc.put("status", l.getStatus());
         doc.put("auditStatus", l.getAuditStatus());
+        // E20 · 租户维度（与商品文档同口径，见 indexSpu 的说明）
+        doc.put("sellerId", l.getSellerId());
         doc.put("createdAt", toMillis(l.getCreatedAt()));
         // 可见性进索引：只有「在售 + 审核通过」可被公开检索命中，其他状态保留文档但不参与查询
         doc.put("salesCount", 0);

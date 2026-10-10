@@ -7,6 +7,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.JwtTokenService;
 import com.duoduo.common.security.perm.PermVersion;
+import com.duoduo.common.security.perm.RolePermissionMatrix;
 import com.duoduo.user.dto.UserDtos;
 import com.duoduo.user.dto.UserDtos.LoginRequest;
 import com.duoduo.user.dto.UserDtos.LoginResponse;
@@ -536,7 +537,10 @@ public class AuthService {
         long permVersion = PermVersion.orInitial(entity.getPermVersion());
         log.info("用户 {} 角色变更为 {}，重签访问令牌使新角色即时生效（permVersion={}）",
                 userId, entity.getRole(), permVersion);
-        String token = jwtTokenService.createAccessToken(loginUser, entry, permVersion);
+        // E20：重签时**重新解析租户**。角色升级（买家→卖家）刚发生，旧令牌没有 tid，
+        // 不重算的话新令牌仍然不带租户，商家端的数据层就不会追加行级条件。
+        Long tenantId = resolveTenantId(entity);
+        String token = jwtTokenService.createAccessToken(loginUser, entry, permVersion, tenantId);
         // 与登录同口径：顺手对齐副本，保证网关那边的版本与这枚令牌一致
         permVersionPublisher.publishQuietly(entity.getId(), permVersion);
         return token;
@@ -590,7 +594,11 @@ public class AuthService {
         // 这一步是"自愈"：变更时如果副本没写成功，对方下一次刷新就会把副本对齐，
         // 于是"副本落后"最多持续到下一次刷新，不会永久卡住。
         long permVersion = PermVersion.orInitial(entity.getPermVersion());
-        String accessToken = jwtTokenService.createAccessToken(loginUser, entry, permVersion);
+        // E20：租户**每次签发都重新解析**（不接受调用方传入，也不从旧令牌继承）。
+        // 刷新令牌刻意不带 tid，就是为了走这里重算一遍 —— 店员换店 / 被停用后
+        // 重新登录拿到的一定是新值，不会沿用最长 7 天的旧归属。
+        Long tenantId = resolveTenantId(entity);
+        String accessToken = jwtTokenService.createAccessToken(loginUser, entry, permVersion, tenantId);
         permVersionPublisher.publishQuietly(entity.getId(), permVersion);
 
         String jti = UUID.randomUUID().toString().replace("-", "");
@@ -640,12 +648,7 @@ public class AuthService {
      * 下发反而会让前端判定漂移出第二份口径）；DISABLED 不下发 —— 前端看到的 null 就是"进不去"。
      */
     private UserDtos.MerchantBrief merchantBriefOf(Long userId) {
-        MerchantMemberEntity member = memberMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MerchantMemberEntity>()
-                        .eq(MerchantMemberEntity::getUserId, userId)
-                        .eq(MerchantMemberEntity::getRole, "STAFF")
-                        .eq(MerchantMemberEntity::getStatus, "ACTIVE")
-                        .last("LIMIT 1"));
+        MerchantMemberEntity member = activeStaffMemberOf(userId);
         if (member == null) {
             return null;
         }
@@ -655,6 +658,72 @@ public class AuthService {
         }
         return new UserDtos.MerchantBrief(String.valueOf(store.getId()), store.getName(),
                 member.getRole(), member.getStatus());
+    }
+
+    /** ACTIVE 的店员成员行；不是店员（或已停用）返回 null。 */
+    private MerchantMemberEntity activeStaffMemberOf(Long userId) {
+        return memberMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MerchantMemberEntity>()
+                        .eq(MerchantMemberEntity::getUserId, userId)
+                        .eq(MerchantMemberEntity::getRole, "STAFF")
+                        .eq(MerchantMemberEntity::getStatus, "ACTIVE")
+                        .last("LIMIT 1"));
+    }
+
+    /**
+     * E20 · 解析这枚令牌代表的**租户**（店铺主体 userId）。
+     *
+     * <h2>四种取值，顺序不可换</h2>
+     * <ol>
+     *   <li><b>平台角色（OPERATOR / ADMIN）→ null</b>。平台方跨租户巡查与代运营，
+     *       给他们的令牌钉一个 tid 会让"后台少看见数据"—— 一个不报错的功能退化。
+     *       反向不成立的代价只是"平台看得见全部"，而平台本来就该看见全部。
+     *       <b>所以必须先判平台角色</b>：一个运营若恰好也是某店店员，
+     *       按"先查成员"的写法就会把他锁进那一家店。</li>
+     *   <li><b>SELLER → 自己的 userId</b>。店铺主体 userId = {@code t_merchant.owner_user_id}，
+     *       与 {@code t_spu.seller_id} 同一把键，不需要再查库。</li>
+     *   <li><b>ACTIVE 店员 → 所属店铺的 owner_user_id</b>。
+     *       ★ <b>取的是 owner_user_id，不是 member.merchantId</b>：
+     *       {@code t_merchant.id} 与 {@code t_user.id} 都是雪花 bigint，
+     *       写错了不会报错，只会让过滤条件按错误的维度过滤（见
+     *       {@link com.duoduo.common.tenant.TenantContext} 的口径说明）。</li>
+     *   <li><b>其余 → null</b>（买家、已停用店员、无店铺用户）→ 下游不追加租户条件。</li>
+     * </ol>
+     *
+     * <h2>为什么在签令牌时解析，而不是让每个服务自己查</h2>
+     * 让下游查的代价是：每个服务都要发一次 Feign、每处都可能写错口径、
+     * 且"某个服务忘了查"表现为**静默不隔离**。放进签名令牌后，全链路一份事实。
+     * 代价是"最长一个访问令牌有效期（15 分钟）内不刷新"—— 这是可接受的，
+     * 因为**准入仍由各服务实时的成员校验把关**（E13 口径：停用即时生效），
+     * 租户只是行级可见性的第二层，不是唯一防线。
+     *
+     * <p>副作用（有意为之）：<b>刷新令牌时重新解析</b>，所以店员换了店铺、
+     * 或被停用后重新登录，拿到的一定是新值 —— 见 {@link #issueTokens}。
+     */
+    private Long resolveTenantId(UserEntity entity) {
+        if (entity == null || entity.getRole() == null) {
+            return null;
+        }
+        String role = RolePermissionMatrix.canonical(entity.getRole());
+        // ① 平台角色一律不带租户（跨租户是他们的职责，不是漏洞）
+        if (RolePermissionMatrix.ROLE_ADMIN.equals(role)
+                || RolePermissionMatrix.ROLE_OPERATOR.equals(role)) {
+            return null;
+        }
+        // ② 店主：店铺主体就是他本人
+        if (RolePermissionMatrix.ROLE_SELLER.equals(role)) {
+            return entity.getId();
+        }
+        // ③ 店员：取所属店铺的 owner_user_id（不是 t_merchant.id）
+        MerchantMemberEntity member = activeStaffMemberOf(entity.getId());
+        if (member == null) {
+            return null;
+        }
+        MerchantEntity store = merchantMapper.selectById(member.getMerchantId());
+        if (store == null || store.getOwnerUserId() == null) {
+            return null;
+        }
+        return store.getOwnerUserId();
     }
 
     private static String maskPhone(String phone) {

@@ -706,9 +706,9 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（25 套接口断言 = 24 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
+### 端到端冒烟（29 套接口断言 = 28 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
 
-> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（24 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
+> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（28 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
 > 外加 node 冒烟 `scripts/e8-entry-scope-smoke.mjs`；
 > 浏览器 e2e 由 `scripts/e2e/*-ui-check.mjs` **自发现**（22 套）。
 > `scripts/check-all.ps1` 里的套件数**从目录实算**，不再写死 —— 写死的数字在加套件之后会变成假话，而没人会记得改它。
@@ -738,7 +738,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
-> CI 子集（本地 / GitHub Actions 同一入口，**13 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1`。
+> CI 子集（本地 / GitHub Actions 同一入口，**16 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1`。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
@@ -758,6 +758,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1     
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 62 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁 / **E16 权限点：直连服务端口做双向断言（USER·SELLER→403、OPERATOR→200、未登录→401、商家端门槛）**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\perm-version-smoke.ps1 # 34 项：权限即时生效（改角色→旧令牌**下一个请求**即 401 / 刷新一次就换到新角色且**无需重新登录** / 收权后 403 与 401 分得清 / **无 pv 的老令牌不被拦下**（对照令牌只差一个 pv）/ 副本自愈 / 幂等不推进版本 / 收尾复原 ADMIN 计数）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-log-smoke.ps1     # 58 项：后台操作审计日志（E18：历史动作标识逐字稳定/落库字段/分页/凭据边界/越权）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\privilege-matrix-smoke.ps1 # 82 项：权限越权回归矩阵（E19：10 节 / 8 模块，**每条「被拒」必配「有权者能过」正对照**，网关层与服务端层分别断言）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tenant-isolation-smoke.ps1 # 37 项：租户隔离（E20：令牌 tid 与刷新重算 / 网关剥离伪造 X-Tenant-Id / 非法头 400 / **验数据层直连服务端口** / 夹具自建自毁 + GUARD）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -1657,6 +1660,119 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-10（E20 收尾：全量回归暴露两类「测试没跟上正确行为」的旧断言）
+
+E20 上线后跑全量回归（28 套，`search` 需 ES 被显式跳过），冒出 4 处红。**逐条查下来都不是产品缺陷，
+而是旧断言没跟上行为变化** —— 分两类，处置方式不同：
+
+**① 跨店越权由 403 变 404（`privilege-matrix` 3 条 + `seller-smoke` 5 条）**
+- 现象：「卖家 B 看 / 改 / 下架 卖家 A 的商品」「另一卖家查看 / 发货 / 退款 订单 A」
+  「复原归属后普通卖家看不到订单 A」，期望 403，实返 **404**。
+- 原因：E19 写这些断言时，越权是「有权限检查、但归属不符」→ 403。E20 加了租户行级过滤后，
+  越权者的请求**在 SQL 层就查不到**那一行 → 系统眼里「不存在」→ 按既定防枚举口径返 404。
+- **被拒的事实没变**：`privilege-matrix` 紧随其后的「商品状态未被改动」、`seller-smoke` §6
+  「卖家发货」正对照（他人那次发货确实没生效）都仍然绿。
+- 顺带理顺一处**口径不一致**：`seller-smoke` 原有「不存在的订单号返回 404（与 403 区分）」，
+  即刻意区分「不存在(404)」与「非你的(403)」。E20 后两者统一为 404 —— **这正是防枚举想要的**
+  （否则能用 403 / 404 的差别反推订单是否存在）。
+- 处置：共 8 条断言 403 → 404，并写明「**不要**写成『403 或 404 都行』」——
+  那样会在真正放开成 200 时失去判别力。
+- ★ **顺带全局排查**：仓里 50 多处 `-eq 403` 全部过了一遍，其余均属「角色 / 凭据 / 网关入口」类
+  （`OperatorGuard`、内部令牌、E16 权限点、ent 不匹配），不经过租户过滤 ——
+  `aftersale`(101/0)、`review`(61/0)、`seckill`(51/0) 本轮实测全绿即为印证。
+
+**② 拿「这一次调度做了几张」当判据（`coupon` 1 条 + `settlement` 2 条）**
+- 现象：`coupon` 的 `sweep.expired=0`、`settlement` 的 `sweep.autoCompleted=0 / fundsReleased=0`，
+  但**紧随其后的终态断言全是绿的**（券确实 EXPIRED、订单确实 COMPLETED + RELEASED）。
+- 原因：**定时调度抢跑**。脚本改完数据再手动触发 sweep，而后台作业在两次调用之间已经处理完，
+  于是这一调用的计数自然是 0。属**时序竞态**，全量跑得慢更容易踩中 ——
+  所以表现为「单跑绿、全量红」，也解释了「本机绿、CI 红」。
+- 两套脚本**各自的另一条同类断言早就**这么处理过（`coupon` TTL 解锁那条注释写明
+  「判据取终态而非这一次解掉了几张」），唯独这两处漏了 → 补齐为**终态判据**。
+- 反向仍有力：调度真坏掉时券会停在 UNUSED、订单会停在 SHIPPED，两处必然红。
+
+**沉淀**：
+- ① 是「**行为变好了，断言没跟着改**」—— 拒绝方式升级（403 → 404）不该被当成回归，
+  但也不能图省事放宽成「两者皆可」；
+- ② 是「**拿易失的过程量当判据**」—— 凡有后台定时任务参与，断言要钉**终态**，
+  而不是「这一次调用的计数」，否则测试会随运行时长随机红。
+
+**修后验证**：`privilege-matrix` 82/0、`seller` 99/0、`coupon` 145/0、`settlement` 125/0；
+静态守卫 48 脚本 PASS；全量 28 套全绿（`search` 因 ES 未启动被显式跳过）。
+
+### 2026-10-10（E20 租户隔离硬化 —— 从「谁在操作」到「这些数据属于谁」）
+
+**目标**：E19 管的是「谁**能不能调**这个接口」，E20 管**行级**：「同一张表里，这一行属于哪个店铺」。
+
+**★ 关键口径纠正（先做，否则后面全错）**：`seller_id` / `tenant_id` 存的是**店铺主体 userId**
+（`t_user.id`，即 `t_merchant.owner_user_id`），**不是 `t_merchant.id`**。实测 8/8 命中 `t_user.id`、
+0/8 命中 `t_merchant.id`。而 `SellerOwnership` 的类注释写的是「值即 `t_merchant.id`」——**注释说反了**
+（代码本来写的就对）。这条必须先纠正：**照注释去加租户列，就会加错维度**。
+
+**带租户列的表：10 张物理表 / 9 个表名**（`information_schema` 实算）：product `t_spu`/`t_listing`/`t_audit_sample`、
+trade `t_order`/`t_seller_debt`/`t_settlement`、fulfilment `t_after_sale`/`t_review`、
+user `t_audit_log`（**唯一叫 `tenant_id` 的**）/`t_audit_sample`。`t_audit_sample` 在 product 与 user **各一张、同名列**，
+所以「表名 → 列名」的映射是安全的 —— 但这条前提必须**写在代码里并被断言**（`sharedTableNames()` /
+`physicalTableCount()`）：哪天出现「同名不同列」，后写的 `put` 会静默覆盖先写的，其中一张表就被按错误的列过滤。
+
+**落地的四层**（失败方向全部指向「可用」，不指向「打不开」）：
+1. **口径层** `duoduo-common/tenant`：`TenantContext`（`ThreadLocal` + 对外只暴露 `Optional`；
+   **0 是有效租户**＝自营，未设置＝不追加条件 → 纵深防御的第二层，不是唯一防线）、
+   `TenantTables`（表→列的唯一权威 + 表名归一 `T_SPU` / 反引号包裹 / `db.t_spu` 三种写法都要命中）、
+   `TenantKeys`（Redis 键统一前缀 `duoduo:tenant:`，现有 4 个键是**收口**而非改名）。
+2. **传播层**：访问令牌加 `tid` 声明（**刷新令牌刻意不带**，刷新时**重新解析** —— 「租户＝你**现在**属于谁」，
+   人可能已被移出店铺）；网关**先剥离客户端同名的 `X-Tenant-Id`、再按 `tid` 写入**，
+   且 `tid` 为空时**不写这个头**而不是写 `0`（写 0 会被当成平台自营，是最宽的桶）；
+   `TenantContextInterceptor` 注册在 `UserContextInterceptor` **之后**、`AuditInterceptor` **之前**
+   （审计记录的租户维度读的就是它），`preHandle`/`afterCompletion` **两处**清理。
+3. **数据层**：MyBatis-Plus `TenantLineInnerInterceptor` 按服务**白名单接入**（product/trade/fulfilment/user 各申报自己那几张表），
+   且**必须排在分页插件之前**（反了 → 分页 count 语句漏掉租户条件，列表与总数不一致**还不报错**）。
+   非法 `X-Tenant-Id` → **400 响亮拒绝**，而不是「悄悄不加条件」。
+4. **搜索层**：ES 文档写入 `sellerId` + 检索追加租户过滤。**今天所有既有链路都不生效**
+   （商家端「我的商品」走 MySQL；买家请求本就无租户上下文），价值是**让「将来接 ES」成为安全的默认** ——
+   因此只做源码级静态断言 + 文档约束，不假装它现在拦得住什么。
+
+**验证**：新增 `tenant-isolation-smoke.ps1` **37/37** ＋ `TenantContextTest` 9 项单测
+（含「0 是有效租户」「线程隔离」「表名归一」「恰好 9 个表名 / 10 张物理表」）＋ 全仓单测 **588/0**。
+
+**★ 两条测试纪律（本项踩到并固化）**：
+- **验数据层必须直连服务端口**：走网关时 `X-Tenant-Id` 由网关按令牌写入、伪造的头会被剥离，
+  「拦截器有没有生效」根本测不到（E16 踩过同一个坑）。且探针要选**自身零过滤**的接口
+  （`/api/products/internal/cards` 走 `selectBatchIds`），否则红与绿都证明不了拦截器在不在。
+- **每条「被隔离」必配一条「未声明时可见」的正对照**：否则「查询恰好返回空」也能看起来像隔离成功。
+
+### 2026-10-10（#277 续 2：全量冒烟首次真跑起来 —— 27 套里 5 套红、四个根因）
+
+**进展**：`18be1a8` 触发（`38039084959`）：`编译检查` ✅、**`冒烟子集` 首次 success**（此前一直 failure ——
+三个修复确实生效）；只剩 `全量冒烟` 红，但这次它**真跑起来了**：汇总表从「26 套 (无汇总行)」变成
+**共 27 套，通过 22 套，失败 5 套**。
+
+| # | 问题 | 为什么现在才现形 | 修法 |
+| -- | -- | -- | -- |
+| ⑤ | `mq-smoke` 32/13，**并连带** `order-smoke` 67/10、`payment-smoke` 64/8 | `$env:TEMP` **在 Linux 上不存在**（Windows 才有），`Join-Path $env:TEMP …` 全部抛 `Cannot bind argument to parameter 'Path' because it is null` → **限流段 30 发请求一发都没发出去**（`limited=0`/`ok=0` 的假红灯）；更糟的是临时文件没清、**冻结没释放**，于是 `order`/`payment` 的「可售库存 316 vs 320」「冻结量从 0 开始」全跟着红 —— 又是「一个上游故障让它后面所有问题都不可见」。而 `mq-smoke` **不在 `SMOKE_SCRIPTS` 里**，所以子集永远是绿的：表现为「本机绿、子集绿、只在全量红」 | 改 `[System.IO.Path]::GetTempPath()`（两平台都对）；`mq-smoke` 纳入 `SMOKE_SCRIPTS` |
+| ⑥ | `mq-smoke` ★首条任务 30s 内未到 `PLACED` | 该套**自管环境**时会把 trade 重建为 queue 模式 —— JVM 全新 + RocketMQ 消费者组正在 rebalance，**第一条消息的延迟是冷启动**，不是链路延迟。本机消费者早热了 → 本机绿、CI 红，且红在 **SLA 断言**上，看上去像「削峰链路变慢了」，会把人往错误方向引 | 加**冷启动预热**：用一条**独立买家**的任务把消费者焐热（预算 180s、不计入 SLA），随后取消它释放冻结；§4 的 30s SLA 断言语义不变，只是不再把冷启动算进去。**用独立买家**是为了不在正式买家的订单列表里留订单（否则「订单已产生且为 1 条」被顶成 2，把环境问题伪装成计数问题） |
+| ⑦ | `coupon-smoke` 红 1：`① 时间字段为 ISO8601 UTC（以 Z 结尾） -> 10/10/2027 08:54:14` | **与 ④a 完全同一个** pwsh 7 日期转换坑（`ConvertFrom-Json` 把 ISO 串自动转 `[datetime]`），只是这条先前没人跑到 | 改为断言**原始报文**里**所有** `endAt` 都符合 ISO-8601+Z（不是只挑一个，而是全部合规） |
+| ⑧ | `seckill-smoke` 红 1：`编辑后结束时间已改 -> 10/10/2026 09:44:47` | 同上 | 同上（改断言原始报文） |
+
+**★ 顺手把这一「类」坑做成永久守卫**：新增 `scripts/lib/check-smoke-static.ps1`，并接进 CI
+**编译检查 job 的第一步**（纯静态、比编译还便宜），两条规则在编译之前就能红：
+
+- **规则 1：`Check` 的判据不得是「裸的比较表达式」。** 实测
+  `Check "x" (管道).Count -eq 0 "extra"` 会被 PowerShell **静默误绑定**：`$ok` 拿到的是 `(管道).Count` 这个数、
+  `-eq 0` 被吞掉，于是「四个令牌全在」照样打印 `[FAIL]`（今天新写的租户套件就踩了这一条，且**不报任何错**）。
+  而仓库里常见的 `Check "x" ((f) -eq 'str')`（整体再包一层括号）**是安全的**
+  （实测不等时返回 `False`，不是「永远为真」）——**不要为了统一风格去改这些**。
+- **规则 2：`.ps1` 必须带 UTF-8 BOM。** 这是项目铁律（PS 5.1 会把无 BOM 的 UTF-8 按 ANSI 解码 → 中文全乱码，
+  而「断言里的中文」往往正是断言文案与被匹配的字符串），但**此前没有任何自动校验**。顺手给唯一漏网的
+  `scripts/docker-mirror.ps1` 补上。规则**只扫我们自己的脚本**（排除 `scripts/e2e/node_modules` 里
+  Playwright 自带的 9 个 `.ps1`）。
+
+**反向验证**：拿一个故意违规（无 BOM + 裸比较表达式）的假仓库跑守卫 → **恰好 2 项违规、exit 1** 并给出改法；
+对真仓库 → 48 个脚本全绿。**失败方向也确认过**：不加外层括号的写法（`(F) -eq '0'`）是**响亮报错**，不会静默通过。
+
+**验证**：本地逐套复跑 —— `coupon 145/0`（原 144/1）、`seckill 51/0`（原 50/1）、`mq 48/0`（原 32/13）、
+`order 77/0`（原 67/10）、`payment 72/0`（原 64/8）。
 
 ### 2026-10-10（#277 续：修完两个根因后，"起全栈"首次通过 —— 随即暴露三个「只在 CI 上才现形」的问题）
 

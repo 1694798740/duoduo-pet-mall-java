@@ -12,6 +12,7 @@ import com.duoduo.product.dto.ProductDtos.ProductQuery;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import com.duoduo.common.tenant.TenantContext;
 import org.springframework.util.StringUtils;
 
 import java.io.StringReader;
@@ -64,6 +65,7 @@ public class EsSearchEngine {
         // 只在 MySQL 侧加条件会让「开 ES 就漏、关 ES 才对」这种最难复现的形态出现
         // （检索命中未过审商品，详情页却 404）。两边条件必须逐字对应。
         filters.add(term("auditStatus", "APPROVED"));
+        addTenantFilter(filters);
         if (expandedCategoryIds != null && !expandedCategoryIds.isEmpty()) {
             filters.add(termsLong("categoryId", expandedCategoryIds));
         }
@@ -98,6 +100,7 @@ public class EsSearchEngine {
         filters.add(term("docType", SearchIndexer.TYPE_LISTING));
         filters.add(term("status", "ON_SALE"));
         filters.add(term("auditStatus", "APPROVED"));
+        addTenantFilter(filters);
         if (StringUtils.hasText(q.city())) {
             filters.add(term("city", q.city().trim()));
         }
@@ -352,6 +355,22 @@ public class EsSearchEngine {
             out.add(Query.of(q -> q.withJson(new StringReader(json))));
         }
         return out;
+    }
+
+    /**
+     * E20 · 租户过滤：**只在请求声明了租户时**追加 {@code term(sellerId)}。
+     *
+     * <p>今天商家端并没有走 ES 的检索路径（「我的商品」走 MySQL 的
+     * {@code SellerProductService.list}），所以这一条**在所有既有链路上都不生效** ——
+     * 商城端买家请求没有租户上下文，行为与 E20 之前逐字一致。
+     *
+     * <p>它的价值是把"将来有人把商家端接到 ES 上"这个动作变成**安全的默认**：
+     * 上下文会自动跟过来，不需要那个人记得写 {@code term("sellerId", …)}；
+     * 而"忘了写"这类漏检在本项目的历史上从来不会报错，只会表现为"某条路径悄悄不过滤"。
+     * 所以：<b>不要因为"现在用不上"就删掉它</b>——这是一道只有出事时才知道缺了的防线。
+     */
+    private static void addTenantFilter(List<Object> filters) {
+        TenantContext.get().ifPresent(tenantId -> filters.add(term("sellerId", tenantId)));
     }
 
     private static Map<String, Object> term(String field, Object value) {

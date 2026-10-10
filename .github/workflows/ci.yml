@@ -33,6 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ★ 放在最前面：它比编译还便宜（纯静态、只读脚本文件），却能在编译之前
+      #   就挡掉两类"不报错但断言失效"的问题（见脚本头注释）。runner 自带 pwsh 7。
+      - name: 冒烟脚本静态自检（断言绑定 / UTF-8 BOM）
+        shell: pwsh
+        run: ./scripts/lib/check-smoke-static.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -70,7 +76,7 @@ jobs:
       # 就只会在"权限没即时生效"这种没人报障的场景里悄悄腐烂。
       # E19 起追加 privilege-matrix-smoke.ps1：越权矩阵同理 —— 它的失效方向是
       # 「注解没注册/网关兜住了 → 断言照样绿」，必须有一台机器每天替我们盯着。
-      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1
     steps:
       - uses: actions/checkout@v4
 

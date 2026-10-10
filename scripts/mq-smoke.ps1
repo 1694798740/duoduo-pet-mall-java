@@ -88,6 +88,16 @@ function Sql([string]$db, [string]$sql) {
 
 function NewKey { return [guid]::NewGuid().ToString() }
 
+# ★ 临时目录必须**跨平台**取（CI 实测踩到，本机永远看不到）：
+#   Windows 有 $env:TEMP，**Linux 没有** —— pwsh 7 在 ubuntu 上取到 $null，于是
+#   `Join-Path $env:TEMP 'x'` 直接抛「Cannot bind argument to parameter 'Path' because it is null」。
+#   后果不是"少跑一条断言"，而是整段限流测试**一发请求都没发出去**：
+#   limited=0 且 ok=0 → 「触发限流」假红灯；更糟的是临时文件没清、冻结没释放，
+#   把后面顺序执行的 order-smoke / payment-smoke 一起带红（同一个上游故障让后面
+#   所有问题都不可见 —— 与 #277 里 powershell.exe 那个坑是同一类）。
+#   [System.IO.Path]::GetTempPath() 在 Windows 与 Linux 上都是对的。
+$TmpDir = [System.IO.Path]::GetTempPath()
+
 function WaitContainerHealthy([string]$container, [int]$timeoutSec) {
     for ($i = 0; $i -lt $timeoutSec; $i++) {
         $st = & docker ps --filter "name=$container" --format '{{.Status}}' 2>$null
@@ -190,6 +200,34 @@ $sessOp = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $loginOp = Call 'Post' "$Gateway/api/auth/login" $sessOp @{ phone = $phoneOp; password = $Password }
 Check "运营账号重新登录成功" ($loginOp.status -eq 200) $loginOp.status
 
+# ---------- 3.5 冷启动预热（CI 实测必需；本机永远看不到） ----------
+Write-Host ""
+Write-Host "> 冷启动预热（把「第一条消息慢」挡在 SLA 断言之外）"
+# ★ 为什么必须有这一段：
+#   上面刚把 trade 重建为 queue 模式 —— JVM 是全新的、RocketMQ 消费者组正在 rebalance。
+#   这段时间里第一条消息的投递延迟属于**冷启动**，不是削峰链路的真实延迟。
+#   CI 实测：第一条任务超过 30s 才落库（等它落库时 order-smoke 的基线早被带偏），
+#   而本机（消费者早就热着）永远 30s 内完成 —— 症状就是「本机绿、CI 红」，
+#   且红在 SLA 断言上，看上去像"削峰链路变慢了"，会把人往错误方向引。
+#   做法：用一条**独立买家**的任务把消费者焐热（预算 180s，不计入 SLA），随后取消它释放冻结。
+#   为什么不复用买家 A：预热会在买家 A 的订单列表里留下一条订单，第 4 节的
+#   「订单已产生且为 1 条」会被它顶成 2 —— 把一个环境问题伪装成计数问题。
+$phoneWarm = '135' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+$regWarm = Register $phoneWarm '削峰预热'
+$sessWarm = $regWarm.session
+Call 'Post' "$Gateway/api/cart/items" $sessWarm @{ skuId = $SKU_A; quantity = 1 } | Out-Null
+$keyWarm = NewKey
+$rWarm = Call 'Post' "$Gateway/api/orders/queued" $sessWarm @{ receiverName = '预热'; receiverPhone = '13700000000'; receiverAddress = $addr; idempotentKey = $keyWarm }
+$stWarm = WaitTask $sessWarm $keyWarm 'PLACED' 180
+Check "（预热）消费者已就绪：预热任务落库（预算 180s，不计入 SLA）" `
+    (($rWarm.status -eq 200) -and ($stWarm -eq 'PLACED')) "status=$($rWarm.status) st=$stWarm"
+# 释放预热订单占用的冻结，并把预热买家的购物车清空 —— 让后面几节的基线回到干净状态
+$warmOrders = (Call 'Get' "$Gateway/api/orders" $sessWarm $null).body.data
+foreach ($o in @($warmOrders.items)) {
+    if ($o.orderNo) { Call 'Post' "$Gateway/api/orders/$($o.orderNo)/cancel" $sessWarm @{ reason = 'mq-smoke 预热清理' } | Out-Null }
+}
+Call 'Delete' "$Gateway/api/cart/items/$SKU_A" $sessWarm $null | Out-Null
+
 # ---------- 4. 削峰主链路：入队 PENDING → PLACED ----------
 Write-Host ""
 Write-Host "> 削峰主链路"
@@ -287,12 +325,12 @@ $replayedOrder = @(@($orders3.items) | Where-Object { $_.status -eq 'PENDING_PAY
 # ---------- 8. Sentinel 限流（burst 打满 QPS=5） ----------
 Write-Host ""
 Write-Host "> Sentinel 限流（30 并发瞬时请求，QPS=5）"
-$jar = Join-Path $env:TEMP 'mqsmoke-op-cookies.txt'
+$jar = Join-Path $TmpDir 'mqsmoke-op-cookies.txt'
 # ⚠ PS 5.1 给原生 exe 传参会剥掉参数里内嵌的双引号：`-d '{"a":"b"}'` 到 curl.exe
 #   已变成 `-d {a:b}` → 服务端 400。curl.exe 的登录与业务 body 都必须落临时文件走 `@file`。
 #   （首版脚本栽在这里：登录 JSON 被剥成裸键名 → 登录失败 → jar 无令牌 →
 #    30 发 burst 全 401，限流断言拿到"没有任何标记"的假红灯。）
-$loginBodyFile = Join-Path $env:TEMP 'mqsmoke-login-body.json'
+$loginBodyFile = Join-Path $TmpDir 'mqsmoke-login-body.json'
 Set-Content -Path $loginBodyFile -Value ('{"phone":"' + $phoneOp + '","password":"' + $Password + '"}') -Encoding ASCII -NoNewline
 & curl.exe -s -c $jar -X POST "$Gateway/api/auth/login" -H 'Content-Type: application/json' -d "@$loginBodyFile" | Out-Null
 Remove-Item $loginBodyFile -Force -ErrorAction SilentlyContinue
@@ -303,17 +341,17 @@ Check "（准备）运营登录成功（cookie jar 含会话）" ((Get-Content $
 #   请求根本到不了 Sentinel 切面 → 限流断言假红灯）。body 必须落临时文件走 `curl -d @file`。
 # 同一个 idempotentKey 打满 30 发即可：限流切面在业务之前，命中阈值后其余全被拦；
 # 放行的那几发是同一任务的幂等重放，不会产生多余数据。
-$bodyFile = Join-Path $env:TEMP 'mqsmoke-burst-body.json'
+$bodyFile = Join-Path $TmpDir 'mqsmoke-burst-body.json'
 Set-Content -Path $bodyFile -Value ('{"receiverName":"rl","receiverPhone":"13800000000","receiverAddress":"Perf Road 1","idempotentKey":"' + (NewKey) + '"}') -Encoding ASCII -NoNewline
 $curlArgs = @('-s', '--parallel', '--parallel-max', '30')
 for ($i = 1; $i -le 30; $i++) {
-    $f = Join-Path $env:TEMP "mqrl_$i.json"
+    $f = Join-Path $TmpDir "mqrl_$i.json"
     $curlArgs += @('-o', $f, '-b', $jar, '-X', 'POST', "$Gateway/api/orders/queued", '-H', 'Content-Type: application/json', '-d', "@$bodyFile")
 }
 & curl.exe @curlArgs | Out-Null
 $limited = 0; $okQps = 0
 for ($i = 1; $i -le 30; $i++) {
-    $f = Join-Path $env:TEMP "mqrl_$i.json"
+    $f = Join-Path $TmpDir "mqrl_$i.json"
     if (Test-Path $f) {
         $c = Get-Content $f -Raw
         if ("$c" -match 'RATE_LIMITED') { $limited++ }

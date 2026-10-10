@@ -44,6 +44,9 @@ import java.util.Map;
  *       让"角色已改、旧令牌还在用"的窗口从 15 分钟收敛到<b>下一个请求</b>。
  *       老令牌（无 pv）不校验；Redis 查不到放行 —— 判据与取舍见
  *       {@link com.duoduo.common.security.perm.PermVersion} 与 {@code PermVersionChecker}</li>
+ *   <li><b>租户标识（E20）</b>：令牌里的 {@code tid} → 请求头 {@code X-Tenant-Id}，
+ *       供各服务的数据层追加行级过滤条件。**没有声明就不写这个头**（而不是写 0），
+ *       下游据此"不追加条件" —— 与 ent/pv 同样的向后兼容姿势，且降级方向恰好等于 E20 之前的行为</li>
  * </ul>
  */
 @Component
@@ -56,6 +59,17 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     public static final String HEADER_USER_ROLE = "X-User-Role";
     public static final String HEADER_REAL_NAME = "X-Real-Name-Verified";
     public static final String HEADER_REQUEST_ID = "X-Request-Id";
+
+    /**
+     * E20 · 租户标识（店铺主体 userId），由令牌里的 {@code tid} 转写。
+     *
+     * <p>★ 刻意**引用 duoduo-common 里的常量**，而不是在这里再写一遍字面量：
+     * 这个头由网关写、由各服务的数据层拦截器读，两边各写一份的话，
+     * 任何一次拼写不一致（{@code X-Tenant-Id} vs {@code X-TenantID}）**都不会报错** ——
+     * 只会表现为"隔离上线了但没生效"。凡跨进程边界的键名，全项目只允许有一个定义。
+     * （既有的四个头历史各自写在两边，属于 E8 之前的状态；新头一律走共享常量。）
+     */
+    public static final String HEADER_TENANT_ID = com.duoduo.common.tenant.TenantTables.HEADER;
 
     /**
      * 可信客户端地址（第五十七轮）：网关写入，供下游做限流键。
@@ -130,6 +144,9 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     headers.remove(HEADER_USER_PHONE);
                     headers.remove(HEADER_USER_ROLE);
                     headers.remove(HEADER_REAL_NAME);
+                    // E20：客户端可能自己编一个 X-Tenant-Id 冒充别的店铺，必须先剥离，
+                    // 再由令牌里的 tid 写入可信值（与 X-Real-IP 同一条纪律）。
+                    headers.remove(HEADER_TENANT_ID);
                     // 入口标识同样先剥离再写入归一化值：下游（用户服务签发令牌时）读的是这个头，
                     // 若不剥离，调用方可以塞任意字符串下去
                     headers.remove(ClientEntry.HEADER);
@@ -161,6 +178,21 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     .header(HEADER_REAL_NAME, String.valueOf(payload.realNameVerified()));
             if (payload.phone() != null) {
                 builder.header(HEADER_USER_PHONE, payload.phone());
+            }
+            /*
+             * E20 · 租户标识：令牌里声明的 tid 在此转成下游可信的头。
+             *
+             * 三个刻意的选择：
+             *   · **取令牌里的，不取请求头里的** —— 与 ent 同一条理由：令牌是签名的。
+             *   · **tid 为空时不写这个头**（而不是写 "0"）：空 = "不属于任何店铺"
+             *     （买家 / 运营 / 管理员 / 老令牌），下游据此**不追加**租户条件；
+             *     写 0 会被下游理解为"平台自营"，那是**权限最宽的桶** ——
+             *     买家所有查询都会被加上 seller_id = 0，结果不是"看得更多"而是"什么也看不到"，
+             *     一次静默的功能故障，且看起来像隔离生效了。
+             *   · 与 X-Real-IP 一样，**先剥离同名字段再写入**（见 builder 前面的 headers.remove）。
+             */
+            if (payload.tenantId() != null) {
+                builder.header(HEADER_TENANT_ID, String.valueOf(payload.tenantId()));
             }
         }
 

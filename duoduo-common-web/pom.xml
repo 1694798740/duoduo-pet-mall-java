@@ -54,5 +54,25 @@
       <groupId>com.github.xiaoymin</groupId>
       <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
     </dependency>
+    <!--
+      E20 · 租户条件拦截器的 MP 适配（`com.duoduo.common.web.tenant`）需要 MP 的
+      `TenantLineInnerInterceptor` 与 `TenantLineHandler` 才会编译，故本模块要能看到 MP。
+
+      ★ 同样必须是 optional=true，理由与上面的 spring-jdbc 一模一样：
+      本模块只是**编译期**用得到 MP，运行时由真正连库的服务自带
+      （product / trade / fulfilment / user / social 都有 mybatis-plus-spring-boot3-starter）。
+      不加 optional 时 MP 会传递到 AI 服务 —— AI 是刻意无数据库的，
+      MP 的自动装配会去找 DataSource，重演 R59 那次「AI 启动直接失败」。
+
+      副作用说明：本模块引了 MP，但**没有任何 @Configuration 会去装配它** ——
+      租户拦截器由各服务在自己的 MybatisPlusInterceptor bean 里显式 add，
+      不做组件扫描、不做自动装配。这是刻意的：自动装配的失效方向是
+      「拦截器没注册 → 条件没追加 → 隔离静默失效」，而显式注册能被 grep 到。
+    -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
 </project>

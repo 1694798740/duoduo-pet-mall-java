@@ -231,7 +231,11 @@ Check "普通用户编辑活动 403" ($r.status -eq 403) $r.status
 $r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $sessOp $editBody
 Check "运营编辑活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 Check "编辑后标题已改" ($r.body.data.title -eq $editedTitle) $r.body.data.title
-Check "编辑后结束时间已改" ("$($r.body.data.endAt)" -like "$($newEnd.Substring(0,16))*") $r.body.data.endAt
+# ★ 同上一条口径：pwsh 7（CI）会把 ISO 串解析成 [datetime]，拼进字符串后是
+#   「10/10/2026 09:44:47」，与期望前缀「2026-10-10T09:44」完全不匹配 → 本机绿、CI 红。
+#   改回断言**原始报文**里服务器的原样输出。
+$endAtRaw = ([regex]::Match($r.raw, '"endAt"\s*:\s*"([^"]+)"')).Groups[1].Value
+Check "编辑后结束时间已改" ($endAtRaw -like "$($newEnd.Substring(0,16))*") "raw endAt=$endAtRaw 期望前缀=$($newEnd.Substring(0,16))"
 Check "编辑已落库（不是只改了响应体）" (
     (Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;") -eq $editedTitle) "DB 实得：$(Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;")"
 

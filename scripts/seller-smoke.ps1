@@ -261,8 +261,13 @@ if (-not $SkipDbCheck) {
 }
 
 # ---------- 5. 归属隔离 ----------
+# ★ E20 起口径变化：本节跨店断言由 403 改为 404。
+#   E20 加了租户行级过滤后，越权者（另一卖家 / 普通卖家）的请求在 SQL 层就查不到该订单 / 商品，
+#   系统眼里「不存在」→ 按既定防枚举口径返 404（与本节末尾「不存在的订单号返回 404」口径统一）。
+#   被拒的事实不变：紧随其后的 §6「卖家发货」正对照仍绿 —— 证明他人那次发货确实没有生效。
+#   不要改成「403 或 404 皆可」：那会在真正放开成 200 时失去判别力。
 Write-Host ""
-Write-Host "> 归属隔离（越权必须 403）"
+Write-Host "> 归属隔离（越权必须被拒；★ E20 起统一为 404 —— 防枚举，不再与「不存在」区分）"
 $r = Call 'Get' "$Gateway/api/seller/orders" $sessSeller $null
 $mineA = @($r.body.data.items | Where-Object { $_.orderNo -eq $onA })
 $mineB = @($r.body.data.items | Where-Object { $_.orderNo -eq $onB })
@@ -274,18 +279,18 @@ $otherSees = @($r.body.data.items | Where-Object { $_.orderNo -eq $onA -or $_.or
 Check "★ 另一卖家的订单列表看不到 A / B" ($otherSees.Count -eq 0) $otherSees.Count
 
 $r = Call 'Get' "$Gateway/api/seller/orders/$onA" $sessOther $null
-Check "★ 另一卖家查看订单 A 详情返回 403" ($r.status -eq 403) $r.status
+Check "★ 另一卖家查看订单 A 详情返回 404（E20 起：租户过滤→SQL 层查不到，走防枚举）" ($r.status -eq 404) $r.status
 # 注意：带 @RequestBody 的 POST 必须显式发空 JSON 对象，不能发「无 body」。
 # PowerShell 的 Invoke-WebRequest 在无 body 的 POST 上会带
 # Content-Type: application/x-www-form-urlencoded，服务端因此返回 415 ——
 # 那是**客户端**发错了格式，把它断言成 403 会把测试意图彻底带偏。
 $r = Call 'Post' "$Gateway/api/seller/orders/$onA/ship" $sessOther @{}
-Check "★ 另一卖家对订单 A 发货返回 403" ($r.status -eq 403) $r.status
+Check "★ 另一卖家对订单 A 发货返回 404（E20 起，同上）" ($r.status -eq 404) $r.status
 $r = Call 'Post' "$Gateway/api/seller/orders/$onA/refund" $sessOther @{ reason = '越权退款' }
-Check "★ 另一卖家对订单 A 退款返回 403" ($r.status -eq 403) $r.status
+Check "★ 另一卖家对订单 A 退款返回 404（E20 起，同上）" ($r.status -eq 404) $r.status
 
 $r = Call 'Get' "$Gateway/api/seller/orders/NOTEXIST$((Get-Random -Maximum 999999))" $sessSeller $null
-Check "不存在的订单号返回 404（与 403 区分）" ($r.status -eq 404) $r.status
+Check "不存在的订单号返回 404（E20 起与「他人的订单」同为 404，不再可区分 —— 这正是防枚举要的效果）" ($r.status -eq 404) $r.status
 
 # ---------- 6. 卖家发货 ----------
 Write-Host ""
@@ -406,7 +411,7 @@ if ($SkipDbCheck) {
     $r = Call 'Get' "$Gateway/api/seller/orders?pageSize=50" $sessOp $null
     Check "★ 运营能看到平台自营订单 A" ((@($r.body.data.items | Where-Object { $_.orderNo -eq $onA }).Count) -eq 1)
     $r = Call 'Get' "$Gateway/api/seller/orders/$onA" $sessSeller $null
-    Check "★ 复原归属后，普通卖家看不到订单 A（403）" ($r.status -eq 403) $r.status
+    Check "★ 复原归属后，普通卖家看不到订单 A（404，E20 起同上）" ($r.status -eq 404) $r.status
 
     Sql 'duoduo_user' "UPDATE t_user SET role = 'SELLER' WHERE id = $otherId;" | Out-Null
     Check "（复原）另一卖家角色已改回 SELLER" ((Sql 'duoduo_user' "SELECT role FROM t_user WHERE id = $otherId;") -eq 'SELLER')
@@ -443,7 +448,7 @@ if ($SkipDbCheck) {
     Check "★ 另一卖家看不到 SPU A" ((@($r.body.data.items | Where-Object { $_.id -eq [long]$spuA }).Count) -eq 0)
 
     $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessOther @{ action = 'OFF_SHELF' }
-    Check "★ 另一卖家下架 SPU A 返回 403" ($r.status -eq 403) $r.status
+    Check "★ 另一卖家下架 SPU A 返回 404（E20 起同上）" ($r.status -eq 404) $r.status
     $r = Call 'Post' "$Gateway/api/seller/products/999999999999/status" $sessSeller @{ action = 'OFF_SHELF' }
     Check "不存在的商品返回 404" ($r.status -eq 404) $r.status
     $r = Call 'Post' "$Gateway/api/seller/products/$spuA/status" $sessSeller @{ action = 'FOO' }

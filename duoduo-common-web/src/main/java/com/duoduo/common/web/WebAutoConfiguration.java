@@ -135,6 +135,21 @@ public class WebAutoConfiguration {
                                 "/doc.html",
                                 "/h2-console/**"
                         );
+                // E20 · 租户上下文。★ 排在 UserContextInterceptor **之后**（身份先立、再谈属于谁），
+                // 且排在 AuditInterceptor **之前** —— 审计记录里的租户维度读的就是这里建好的上下文。
+                // 它把网关写的 X-Tenant-Id 还原成 TenantContext，供数据层追加行级过滤条件；
+                // 头不存在时**不设上下文**（= 不追加条件），这正是 E20 之前的行为，上线零风险。
+                registry.addInterceptor(new TenantContextInterceptor())
+                        .addPathPatterns("/**")
+                        .excludePathPatterns(
+                                "/actuator/**",
+                                "/health/**",
+                                "/error",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/doc.html",
+                                "/h2-console/**"
+                        );
                 // E18 · 后台写操作留痕。★ 注册在 UserContextInterceptor 之后（要靠它还原操作人）、
                 // 但在 PermissionInterceptor **之前** —— 顺序反过来的话，越权被拒的请求
                 // 根本走不到审计拦截器的 afterCompletion（Spring 只为 preHandle 成功过的

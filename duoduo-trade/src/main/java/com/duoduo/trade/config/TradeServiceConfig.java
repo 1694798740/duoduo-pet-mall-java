@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.common.web.tenant.TenantLineInterceptors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +22,10 @@ public class TradeServiceConfig {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        // E20 · 租户条件自动追加（交易域的三张租户表）。★ 必须在分页插件之前 add
+        // （多租户 → 分页；顺序反了会让分页 count 语句漏掉租户条件，列表与总数不一致且不报错）。
+        TenantLineInterceptors.forTables("t_order", "t_seller_debt", "t_settlement")
+                .forEach(interceptor::addInnerInterceptor);
         PaginationInnerInterceptor pagination = new PaginationInnerInterceptor();
         pagination.setMaxLimit(100L);
         interceptor.addInnerInterceptor(pagination);

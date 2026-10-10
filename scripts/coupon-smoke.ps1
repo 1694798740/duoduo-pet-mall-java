@@ -251,7 +251,16 @@ $lowViewAuth = @($rListAuth.body.data | Where-Object { [long]$_.id -eq [long]$TP
 Check "① 登录后同一张券 claimable=true 且无原因文案" (($lowViewAuth.claimable) -and ($null -eq $lowViewAuth.claimableReason)) ($lowViewAuth | ConvertTo-Json -Compress)
 Check "① 券类型中文文案为「满减券」" ($lowViewAuth.typeLabel -eq '满减券') $lowViewAuth.typeLabel
 Check "① 剩余量 = 总量 - 已领（100 = 100 - 0）" ($lowViewAuth.remainingCount -eq 100) $lowViewAuth.remainingCount
-Check "① 时间字段为 ISO8601 UTC（以 Z 结尾）" ($lowViewAuth.endAt -match 'Z$') $lowViewAuth.endAt
+# ★ 断言**原始报文**里的 endAt，而不是解析后的对象：pwsh 7（CI 上跑的就是它）的
+#   ConvertFrom-Json 会把 ISO-8601 字符串**自动转成 [datetime]**，于是 -match 'Z$'
+#   作用在 DateTime 上必然为假，失败信息打印出来是 10/10/2027 08:54:14；
+#   Windows PowerShell 5.1 不做这个转换 → 同一条断言本机绿、CI 红。
+#   一句话：断言要测服务端的输出，不要测客户端解析之后的对象。
+$endAtsRaw = @([regex]::Matches($rListAuth.raw, '"endAt"\s*:\s*"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+$badEndAts = @($endAtsRaw | Where-Object { $_ -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$' })
+Check "① 时间字段为 ISO8601 UTC（以 Z 结尾）" `
+    (($endAtsRaw.Count -ge 1) -and ($badEndAts.Count -eq 0)) `
+    "样本=$($endAtsRaw.Count) 不合规=$($badEndAts -join ',')"
 Check "① 列表顺序稳定（按 id 升序）" ($ids[0] -lt $ids[-1]) ($ids -join ',')
 Check "① 匿名访问「我的券包」被网关拦下（401）" ((Call 'Get' "$Gateway/api/coupons/mine" $anon $null).status -eq 401)
 Check "① 匿名领券被网关拦下（401）" ((Claim $anon $TPL_LOW).status -eq 401)
@@ -533,7 +542,10 @@ Check "★ 补偿调度幂等：第二次 released=0（无 LOCKED 可解，无�
 Sql 'duoduo_marketing' "UPDATE t_coupon SET expire_at = UTC_TIMESTAMP() - INTERVAL 1 DAY WHERE code = '$CODE_EXP';" | Out-Null
 Check "（夹具）券已被人为改成「已过期」" ("$(Sql 'duoduo_marketing' "SELECT expire_at < UTC_TIMESTAMP() FROM t_coupon WHERE code = '$CODE_EXP';")" -eq '1')
 $rSweep3 = Call 'Post' "$Marketing/api/coupons/internal/sweep" $null $null $H_INTERNAL
-Check "★ 过期券被标记为 EXPIRED（expired >= 1）" ($rSweep3.body.data.expired -ge 1) ($rSweep3.body | ConvertTo-Json -Compress)
+# 与上面「TTL 兜底解锁」同款判据：定时调度（CouponReleaseJob）可能在这两次调用之间抢先标记，
+# 它抢先之后这一调用的 expired 就是 0 —— 但「过期券不会被漏标」这条不变式已经成立。
+# 反向看仍有力：调度真的坏掉时券会停在 UNUSED，此处必然红（下一行还钉了终态）。
+Check "★ 过期券被标记为 EXPIRED（expired >= 1，或定时调度已先行标记）" (($rSweep3.body.data.expired -ge 1) -or ("$(CouponStatusOf $CODE_EXP)" -eq 'EXPIRED')) ($rSweep3.body | ConvertTo-Json -Compress)
 Check "★ 过期券状态为 EXPIRED（终态）" ("$(CouponStatusOf $CODE_EXP)" -eq 'EXPIRED') (CouponStatusOf $CODE_EXP)
 $rUsableAfter = Call 'Get' "$Gateway/api/coupons/mine/usable?amount=$SKU_PRICE" $sessA $null
 $expStillListed = @($rUsableAfter.body.data.coupons | Where-Object { $_.code -eq $CODE_EXP }).Count
