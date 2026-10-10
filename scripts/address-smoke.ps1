@@ -320,7 +320,16 @@ if ($S -lt 3) {
 }
 Check "夹具前提：SKU $SKU 可售 >= 3" ($S -ge 3) $S
 $dbStockBefore = [int](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $SKU;")
-Check "（前置）库内库存与接口可售一致（冻结为 0）" ($dbStockBefore -eq $S) "db=$dbStockBefore api=$S"
+# 这条断言几乎**从不**因为本套件的夹具而红 —— 它红的时候，通常是**别的套件漏了收尾**，
+# 留下了一张未关闭的订单冻着这个 SKU 的可售量（真实发生过：E19 一次被中断的运行留下的
+# PENDING_PAYMENT 单，让这里以 db=105 api=104 报红，而它与地址簿毫无关系）。
+# 所以不一致时把「谁占着」一并打出来：让失败自带归因，而不是留一句干巴巴的数字。
+$holders = '(无需排查)'
+if ($dbStockBefore -ne $S) {
+    $holders = Sql 'duoduo_trade' "SELECT IFNULL(GROUP_CONCAT(CONCAT(o.order_no, '/', o.user_id, '/', o.status) SEPARATOR ' | '), '(无未关闭订单)') FROM duoduo_trade.t_order_item i JOIN duoduo_trade.t_order o ON o.id = i.order_id WHERE i.sku_id = $SKU AND o.status NOT IN ('CLOSED','COMPLETED','CANCELLED');"
+    Write-Host "  [INFO] 占用 SKU $SKU 的未关闭订单：$holders"
+}
+Check "（前置）库内库存与接口可售一致（冻结为 0）" ($dbStockBefore -eq $S) "db=$dbStockBefore api=$S holders=$holders"
 
 # 用用户 C 的地址簿下单（C 先建地址）
 $rC1 = NewAddr $sessC '王五' '13500003333' '北京市' '北京市' '朝阳区' '建国路 88 号 A 座' '公司' $null

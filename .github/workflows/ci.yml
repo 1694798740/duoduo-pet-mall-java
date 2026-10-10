@@ -68,7 +68,9 @@ jobs:
       # E17 起追加 perm-version-smoke.ps1：权限版本是**鉴权链路上**的判定，
       # 且它的失效方向是"静默放行"（Redis 读不到就放行）—— 这类套件不进 CI
       # 就只会在"权限没即时生效"这种没人报障的场景里悄悄腐烂。
-      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1
+      # E19 起追加 privilege-matrix-smoke.ps1：越权矩阵同理 —— 它的失效方向是
+      # 「注解没注册/网关兜住了 → 断言照样绿」，必须有一台机器每天替我们盯着。
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +83,27 @@ jobs:
 
       - name: 构建各服务 fat jar
         run: mvn -B -ntp -DskipTests package
+
+      # ★★ 起全栈之前**必须先构建前端** ★★
+      #   frontend/Dockerfile 刻意不在容器内做构建（复用宿主依赖缓存），它做的是
+      #       COPY apps/${APP}/dist /usr/share/nginx/html
+      #   而 frontend/.gitignore 排除了 dist/ —— 所以 runner 检出后的仓库里**没有 dist**，
+      #   `docker compose up -d --build` 会在构建三个前端镜像时直接失败：
+      #       target duoduo-web-app: failed to solve: ... "/apps/mall/dist": not found
+      #   这是「本机能跑、CI 必炸」的典型：本机 dist 是构建过一次就一直躺在那儿，
+      #   而 CI 每次都是干净检出。三个站点加入 compose 时漏了这一步，于是从那天起全红。
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端三站点产物（compose 构建前端镜像的硬前提）
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
       - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
         run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe
@@ -158,6 +181,27 @@ jobs:
 
       - name: 构建各服务 fat jar
         run: mvn -B -ntp -DskipTests package
+
+      # ★★ 起全栈之前**必须先构建前端** ★★
+      #   frontend/Dockerfile 刻意不在容器内做构建（复用宿主依赖缓存），它做的是
+      #       COPY apps/${APP}/dist /usr/share/nginx/html
+      #   而 frontend/.gitignore 排除了 dist/ —— 所以 runner 检出后的仓库里**没有 dist**，
+      #   `docker compose up -d --build` 会在构建三个前端镜像时直接失败：
+      #       target duoduo-web-app: failed to solve: ... "/apps/mall/dist": not found
+      #   这是「本机能跑、CI 必炸」的典型：本机 dist 是构建过一次就一直躺在那儿，
+      #   而 CI 每次都是干净检出。三个站点加入 compose 时漏了这一步，于是从那天起全红。
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端三站点产物（compose 构建前端镜像的硬前提）
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
       - name: shim curl.exe（冒烟脚本里的 Windows 习惯调用）
         run: sudo ln -sf /usr/bin/curl /usr/local/bin/curl.exe

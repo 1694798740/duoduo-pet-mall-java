@@ -334,19 +334,35 @@ INSERT INTO t_listing (id, seller_id, title, description, category_id, price, or
 -- t_spu.seller_id 默认 0（自营）；merchant 商品的归属卖家在用户域种子之后回填。
 -- 「问一问」（ASK）按商品归属卖家定收件人，没有归属的商品无法咨询。
 -- 与 incremental/15-ask-seller-backfill.sql 保持同一口径，跨环境可重放。
-UPDATE t_spu
-SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13550931548' AND role = 'SELLER')
-WHERE id IN (1009, 1010);
+--
+-- ★★ 这里必须用 **JOIN**，绝不能用 `SET seller_id = (SELECT ...)` 子查询 ★★
+--    子查询查不到人时返回的是 **NULL**，而 seller_id 是 NOT NULL ——
+--    于是「回填目标不存在」会把整份**全新初始化**打断在这里：
+--        ERROR 1048 (23000) at line 337: Column 'seller_id' cannot be null
+--    这条错误的杀伤力在于它**只在新库上现形**：
+--      · 本机是老库，数据早就有了，本地永远看不到（我本人一直以为是「历史问题」）；
+--      · CI 每轮都是空库 → **每轮必红**，而且它藏在 mysql 容器日志里，
+--        表面症状只是「docker compose up 失败」，极难往种子上想。
+--    JOIN 的语义恰好是我们要的：「有这个账号就回填，没有就什么都不做」——
+--    幂等、可重放、且不会因为数据缺失而崩。
+--    （第 337/289/257 行是同一个错在不同轮次的行号漂移，说明它一直没被修掉。）
+UPDATE t_spu s
+JOIN duoduo_user.t_user u ON u.phone = '13550931548' AND u.role = 'SELLER'
+SET s.seller_id = u.id
+WHERE s.id IN (1009, 1010);
 
-UPDATE t_spu
-SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13765569756' AND role = 'SELLER')
-WHERE id IN (1015, 1017, 1018);
+UPDATE t_spu s
+JOIN duoduo_user.t_user u ON u.phone = '13765569756' AND u.role = 'SELLER'
+SET s.seller_id = u.id
+WHERE s.id IN (1015, 1017, 1018);
 
 -- ---------- 自营商品归属官方客服（第四十八轮） ----------
 -- 自营（supply_type='self'）商品 seller_id=0 时「问一问」一律 422；
 -- 归属到「多多官方客服」后语义变为咨询官方客服，复用全部私信链路。
 -- 官方客服账号由 incremental/16-official-cs-and-avatars.sql 创建（含头像），
 -- 与增量 16 保持同一口径，跨环境可重放。
-UPDATE t_spu
-SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13900000002' AND role = 'SELLER')
-WHERE supply_type = 'self' AND seller_id = 0;
+-- （同一条 JOIN 铁律：账号不在就保持 seller_id=0，不做 NULL 赋值。）
+UPDATE t_spu s
+JOIN duoduo_user.t_user u ON u.phone = '13900000002' AND u.role = 'SELLER'
+SET s.seller_id = u.id
+WHERE s.supply_type = 'self' AND s.seller_id = 0;

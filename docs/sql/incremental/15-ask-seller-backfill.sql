@@ -10,10 +10,15 @@
 SET NAMES utf8mb4;
 USE `duoduo_product`;
 
-UPDATE t_spu
-SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13550931548' AND role = 'SELLER')
-WHERE id IN (1009, 1010);
+-- ★ 用 JOIN 而不是子查询：子查询查不到人返回 NULL，而 seller_id 是 NOT NULL，
+--   会把「全新初始化」直接打断（ERROR 1048 Column 'seller_id' cannot be null）。
+--   JOIN 的语义是「有账号就回填、没有就跳过」，幂等可重放。与 02-…product.sql 同一口径。
+UPDATE t_spu s
+JOIN duoduo_user.t_user u ON u.phone = '13550931548' AND u.role = 'SELLER'
+SET s.seller_id = u.id
+WHERE s.id IN (1009, 1010);
 
-UPDATE t_spu
-SET seller_id = (SELECT id FROM duoduo_user.t_user WHERE phone = '13765569756' AND role = 'SELLER')
-WHERE id IN (1015, 1017, 1018);
+UPDATE t_spu s
+JOIN duoduo_user.t_user u ON u.phone = '13765569756' AND u.role = 'SELLER'
+SET s.seller_id = u.id
+WHERE s.id IN (1015, 1017, 1018);

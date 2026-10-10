@@ -217,7 +217,10 @@ Check "夹具：卖家 B 登录（ent=merchant）" ($loginSB.status -eq 200 -and
 # 改库造出来的店员会绕开那道门，之后所有「店员能不能做 X」的断言就都不成立。
 Call 'Post' "$Gateway/api/auth/register" @{ phone = $phoneStaff; password = $Password; nickname = '矩阵夹具-店员' } @{ 'X-Duoduo-Entry' = 'merchant' } | Out-Null
 $invite = Call 'Post' "$Gateway/api/seller/staff" @{ phone = $phoneStaff } (Bearer $tokenSA)
-$memberIdStaff = $invite.body.data.id
+# 响应字段是 memberId（不是 id）。取错字段不会报错，只会让后面所有
+# 「停用成员」的调用打到 /api/seller/staff//disable 上，拿回 404 ——
+# 而 404 与 403 在这里**看起来都像"越权被挡住了"**，是一条典型的假通过。
+$memberIdStaff = "$($invite.body.data.memberId)"
 Check "夹具：卖家 A 通过真实接口邀请店员成功" ($invite.status -eq 200 -and -not [string]::IsNullOrWhiteSpace("$memberIdStaff")) "status=$($invite.status) raw=$($invite.raw)"
 $staffMemberState = Sql 'duoduo_user' "SELECT CONCAT(role,'/',status) FROM t_merchant_member WHERE user_id=(SELECT id FROM t_user WHERE phone='$phoneStaff');"
 Check "夹具：店员的成员记录为 STAFF/ACTIVE（权限由成员身份驱动，不是角色）" ($staffMemberState -eq 'STAFF/ACTIVE') $staffMemberState
@@ -294,11 +297,18 @@ Check "★ 纵向：店员停用成员（含自己）→ 403" ($r.status -eq 403
 $r = Call 'Post' "$Gateway/api/seller/staff/$memberIdStaff/disable" $null (Bearer $tokenSB)
 Check "★ 横向：卖家 B 停用卖家 A 的店员 → 404（跨店不可见）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
+# 运营侧要分两层验，缺一层就会漏掉一类失效：
+#   ① 网关层：运营令牌带 ent=admin，而 /api/seller/** 属商家入口族 → 入口先拦（403）
+#   ② 服务端层：绕过入口直连 user 服务 → 判权仍把运营挡在"店主侧成员列表"之外（404）
+# 只写 ① 的话，测到的是入口裁剪；只写 ② 的话，真实链路上运营其实根本到不了这一步。
 $r = Call 'Get' "$Gateway/api/seller/staff" $null (Bearer $tokenOp)
-Check "★ 平台运营调**店主侧**成员列表 → 404（E13 口径：子账号=商家自有，平台走统管端点）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
+Check "★ 平台运营令牌（ent=admin）访问 /api/seller/** → 403（入口族隔离）" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
+
+$r = Call 'Get' "$SvcUser/api/seller/staff" $null (AsUser 'OPERATOR')
+Check "★ 服务端（直连）：OPERATOR 调店主侧成员列表 → 404（E13 口径：子账号=商家自有）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Get' "$Gateway/api/admin/merchant-staff?page=1&pageSize=1" $null (Bearer $tokenOp)
-Check "正对照：平台运营调**统管**端点 → 200（平台统管的能力没有被上面那条挡掉）" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
+Check "正对照：平台运营调**统管**端点 → 200（平台统管的能力没有被上面两条挡掉）" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
 # ==============================================================================
 # §3 后台入口边界（网关层，E8）
@@ -374,29 +384,59 @@ $r = Call 'Get' $svcAuditLogs $null (AsUser 'OPERATOR')
 Check "正对照：服务端（直连）OPERATOR → 审计日志 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
 # ==============================================================================
-# §5 商品（product 域）· 横向（跨店）+ 未过审可见性
+# §5 商品（product 域）· 横向（跨店）+ 审核维度的可见性
 # ==============================================================================
 # E14：status（卖家控）与 audit_status（平台判）**正交**，可见性唯一出口是
-# 「在售 且 已过审」。本节同时验证「跨店碰不到」与「未过审看不见」两件事 ——
-# 它们容易被混为一谈，其实一个管归属、一个管内容可否公开。
+# 「在售 且 已过审」。E28 起审核本身也分两条路 —— 干净内容**默认放行**（AUTO），
+# 命中风险规则才**转人工**（PENDING）。所以本节必须**两条路各建一个商品**：
+# 只建一个的话，断言会锁死在「第三方提交必为 PENDING」这个 E28 之前的旧口径上，
+# 而那条旧口径现在是**错的**（第一次跑就是被它判红的）。
 Write-Host ""
-Write-Host "> §5 商品（product 域）· 横向 + 未过审可见性"
+Write-Host "> §5 商品（product 域）· 横向 + 审核维度可见性"
 
 $tplCat = Sql 'duoduo_product' "SELECT id FROM t_category ORDER BY id LIMIT 1;"
-$createBody = @{
-    title     = '矩阵夹具商品-' + (Get-Random -Minimum 100000 -Maximum 999999)
-    subtitle  = '越权矩阵用'
+
+# ---- 商品 A：内容干净 → 走 E28「默认放行」 ----
+$created = Call 'Post' "$Gateway/api/seller/products" @{
+    title      = '矩阵夹具商品A-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    subtitle   = '越权矩阵用'
     categoryId = [long]$tplCat
-    mainImage = '/img/fixture.png'
-    detail    = '越权矩阵夹具商品'
-    skus      = @(@{ specName = '标准'; price = 1990; stock = 20 })
-}
-$created = Call 'Post' "$Gateway/api/seller/products" $createBody (Bearer $tokenSA)
+    mainImage  = '/img/fixture.png'
+    detail     = '越权矩阵夹具商品（内容干净）'
+    skus       = @(@{ specName = '标准'; price = 1990; stock = 20 })
+} (Bearer $tokenSA)
 $spuA = "$($created.body.data.id)"
-Check "正对照：卖家 A 提交商品 → 200" ($created.status -eq 200 -and $created.body.data.id) "status=$($created.status) raw=$($created.raw)"
-$spuAudit = "$($created.body.data.auditStatus)"
+Check "正对照：卖家 A 提交内容干净的商品 → 200" ($created.status -eq 200 -and $created.body.data.id) "status=$($created.status) raw=$($created.raw)"
 $spuStatus = "$($created.body.data.status)"
-Check "★ 第三方提交后审核态为 PENDING（服务端决定，请求体说了不算）" ($spuAudit -eq 'PENDING') "auditStatus=$spuAudit status=$spuStatus"
+Check "★ E28 默认放行：干净内容直接 APPROVED（人工审核不再是必经环节）" `
+    ("$($created.body.data.auditStatus)" -eq 'APPROVED') "auditStatus=$($created.body.data.auditStatus)"
+# 这条是 E28 最核心的机器结论：自动放行**必须写 audit_at**。
+# 抽查候选集是按 audit_at ∈ [T-1 当天] 筛的 —— 不写它，抽查任务照跑、created=0、
+# 接口 200 无日志，也就是"免事前审核"的全部对价**永久静默空转**，没有任何断言会红。
+$autoRow = Sql 'duoduo_product' "SELECT CONCAT(audit_source,'/',IF(audit_at IS NULL,'NO_AT','AT')) FROM t_spu WHERE id=$spuA;"
+Check "★ E28 自动放行必须写 audit_at 且来源为 AUTO（否则事后抽查静默空转）" ($autoRow -eq 'AUTO/AT') $autoRow
+
+# ---- 商品 B：标题含手机号 → 命中 CONTACT_INFO → 转人工 ----
+$createdB = Call 'Post' "$Gateway/api/seller/products" @{
+    title      = '矩阵夹具商品B 咨询 13900001234'
+    subtitle   = '越权矩阵用'
+    categoryId = [long]$tplCat
+    mainImage  = '/img/fixture.png'
+    detail     = '越权矩阵夹具商品（含联系方式）'
+    skus       = @(@{ specName = '标准'; price = 1990; stock = 20 })
+} (Bearer $tokenSA)
+$spuB = "$($createdB.body.data.id)"
+Check "★ E28 转人工：命中风险规则（标题含联系方式）→ 审核态回到 PENDING" `
+    ("$($createdB.body.data.auditStatus)" -eq 'PENDING') "auditStatus=$($createdB.body.data.auditStatus)"
+$pendRow = Sql 'duoduo_product' "SELECT CONCAT(IFNULL(audit_source,'NULL'),'/',IF(audit_at IS NULL,'NO_AT','AT')) FROM t_spu WHERE id=$spuB;"
+Check "★ 转人工时 audit_source 与 audit_at 都清空（上一次结论已作废，留着会被当成「今天刚自动放行」抽进复核队列）" `
+    ($pendRow -eq 'NULL/NO_AT') $pendRow
+
+# ---- 跨店（横向）----
+# 先立正对照：同一端点、同一动作，只有"是不是自己的商品"这一项不同。
+# 没有它的话，下面的 403 在"端点整个坏掉、谁都拿不到"时也照样绿。
+$r = Call 'Get' "$Gateway/api/seller/products/$spuA" $null (Bearer $tokenSA)
+Check "正对照：卖家 A 看自己的商品详情 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Get' "$Gateway/api/seller/products/$spuA" $null (Bearer $tokenSB)
 Check "★ 横向：卖家 B 看卖家 A 的商品详情 → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
@@ -416,10 +456,14 @@ $r = Call 'Get' "$Gateway/api/seller/products?pageSize=50" $null (Bearer $tokenS
 $selfOwned = @($r.body.data.items | Where-Object { $_.sellerId -eq 0 }).Count
 Check "★ 卖家商品列表不含平台自营（sellerId=0 是平台的，不该出现在卖家视角）" ($r.status -eq 200 -and $selfOwned -eq 0) "status=$($r.status) selfOwned=$selfOwned"
 
+# ---- 可见性出口：两个维度各验一条，避免"所有第三方都看不见"也能全绿 ----
 $r = Call 'Get' "$Gateway/api/products/$spuA" $null (Bearer $tokenA)
+Check "正对照：自动放行的商品买家可见 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
+
+$r = Call 'Get' "$Gateway/api/products/$spuB" $null (Bearer $tokenA)
 # 未过审商品对买家应当"看起来不存在"（404 而不是 403）：
 # 403 等于告诉对方"这里有个商品，你只是没权限看"，那是可枚举的信息泄露。
-Check "★ 未过审商品：买家读公开详情 → 404（不是 403，避免暴露商品存在）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
+Check "★ 转人工（未过审）商品：买家读公开详情 → 404（不是 403，避免暴露商品存在）" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
 # ==============================================================================
 # §6 审核台（product 域）· 纵向（谁能判）
@@ -430,19 +474,25 @@ Check "★ 未过审商品：买家读公开详情 → 404（不是 403，避免
 Write-Host ""
 Write-Host "> §6 审核台（product 域）· 纵向"
 
-$r = Call 'Post' "$Gateway/api/admin/products/$spuA/audit" @{ action = 'APPROVE' } (Bearer $tokenSA)
+$r = Call 'Post' "$Gateway/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (Bearer $tokenSA)
 Check "★ 商家令牌调商品审核 → 403（经网关，入口先挡）" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Post' "$Gateway/api/admin/products/$spuA/audit" @{ action = 'APPROVE' } (Bearer $tokenA)
+$r = Call 'Post' "$Gateway/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (Bearer $tokenA)
 Check "★ 买家令牌调商品审核 → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Post' "$SvcProduct/api/admin/products/$spuA/audit" @{ action = 'APPROVE' } (AsUser 'USER')
+$r = Call 'Post' "$SvcProduct/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (AsUser 'USER')
 Check "★ 服务端（直连）：USER 调商品审核 → 403（注解/判权独立成立）" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Post' "$Gateway/api/admin/products/$spuA/audit" @{ action = 'APPROVE' } (Bearer $tokenOp)
+# ★ 纵向最要紧的一条：**商家不能自己审自己**。
+#   走网关时入口会先挡住（上一对已验），所以这里必须直连 —— 否则「服务端是否也拦」
+#   根本没被测到，而注解没注册/漏写恰恰只会表现为"接口 200、任何人都能过"。
+$r = Call 'Post' "$SvcProduct/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (AsUser 'SELLER' $uidSellA)
+Check "★ 纵向（服务端·直连）：卖家本人调商品审核 → 403（不能自审自己的商品）" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
+
+$r = Call 'Post' "$Gateway/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (Bearer $tokenOp)
 Check "正对照：运营审核通过 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Get' "$Gateway/api/products/$spuA" $null (Bearer $tokenA)
+$r = Call 'Get' "$Gateway/api/products/$spuB" $null (Bearer $tokenA)
 Check "★ 过审后买家即可见 → 200（反证上一节的 404 来自审核态，而不是商品压根没建出来）" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
 # ==============================================================================
@@ -457,6 +507,8 @@ Write-Host "> §7 订单（trade 域）· 横向 + 自营归属"
 
 $fxSku = Resolve-SkuFixtures -MinStock 2
 $selfSku = $fxSku.A
+# 下单前先记下该 SKU 的冻结量，收尾时用它自证「我冻的那件确实还回去了」。
+$frozenBefore = [int](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $selfSku;")
 Call 'Post' "$Gateway/api/cart/items" @{ skuId = [long]$selfSku; quantity = 1 } (Bearer $tokenA) | Out-Null
 $placed = Call 'Post' "$Gateway/api/orders" @{ receiverName = '买家A'; receiverPhone = $phoneBuyA; receiverAddress = '上海市浦东新区矩阵路 1 号'; idempotentKey = (NewKey) } (Bearer $tokenA)
 $orderNo = "$(@($placed.body.data.orders)[0].orderNo)"
@@ -465,7 +517,10 @@ Check "夹具：买家 A 下单成功（自营 SKU $selfSku）" ($placed.status 
 $r = Call 'Get' "$Gateway/api/orders/$orderNo" $null (Bearer $tokenB)
 Check "★ 横向：买家 B 查买家 A 的订单 → 404" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Post' "$Gateway/api/orders/$orderNo/cancel" $null (Bearer $tokenB)
+# cancel 的请求体是 @RequestBody(required=false)，但**不带 Content-Type 会先撞 415**
+# （UNSUPPORTED_MEDIA_TYPE），于是「越权被拒」的断言会拿到一个与权限完全无关的状态码。
+# 传一个空对象既是合法调用，也让 404/403 成为这条链路上唯一的可能结果。
+$r = Call 'Post' "$Gateway/api/orders/$orderNo/cancel" @{} (Bearer $tokenB)
 Check "★ 横向：买家 B 取消买家 A 的订单 → 404" ($r.status -eq 404) "status=$($r.status) raw=$($r.raw)"
 
 $r = Call 'Get' "$Gateway/api/seller/orders?page=1&pageSize=50" $null (Bearer $tokenSA)
@@ -478,10 +533,19 @@ Check "★ 卖家 A 给平台自营订单发货 → 403 或 404（绝不能是 2
 $r = Call 'Get' "$Gateway/api/orders/$orderNo" $null (Bearer $tokenA)
 Check "正对照：买家 A 查自己的订单 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
 
-# 收尾（不设断言）：把这张单取消掉，释放它冻结的库存。
-# 留着 PENDING_PAYMENT 不是错，但会持续占着 SKU 的可售量 —— 与本套件的主题无关的副作用，
-# 能在收尾顺手消掉就不要留给下一个套件去困惑（"怎么可售比库内少 1"）。
-Call 'Post' "$Gateway/api/orders/$orderNo/cancel" $null (Bearer $tokenA) | Out-Null
+# 收尾：把这张单取消掉，释放它冻结的库存。
+# ★ **必须断言，不能 `| Out-Null` 静默收尾** —— 这是本套件真实踩过的坑：
+#   有一轮这里的取消没生效（那次运行被中断），那张单就一直停在 PENDING_PAYMENT 冻着
+#   自营 SKU 的 1 件可售；而下一个跑到的 address-smoke 前置断言恰好会读
+#   「库内库存 vs 接口可售」，于是它以 `db=105 api=104` 的形式报红 ——
+#   一个与本套件主题毫无关系的红，归因要从订单表倒查到夹具账号，成本极高。
+#   夹具纪律「跑完自毁」的后半句就是这里：**自毁也必须自证**。
+#   （进程被强杀时任何收尾都跑不到，这没法靠脚本兜；能兜的是「跑到了但没成功」必须变红。）
+$r = Call 'Post' "$Gateway/api/orders/$orderNo/cancel" @{} (Bearer $tokenA)
+Check "收尾：买家 A 取消自己刚下的订单 → 200（释放它冻结的可售量）" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
+$frozenAfter = [int](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $selfSku;")
+Check "★ 收尾自证：该 SKU 冻结量已回到下单前（否则冻结跨套件累积，坑的是下一个套件）" `
+    ($frozenAfter -eq $frozenBefore) "frozen=$frozenAfter before=$frozenBefore sku=$selfSku"
 
 # ==============================================================================
 # §8 审计日志（user 域）· 纵向
@@ -518,10 +582,29 @@ $opAfter = [int](Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE role='OPER
 Check "★ 全库 OPERATOR 数量没有增加（收尾自证：没有留下永久后台钥匙）" `
     ($opAfter -le $opBefore) "before=$opBefore after=$opAfter"
 
-# 夹具商品下架：它在 §6 已被审核通过、对买家可见，留着会让前台多一条测试商品
-Sql 'duoduo_product' "UPDATE t_spu SET status='OFF_SHELF', updated_at=UTC_TIMESTAMP() WHERE id=$spuA;" | Out-Null
-$spuFinal = Sql 'duoduo_product' "SELECT status FROM t_spu WHERE id=$spuA;"
-Check "夹具商品已下架（不给前台留测试商品）" ($spuFinal -eq 'OFF_SHELF') "status=$spuFinal"
+# 夹具商品：**必须拆除，不能只下架**。
+# 「下架」只解决了"前台多两条测试商品"，解决不了"库里的夹具越跑越多" ——
+# 下一轮跑时这些行会被夹具解析当成**既有数据**吃掉（catalog-fixture.ps1 文件头写得很明白：
+# 「夹具越跑越多」正是历轮把种子库搞乱的老路）。
+#
+# ★ 这是本套件真实踩过并造成**跨套件污染**的一个坑：
+#   §7 用 Resolve-SkuFixtures 在自营 SPU 1001 下现场建了 3 个 SKU（小库存/售罄/已下架，
+#   因为种子 SKU 2001/2002 都"够用"，夹具只补了这三类），却从没调用 Remove-SkuFixtures。
+#   结果是 smoke.ps1 的「商品详情应含 2 个 SKU」断言被挤红（实得 4）——
+#   **红的是那个与越权毫无关系的套件**，而归因要从 SPU 1001 的 SKU 列表倒查回本脚本。
+#   夹具纪律「跑完自毁」不是"记得删一下"，是**必须自证删干净了**。
+Remove-SpuFixtures -Ids @($spuA, $spuB)
+$spuLeft = [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($spuA,$spuB);")
+Check "★ 收尾自证：两件夹具商品已从库中删除（只下架不删除 = 夹具越跑越多，坑下一个套件）" `
+    ($spuLeft -eq 0) "left=$spuLeft ids=$spuA,$spuB"
+
+$createdSkus = @($fxSku.CreatedIds)
+Remove-SkuFixtures -Ids $createdSkus
+$skuLeft = if ($createdSkus.Count -gt 0) {
+    [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku WHERE id IN ($($createdSkus -join ','));")
+} else { 0 }
+Check "★ 收尾自证：§7 现场创建的夹具 SKU 已全部拆除（本套件创建 $($createdSkus.Count) 个）" `
+    ($skuLeft -eq 0) "left=$skuLeft created=$($createdSkus.Count)"
 
 # 吊销本次全部夹具账号的刷新令牌（账号本身留着，与 platform-operator.ps1 同一取舍）
 $fixturePhones = "'$phoneBuyA','$phoneBuyB','$phoneSellA','$phoneSellB','$phoneStaff','$($op.phone)'"
