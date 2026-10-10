@@ -75,6 +75,13 @@ public final class RolePermissionMatrix {
         Set<String> operator = new LinkedHashSet<>(Permission.ALL);
         operator.remove(Permission.USER_ROLE_MANAGE);
         operator.remove(Permission.FINANCE_SETTLEMENT);
+        // E21：重置他人两步验证等于"替别人摘掉第二把锁"，与「改角色」同级，**仅 ADMIN**。
+        //
+        // ★ 这一行不是可选的：OPERATOR 是"ALL 减去少数几个"的构造方式，
+        //   新增权限点时若忘了在这里排除，运营就会**静默**多出一项高危能力 ——
+        //   没有编译错误、没有运行时报错，只有越权矩阵测试（E19）能把它抓出来。
+        //   凡是在 Permission.ALL 里加东西，都要回到这里回答一句"运营要不要有"。
+        operator.remove(Permission.USER_SECURITY_MANAGE);
         map.put(ROLE_OPERATOR, Collections.unmodifiableSet(operator));
 
         // SELLER：只能进商家端

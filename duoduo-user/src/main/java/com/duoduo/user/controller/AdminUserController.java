@@ -53,4 +53,22 @@ public class AdminUserController {
                                                     @RequestBody RoleChangeRequest request) {
         return ApiResponse.ok(adminUserService.changeRole(id, request.role()));
     }
+
+    /**
+     * E21 · 重置某账号的两步验证（手机丢失 + 恢复码也丢失时的最后手段）。
+     *
+     * <p>为什么不做成"用户自助"：自助通道需要另一样能证明身份的东西，而这时两个因子都已经丢了
+     * —— 只能由人来判断"这个人确实是账号主人"。因此它是**仅 ADMIN** 的高危动作，
+     * 且必然留痕（{@link AuditAction#USER_TOTP_RESET}）：这是全项目唯一一处
+     * "能替别人摘下第二把锁"的入口，没有记录就等于没有约束。
+     *
+     * <p>只返回"成功了"，不返回重置后的任何状态：重置后该账号回到未绑定，
+     * 下次登录不再要求验证码 —— 后台页面只需要知道这一步完成了。
+     */
+    @PostMapping("/{id}/2fa/reset")
+    @Audited(action = AuditAction.USER_TOTP_RESET)
+    public ApiResponse<Void> resetTwoFactor(@PathVariable Long id) {
+        adminUserService.resetTwoFactor(id);
+        return ApiResponse.ok();
+    }
 }

@@ -37,6 +37,25 @@ public enum AuditAction {
     /** 变更用户的系统角色。E18 之前已有（{@code AdminUserService}）。 */
     USER_ROLE_CHANGE(AuditCategory.SECURITY, "USER"),
 
+    /**
+     * E21 · 启用两步验证（TOTP）。
+     *
+     * <p>归 SECURITY：它改变的是"这个账号需要几把钥匙才能进"，与权限变更同性质 ——
+     * 追责时「某人的 2FA 是什么时候被打开的」往往正是判断"这次入侵从哪一步开始"的关键材料。
+     */
+    USER_TOTP_ENABLE(AuditCategory.SECURITY, "USER"),
+
+    /** E21 · 关闭两步验证（含"用恢复码关闭"那条路径 —— 它更需要留痕）。 */
+    USER_TOTP_DISABLE(AuditCategory.SECURITY, "USER"),
+
+    /**
+     * E21 · 由平台管理员重置某账号的两步验证（两个因子都丢失时的最后手段）。
+     *
+     * <p>这是唯一一个"能替别人解开第二把锁"的动作，必须留痕 ——
+     * 否则一个被滥用的管理员可以悄无声息地摘掉任意账号的 2FA，再从容撞库。
+     */
+    USER_TOTP_RESET(AuditCategory.SECURITY, "USER"),
+
     // ---------------- 商家入驻 / 资质（租户生命周期） ----------------
 
     /** 开始审核入驻申请。 */

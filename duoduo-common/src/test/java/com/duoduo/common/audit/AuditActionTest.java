@@ -159,12 +159,13 @@ class AuditActionTest {
     }
 
     @Test
-    @DisplayName("清单规模：38 个真实动作 + 1 个兜底")
+    @DisplayName("清单规模：41 个真实动作 + 1 个兜底")
     void 清单规模() {
         // 钉住数量是刻意的：动作清单是**审计覆盖面的分母**。
         // 少了会红（有人删了动作），多了也会红（有人加了动作但没读本文件的说明）。
         // 若是有意新增，请同时更新这里的数字，并在总纲 §5 记录。
-        assertThat(AuditAction.values()).hasSize(39);
+        // E21：新增 3 个两步验证动作（USER_TOTP_ENABLE / USER_TOTP_DISABLE / USER_TOTP_RESET），39 → 42。
+        assertThat(AuditAction.values()).hasSize(42);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

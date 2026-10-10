@@ -1,17 +1,23 @@
 package com.duoduo.gateway.filter;
 
+import com.duoduo.common.context.LoginUser;
+import com.duoduo.common.security.ClientEntry;
 import com.duoduo.common.security.JwtTokenService;
 import com.duoduo.gateway.config.GatewaySecurityProperties;
 import com.duoduo.gateway.support.PermVersionChecker;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -70,6 +76,112 @@ class JwtAuthGlobalFilterTest {
     }
 
     private record Result(boolean passed, ServerWebExchange downstream, MockServerWebExchange original) {
+    }
+
+    // ---------------- E21 · 平台后台 IP 白名单 ----------------
+
+    /**
+     * 造一个"合法的后台调用"：运营角色 + admin 入口的访问令牌 + 指定的来源地址。
+     *
+     * <p>必须带有效令牌才有意义 —— 无令牌的请求会在更早的一步（未认证）就被拦下，
+     * 根本走不到 IP 判断。用无效请求去测白名单，测出来的只是 401。
+     */
+    private Result adminCall(String ip) {
+        String token = jwt.createAccessToken(
+                new LoginUser(1L, "13900000000", "OPERATOR", true), ClientEntry.ADMIN);
+        return run(MockServerHttpRequest.get("/api/admin/users")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .remoteAddress(new InetSocketAddress(ip, 34567)));
+    }
+
+    private static void from(MockServerHttpRequest.BaseBuilder<?> builder, String ip) {
+        builder.remoteAddress(new InetSocketAddress(ip, 34567));
+    }
+
+    @Test
+    @DisplayName("E21 · 后台 IP 白名单默认关闭：名单内容完全不影响现有行为")
+    void adminIpWhitelist_disabled_by_default() {
+        assertThat(properties.isAdminIpWhitelistEnabled())
+                .as("默认必须是关的 —— 打开它是「收紧」，配错方向的后果是所有人进不了后台")
+                .isFalse();
+        // 即便配了一份不含当前来源的名单，未启用时也必须照常放行
+        properties.setAdminIpWhitelist(List.of("203.0.113.7"));
+        assertThat(adminCall("10.1.2.3").passed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("E21 · 开启后：精确地址 / CIDR / 前缀通配三种写法都生效，名单外一律 403")
+    void adminIpWhitelist_allows_listed_and_blocks_others() {
+        properties.setAdminIpWhitelistEnabled(true);
+        properties.setAdminIpWhitelist(List.of("203.0.113.7", "10.0.0.0/8", "192.168.1.*"));
+
+        assertThat(adminCall("203.0.113.7").passed()).as("精确地址").isTrue();
+        assertThat(adminCall("10.20.30.40").passed()).as("CIDR 命中").isTrue();
+        assertThat(adminCall("192.168.1.55").passed()).as("前缀通配命中").isTrue();
+
+        Result denied = adminCall("8.8.8.8");
+        assertThat(denied.passed()).as("名单外必须拦下").isFalse();
+        assertThat(denied.original().getResponse().getStatusCode().value())
+                .as("403 而不是 401：身份可能合法，只是网络位置不符；写 401 会让前端无限刷新令牌")
+                .isEqualTo(403);
+        assertThat(denied.original().getResponse().getBodyAsString().block())
+                .as("独立 code，便于排障时区分「没权限」与「这个网络进不来」")
+                .contains("ADMIN_IP_DENIED");
+    }
+
+    @Test
+    @DisplayName("E21 · CIDR 边界：/8 不越界、/24 恰好在 255 处收住、非法前缀一律不匹配")
+    void adminIpWhitelist_cidr_boundaries() {
+        properties.setAdminIpWhitelistEnabled(true);
+
+        properties.setAdminIpWhitelist(List.of("10.0.0.0/8"));
+        assertThat(adminCall("10.255.255.255").passed()).as("/8 内最后一个地址").isTrue();
+        assertThat(adminCall("11.0.0.1").passed()).as("/8 之外的相邻网段").isFalse();
+
+        properties.setAdminIpWhitelist(List.of("192.168.1.0/24"));
+        assertThat(adminCall("192.168.1.255").passed()).as("/24 内最后一个地址").isTrue();
+        assertThat(adminCall("192.168.2.1").passed()).as("/24 之外的相邻网段").isFalse();
+
+        properties.setAdminIpWhitelist(List.of("10.0.0.0/99"));
+        assertThat(adminCall("10.0.0.1").passed()).as("非法前缀 → 视为不匹配 → 拒绝").isFalse();
+    }
+
+    @Test
+    @DisplayName("E21 · 开关打开但名单为空 → 拒绝全部（失败关闭，不是放行全部）")
+    void adminIpWhitelist_empty_list_denies_everything() {
+        properties.setAdminIpWhitelistEnabled(true);
+        properties.setAdminIpWhitelist(List.of());
+        assertThat(adminCall("10.0.0.1").passed())
+                .as("把空名单当「放行」会让一次漏配静默地什么都不拦")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("E21 · 只收窄 /api/admin/**：同一来源访问商家端 / 买家端不受影响")
+    void adminIpWhitelist_only_narrows_admin_paths() {
+        properties.setAdminIpWhitelistEnabled(true);
+        properties.setAdminIpWhitelist(List.of("203.0.113.7"));
+
+        String sellerToken = jwt.createAccessToken(
+                new LoginUser(2L, "13900000001", "SELLER", true), ClientEntry.MERCHANT);
+        MockServerHttpRequest.BaseBuilder<?> sellerReq = MockServerHttpRequest.get("/api/seller/products")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + sellerToken);
+        from(sellerReq, "8.8.8.8");
+        assertThat(run(sellerReq).passed())
+                .as("IP 白名单只该管后台；把商家/买家一起管起来是另一个决定，不该顺手发生")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("E21 · 取不到对端地址（连接已断）→ 拒绝，不放来源不明的请求进后台")
+    void adminIpWhitelist_unknown_peer_is_denied() {
+        properties.setAdminIpWhitelistEnabled(true);
+        properties.setAdminIpWhitelist(List.of("203.0.113.7"));
+        // 不带 remoteAddress 的请求 → peerAddress 返回 null
+        String token = jwt.createAccessToken(
+                new LoginUser(1L, "13900000000", "OPERATOR", true), ClientEntry.ADMIN);
+        assertThat(run(MockServerHttpRequest.get("/api/admin/users")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)).passed()).isFalse();
     }
 
     private static MockServerHttpRequest.BaseBuilder<?> get(String path) {

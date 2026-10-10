@@ -40,6 +40,9 @@ const TABS = [
   // /admin/operation-audits —— 前者是追责台账（只读），后者是内容审批队列（有操作列）。
   { to: '/admin/operation-audits', label: '操作审计', end: false },
   { to: '/admin/seckill', label: '秒杀活动', end: false },
+  // E21：账号安全（两步验证）刻意放在导航末尾 —— 它是"关于我自己的"设置，
+  // 与前面那批"管别人 / 管数据"的工单页语义不同；混在中间会让人以为又是一个审核队列。
+  { to: '/admin/account-security', label: '账号安全', end: false },
 ];
 
 export const AdminTabs: React.FC = () => (

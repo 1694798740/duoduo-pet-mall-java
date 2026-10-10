@@ -42,6 +42,33 @@
 
 // ---------- 用户域（duoduo-user） ----------
 
+/**
+ * E21 · 两步验证状态。
+ *
+ * <p>`enabled=true` 表示此后登录必须携带动态码或恢复码。前端在两处用到它：
+ * 登录页据此展示"第二步"，后台内据此展示"已开启 / 去绑定"。
+ */
+export interface TotpStatusView {
+  enabled: boolean;
+  /** 绑定完成时间（ISO-8601 UTC）；未绑定为 null */
+  boundAt: string | null;
+  /** 剩余可用恢复码数量。明文只在生成那一刻返回一次，这里只给数量 */
+  recoveryCodesRemaining: number;
+}
+
+/** E21 · 绑定第一步的返回：Base32 密钥 + otpauth 链接 */
+export interface TotpSetupView {
+  /** 供"扫不了码"时手动录入认证器 */
+  secret: string;
+  /** 交给二维码组件渲染 */
+  otpauthUri: string;
+}
+
+/** E21 · 绑定成功的返回：**一次性**的恢复码明文，之后服务端只存哈希 */
+export interface TotpEnableView {
+  recoveryCodes: string[];
+}
+
 export interface UserView {
   id: string;
   /** 手机号掩码，如 138****0001；后端不下发明文 */

@@ -53,6 +53,10 @@ class RolePermissionMatrixTest {
         // 平台后台与用户管理
         EXPECTED_HOLDERS.put(Permission.PLATFORM_CONSOLE, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.USER_ROLE_MANAGE, Set.of("ADMIN"));
+        // E21 · 重置他人两步验证：**仅 ADMIN**。它与「改角色」同属账号级高危动作，
+        // 但方向相反 —— 改角色是"给权限"，重置 2FA 是"替别人摘掉第二把锁"。
+        // 写在这里是一句显式的决定：运营**不**拥有它。
+        EXPECTED_HOLDERS.put(Permission.USER_SECURITY_MANAGE, Set.of("ADMIN"));
         // 商家
         EXPECTED_HOLDERS.put(Permission.MERCHANT_AUDIT, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.MERCHANT_MATERIAL_READ, Set.of("ADMIN", "OPERATOR"));
@@ -82,7 +86,7 @@ class RolePermissionMatrixTest {
     // ---------------- 1. 逐条矩阵 ----------------
 
     @Test
-    @DisplayName("逐条矩阵：4 角色 × 19 权限点，每条都按真值表钉死")
+    @DisplayName("逐条矩阵：4 角色 × 20 权限点，每条都按真值表钉死")
     void every_role_permission_pair_matches_truth_table() {
         List<String> mismatches = new ArrayList<>();
         int checked = 0;
@@ -135,15 +139,16 @@ class RolePermissionMatrixTest {
     }
 
     @Test
-    @DisplayName("OPERATOR 恰好被排除两项：改角色与资金")
-    void operator_is_excluded_from_exactly_two_points() {
+    @DisplayName("OPERATOR 恰好被排除三项：改角色、资金、重置他人两步验证")
+    void operator_is_excluded_from_exactly_three_points() {
         Set<String> missing = new java.util.LinkedHashSet<>(Permission.ALL);
         missing.removeAll(RolePermissionMatrix.of("OPERATOR"));
         assertThat(missing)
-                .as("被排除的必须是且仅是这两项 —— 多排除一项是运营干不了活，少排除一项是越权")
+                .as("被排除的必须是且仅是这三项 —— 多排除一项是运营干不了活，少排除一项是越权")
                 .containsExactlyInAnyOrder(
                         Permission.USER_ROLE_MANAGE,
-                        Permission.FINANCE_SETTLEMENT);
+                        Permission.FINANCE_SETTLEMENT,
+                        Permission.USER_SECURITY_MANAGE);
     }
 
     @Test
@@ -268,6 +273,8 @@ class RolePermissionMatrixTest {
         assertThat(operator.hasPerm(Permission.PLATFORM_CONSOLE)).isTrue();
         assertThat(operator.hasPerm(Permission.USER_ROLE_MANAGE)).isFalse();
         assertThat(operator.hasPerm(Permission.FINANCE_SETTLEMENT)).isFalse();
+        // E21：重置他人两步验证同样只给 ADMIN —— 运营能进后台，但不能替别人关掉第二把锁
+        assertThat(operator.hasPerm(Permission.USER_SECURITY_MANAGE)).isFalse();
         assertThat(operator.hasPerm("不存在的权限点")).isFalse();
         assertThat(operator.hasPerm(null)).isFalse();
 

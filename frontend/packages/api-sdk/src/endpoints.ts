@@ -95,6 +95,9 @@ import type {
   ShareTopicView,
   ShareView,
   UnreadCount,
+  TotpEnableView,
+  TotpSetupView,
+  TotpStatusView,
   SellerSummary,
   SettlementPage,
   SettlementView,
@@ -129,8 +132,14 @@ export const authApi = {
   register: (body: { phone: string; password: string; nickname?: string }) =>
     api.post<UserView>('/api/auth/register', body, { allowRefresh: false }),
 
-  /** 密码登录；账号不存在与密码错误返回同一提示（防手机号枚举） */
-  login: (body: { phone: string; password: string }) =>
+  /**
+   * 密码登录；账号不存在与密码错误返回同一提示（防手机号枚举）。
+   *
+   * <p>E21：已启用两步验证的账号必须再带 `totpCode`（认证器里的 6 位码）
+   * 或 `recoveryCode`（一次性恢复码）。缺失时后端返回 401 且 code 为 `TOTP_REQUIRED`，
+   * 前端据此切到"第二步" —— 而不是把用户引去反复重输密码。
+   */
+  login: (body: { phone: string; password: string; totpCode?: string; recoveryCode?: string }) =>
     api.post<UserView>('/api/auth/login', body, { allowRefresh: false }),
 
   /** 刷新令牌轮转：旧令牌立即吊销，签发新对 */
@@ -138,6 +147,27 @@ export const authApi = {
 
   /** 吊销刷新令牌并清 Cookie */
   logout: () => api.post<void>('/api/auth/logout', undefined, { allowRefresh: false }),
+};
+
+/**
+ * E21 · 两步验证（TOTP）自助管理。
+ *
+ * <p>路径在 `/api/auth/2fa/**` 而非 `/api/admin/**`：它是账号安全设置，
+ * 且**必须在通过第二步之前就能访问** —— 否则"要进后台先绑 2FA、要绑 2FA 先进后台"就成了死锁。
+ */
+export const twoFactorApi = {
+  /** 当前账号的绑定状态（是否已启用、绑定时间、剩余恢复码数量） */
+  status: () => api.get<TotpStatusView>('/api/auth/2fa/status'),
+
+  /** 第一步：取密钥与 otpauth 链接（此时**尚未**启用） */
+  setup: () => api.post<TotpSetupView>('/api/auth/2fa/setup'),
+
+  /** 第二步：用一次正确的动态码确认绑定；响应里**一次性**返回恢复码明文 */
+  enable: (body: { code: string }) => api.post<TotpEnableView>('/api/auth/2fa/enable', body),
+
+  /** 解绑：动态码与恢复码二选一（手机丢了只能靠后者） */
+  disable: (body: { code?: string; recoveryCode?: string }) =>
+    api.post<void>('/api/auth/2fa/disable', body),
 };
 
 // ---------- 用户（/api/users） ----------
@@ -611,6 +641,12 @@ export const adminApi = {
     api.get<PageResult<AdminUserView>>('/api/admin/users', { query }),
   adminChangeRole: (id: string, body: RoleChangeRequest) =>
     api.post<RoleChangeResult>(`/api/admin/users/${id}/role`, body),
+
+  /**
+   * E21 · 重置某账号的两步验证（**仅 ADMIN**；手机与恢复码都丢失时的最后手段）。
+   * 这是全项目唯一一处"能替别人摘下第二把锁"的入口，后端强制留痕。
+   */
+  adminResetTwoFactor: (id: string) => api.post<void>(`/api/admin/users/${id}/2fa/reset`),
 
   // ---- 售后仲裁工作台（A3，落在 duoduo-fulfilment） ----
 

@@ -44,6 +44,25 @@ public class UserEntity {
      * {@code PermVersion.orInitial(...)}，不在这里做"看起来非空"的假设。
      */
     private Long permVersion;
+    /**
+     * E21 · TOTP 共享密钥（Base32 无填充）。null = 未绑定。
+     *
+     * <p>它与 {@link #totpEnabled} 的**组合**才有意义：secret 非空但 enabled 为 false，
+     * 表示"已生成密钥、用户还没完成验证"的过渡态 —— 这种状态下登录不要求动态码，
+     * 但再次调用 setup 会覆盖密钥（等于作废上一个二维码）。
+     */
+    private String totpSecret;
+    /** E21 · 是否已完成绑定验证；true 时登录必须携带动态码或恢复码 */
+    private Boolean totpEnabled;
+    /** E21 · 绑定完成时间（UTC） */
+    private LocalDateTime totpBoundAt;
+    /**
+     * E21 · 最近一次**成功校验**的时间步。
+     *
+     * <p>用于防重放：同一枚动态码在 ±30 秒窗口内可被重复提交，只有记录"已经用掉的时间步"
+     * 才能拒绝"截获后原样重放"。允许 null（从未成功校验过）。
+     */
+    private Long totpLastStep;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -142,6 +161,49 @@ public class UserEntity {
 
     public void setPermVersion(Long permVersion) {
         this.permVersion = permVersion;
+    }
+
+    public String getTotpSecret() {
+        return totpSecret;
+    }
+
+    public void setTotpSecret(String totpSecret) {
+        this.totpSecret = totpSecret;
+    }
+
+    public Boolean getTotpEnabled() {
+        return totpEnabled;
+    }
+
+    public void setTotpEnabled(Boolean totpEnabled) {
+        this.totpEnabled = totpEnabled;
+    }
+
+    public LocalDateTime getTotpBoundAt() {
+        return totpBoundAt;
+    }
+
+    public void setTotpBoundAt(LocalDateTime totpBoundAt) {
+        this.totpBoundAt = totpBoundAt;
+    }
+
+    public Long getTotpLastStep() {
+        return totpLastStep;
+    }
+
+    public void setTotpLastStep(Long totpLastStep) {
+        this.totpLastStep = totpLastStep;
+    }
+
+    /**
+     * E21 · 是否已启用两步验证。
+     *
+     * <p>统一走这个判断，而不是各处写 {@code Boolean.TRUE.equals(getTotpEnabled())}：
+     * 老库的该列可能为 NULL（虽然 DDL 上是 NOT NULL DEFAULT 0，但读旧数据时不能假设），
+     * 拼错一次就是"2FA 看起来绑了、实际没拦"，这类错误在测试里只表现为"少了一次校验请求"。
+     */
+    public boolean isTwoFactorEnabled() {
+        return Boolean.TRUE.equals(totpEnabled);
     }
 
     public LocalDateTime getLastLoginAt() {

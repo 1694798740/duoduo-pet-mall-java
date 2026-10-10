@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     `wx_openid`       VARCHAR(64)           DEFAULT NULL COMMENT '微信 openid（A13，绑定后写入；未绑定为 NULL）',
     `credit_score`    INT          NOT NULL DEFAULT 60 COMMENT '信用分（A4），默认 = CreditModel 基础分，与「无数据用户得基础分」对齐',
     `perm_version`    BIGINT       NOT NULL DEFAULT 0 COMMENT '权限版本（E17）：角色变更时 +1；访问令牌带签发时的值，网关比对不一致即 401。初始 0 与 PermVersion.INITIAL 对齐',
+    `totp_secret`     VARCHAR(64)           DEFAULT NULL COMMENT 'E21 · TOTP 共享密钥（Base32 无填充）；NULL = 未绑定（刻意不用空串表示未绑定，见 incremental/32）',
+    `totp_enabled`    TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'E21 · 是否已完成绑定验证（0=已生成密钥但未验证 / 1=已启用，登录时强制校验）',
+    `totp_bound_at`   DATETIME              DEFAULT NULL COMMENT 'E21 · 绑定完成时间（UTC）；NULL = 未绑定',
+    `totp_last_step`  BIGINT                DEFAULT NULL COMMENT 'E21 · 最近一次成功校验的时间步（防同一枚码重放）',
     `last_login_at`   TIMESTAMP             DEFAULT NULL,
     `created_at`      TIMESTAMP    NOT NULL,
     `updated_at`      TIMESTAMP    NOT NULL,
@@ -45,6 +49,22 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     UNIQUE KEY `uk_user_wxopenid` (`wx_openid`),
     KEY `idx_user_created_at` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户账号';
+
+-- ---------------------------------------------------------------------------
+-- E21 · TOTP 恢复码（一次性，只存哈希）
+--
+-- 与 t_user 的 totp_* 列配套：绑定两步验证后一次性下发若干枚，用于"手机丢了 /
+-- 换机没导出来"。用一次作废一枚，故单独成表（为什么不用一列 JSON，见 incremental/32）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `t_totp_recovery_code` (
+    `id`         BIGINT   NOT NULL COMMENT '雪花 ID',
+    `user_id`    BIGINT   NOT NULL COMMENT '所属账号',
+    `code_hash`  CHAR(64) NOT NULL COMMENT '恢复码明文的 SHA-256 十六进制；禁止存明文',
+    `used_at`    DATETIME          DEFAULT NULL COMMENT '使用时间（UTC）；非 NULL = 已用，不可再次登录',
+    `created_at` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_recovery_user` (`user_id`, `used_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'E21 · TOTP 恢复码（一次性，只存哈希）';
 
 -- ---------------------------------------------------------------------------
 -- 刷新令牌（只存哈希 + 支持轮转与强制下线）

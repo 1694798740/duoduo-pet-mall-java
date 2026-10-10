@@ -46,6 +46,16 @@ public final class Permission {
     /** 变更用户的系统角色。高危：给自己提权 / 给他人降权都从这里走。历史上**仅 ADMIN** 可用。 */
     public static final String USER_ROLE_MANAGE = "user:role:manage";
 
+    /**
+     * 管理他人账号的登录安全设置（E21）：重置某账号的两步验证。
+     *
+     * <p><b>仅 ADMIN</b>。为什么单独立一个点、不复用 {@link #USER_ROLE_MANAGE}：
+     * 两者虽同属"账号级高危操作"，但失效方向不同 —— 改角色是"给权限"，
+     * 重置 2FA 是"摘掉别人账号上的第二把锁"。共用的话，将来真出现一个
+     * "能管角色但不该动 2FA"的角色时只能拆点，而那时代码里已经有一处按共用点放行的判断了。
+     */
+    public static final String USER_SECURITY_MANAGE = "user:security:manage";
+
     // ---------------- 商家（入驻 / 资质 / 成员） ----------------
 
     /** 入驻审核台：查看申请、通过开店、驳回。 */
@@ -147,6 +157,7 @@ public final class Permission {
         Set<String> set = new LinkedHashSet<>();
         set.add(PLATFORM_CONSOLE);
         set.add(USER_ROLE_MANAGE);
+        set.add(USER_SECURITY_MANAGE);
         set.add(MERCHANT_AUDIT);
         set.add(MERCHANT_MATERIAL_READ);
         set.add(MERCHANT_STAFF_DISPOSE);

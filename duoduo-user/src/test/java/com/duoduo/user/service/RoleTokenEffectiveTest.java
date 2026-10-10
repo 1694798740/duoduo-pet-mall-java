@@ -67,8 +67,16 @@ class RoleTokenEffectiveTest {
     private final com.duoduo.user.support.PermVersionPublisher permVersionPublisher =
             mock(com.duoduo.user.support.PermVersionPublisher.class);
 
+    /**
+     * E21：本测试覆盖"令牌里的版本 / 角色是否生效"，涉及的账号都**未启用两步验证**。
+     * 给 mock 而不是 null —— {@code AuthService.login} 会调它，null 会让覆盖登录路径的用例 NPE；
+     * mock 的 void 方法默认什么都不做，恰好等价于"未启用 2FA 直接放行"，正是这些用例的前提。
+     */
+    private final TwoFactorService twoFactorService = mock(TwoFactorService.class);
+
     private final AuthService authService = new AuthService(userMapper, refreshTokenMapper, passwordEncoder,
-            jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper, permVersionPublisher);
+            jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper, permVersionPublisher,
+            twoFactorService);
     /** 控制器多了一个宠物档案依赖（第五十八轮 S1），这两条断言用不到它 */
     private final PetProfileService petProfileService = mock(PetProfileService.class);
 

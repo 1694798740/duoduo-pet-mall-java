@@ -706,9 +706,9 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（29 套接口断言 = 28 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
+### 端到端冒烟（30 套接口断言 = 29 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
 
-> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（28 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
+> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（29 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
 > 外加 node 冒烟 `scripts/e8-entry-scope-smoke.mjs`；
 > 浏览器 e2e 由 `scripts/e2e/*-ui-check.mjs` **自发现**（22 套）。
 > `scripts/check-all.ps1` 里的套件数**从目录实算**，不再写死 —— 写死的数字在加套件之后会变成假话，而没人会记得改它。
@@ -738,7 +738,7 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
-> CI 子集（本地 / GitHub Actions 同一入口，**16 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1`。
+> CI 子集（本地 / GitHub Actions 同一入口，**17 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1`。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
@@ -761,6 +761,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\perm-version-smoke.p
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-log-smoke.ps1     # 58 项：后台操作审计日志（E18：历史动作标识逐字稳定/落库字段/分页/凭据边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\privilege-matrix-smoke.ps1 # 82 项：权限越权回归矩阵（E19：10 节 / 8 模块，**每条「被拒」必配「有权者能过」正对照**，网关层与服务端层分别断言）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tenant-isolation-smoke.ps1 # 37 项：租户隔离（E20：令牌 tid 与刷新重算 / 网关剥离伪造 X-Tenant-Id / 非法头 400 / **验数据层直连服务端口** / 夹具自建自毁 + GUARD）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-2fa-smoke.ps1   # 54 项：平台后台两步验证（E21：绑定三步 / 登录两步 TOTP_REQUIRED / **防重放** / 恢复码一次性且只存哈希 / 刷新链路 / 管理员重置仅 ADMIN / IP 白名单默认关 / 收尾自证）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\backfill-smoke.ps1     # 88 项：托管单回补（dryRun/幂等/挂账清零/控制组/REFUNDED 盲区）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\aftersale-smoke.ps1    # 101 项：售后仲裁（立案/卖家处理/升级/裁定退款/已放款边界/越权）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\logistics-smoke.ps1    # 79 项：物流轨迹（发货即揽收/乱序正序/幂等/批量全有或全无/越权/敏感字段）
@@ -1660,6 +1661,48 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-10（E21 平台后台两步验证 + IP 白名单 —— P3 第 6 项）
+
+**要解决的问题**：平台运营 / 管理员一个账号能审商品、关订单、改权限、看全站资金。
+只靠密码的话，一次撞库或一次钓鱼就足以拿到整个后台。两步验证让「拿到密码」不再等于「拿到后台」。
+
+**★ 强制点放在登录链路，而不是网关** —— 这是本轮最关键的设计决定：
+- 已启用 2FA 的账号，登录时必须提供动态码或恢复码，否则**拿不到任何令牌**。
+  没有令牌，网关本来就什么都放行不了，因此**不需要**在网关上再加一条"这枚令牌算不算数"的判断
+  （判定点越少，口径越不容易分裂，也不必让 `JwtAuthGlobalFilter` 继续膨胀）。
+- **刷新令牌带 `tfv` 声明**：刷新令牌有效期 7 天，若不带这个声明，
+  一枚"启用 2FA 之前签发"的刷新令牌就能把这道门整个绕开。
+  并且**启用 2FA 时会主动吊销该账号的全部刷新令牌** —— 声明与吊销是两道互补的防线
+  （吊销清掉存量会话，声明兜住吊销那一刻正在飞行中的请求）。
+  这一处**刻意不做向后兼容**：放行"无声明"的老令牌等于"启用之前的会话永远有效"，2FA 就形同虚设。
+- **微信登录对已启用 2FA 的账号直接拒绝**：那条通道没有"第二步"的输入位，
+  放行它等于给绑定过微信的运营账号留了一扇后门。
+
+**★ 三个安全细节（改动时不要"简化"）**：
+1. **防重放**：同一枚动态码在 ±30 秒窗口内可被重复提交，因此记录每次成功校验的"时间步"，
+   并用一次**条件更新**（`WHERE totp_last_step IS NULL OR < 本次步号`）原子地推进 ——
+   先读后写会在并发下把同一枚码放行两次；
+2. **恢复码只存哈希、用一次作废一枚**，且**失败尝试不消耗**
+   （否则攻击者可以用错误输入把用户的恢复码一枚枚耗光，比不设恢复码更糟）；
+3. **已启用时拒绝重新 setup**：允许覆盖密钥等于给出一条降级路径 ——
+   攻击者登录后重新生成密钥，用户的认证器就失效了。换设备必须先解绑（需验证码）。
+
+**★ 本轮冒烟挖出一个真 bug（很隐蔽，值得单记）**：
+`AuthService.login` 在两步验证通过后调用 `updateById(entity)` 更新登录时间 ——
+而 `entity` 是校验**之前**查出的快照，里面的 `totp_last_step` 还是旧值。
+整行回写把刚写入的"已用时间步"**静默覆盖**，于是防重放失效：同一枚动态码可以反复登录。
+除"重放"那一条断言外，其余全部照常通过 —— 这正是它难被发现的原因。
+**修法**：只 `set(lastLoginAt)` + `set(updatedAt)`，不做整行回写。
+**沉淀**：凡在同一个请求里"既读同一行、又改同一行"，都不能用整行回写。
+
+**IP 白名单（默认关）**：只收窄 `/api/admin/**`，只看 TCP 对端（**不**看 `X-Forwarded-For`），
+支持精确地址 / IPv4 CIDR / 前缀通配（刻意不用 `InetAddress.getByName` —— 它对非 IP 字符串会做 DNS 解析）。
+**开关打开但名单为空 = 拒绝全部**（失败关闭）。默认关闭是刻意的：打开它是"收紧"，
+而配错方向的后果是"所有人进不了后台"，不该由一个默认值决定。
+
+**验证**：单测 **604/0**（新增 TOTP 16 项 + 网关白名单 6 项）；
+`admin-2fa-smoke.ps1` **54/54**（含防重放、恢复码一次性、刷新链路、管理员重置、收尾自证）。
 
 ### 2026-10-10（E20 收尾：全量回归暴露两类「测试没跟上正确行为」的旧断言）
 

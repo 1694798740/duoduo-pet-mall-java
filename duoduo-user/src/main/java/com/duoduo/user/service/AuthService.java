@@ -66,6 +66,14 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final SnowflakeIdGenerator idGenerator;
     private final WechatGateway wechatGateway;
+    /**
+     * E21 · 两步验证（TOTP）。登录时校验动态码 / 恢复码，并在通过后推进"已用时间步"。
+     *
+     * <p>依赖方向是单向的「认证 → 两步验证」，{@code TwoFactorService} 不回调本类，
+     * 因此不存在 Spring 循环依赖。判定点也只有一个 —— 本类回答"什么时候必须验"，
+     * 它回答"验得对不对"，两边都不重复实现对方的逻辑。
+     */
+    private final TwoFactorService twoFactorService;
     /** E13 · 店铺成员/店铺查询：给 /users/me 下发成员身份简报用 */
     private final MerchantMapper merchantMapper;
     private final MerchantMemberMapper memberMapper;
@@ -90,7 +98,8 @@ public class AuthService {
                        @Value("${duoduo.user.credit-default:60}") int creditDefault,
                        MerchantMapper merchantMapper,
                        MerchantMemberMapper memberMapper,
-                       PermVersionPublisher permVersionPublisher) {
+                       PermVersionPublisher permVersionPublisher,
+                       TwoFactorService twoFactorService) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
@@ -101,6 +110,7 @@ public class AuthService {
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
         this.permVersionPublisher = permVersionPublisher;
+        this.twoFactorService = twoFactorService;
     }
 
     @Transactional
@@ -171,9 +181,22 @@ public class AuthService {
             throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");
         }
 
-        entity.setLastLoginAt(LocalDateTime.now(ZoneOffset.UTC));
-        entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
-        userMapper.updateById(entity);
+        // E21 · 第二步验证。顺序刻意排在密码校验**之后**：
+        // 若先验动态码，"这个手机号存不存在、有没有开两步验证"就会暴露给尚未持有密码的人。
+        // 未启用 2FA 的账号在这里直接返回（绝大多数账号走这条路），不产生任何额外开销。
+        twoFactorService.assertSatisfiedAtLogin(entity, request.totpCode(), request.recoveryCode());
+
+        // ★ 只更新这两个字段，**不能**用 updateById(entity) 整行回写：
+        //   entity 是本方法开头查出来的**快照**，而上面的两步验证刚刚把同一行的
+        //   totp_last_step 改成了"本次已用掉的时间步"。整行回写会拿快照里的旧值把它覆盖掉 ——
+        //   表现是「防重放静默失效」：同一枚动态码可以反复登录，而除重放那一条之外的所有断言
+        //   都照常通过（这正是它难被发现的原因）。
+        //   凡是在同一个请求里"既读同一行又改同一行"，都不能用整行回写。
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        userMapper.update(null, Wrappers.<UserEntity>lambdaUpdate()
+                .set(UserEntity::getLastLoginAt, now)
+                .set(UserEntity::getUpdatedAt, now)
+                .eq(UserEntity::getId, entity.getId()));
 
         log.info("用户登录成功 userId={}", entity.getId());
         return issueTokens(entity, userAgent, entry);
@@ -203,6 +226,21 @@ public class AuthService {
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁");
+        }
+
+        // E21 · 两步验证：账号**现已启用** 2FA，而这枚刷新令牌是在"未满足"的状态下签发的
+        // （老令牌，或启用 2FA 之前签发）→ 拒绝刷新，要求重新走一次带验证码的登录。
+        //
+        // ★ 这一条是 2FA 能否真正生效的关键：刷新令牌有效期 7 天，没有它，
+        //   "启用 2FA 之前签发的令牌"可以把这道门整个绕开整整一周。
+        //   错误码用 TOTP_REQUIRED 而不是笼统的 401：前端据此直接弹"第二步"输入框，
+        //   而不是跳回登录页让人重输密码。
+        //
+        //   与"启用时吊销全部刷新令牌"（TwoFactorService.enable）是**两道互补的防线**：
+        //   吊销负责把存量会话立即清掉，本判断负责兜住"吊销那一刻正在飞行中的请求"
+        //   以及任何绕过吊销路径产生的旧令牌。
+        if (entity.isTwoFactorEnabled() && !payload.twoFactorSatisfied()) {
+            throw BizException.totpRequired("账号已启用两步验证，请重新登录并输入验证码");
         }
 
         // 轮转：旧令牌立即吊销，签发全新令牌对。
@@ -252,6 +290,15 @@ public class AuthService {
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");
+        }
+        // E21 · 已启用两步验证的账号**不能**走微信登录。
+        //
+        // 微信登录这条通道没有"第二步"的输入位（小程序端不面向平台账号）。若放行，
+        // 它就成了绕过 2FA 的后门：一个顺手绑过微信的运营账号，用微信扫码就能跳过动态码进后台。
+        // 这里选择"明确拒绝 + 告诉用户该走哪条路"，而不是给微信登录也加一个验证码参数 ——
+        // 平台账号本就不该用微信登录，多一个参数就多一条要长期维护的判定路径。
+        if (entity.isTwoFactorEnabled()) {
+            throw BizException.businessRule("该账号已启用两步验证，请使用手机号 + 密码 + 验证码登录");
         }
 
         entity.setLastLoginAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -602,7 +649,15 @@ public class AuthService {
         permVersionPublisher.publishQuietly(entity.getId(), permVersion);
 
         String jti = UUID.randomUUID().toString().replace("-", "");
-        String refreshToken = jwtTokenService.createRefreshToken(entity.getId(), jti, entry);
+        // E21：走到这里说明本轮登录/刷新**已满足**该账号当时的两步验证要求 ——
+        // 已启用 2FA 的账号若没通过校验，上面两处（登录校验 / 刷新校验）早就抛错了。
+        // 未启用 2FA 的账号视为"要求已满足"（它本就没有这项要求）。
+        //
+        // ★ 配套动作不可少：**启用 2FA 的那一刻会吊销该账号的全部刷新令牌**
+        //   （见 TwoFactorService.enable）。否则"启用之前签发的刷新令牌"带着 tfv=true
+        //   （因为当时确实没有要求）继续有效，第二步就被整个绕开了。
+        //   声明 + 吊销，两条一起才成立。
+        String refreshToken = jwtTokenService.createRefreshToken(entity.getId(), jti, entry, true);
 
         RefreshTokenEntity tokenRecord = new RefreshTokenEntity();
         tokenRecord.setId(jti);

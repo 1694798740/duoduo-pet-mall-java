@@ -84,6 +84,16 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String COOKIE_ACCESS = "dd_at";
 
+    /**
+     * E21 · 受 IP 白名单约束的路径族。
+     *
+     * <p>只收窄 {@code /api/admin/**}：平台后台是"一个人能影响全站"的地方，
+     * 而商家端 / 买家端的用户遍布各地，做 IP 限制只会把正常用户挡在门外。
+     * 这与 {@code entryRules} 里那条 {@code /api/admin/**} 是**同一个边界、不同的收窄维度**
+     * （一个按入口、一个按来源地址），两者独立生效、互不替代。
+     */
+    private static final String ADMIN_PATH_PATTERN = "/api/admin/**";
+
     private final JwtTokenService jwtTokenService;
     private final GatewaySecurityProperties properties;
     private final PermVersionChecker permVersionChecker;
@@ -170,6 +180,22 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         String peer = peerAddress(request);
         if (peer != null) {
             builder.header(HEADER_X_REAL_IP, peer);
+        }
+
+        /*
+         * E21 · 平台后台 IP 白名单（默认关闭）。
+         *
+         * 三个刻意的选择：
+         *   · **只看 TCP 对端**（peerAddress），不看 X-Forwarded-For —— 后者是调用方自己能写的。
+         *     这与下一行写入 X-Real-IP 用的是同一个事实来源，不引入第二份判断口径。
+         *   · **默认关闭**：打开它是"收紧"，而收紧方向配错的后果是"所有人进不了后台"。
+         *     必须由运维显式打开并配好名单，而不是靠默认值。
+         *   · **开关打开但名单为空 = 拒绝**（失败关闭）。把空名单当放行，
+         *     会让一次漏配静默地什么都不拦。
+         */
+        if (!isAdminIpAllowed(path, peer)) {
+            log.warn("网关拒绝不在白名单内的后台访问 requestId={} path={} peer={}", requestId, path, peer);
+            return adminIpDenied(exchange);
         }
 
         if (payload.valid()) {
@@ -306,6 +332,117 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     }
 
     /**
+     * E21 · 这次请求的来源地址能否访问平台后台。
+     *
+     * <p>判定顺序刻意如此：**先看开关、再看路径、最后才比对名单** ——
+     * 于是"未启用"与"非后台路径"都在前两步就返回，日常请求不产生任何额外开销；
+     * 只有真正命中后台路径且开关打开时才去逐个比对规则。
+     */
+    private boolean isAdminIpAllowed(String path, String peer) {
+        if (!properties.isAdminIpWhitelistEnabled()) {
+            return true;
+        }
+        if (!pathMatcher.match(ADMIN_PATH_PATTERN, path)) {
+            return true;
+        }
+        List<String> whitelist = properties.getAdminIpWhitelist();
+        if (whitelist == null || whitelist.isEmpty()) {
+            // 开关打开但名单为空 → 拒绝。理由见 GatewaySecurityProperties#adminIpWhitelist
+            return false;
+        }
+        if (peer == null) {
+            // 取不到对端地址（连接已断开等）→ 同样拒绝：宁可误拒一次，
+            // 也不放一个来源不明的请求进后台。
+            return false;
+        }
+        for (String rule : whitelist) {
+            if (matchesIp(rule, peer)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 规则与地址是否匹配。支持精确地址、IPv4 CIDR、以及 {@code 192.168.1.*} 形式的前缀通配。
+     *
+     * <p><b>刻意不用 {@code InetAddress.getByName}</b>：那个方法对"不是 IP 的字符串"会去做 DNS 解析。
+     * 在认证链路上引入计划外的网络查询有两个坏处：延迟受外部 DNS 影响，
+     * 且一个被污染的配置值能把网关变成 DNS 探测跳板。这里只认字面量 ——
+     * IPv4 按四段数字解析，其余形态一律退化为字符串精确比对。
+     */
+    private static boolean matchesIp(String rule, String ip) {
+        if (rule == null || rule.isBlank() || ip == null) {
+            return false;
+        }
+        String pattern = rule.trim();
+        if (pattern.equals(ip)) {
+            return true;
+        }
+        if (pattern.endsWith("*")) {
+            return ip.startsWith(pattern.substring(0, pattern.length() - 1));
+        }
+        int slash = pattern.indexOf('/');
+        if (slash < 0) {
+            return false;
+        }
+        return matchesIpv4Cidr(pattern.substring(0, slash), pattern.substring(slash + 1), ip);
+    }
+
+    private static boolean matchesIpv4Cidr(String network, String prefixRaw, String ip) {
+        byte[] net = ipv4Bytes(network);
+        byte[] addr = ipv4Bytes(ip);
+        if (net == null || addr == null) {
+            return false;
+        }
+        int prefix;
+        try {
+            prefix = Integer.parseInt(prefixRaw);
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+        if (prefix < 0 || prefix > 32) {
+            return false;
+        }
+        int fullBytes = prefix / 8;
+        for (int i = 0; i < fullBytes; i++) {
+            if (net[i] != addr[i]) {
+                return false;
+            }
+        }
+        int remainingBits = prefix % 8;
+        if (remainingBits == 0) {
+            return true;
+        }
+        int mask = (0xFF << (8 - remainingBits)) & 0xFF;
+        return (net[fullBytes] & mask) == (addr[fullBytes] & mask);
+    }
+
+    /** 只解析 IPv4 字面量（四段、每段 0-255）；不是这个形状就返回 null，绝不触发 DNS 查询 */
+    private static byte[] ipv4Bytes(String value) {
+        String[] parts = value.split("\\.", -1);
+        if (parts.length != 4) {
+            return null;
+        }
+        byte[] out = new byte[4];
+        for (int i = 0; i < 4; i++) {
+            if (parts[i].isEmpty()) {
+                return null;
+            }
+            try {
+                int v = Integer.parseInt(parts[i]);
+                if (v < 0 || v > 255) {
+                    return null;
+                }
+                out[i] = (byte) v;
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return out;
+    }
+
+    /**
      * 本次请求的真实对端地址：**只看 TCP 连接，不看任何请求头**。
      *
      * <p>为什么不用 X-Forwarded-For 的第一段：那是调用方提供的数据。
@@ -347,6 +484,21 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     /** E8 · 入口不匹配（令牌合法、但这一端不该访问这个路径族）→ 403 而不是 401 */
     private Mono<Void> forbidden(ServerWebExchange exchange, String message) {
         return reject(exchange, ErrorCode.FORBIDDEN, "FORBIDDEN", message);
+    }
+
+    /**
+     * E21 · 来源地址不在后台白名单内 → 403。
+     *
+     * <p>为什么是 403 而不是 401：调用方的身份凭证可能完全合法，
+     * 只是"从哪个网络过来"不符合要求。写成 401 会让前端触发刷新令牌的逻辑，
+     * 刷一百次也不会变（问题不在令牌上），只是把一次清晰的拒绝变成一串无意义的刷新请求。
+     *
+     * <p>独立 code {@code ADMIN_IP_DENIED}：排障时要能一眼分清
+     * "你没权限"与"你这个网络位置进不来" —— 后者的处置是找运维加白名单，完全不是一回事。
+     */
+    private Mono<Void> adminIpDenied(ServerWebExchange exchange) {
+        return reject(exchange, ErrorCode.FORBIDDEN, "ADMIN_IP_DENIED",
+                "当前网络位置不在后台访问白名单内");
     }
 
     /**

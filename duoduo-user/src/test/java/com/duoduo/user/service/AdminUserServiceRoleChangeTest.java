@@ -53,8 +53,14 @@ class AdminUserServiceRoleChangeTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final PermVersionPublisher permVersionPublisher = mock(PermVersionPublisher.class);
 
+    /**
+     * E21：本测试只覆盖"改角色"，不触碰两步验证 —— 但构造需要这个依赖，
+     * 给 mock 而不是 null：将来若有用例走到 {@code resetTwoFactor}，null 会变成 NPE 而不是断言失败。
+     */
+    private final TwoFactorService twoFactorService = mock(TwoFactorService.class);
+
     private final AdminUserService service = new AdminUserService(userMapper,
-            refreshTokenMapper, idGenerator, permVersionPublisher);
+            refreshTokenMapper, idGenerator, permVersionPublisher, twoFactorService);
 
     @BeforeEach
     void loginAsAdmin() {

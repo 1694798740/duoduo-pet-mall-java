@@ -35,6 +35,22 @@ public enum ErrorCode {
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "请求方法不被支持，请检查 HTTP 方法是否正确"),
 
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "身份未认证或登录已过期"),
+    /**
+     * E21 · 该账号已启用两步验证，本次登录未提供动态码 / 恢复码。
+     *
+     * <p>与 {@link #UNAUTHORIZED} 分开，是为了让前端能准确区分"该输第二步了"与"密码不对"。
+     * 都报同一句话的后果是用户反复重输密码，而正确操作其实是去翻认证器 App。
+     * HTTP 状态仍取 401 —— 它确实是"身份还没证明完整"，而前端对 401 的既有处理
+     * （不跳登录页、留在当前页）也正是这里想要的。
+     */
+    TOTP_REQUIRED(HttpStatus.UNAUTHORIZED, "该账号已启用两步验证，请提供验证码"),
+    /**
+     * E21 · 两步验证码不正确（动态码错误，或恢复码无效 / 已被使用过）。
+     *
+     * <p>恢复码与动态码共用这一个码值：对客户端而言处置相同（重试，或换一枚恢复码），
+     * 而分成两个码值会泄露"这枚恢复码存在、但已经用过"这类内部信息。
+     */
+    TOTP_INVALID(HttpStatus.UNAUTHORIZED, "验证码不正确或已失效"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "没有权限执行该操作"),
 
     NOT_FOUND(HttpStatus.NOT_FOUND, "资源不存在"),

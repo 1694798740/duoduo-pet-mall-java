@@ -33,6 +33,8 @@ import java.util.Map;
  *   <li><b>租户标识 tid（E20）</b>：这枚令牌代表哪个店铺（店铺主体 userId），
  *       网关据此写入 {@code X-Tenant-Id}，各服务的数据层据此追加行级过滤条件。
  *       口径与"为什么放令牌里"见 {@link #CLAIM_TENANT}；<b>刷新令牌不带它</b>（换新令牌时重算）</li>
+ *   <li><b>两步验证已满足 tfv（E21）</b>：<b>只写刷新令牌</b>，用于拦住"启用 2FA 之前签发的
+ *       刷新令牌"。口径见 {@link #CLAIM_TWO_FACTOR_SATISFIED}</li>
  * </ul>
  *
  * <p>网关与服务端共用本类，保证签名逻辑只有一份实现。
@@ -75,6 +77,23 @@ public class JwtTokenService {
      * "你在哪个站点登录的"，换了反而把入口限制洗掉；租户是"你现在属于谁"，必须重算。
      */
     private static final String CLAIM_TENANT = "tid";
+    /**
+     * E21 · 「该账号的两步验证要求已满足」。
+     *
+     * <p><b>只写在刷新令牌上，不写在访问令牌上。</b>为什么：
+     * 强制的判定点是"能不能换到新的访问令牌"，而不是"每一次请求"——
+     * 已启用 2FA 的账号在登录时若没通过校验，**根本拿不到任何令牌**，
+     * 因此访问令牌不需要再带一个"我算不算数"的声明（带了也只是同义反复，
+     * 反而多一处可能与登录判定不一致的地方）。而刷新令牌**必须带**：
+     * 它有效期 7 天，若不带这个声明，一枚"启用 2FA 之前签发"的刷新令牌
+     * 就能在最长 7 天内无限换新令牌，把这道门整个绕开。
+     *
+     * <p>没写 = 老令牌（E21 之前签发的）→ 刷新时按"未满足"处理。
+     * 这里**刻意不做向后兼容**（与 ent / pv 的处理相反）：放行无声明的老令牌
+     * 等于"启用 2FA 之前签发的会话永远有效"，那 2FA 就形同虚设。
+     * 代价是启用 2FA 后需重新登录一次 —— 而这正是启用它时应有的效果。
+     */
+    private static final String CLAIM_TWO_FACTOR_SATISFIED = "tfv";
 
     private final SecretKey secretKey;
     private final Duration accessTtl;
@@ -137,7 +156,7 @@ public class JwtTokenService {
      *   <li>{@code 0} —— 平台自营。**是有效值**，写进声明；</li>
      *   <li>{@code > 0} —— 第三方店铺主体 userId。</li>
      * </ul>
-     * 注意 0 与 null 的区别必须由调用方用 {@code Long} 表达，不能用 {@code long} 默认值兜 —— 
+     * 注意 0 与 null 的区别必须由调用方用 {@code Long} 表达，不能用 {@code long} 默认值兜 ——
      * 那会把"买家"写成"自营"，等于给买家打开自营数据的门（见
      * {@link com.duoduo.common.tenant.TenantContext} 的"为什么用 Optional"）。
      *
@@ -170,9 +189,14 @@ public class JwtTokenService {
                 .compact();
     }
 
-    /** 兼容入口：不声明入口 */
+    /** 兼容入口：不声明入口、不声明两步验证状态（等价于"老令牌"，刷新时按未满足处理） */
     public String createRefreshToken(Long userId, String jti) {
-        return createRefreshToken(userId, jti, null);
+        return createRefreshToken(userId, jti, null, false);
+    }
+
+    /** 兼容入口：不声明两步验证状态 */
+    public String createRefreshToken(Long userId, String jti, String entry) {
+        return createRefreshToken(userId, jti, entry, false);
     }
 
     /**
@@ -180,8 +204,12 @@ public class JwtTokenService {
      *
      * <p>刷新令牌同样带 ent：{@code /api/auth/refresh} 用它换新的访问令牌，
      * 若刷新令牌不带入口，刷新一次就会把"入口限制"洗掉 —— 那等于这个字段形同虚设。
+     *
+     * <p>E21：{@code twoFactorSatisfied} 为 true 时写入 {@code tfv} 声明。
+     * 真实签发路径是 {@code AuthService.issueTokens}，它传入的是"本次登录是否已满足
+     * 该账号的两步验证要求"（未绑定 2FA 的账号视为已满足）。
      */
-    public String createRefreshToken(Long userId, String jti, String entry) {
+    public String createRefreshToken(Long userId, String jti, String entry, boolean twoFactorSatisfied) {
         Instant now = Instant.now();
         var builder = Jwts.builder()
                 .id(jti)
@@ -190,6 +218,9 @@ public class JwtTokenService {
         String normalized = ClientEntry.normalize(entry);
         if (normalized != null) {
             builder.claim(CLAIM_ENTRY, normalized);
+        }
+        if (twoFactorSatisfied) {
+            builder.claim(CLAIM_TWO_FACTOR_SATISFIED, true);
         }
         return builder
                 .issuedAt(Date.from(now))
@@ -245,8 +276,12 @@ public class JwtTokenService {
             // 两者在下游的处理**完全相同**（都不追加租户条件），所以不需要再区分。
             Object rawTenant = claims.get(CLAIM_TENANT);
             Long tenantId = rawTenant instanceof Number number ? number.longValue() : null;
+            // E21：取不到就是 false（老刷新令牌）→ 刷新时按"两步验证未满足"处理，
+            // 于是"启用 2FA 之前签发的刷新令牌"会在下一次刷新时被拦下，而不是继续用满 7 天。
+            boolean twoFactorSatisfied =
+                    Boolean.TRUE.equals(claims.get(CLAIM_TWO_FACTOR_SATISFIED, Boolean.class));
             return new TokenPayload(userId, phone, role, Boolean.TRUE.equals(realName), claims.getId(), entry,
-                    permVersion, tenantId, true);
+                    permVersion, tenantId, twoFactorSatisfied, true);
         } catch (JwtException | IllegalArgumentException ex) {
             return TokenPayload.invalid();
         }
@@ -263,6 +298,10 @@ public class JwtTokenService {
      * @param permVersion E17 · 权限版本；{@code null} = 该令牌未声明版本（老令牌），不参与版本校验
      * @param tenantId    E20 · 租户标识（店铺主体 userId）；{@code null} = 不属于任何店铺（买家/运营/管理员）
      *                    或老令牌，两者下游处理相同 —— 都不追加租户条件。{@code 0} = 平台自营，是有效值
+     * @param twoFactorSatisfied E21 · 两步验证要求是否已满足。**只对刷新令牌有意义**：
+     *                    {@code false} = 该刷新令牌是在"未满足 2FA"的状态下签发的（老令牌，
+     *                    或账号启用 2FA 之前签发的），刷新时若账号现已启用 2FA 则应拒绝。
+     *                    访问令牌上恒为 {@code false}（不带该声明），因为强制点不在这里
      */
     public record TokenPayload(
             Long userId,
@@ -273,10 +312,11 @@ public class JwtTokenService {
             String entry,
             Long permVersion,
             Long tenantId,
+            boolean twoFactorSatisfied,
             boolean valid
     ) {
         public static TokenPayload invalid() {
-            return new TokenPayload(null, null, null, false, null, null, null, null, false);
+            return new TokenPayload(null, null, null, false, null, null, null, null, false, false);
         }
     }
 }

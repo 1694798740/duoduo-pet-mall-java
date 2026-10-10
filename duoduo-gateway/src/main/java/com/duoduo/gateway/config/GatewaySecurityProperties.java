@@ -154,6 +154,38 @@ public class GatewaySecurityProperties {
      */
     private boolean permVersionEnabled = true;
 
+    // ---------------- E21 · 平台后台 IP 白名单 ----------------
+
+    /**
+     * 是否启用「后台访问 IP 白名单」。**默认关闭** —— 总纲明确要求"配置化（默认关）"。
+     *
+     * <p>为什么默认关：本项目的部署形态是"网关在最外层"，网关看到的对端地址就是真实来源，
+     * 判定本身是可靠的。但开发 / 演示环境的来源五花八门（本机、容器网段、内网跳板），
+     * 一旦默认打开而名单没配全，**所有人都会被挡在后台之外** ——
+     * 那是可用性事故，不该由一个默认值来决定。生产应显式打开并配好运维出口地址。
+     *
+     * <p>与 {@link #entryScopeEnabled} / {@link #permVersionEnabled} 同一姿势：
+     * 凡在认证链路上新增判断，都必须有"一行配置退回原行为"的兜底。
+     */
+    private boolean adminIpWhitelistEnabled = false;
+
+    /**
+     * 允许访问 {@code /api/admin/**} 的来源地址。
+     *
+     * <p>三种写法（可混用）：
+     * <ul>
+     *   <li><b>精确地址</b>：{@code 203.0.113.7}；也支持 IPv6 字面量（按字符串精确比对）；</li>
+     *   <li><b>CIDR</b>：{@code 10.0.0.0/8}、{@code 192.168.1.0/24}（仅 IPv4，位运算比对）；</li>
+     *   <li><b>前缀通配</b>：{@code 192.168.1.*} —— 按字符串前缀比对，仅供临时配置；
+     *       长期应写成 CIDR。</li>
+     * </ul>
+     *
+     * <p><b>开关打开但本列表为空 = 拒绝全部后台访问</b>（失败关闭）。
+     * 反过来把空名单当"放行全部"，会让"配了白名单但漏填"变成一次静默失效 ——
+     * 安全配置的失效方向必须指向"拒绝"。
+     */
+    private List<String> adminIpWhitelist = List.of();
+
     /** 路径族 → 允许访问该族路径的入口列表。
      *
      * <p><b>刻意用"只列专属族"的方式，而不是给每个入口列白名单</b>：
@@ -238,5 +270,21 @@ public class GatewaySecurityProperties {
 
     public void setPermVersionEnabled(boolean permVersionEnabled) {
         this.permVersionEnabled = permVersionEnabled;
+    }
+
+    public boolean isAdminIpWhitelistEnabled() {
+        return adminIpWhitelistEnabled;
+    }
+
+    public void setAdminIpWhitelistEnabled(boolean adminIpWhitelistEnabled) {
+        this.adminIpWhitelistEnabled = adminIpWhitelistEnabled;
+    }
+
+    public List<String> getAdminIpWhitelist() {
+        return adminIpWhitelist;
+    }
+
+    public void setAdminIpWhitelist(List<String> adminIpWhitelist) {
+        this.adminIpWhitelist = adminIpWhitelist;
     }
 }

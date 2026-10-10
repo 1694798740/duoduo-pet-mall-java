@@ -28,6 +28,7 @@ import { AdminCategoriesPage } from './Categories';
 import { AdminBrandsPage } from './Brands';
 import { AdminOperatorsPage } from './Operators';
 import { AdminSeckillPage } from './Seckill';
+import { AdminAccountSecurityPage } from './AccountSecurity';
 import { AdminOrdersPage } from './Orders';
 import { AdminAfterSalesPage } from './AfterSales';
 import { AdminShareReportsPage } from './ShareReports';
@@ -104,6 +105,8 @@ export const AdminRoot: React.FC = () => (
       <Route path="/admin/share-reports" element={<AdminShareReportsPage />} />
       <Route path="/admin/operators" element={<AdminOperatorsPage />} />
       <Route path="/admin/seckill" element={<AdminSeckillPage />} />
+      {/* E21 · 账号安全（两步验证）：关于「我自己这个账号」的设置，与其余工单页语义不同 */}
+      <Route path="/admin/account-security" element={<AdminAccountSecurityPage />} />
       {/* 入口根路径与未知路径都收敛到概览，避免后台入口出现空白页 */}
       <Route path="*" element={<Navigate to="/admin" replace />} />
     </Route>

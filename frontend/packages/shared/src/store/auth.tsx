@@ -29,7 +29,15 @@ interface AuthState {
   pets: PetView[];
   /** 首次会话校验是否仍在进行 */
   loading: boolean;
-  login: (phone: string, password: string) => Promise<UserView>;
+  /**
+   * 密码登录。E21 起第三参数可选：账号启用两步验证时传 `totpCode` 或 `recoveryCode`。
+   * 保持可选是为了让既有的商城 / 商家端 / 小程序三处调用无需改动。
+   */
+  login: (
+    phone: string,
+    password: string,
+    extra?: { totpCode?: string; recoveryCode?: string },
+  ) => Promise<UserView>;
   register: (phone: string, password: string, nickname?: string) => Promise<UserView>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
@@ -78,8 +86,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshMe]);
 
   const login = useCallback(
-    async (phone: string, password: string) => {
-      const me = await authApi.login({ phone, password });
+    async (phone: string, password: string, extra?: { totpCode?: string; recoveryCode?: string }) => {
+      const me = await authApi.login({ phone, password, ...extra });
       setUser(me);
       await refreshPets();
       return me;

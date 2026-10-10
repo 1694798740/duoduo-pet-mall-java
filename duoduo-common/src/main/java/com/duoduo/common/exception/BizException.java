@@ -66,4 +66,22 @@ public class BizException extends RuntimeException {
     public static BizException rateLimited(String message) {
         return new BizException(ErrorCode.RATE_LIMITED, message);
     }
+
+    /**
+     * E21 · 需要两步验证：账号已启用 2FA，本次登录未携带动态码 / 恢复码。
+     *
+     * <p>与 {@link #unauthorized(String)} 分开的理由见 {@code ErrorCode.TOTP_REQUIRED}：
+     * 前端要能把"该输第二步了"与"密码不对"分开处理。
+     */
+    public static BizException totpRequired(String message) {
+        return new BizException(ErrorCode.TOTP_REQUIRED, message);
+    }
+
+    /**
+     * E21 · 两步验证码不正确，或恢复码无效 / 已被使用。
+     * 两类共用同一个错误码的理由见 {@code ErrorCode.TOTP_INVALID}。
+     */
+    public static BizException totpInvalid(String message) {
+        return new BizException(ErrorCode.TOTP_INVALID, message);
+    }
 }

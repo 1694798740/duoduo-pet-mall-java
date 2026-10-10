@@ -78,15 +78,44 @@ public class AdminUserService {
     private final RefreshTokenMapper refreshTokenMapper;
     private final SnowflakeIdGenerator idGenerator;
     private final PermVersionPublisher permVersionPublisher;
+    /**
+     * E21 · 重置他人两步验证时复用它的清空逻辑。
+     *
+     * <p>刻意**不**在这里重写一遍"清密钥、删恢复码、吊销令牌"：那三件事必须与
+     * 用户自助解绑完全一致，各写一份迟早分叉 —— 而分叉的表现是
+     * "管理员重置后账号仍被要求输入验证码"这类沉默的错。
+     * 本类只负责判权（谁可以做），"做什么"由 {@code TwoFactorService} 独占。
+     */
+    private final TwoFactorService twoFactorService;
 
     public AdminUserService(UserMapper userMapper,
                             RefreshTokenMapper refreshTokenMapper,
                             SnowflakeIdGenerator idGenerator,
-                            PermVersionPublisher permVersionPublisher) {
+                            PermVersionPublisher permVersionPublisher,
+                            TwoFactorService twoFactorService) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.idGenerator = idGenerator;
         this.permVersionPublisher = permVersionPublisher;
+        this.twoFactorService = twoFactorService;
+    }
+
+    /**
+     * E21 · 由平台管理员重置某账号的两步验证 —— 手机丢了、恢复码也丢了时的最后手段。
+     *
+     * <p>判权与 {@code changeRole} 同一姿势（两层门、分开报错）：先确认"进得了后台"，
+     * 再看权限点 {@code user:security:manage}（矩阵里仅 ADMIN）。
+     * 为什么单独立一个权限点而不是复用 {@code user:role:manage}，见 {@code Permission}。
+     *
+     * <p>不加 {@code @Transactional}：真正的写动作在 {@code TwoFactorService.resetByAdmin}
+     * 上，那一层已经带了事务。这里再加一层只是多一个嵌套事务，没有额外语义。
+     */
+    public void resetTwoFactor(Long targetUserId) {
+        LoginUser actor = OperatorGuard.requireOperator();
+        if (!actor.hasPerm(Permission.USER_SECURITY_MANAGE)) {
+            throw BizException.forbidden("重置他人两步验证仅限超级管理员操作");
+        }
+        twoFactorService.resetByAdmin(targetUserId);
     }
 
     /**

@@ -41,7 +41,25 @@ public final class UserDtos {
             String phone,
 
             @NotBlank(message = "密码不能为空")
-            String password
+            String password,
+
+            /**
+             * E21 · 两步验证码（6 位数字）。仅当该账号**已启用**两步验证时才需要：
+             * 未携带 → 401 且 code 为 {@code TOTP_REQUIRED}；携带但错误 → 401 且 code 为
+             * {@code TOTP_INVALID}。两者分开是为了让前端能准确地区分"该输第二步了"
+             * 与"码输错了"—— 都笼统报"登录失败"会让人反复重输密码。
+             *
+             * <p>**与密码放在同一个请求里**，而不是拆成两个端点：本项目有三端客户端
+             * （Web 后台 / 小程序 / 命令行夹具），多一个端点就是三处都要改的联调面；
+             * 而"密码 + 动态码一起提交"在语义上本就是一次登录的两个因子。
+             */
+            String totpCode,
+
+            /**
+             * E21 · 恢复码（忘记动态码时的一次性替代通道）。
+             * 与 {@code totpCode} 二选一；两者都传时以 {@code totpCode} 为准（正常路径优先）。
+             */
+            String recoveryCode
     ) {
     }
 
@@ -333,6 +351,62 @@ public final class UserDtos {
             String accessToken,
             String refreshToken,
             long expiresInSeconds
+    ) {
+    }
+
+    // ---------------- E21 · 平台后台两步验证（TOTP） ----------------
+
+    /**
+     * 两步验证状态。用于两端：前端据此决定是否显示"去绑定"引导；
+     * 用户自己也能看到"我到底绑没绑、还剩几枚恢复码"。
+     */
+    public record TotpStatusView(
+            /** true = 已完成绑定（此后登录必须携带动态码或恢复码） */
+            boolean enabled,
+            /** 绑定完成时间（ISO-8601 UTC 字符串）；未绑定为 null */
+            String boundAt,
+            /** 剩余可用恢复码数量。**只给数量、不给码** —— 明文只在生成那一刻出现一次 */
+            int recoveryCodesRemaining
+    ) {
+    }
+
+    /** 绑定第一步：返回密钥与 otpauth 链接（前端渲染二维码，或让用户手动输入密钥） */
+    public record TotpSetupView(
+            /** Base32 密钥（无填充），供"扫不了码"时手动录入 */
+            String secret,
+            /** {@code otpauth://} 链接，交给二维码组件 */
+            String otpauthUri
+    ) {
+    }
+
+    public record TotpEnableRequest(
+            @NotBlank(message = "验证码不能为空")
+            String code
+    ) {
+    }
+
+    /**
+     * 绑定成功：**一次性**下发恢复码明文。
+     *
+     * <p>这是全流程中唯一一次能拿到明文的地方 —— 服务端只存 SHA-256。
+     * 响应里没有任何"以后再查"的接口，所以前端必须在这一步明确提示用户保存。
+     */
+    public record TotpEnableView(
+            List<String> recoveryCodes
+    ) {
+    }
+
+    /**
+     * 解绑请求：动态码与恢复码二选一。
+     *
+     * <p>两个都允许，是因为真实场景里"手机还在但想关掉"和"手机丢了只能靠恢复码关掉"
+     * 都会发生；只留动态码会让后者必须去找管理员。
+     */
+    public record TotpDisableRequest(
+            /** 当前动态码；与 recoveryCode 二选一 */
+            String code,
+            /** 恢复码；与 code 二选一 */
+            String recoveryCode
     ) {
     }
 
