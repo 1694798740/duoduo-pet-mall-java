@@ -15,7 +15,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
-$logDir = Join-Path $root 'logs\ci'
+$logDir = Join-Path $root 'logs/ci'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 
 $names = $Scripts.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }

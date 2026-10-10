@@ -265,7 +265,15 @@ $r = Call 'Put' "$Gateway/api/addresses/999999999999999" $sessA @{
     city = '上海市'; district = '浦东新区'; detail = '不存在的地址'
 }
 Check "① 不存在的地址 id 修改 → 404（与越权同码）" ($r.status -eq 404) "$($r.status)/$($r.body.code)"
-Check "① 错误文案不提示「这不是你的地址」" ($r.raw -notmatch '不是你的|无权|他人') $r.raw
+# ★ 断言对象从 `$r.raw` 换成 `$r.body.message`（解码后的字段），两个理由：
+#   ① 错误响应在 pwsh 7 上取回来的是**重新序列化**过的文本（缩进 + 非 ASCII 转成 \uXXXX），
+#      于是 `$r.raw -notmatch '不是你的'` 永远为真 —— 一条**假通过**的断言，
+#      它想拦的泄露真发生了也拦不住（这句话里全是中文，转义后一个都匹配不上）。
+#   ② 附带把"文案确实取到了"也钉住：`$msg.Length -gt 0` 让"body 没解析出来"
+#      这种情况报红，而不是因为空串不含关键字而静默通过。
+$msg = "$($r.body.message)"
+Check "① 错误文案不提示「这不是你的地址」（且文案确实非空）" `
+    (($msg.Length -gt 0) -and ($msg -notmatch '不是你的|无权|他人')) "msg=$msg"
 
 # ---------- 6. 内部快照接口与凭据（验收③的前置） ----------
 Write-Host ""

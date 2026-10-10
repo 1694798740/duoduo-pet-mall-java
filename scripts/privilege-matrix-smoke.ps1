@@ -321,7 +321,13 @@ Write-Host "> §3 后台入口边界（网关层）"
 
 $r = Call 'Get' "$Gateway/api/admin/users?page=1&pageSize=1" $null (Bearer $tokenSA)
 Check "★ 商家令牌（ent=merchant）访问 /api/admin/** → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
-Check "★ 拒绝文案指向入口（不是笼统的没权限）" ($r.raw -like '*入口*') $r.raw
+# ★ 断言 `$r.body.message`（解码后的字段）而不是 `$r.raw`：
+#   CI（pwsh 7）取回的**错误响应体是重新序列化过的文本**（缩进 + 非 ASCII → \uXXXX），
+#   于是 `$r.raw -like '*入口*'` 在 CI 上恒为假 —— 而服务端文案其实完全正确
+#   （message 字段解出来就是「当前登录入口无权访问该接口」）。用 raw 断言时，
+#   这条测试测的是"客户端怎么转义 JSON"，不是"服务端说了什么"。
+Check "★ 拒绝文案指向入口（不是笼统的没权限）" `
+    ("$($r.body.message)" -like '*入口*') "status=$($r.status) message=$($r.body.message)"
 
 $r = Call 'Get' "$Gateway/api/seller/orders?page=1&pageSize=1" $null (Bearer $tokenA)
 Check "★ 买家令牌（ent=mall）访问 /api/seller/** → 403" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"

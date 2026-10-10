@@ -294,7 +294,18 @@ Check "① 发货后轨迹里有 1 条节点（交易域 best-effort 补推生�
 Check "① 该节点是 PICKED_UP" ($tracks1[0].nodeCode -eq 'PICKED_UP') $tracks1[0].nodeCode
 Check "① 服务端给出的节点文案是「已揽收」" ($tracks1[0].nodeLabel -eq '已揽收') $tracks1[0].nodeLabel
 Check "① 节点描述带上了卖家填的物流公司与单号" ($tracks1[0].nodeText -match '顺丰速运' -and $tracks1[0].nodeText -match 'SF1234567890') $tracks1[0].nodeText
-Check "① 发生时间是 ISO-8601（UTC，以 Z 结尾）" ($tracks1[0].occurredAt -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$') $tracks1[0].occurredAt
+# ★ 这条断言测的是**服务端下发的序列化格式**，所以必须看原始报文，不能看解析后的对象。
+#
+# 原因（CI 实测踩到）：pwsh 7 的 `ConvertFrom-Json` 会把 ISO-8601 字符串**自动转成 [datetime]**，
+# 而 Windows PowerShell 5.1 不转 —— 于是 `$tracks1[0].occurredAt -match '…Z$'` 里
+# 左边根本不是字符串，是 DateTime，`-match` 按 InvariantCulture 把它变成
+#     "10/10/2026 08:32:20"
+# 再去比正则，必然失败。也就是说：**同一条断言在 Windows 上绿、在 CI 上红**，
+# 而红的原因与"服务端有没有按 UTC 下发"毫无关系 —— 它测的是客户端解析后的类型。
+# 改成对原始报文断言后，测的就是真正要保证的东西（线上协议），且两种 PS 版本行为一致。
+Check "① 发生时间是 ISO-8601（UTC，以 Z 结尾）" `
+    ($r.raw -match '"occurredAt"\s*:\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z"') `
+    "parsed=$($tracks1[0].occurredAt)"
 
 # 内部接口发货（不带物流信息）—— 证明「节点文案缺失时由服务端兜底为节点名」
 # 注意归属：$on2 是卖家 S 的订单，只能由 S 自己发货 —— 用平台运营会话会 403
