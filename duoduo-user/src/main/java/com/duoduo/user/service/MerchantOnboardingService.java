@@ -4,6 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditLogRecord;
+import com.duoduo.common.audit.AuditOutcome;
+import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.security.perm.Permission;
@@ -16,8 +20,6 @@ import com.duoduo.user.dto.MerchantDtos.SaveDraftRequest;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.entity.AuditLogEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.UserMapper;
@@ -60,7 +62,7 @@ public class MerchantOnboardingService {
     /** E12 · 私有读取路径前缀（鉴权端点，不走公开 nginx） */
     private static final String MATERIAL_READ_PREFIX = "/api/merchant-materials/";
     /** E12 · 审计动作：读取入驻材料 */
-    public static final String ACTION_MATERIAL_READ = "MERCHANT_MATERIAL_READ";
+    public static final AuditAction ACTION_MATERIAL_READ = AuditAction.MERCHANT_MATERIAL_READ;
     private static final int STORE_NAME_MIN = 2;
     private static final int STORE_NAME_MAX = 30;
 
@@ -85,7 +87,7 @@ public class MerchantOnboardingService {
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final MerchantMaterialStorage materialStorage;
-    private final AuditLogMapper auditLogMapper;
+    private final AuditLogService auditLogService;
     private final MerchantViolationService violationService;
 
     public MerchantOnboardingService(MerchantMapper merchantMapper,
@@ -95,7 +97,7 @@ public class MerchantOnboardingService {
                                      SnowflakeIdGenerator idGenerator,
                                      ObjectMapper objectMapper,
                                      MerchantMaterialStorage materialStorage,
-                                     AuditLogMapper auditLogMapper,
+                                     AuditLogService auditLogService,
                                      MerchantViolationService violationService) {
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
@@ -104,7 +106,7 @@ public class MerchantOnboardingService {
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
         this.materialStorage = materialStorage;
-        this.auditLogMapper = auditLogMapper;
+        this.auditLogService = auditLogService;
         this.violationService = violationService;
     }
 
@@ -372,6 +374,8 @@ public class MerchantOnboardingService {
         MerchantEntity entity = requireMerchant(merchantId);
         MerchantStatus status = MerchantStatus.valueOf(entity.getStatus());
         if (status == MerchantStatus.REVIEWING) {
+            // E18 · 幂等确认不构成事件（与 E18 之前同一口径）
+            AuditTrail.skip("申请已是审核中，无实际变更");
             return toView(entity);
         }
         if (status != MerchantStatus.SUBMITTED) {
@@ -380,6 +384,7 @@ public class MerchantOnboardingService {
         entity.setStatus(MerchantStatus.REVIEWING.name());
         entity.setUpdatedAt(now());
         merchantMapper.updateById(entity);
+        audit(entity, status, MerchantStatus.REVIEWING, "人工开始审核");
         log.info("入驻审核开始 merchantId={} operator={}", merchantId, operatorId);
         return toView(entity);
     }
@@ -396,12 +401,15 @@ public class MerchantOnboardingService {
         MerchantEntity entity = requireMerchant(merchantId);
         MerchantStatus status = MerchantStatus.valueOf(entity.getStatus());
         if (status == MerchantStatus.APPROVED) {
+            // E18 · 幂等：重复通过返回现状，不构成事件
+            AuditTrail.skip("申请已是已通过，无实际变更");
             return toView(entity);           // 幂等：重复通过返回现状
         }
         if (status != MerchantStatus.REVIEWING) {
             throw BizException.businessRule("只有审核中的申请可以通过（当前 " + status + "）");
         }
         applyApproval(entity, operatorId, AUDIT_SOURCE_MANUAL, now());
+        audit(entity, status, MerchantStatus.APPROVED, "人工审核通过并开店");
         log.info("入驻通过并开店 merchantId={} owner={} operator={}", merchantId, entity.getOwnerUserId(), operatorId);
         return toView(entity);
     }
@@ -487,10 +495,13 @@ public class MerchantOnboardingService {
         MerchantEntity entity = requireMerchant(merchantId);
         MerchantStatus status = MerchantStatus.valueOf(entity.getStatus());
         if (status == MerchantStatus.REJECTED) {
-            // 幂等：结论一致（都是驳回），允许补全/更新原因后返回现状
+            // 幂等：结论一致（都是驳回），允许补全/更新原因后返回现状。
+            // ★ 这一支**要留痕**：它确实写了库（原因被补全/更新），是真实变更，
+            // 与「什么都没发生」的幂等分支不同 —— 抑制它是错的口径。
             entity.setRejectReason(toJson(reasons));
             entity.setUpdatedAt(now());
             merchantMapper.updateById(entity);
+            audit(entity, status, MerchantStatus.REJECTED, "重复驳回，补全/更新驳回原因");
             return toView(entity);
         }
         if (status != MerchantStatus.REVIEWING) {
@@ -502,6 +513,7 @@ public class MerchantOnboardingService {
         entity.setReviewedBy(operatorId);
         entity.setUpdatedAt(now());
         merchantMapper.updateById(entity);
+        audit(entity, status, MerchantStatus.REJECTED, "人工驳回，原因 " + reasons.size() + " 条");
         log.info("入驻驳回 merchantId={} operator={} reasons={} 条", merchantId, operatorId, reasons.size());
         return toView(entity);
     }
@@ -554,15 +566,16 @@ public class MerchantOnboardingService {
         }
         MerchantMaterialStorage.ReadResult result = materialStorage.read(merchantId, storedName);
         try {
-            AuditLogEntity record = new AuditLogEntity();
-            record.setId(idGenerator.nextId());
-            record.setActorId(readerId);
-            record.setActorPhone(reader.phone() == null ? "" : reader.phone());
-            record.setAction(ACTION_MATERIAL_READ);
-            record.setTargetId(merchantId);
-            record.setDetail(storedName);
-            record.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            auditLogMapper.insert(record);
+            // E18 · 统一走 AuditLogService。这条是**读**留痕（不是写操作），
+            // 因此没有配 @Audited 注解 —— 注解的语义是「后台写操作」，
+            // 挂在 GET 上会让「审计页全是读记录」这种口径漂移没人拦得住。
+            auditLogService.record(new AuditLogRecord(
+                    readerId, reader.phone() == null ? "" : reader.phone(),
+                    ACTION_MATERIAL_READ.code(), ACTION_MATERIAL_READ.category().name(),
+                    AuditOutcome.SUCCESS.name(), merchantId, ACTION_MATERIAL_READ.targetType(),
+                    entity.getOwnerUserId() == null ? 0L : entity.getOwnerUserId(),
+                    null, null, null, com.duoduo.common.api.RequestIdHolder.get(),
+                    storedName, LocalDateTime.now(ZoneOffset.UTC).toString()));
         } catch (Exception ex) {
             // 留痕失败不阻断读取 —— 但必须吵到日志里（审计静默丢失比不审计更危险）
             log.error("材料读取留痕失败 merchantId={} storedName={} reader={}", merchantId, storedName, readerId, ex);
@@ -642,6 +655,23 @@ public class MerchantOnboardingService {
         }
         LocalDateTime reviewedAt = entity.getReviewedAt();
         return reviewedAt != null && !reviewedAt.isBefore(now().minusDays(RESUME_WINDOW_DAYS));
+    }
+
+    /**
+     * E18 · 补充入驻审核动作的审计上下文。
+     *
+     * <p>留痕本身由 {@code AuditInterceptor} 统一采集（谁 / 何时 / 从哪来 / 成没成），
+     * 这里只补三件注解拿不到的事：<b>目标是哪家店、属于哪个租户、状态从什么变成什么</b>。
+     *
+     * <p>租户 = 店铺主体 userId（与 {@code t_spu.seller_id} 同一个键）——
+     * 不能填 {@code merchant.id}，否则「按租户检索」会查不到：
+     * 平台其它地方用的是 ownerUserId，两套 id 混用会让审计结果凭空少一半。
+     */
+    private void audit(MerchantEntity entity, MerchantStatus before, MerchantStatus after, String note) {
+        AuditTrail.target(entity.getId(), "MERCHANT");
+        AuditTrail.tenant(entity.getOwnerUserId());
+        AuditTrail.change(before.name(), after.name());
+        AuditTrail.note(note);
     }
 
     private MerchantEntity requireMerchant(Long merchantId) {

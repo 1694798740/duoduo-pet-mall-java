@@ -1,6 +1,9 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.trade.dto.AdminDtos.AbnormalSettlement;
 import com.duoduo.trade.dto.AdminDtos.BackfillResult;
 import com.duoduo.trade.dto.AdminDtos.CompensateRequest;
@@ -65,6 +68,7 @@ public class AdminSettlementController {
      * 也与本项目既有的布尔开关写法（{@code /categories/{id}/status?active=false}）一致。
      */
     @PostMapping("/backfill")
+    @Audited(action = AuditAction.SETTLEMENT_BACKFILL)
     public ApiResponse<BackfillResult> backfill(@RequestParam(required = false) Boolean dryRun) {
         return ApiResponse.ok(settlementBackfillService.backfill(Boolean.TRUE.equals(dryRun)));
     }
@@ -80,7 +84,9 @@ public class AdminSettlementController {
      * 垫付动的是「平台的钱」并额外产生一笔债。混在一个动作里，资金轨迹就说不清了。
      */
     @PostMapping("/compensate")
+    @Audited(action = AuditAction.SETTLEMENT_COMPENSATE)
     public ApiResponse<SellerDebtView> compensate(@Valid @RequestBody CompensateRequest request) {
+        AuditTrail.note("订单号 " + request.orderNo());
         return ApiResponse.ok(sellerDebtService.compensate(request.orderNo(), request.reason()));
     }
 
@@ -93,13 +99,17 @@ public class AdminSettlementController {
 
     /** 收回欠款（卖家已还） */
     @PostMapping("/debts/{id}/settle")
+    @Audited(action = AuditAction.SETTLEMENT_DEBT_SETTLE)
     public ApiResponse<SellerDebtView> settleDebt(@PathVariable Long id) {
+        AuditTrail.target(id, "SELLER_DEBT");
         return ApiResponse.ok(sellerDebtService.settle(id));
     }
 
     /** 核销欠款（确认收不回，走坏账） */
     @PostMapping("/debts/{id}/write-off")
+    @Audited(action = AuditAction.SETTLEMENT_DEBT_WRITE_OFF)
     public ApiResponse<SellerDebtView> writeOffDebt(@PathVariable Long id) {
+        AuditTrail.target(id, "SELLER_DEBT");
         return ApiResponse.ok(sellerDebtService.writeOff(id));
     }
 }

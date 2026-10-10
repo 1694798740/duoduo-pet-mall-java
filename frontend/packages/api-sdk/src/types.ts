@@ -681,8 +681,68 @@ export interface RoleChangeRequest {
 
 export interface RoleChangeResult {
   user: AdminUserView;
-  /** 展示给运营的提示（含「目标用户需重新登录后生效」） */
+  /**
+   * 展示给运营的提示。**原样展示、不要在本地拼文案** —— 它说明这次变更生效到了哪一步：
+   * E17 起正常情况是「…在下一个请求即生效（无需重新登录）」；
+   * 只有 Redis 不可用、退回吊销刷新令牌时才会出现「…将重新登录后生效」。
+   * 两者的处置完全不同（一个什么都不用做，一个要通知对方重登），所以文案本身就是处置依据。
+   */
   notice: string;
+}
+
+/**
+ * 后台操作审计记录（E18）。
+ *
+ * **全部字段只读**：审计页只有一个 GET 入口，服务端刻意不提供任何修改/删除路径
+ * （完整性靠「没有修改路径」保证，而不是靠「没人会去改」）。
+ *
+ * 几个口径：
+ *  - `id` / `actorId` / `targetId` / `tenantId` 一律是**字符串**：雪花 ID 超出 JS 安全整数
+ *    范围，转 Number 会丢精度（T-39）；
+ *  - `targetId === '0'` 表示**平台级操作、无单一目标**（全站索引重建、资质巡检），
+ *    与「找不到目标」不是一回事；
+ *  - `tenantId === '0'` 表示平台级 / 自营操作，不属于任何店铺；
+ *  - `actorPhone` **刻意不脱敏**（与账号列表的 `phoneMasked` 不同）：审计页的用途是追责，
+ *    手机号是定位到具体账号的唯一稳定标识；
+ *  - `immutable` 由**服务端**按唯一判据（SECURITY / FUNDS 档）算出后下发，
+ *    前端不得自行判断 —— 否则要再抄一份规则，两份规则迟早分叉。
+ */
+export interface AuditLogView {
+  id: string;
+  actorId: string | null;
+  actorPhone: string;
+  /** 动作标识（枚举名，如 USER_ROLE_CHANGE / ORDER_FORCE_CLOSE） */
+  action: string;
+  /** 动作类目：SECURITY / FUNDS / TENANT / CONTENT / OTHER */
+  category: string;
+  /** 类目是否属「不可删改」档（资金与权限类），由服务端算出 */
+  immutable: boolean;
+  /** 结果：SUCCESS / FAILED（失败的越权尝试同样留痕） */
+  outcome: string;
+  targetId: string;
+  targetType: string;
+  tenantId: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+  ip: string | null;
+  requestId: string | null;
+  detail: string;
+  createdAt: string | null;
+}
+
+/** 审计检索条件（全部可选；不传即「最近若干条」）。起止时间止端按**含**处理。 */
+export interface AuditLogQuery {
+  actorId?: string;
+  tenantId?: string;
+  category?: string;
+  action?: string;
+  outcome?: string;
+  targetId?: string;
+  /** `2026-10-09`（整日）或 `2026-10-09T13:00:00` */
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 /** 全平台托管资金汇总（与商家端按卖家过滤的口径分开） */

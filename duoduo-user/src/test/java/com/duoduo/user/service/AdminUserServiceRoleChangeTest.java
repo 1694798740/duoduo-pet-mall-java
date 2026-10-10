@@ -1,13 +1,13 @@
 package com.duoduo.user.service;
 
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.UserDtos.RoleChangeResult;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
 import com.duoduo.user.support.PermVersionPublisher;
@@ -49,22 +49,26 @@ class AdminUserServiceRoleChangeTest {
     private static final long TARGET_ID = 710000000000000002L;
 
     private final UserMapper userMapper = mock(UserMapper.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
     private final RefreshTokenMapper refreshTokenMapper = mock(RefreshTokenMapper.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final PermVersionPublisher permVersionPublisher = mock(PermVersionPublisher.class);
 
-    private final AdminUserService service = new AdminUserService(userMapper, auditLogMapper,
+    private final AdminUserService service = new AdminUserService(userMapper,
             refreshTokenMapper, idGenerator, permVersionPublisher);
 
     @BeforeEach
     void loginAsAdmin() {
         UserContext.set(new LoginUser(ADMIN_ID, "13900000000", "ADMIN", true));
+        // E18 起留痕由拦截器统一做；单测里没有拦截器，所以显式开一个上下文来承接
+        // 业务侧补充的 target / 前后值（不开上下文时这些调用是静默 no-op，
+        // 那样断言「前后值写对了没」会永远通过 —— 一个典型的假绿）
+        AuditTrail.start(AuditAction.USER_ROLE_CHANGE);
     }
 
     @AfterEach
     void logout() {
         UserContext.clear();
+        AuditTrail.clear();
     }
 
     private static UserEntity target(String role) {
@@ -162,6 +166,15 @@ class AdminUserServiceRoleChangeTest {
         // 幂等：没有变更就不该动版本，否则每次"重复点一下"都会把别人的在线会话判过期
         verify(permVersionPublisher, never()).publish(any(), any());
         assertThat(result.notice()).contains("未做变更");
+        // ★ E18 起留痕由拦截器统一做，所以"无事实变化"这件事必须**显式抑制** ——
+        //   不抑制的话，重复确认会在审计表里堆成事件，把真正的变更淹没掉。
+        //   这里断言的是「抑制被声明了」，而不是「没写审计」：后者在单测里必然成立
+        //   （没有拦截器就没有写库路径），断言它等于什么都没测。
+        assertThat(AuditTrail.current()).isNotNull();
+        assertThat(AuditTrail.current().skipped())
+                .as("幂等确认必须显式声明抑制，否则会写成一条审计记录")
+                .isTrue();
+        assertThat(AuditTrail.current().skipReason()).isNotBlank();
     }
 
     @Test
@@ -192,9 +205,35 @@ class AdminUserServiceRoleChangeTest {
 
         service.changeRole(TARGET_ID, "SELLER");
 
-        ArgumentCaptor<AuditLogEntity> captor = ArgumentCaptor.forClass(AuditLogEntity.class);
-        verify(auditLogMapper).insert(captor.capture());
-        assertThat(captor.getValue().getDetail()).isEqualTo("USER -> SELLER");
-        assertThat(captor.getValue().getActorId()).isEqualTo(ADMIN_ID);
+        // E18：服务层不再自己 insert 审计表，改为「补充拦截器采集不到的三件事」。
+        // 断言因此落在 AuditTrail 上 —— 若把这几行删掉（回归到"只靠注解"），
+        // 本用例会红；而删掉它们不会影响任何业务行为，属于极易被顺手移除的代码。
+        AuditTrail trail = AuditTrail.current();
+        assertThat(trail).isNotNull();
+        assertThat(trail.targetId()).as("目标用户必须写进审计").isEqualTo(TARGET_ID);
+        assertThat(trail.targetType()).isEqualTo("USER");
+        assertThat(trail.beforeValue()).isEqualTo("USER");
+        assertThat(trail.afterValue()).isEqualTo("SELLER");
+        assertThat(trail.detail()).as("人读摘要应能直接看出改了哪个角色").isEqualTo("USER -> SELLER");
+        assertThat(trail.tenantId())
+                .as("★ 角色是平台级概念，租户必须为 0；填了 actor 的 userId 会在审计页误显示成「某家店的动作」")
+                .isZero();
+        assertThat(trail.skipped()).as("发生了真实变更，绝不能被抑制").isFalse();
+    }
+
+    @Test
+    void 广播失败也要留审计_前后值不因分支不同而缺失() {
+        afterBump("OPERATOR", "USER");
+        when(permVersionPublisher.publish(TARGET_ID, 5L)).thenReturn(false);
+        when(refreshTokenMapper.revokeAllByUser(TARGET_ID)).thenReturn(1);
+
+        service.changeRole(TARGET_ID, "USER");
+
+        AuditTrail trail = AuditTrail.current();
+        assertThat(trail.beforeValue()).isEqualTo("OPERATOR");
+        assertThat(trail.afterValue()).isEqualTo("USER");
+        // 广播失败只影响「生效路径」（是否需要重登），**不影响**这次变更本身要不要留痕 ——
+        // 把留痕放在广播成功分支里，会让 Redis 一挂就出现一段"查不到谁改的"空窗
+        assertThat(trail.skipped()).isFalse();
     }
 }

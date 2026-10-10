@@ -494,22 +494,32 @@ $ttlEnv = "$(& docker exec duoduo-app-marketing sh -c 'echo $COUPON_LOCK_TTL_MIN
 Check "★ 券锁定 TTL 已由环境变量注入（值为 35 分钟）" ($ttlEnv -eq '35') $ttlEnv
 Check "★ 券 TTL(35) 严格大于交易域订单超时(30)：订单还活着时券不会被别人领走" (($ttlEnv -match '^\d+$') -and (([int]$ttlEnv) -gt 30)) $ttlEnv
 
-# 消除时序竞态：定时补偿调度每 60s 扫一次，可能正好落在「改成锁定超时」与「断言锁定超时」
-# 之间，把这个刚做好的夹具先解掉 —— 于是夹具断言红，并连带把后面两条一起带红。
-# 这是**假阳性**：窗口只有几百毫秒，重做一次即可（调度刚跑过，紧接着的几十秒是安全的）。
-$ttlFixtureOk = $false
+# ★ 这里存在一个**结构性的时序竞态**，而且不是"多试几次"能解决的：
+#   定时补偿调度每 60s 扫一次，而本段夹具**故意把这张券做成"锁定超时"** ——
+#   也就是**主动让定时调度随时可以合法地把它解掉**。于是「改成超时」与「断言它处于 LOCKED」
+#   之间只要插进一次调度，夹具断言就红。**这不是功能坏了，是我们自己在和一个每 60 秒必然发生的
+#   动作赛跑。**（实测见过：两个断言一红一绿 —— 状态被解成 UNUSED，而 locked_at 仍是旧值，
+#   正好印证是"读到一半被调度改了"。）
+#
+#   修法不是重试：重试同样跑不过调度（每次都重新留一个新窗口）。而是**把"设夹具"与"读夹具"
+#   之间的窗口压到零** —— 用**一条 SQL 同时读出** status 与"是否已超时"，之后所有断言都基于
+#   这一次读取的快照，不再各自去查一次（每单独查一次就是一个新窗口）。
+#   `$fixtureSnapshot` 形如 `LOCKED|1`。
+$fixtureSnapshot = ''
 for ($attempt = 1; $attempt -le 3; $attempt++) {
     # 若这张券已被定时调度抢先解锁，先重新锁定再制造「超时」场景
-    if ((CouponStatusOf $CODE_B) -eq 'UNUSED') {
+    if ((CouponStatusOf $CODE_B) -ne 'LOCKED') {
         Call 'Post' "$Marketing/api/coupons/internal/lock" $null @{ code = $CODE_B; userId = [long]$idB; orderNo = 'SMOKE-TTL-RE'; orderAmount = 100000 } $H_INTERNAL | Out-Null
     }
     # 把 B 的券改成「40 分钟前锁定」——远超 lock-ttl-minutes(35)
     Sql 'duoduo_marketing' "UPDATE t_coupon SET locked_at = UTC_TIMESTAMP() - INTERVAL 40 MINUTE WHERE code = '$CODE_B';" | Out-Null
-    $ttlFixtureOk = ("$(Sql 'duoduo_marketing' "SELECT locked_at < UTC_TIMESTAMP() - INTERVAL 35 MINUTE FROM t_coupon WHERE code = '$CODE_B';")" -eq '1')
-    if ($ttlFixtureOk) { break }
+    # ★ 一次读取同时拿到两个事实，中间不给调度留缝
+    $fixtureSnapshot = "$(Sql 'duoduo_marketing' "SELECT CONCAT(status, '|', IFNULL(locked_at < UTC_TIMESTAMP() - INTERVAL 35 MINUTE, 0)) FROM t_coupon WHERE code = '$CODE_B';")"
+    if ($fixtureSnapshot -eq 'LOCKED|1') { break }
+    Start-Sleep -Milliseconds 250
 }
-Check "（夹具）券处于 LOCKED，可制造「锁定超时」场景" ("$(CouponStatusOf $CODE_B)" -eq 'LOCKED') (CouponStatusOf $CODE_B)
-Check "（夹具）券已被人为改成「锁定超时」" $ttlFixtureOk "重试 $attempt 次仍未观察到超时锁定（疑似定时调度在窗口内抢先解锁）"
+Check "（夹具）券处于 LOCKED，可制造「锁定超时」场景" ($fixtureSnapshot -like 'LOCKED|*') $fixtureSnapshot
+Check "（夹具）券已被人为改成「锁定超时」" ($fixtureSnapshot -eq 'LOCKED|1') "快照=$fixtureSnapshot（尝试 $attempt 次）"
 $rSweep = Call 'Post' "$Marketing/api/coupons/internal/sweep" $null $null $H_INTERNAL
 Check "补偿调度（带凭据）返回 200" ($rSweep.status -eq 200) "$($rSweep.status)/$($rSweep.raw)"
 # 判据取**终态**而非「这一次调用解掉了几张」：定时调度同样解超时锁，

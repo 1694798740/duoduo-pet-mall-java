@@ -90,17 +90,29 @@ CREATE TABLE t_user_address (
 );
 CREATE INDEX idx_address_user ON t_user_address (user_id);
 
--- 运营审计日志（A7）：只追加、不更新、不删除；记录「谁给谁改了什么」。
--- 与 01-duoduo-user.sql / incremental/09 同源，三处口径一致。
+-- 后台操作审计日志（A7 建表 / E18 扩列）：只追加、不更新、不删除。
+-- 与 01-duoduo-user.sql / incremental/09 + 31 同源，口径一致。
 CREATE TABLE t_audit_log (
     id           BIGINT       NOT NULL,
     actor_id     BIGINT       NOT NULL,
     actor_phone  VARCHAR(20)  NOT NULL,
     action       VARCHAR(50)  NOT NULL,
+    category     VARCHAR(20)  NOT NULL DEFAULT 'OTHER',
+    outcome      VARCHAR(16)  NOT NULL DEFAULT 'SUCCESS',
     target_id    BIGINT       NOT NULL,
+    target_type  VARCHAR(32)  NOT NULL DEFAULT '',
+    tenant_id    BIGINT       NOT NULL DEFAULT 0,
+    before_value VARCHAR(500)          DEFAULT NULL,
+    after_value  VARCHAR(500)          DEFAULT NULL,
+    ip           VARCHAR(64)           DEFAULT NULL,
+    request_id   VARCHAR(64)           DEFAULT NULL,
     detail       VARCHAR(500) NOT NULL,
     created_at   TIMESTAMP    NOT NULL,
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_audit_actor ON t_audit_log (actor_id);
 CREATE INDEX idx_audit_target ON t_audit_log (target_id);
+CREATE INDEX idx_audit_created ON t_audit_log (created_at);
+CREATE INDEX idx_audit_actor_created ON t_audit_log (actor_id, created_at);
+CREATE INDEX idx_audit_tenant_created ON t_audit_log (tenant_id, created_at);
+CREATE INDEX idx_audit_category_created ON t_audit_log (category, created_at);

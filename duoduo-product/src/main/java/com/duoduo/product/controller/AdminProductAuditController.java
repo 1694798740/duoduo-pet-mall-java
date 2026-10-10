@@ -1,6 +1,9 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditRequest;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
@@ -55,6 +58,7 @@ public class AdminProductAuditController {
 
     /** 审核结论：{@code {"action":"APPROVE"|"REJECT","reason":"..."}}（驳回时 reason 必填） */
     @PostMapping("/{spuId}/audit")
+    @Audited(action = AuditAction.PRODUCT_AUDIT)
     public ApiResponse<AdminProductAuditView> audit(@PathVariable Long spuId,
                                                     @RequestBody AdminProductAuditRequest request) {
         return ApiResponse.ok(sellerProductService.audit(spuId,

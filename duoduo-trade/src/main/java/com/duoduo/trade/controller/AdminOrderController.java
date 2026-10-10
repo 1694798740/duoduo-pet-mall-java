@@ -1,6 +1,9 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.trade.dto.AdminDtos.ForceCloseRequest;
@@ -51,8 +54,12 @@ public class AdminOrderController {
 
     /** 运营强制关单（仅待付款订单）；已付款/已发货会被状态机拒绝 */
     @PostMapping("/{orderNo}/force-close")
+    @Audited(action = AuditAction.ORDER_FORCE_CLOSE)
     public ApiResponse<OrderView> forceClose(@PathVariable String orderNo, @RequestBody ForceCloseRequest request) {
         OperatorGuard.requireOperator();
+        // 强制关闭已付款订单会触发退款 —— 属于资金事实变更，因此归入不可删改的 FUNDS 档。
+        AuditTrail.target(0L);
+        AuditTrail.note("订单号 " + orderNo);
         String reason = request == null ? null : request.reason();
         return ApiResponse.ok(orderService.forceClose(orderNo, reason));
     }

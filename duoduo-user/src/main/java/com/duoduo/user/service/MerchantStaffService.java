@@ -1,6 +1,7 @@
 package com.duoduo.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.duoduo.common.audit.AuditTrail;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
@@ -10,11 +11,9 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.MembershipInfo;
 import com.duoduo.user.dto.MerchantDtos.StaffAdminView;
 import com.duoduo.user.dto.MerchantDtos.StaffView;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMemberEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
 import com.duoduo.user.mapper.UserMapper;
@@ -57,16 +56,13 @@ public class MerchantStaffService {
     private final MerchantMemberMapper memberMapper;
     private final UserMapper userMapper;
     private final SnowflakeIdGenerator idGenerator;
-    private final AuditLogMapper auditLogMapper;
 
     public MerchantStaffService(MerchantMapper merchantMapper, MerchantMemberMapper memberMapper,
-                                UserMapper userMapper, SnowflakeIdGenerator idGenerator,
-                                AuditLogMapper auditLogMapper) {
+                                UserMapper userMapper, SnowflakeIdGenerator idGenerator) {
         this.merchantMapper = merchantMapper;
         this.memberMapper = memberMapper;
         this.userMapper = userMapper;
         this.idGenerator = idGenerator;
-        this.auditLogMapper = auditLogMapper;
     }
 
     // ---------------- 店主侧 ----------------
@@ -103,8 +99,11 @@ public class MerchantStaffService {
         } catch (DuplicateKeyException ex) {
             throw BizException.conflict("该用户已属于其他商家（并发邀请），请刷新确认");
         }
-        writeAudit(ownerId, target.getId(), "INVITE_STAFF",
-                store.getName() + " 邀请 " + mask(target.getPhone()));
+        // E18 · 留痕交给 AuditInterceptor（端点带 @Audited），这里只补注解采集不到的三件事：
+        // 目标是谁、属于哪个租户、人读说明。租户 = 店铺主体 userId（与 t_spu.seller_id 同一个键）。
+        AuditTrail.target(target.getId(), "STAFF");
+        AuditTrail.tenant(store.getOwnerUserId());
+        AuditTrail.note(store.getName() + " 邀请 " + mask(target.getPhone()));
         log.info("店员邀请成功 merchantId={} staff={} owner={}", store.getId(), target.getId(), ownerId);
         return toView(member, target);
     }
@@ -136,8 +135,14 @@ public class MerchantStaffService {
             member.setStatus(target);
             member.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
             memberMapper.updateById(member);
-            writeAudit(ownerId, member.getUserId(),
-                    enable ? "ENABLE_STAFF" : "DISABLE_STAFF", "店 " + store.getName());
+            AuditTrail.target(member.getUserId(), "STAFF");
+            AuditTrail.tenant(store.getOwnerUserId());
+            AuditTrail.change(member.getRole() + ":" + (enable ? "DISABLED" : "ACTIVE"),
+                    member.getRole() + ":" + target);
+            AuditTrail.note("店 " + store.getName());
+        } else {
+            // 状态本来就一致 = 幂等确认，不构成事件（与 E18 之前同一口径）
+            AuditTrail.skip("店员状态已是 " + target + "，无实际变更");
         }
         return toView(member, userMapper.selectById(member.getUserId()));
     }
@@ -178,15 +183,22 @@ public class MerchantStaffService {
         if ("OWNER".equals(member.getRole())) {
             throw BizException.businessRule("不能停用店主账号（如需处置店铺请走封禁流程）");
         }
+        MerchantEntity store = merchantMapper.selectById(member.getMerchantId());
         String target = enable ? "ACTIVE" : "DISABLED";
         if (!target.equals(member.getStatus())) {
             member.setStatus(target);
             member.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
             memberMapper.updateById(member);
-            writeAudit(adminId, member.getUserId(),
-                    enable ? "ADMIN_ENABLE_STAFF" : "ADMIN_DISABLE_STAFF", "平台处置 merchant=" + member.getMerchantId());
+            AuditTrail.target(member.getUserId(), "STAFF");
+            // 平台处置也要落租户：否则「这家店的成员被谁动过」在按租户检索时查不出来，
+            // 而那恰恰是平台处置最需要被追溯的场景。
+            AuditTrail.tenant(store == null ? 0L : store.getOwnerUserId() == null ? 0L : store.getOwnerUserId());
+            AuditTrail.change(member.getRole() + ":" + (enable ? "DISABLED" : "ACTIVE"),
+                    member.getRole() + ":" + target);
+            AuditTrail.note("平台处置 merchant=" + member.getMerchantId());
+        } else {
+            AuditTrail.skip("店员状态已是 " + target + "，无实际变更");
         }
-        MerchantEntity store = merchantMapper.selectById(member.getMerchantId());
         UserEntity u = userMapper.selectById(member.getUserId());
         return new StaffAdminView(String.valueOf(member.getId()), String.valueOf(member.getMerchantId()),
                 store == null ? "—" : store.getName(), String.valueOf(member.getUserId()),
@@ -254,22 +266,6 @@ public class MerchantStaffService {
                 member.getCreatedAt() == null ? null : member.getCreatedAt().toString());
     }
 
-    private void writeAudit(Long actorId, Long targetId, String action, String detail) {
-        try {
-            LoginUser actor = UserContext.get();
-            AuditLogEntity record = new AuditLogEntity();
-            record.setId(idGenerator.nextId());
-            record.setActorId(actorId);
-            record.setActorPhone(actor == null || actor.phone() == null ? "" : actor.phone());
-            record.setAction(action);
-            record.setTargetId(targetId);
-            record.setDetail(detail);
-            record.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            auditLogMapper.insert(record);
-        } catch (Exception ex) {
-            log.error("成员操作留痕失败 actor={} target={} action={}", actorId, targetId, action, ex);
-        }
-    }
 
     private static String mask(String phone) {
         if (phone == null || phone.length() != 11) {

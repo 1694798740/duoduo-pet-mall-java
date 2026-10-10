@@ -1,12 +1,11 @@
 package com.duoduo.user.service;
 
+import com.duoduo.common.audit.AuditLogRecord;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.MerchantEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
@@ -51,11 +50,11 @@ class MerchantMaterialAccessTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MerchantMaterialStorage storage = mock(MerchantMaterialStorage.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, objectMapper, storage, auditLogMapper,
+                    userMapper, idGenerator, objectMapper, storage, auditLogService,
                     mock(MerchantViolationService.class));
 
     @BeforeEach
@@ -84,11 +83,11 @@ class MerchantMaterialAccessTest {
 
         service.readMaterial(OWNER_ID, MERCHANT_ID, STORED);
 
-        ArgumentCaptor<AuditLogEntity> cap = ArgumentCaptor.forClass(AuditLogEntity.class);
-        verify(auditLogMapper).insert(cap.capture());
-        assertThat(cap.getValue().getActorId()).isEqualTo(OWNER_ID);
-        assertThat(cap.getValue().getTargetId()).isEqualTo(MERCHANT_ID);
-        assertThat(cap.getValue().getDetail()).isEqualTo(STORED);
+        ArgumentCaptor<AuditLogRecord> cap = ArgumentCaptor.forClass(AuditLogRecord.class);
+        verify(auditLogService).record(cap.capture());
+        assertThat(cap.getValue().actorId()).isEqualTo(OWNER_ID);
+        assertThat(cap.getValue().targetId()).isEqualTo(MERCHANT_ID);
+        assertThat(cap.getValue().detail()).isEqualTo(STORED);
     }
 
     @Test
@@ -119,7 +118,7 @@ class MerchantMaterialAccessTest {
     void 留痕失败不阻断读取_但审计口子留在日志() {
         // 审计写入炸掉时读取仍要成功（可用性优先），否则一张读不出的图会卡住整个审核
         loginAs(OWNER_ID, "USER");
-        when(auditLogMapper.insert(any(AuditLogEntity.class))).thenThrow(new RuntimeException("db down"));
+        when(auditLogService.record(any(AuditLogRecord.class))).thenReturn(false);
 
         assertThat(service.readMaterial(OWNER_ID, MERCHANT_ID, STORED)).isNotNull();
     }

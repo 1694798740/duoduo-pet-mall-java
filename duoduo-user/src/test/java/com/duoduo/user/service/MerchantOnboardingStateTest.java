@@ -9,7 +9,6 @@ import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
 import com.duoduo.user.entity.MerchantMemberEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
@@ -59,11 +58,11 @@ class MerchantOnboardingStateTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MerchantMaterialStorage materialStorage = mock(MerchantMaterialStorage.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, objectMapper, materialStorage, auditLogMapper,
+                    userMapper, idGenerator, objectMapper, materialStorage, auditLogService,
                     mock(MerchantViolationService.class));
 
     /** setUp 与各用例共享的 owner 实例（service 经 userMapper.selectById 读到的就是它） */

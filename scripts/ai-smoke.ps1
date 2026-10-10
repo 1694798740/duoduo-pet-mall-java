@@ -62,6 +62,15 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
         Start-Sleep -Seconds 2
         $r = CallOnce $method $uri $session $bodyObj $headers
     }
+    # 503 + DEGRADED 与 status=0 是**同一类**：服务端明确说"我没能在超时内取到召回结果"
+    # —— 这是可用性抖动（商品域慢了一下），不是判断错误，可以安全重来一次。
+    # ★ 划清界限：**重试的是"拿不到"，绝不重试"答得不对"** —— 召回为空、答非所问、
+    #   幂等/权限不符这类都是真实信号，重试只会把它们洗成绿色（那是本项目最忌讳的假绿）。
+    if ($r.status -eq 503 -and "$($r.body.code)" -eq 'DEGRADED' -and $uri -like '*/api/duoduo/chat*') {
+        Write-Host "    （服务端 503 DEGRADED：召回超时 / 商品域不可达 —— 属「拿不到」，重试 1 次）"
+        Start-Sleep -Seconds 2
+        $r = CallOnce $method $uri $session $bodyObj $headers
+    }
     return $r
 }
 
@@ -210,7 +219,7 @@ $deepHistory = @(
     @{ role = 'assistant'; content = '网易严选 99 元' }
 )
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '有货吗？'; clarified = $true; history = $deepHistory } $null $null
-Check "连续追问（第二轮追问）仍能召回" (@($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+Check "连续追问（第二轮追问）仍能召回" (@($r.body.data.recommendations).Count -ge 1) ("status=$($r.status) | " + ($r.body | ConvertTo-Json -Compress -Depth 6))
 
 # 对照：不带 history 的追问句必须如实说没有 —— 证明上面命中的确来自上下文并入，而非该句本身可召回
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？'; clarified = $true } $null $null

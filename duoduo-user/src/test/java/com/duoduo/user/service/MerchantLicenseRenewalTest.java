@@ -10,7 +10,6 @@ import com.duoduo.user.dto.MerchantDtos.SaveDraftRequest;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.mapper.MerchantMemberMapper;
@@ -68,11 +67,11 @@ class MerchantLicenseRenewalTest {
     private final UserMapper userMapper = mock(UserMapper.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final MerchantMaterialStorage materialStorage = mock(MerchantMaterialStorage.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
 
     private final MerchantOnboardingService service =
             new MerchantOnboardingService(merchantMapper, memberMapper, materialMapper,
-                    userMapper, idGenerator, new ObjectMapper(), materialStorage, auditLogMapper,
+                    userMapper, idGenerator, new ObjectMapper(), materialStorage, auditLogService,
                     mock(MerchantViolationService.class));
 
     /** service 每次 selectList 都返回这一份材料行，用例可以改它模拟「商家填了哪些有效期」 */

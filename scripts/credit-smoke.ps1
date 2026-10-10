@@ -60,7 +60,8 @@ function Check([string]$name, [bool]$ok, $extra) {
 . (Join-Path $PSScriptRoot 'lib\seller-fixture.ps1')
 # 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货；
 # 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
-$sessShip = (New-PlatformOperatorSession -Gateway $Gateway -Password $Password).session
+$opShip = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
+$sessShip = $opShip.session
 
 
 function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$headers) {
@@ -427,6 +428,15 @@ Sql 'duoduo_user' "UPDATE t_user SET credit_score = $origCredit WHERE id = $sell
 Check "★ 卖家 S 信用分已复原为测试前的 $origCredit" ("$(Sql 'duoduo_user' "SELECT credit_score FROM t_user WHERE id = $sellerId;")" -eq "$origCredit")
 $rFinal = Credit $sellerId $anon
 Check "（复原后）卖家 S 信用分回到基础分 $W_BASE" ($rFinal.body.data.score -eq $W_BASE) $rFinal.body.data.score
+
+# ---------- 收尾：夹具运营账号降回 USER + 清掉它留下的审计行 ----------
+# 本套件为拿到后台入口提了**两个**临时运营账号（发货会话 + 通用会话）。不收尾的话，
+# 每跑一轮就在库里留两个永久可进平台后台的账号（E26 清理存量时就见过一批）；
+# 而 E18 起后台每次写操作都会留痕 —— 那些审计行还会假装成"真人干过的运营动作"。
+# 放在所有 Check 之后：不新增断言，断言总数守卫的期望值不受影响。
+foreach ($fx in @($opShip, $op)) {
+    if ($null -ne $fx -and "$($fx.phone)" -ne '') { Remove-PlatformOperatorPrivilege -Phone $fx.phone | Out-Null }
+}
 
 # ---------- 结果 ----------
 Write-Host ""

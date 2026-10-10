@@ -4,6 +4,7 @@ import com.duoduo.common.web.internal.InternalCallAuth;
 import com.duoduo.common.web.sched.SchedLeaderLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -117,12 +118,28 @@ public class WebAutoConfiguration {
     }
 
     @Bean
-    public WebMvcConfigurer duoduoWebMvcConfigurer() {
+    public WebMvcConfigurer duoduoWebMvcConfigurer(
+            ObjectProvider<com.duoduo.common.audit.AuditSink> auditSinkProvider) {
         return new WebMvcConfigurer() {
 
             @Override
             public void addInterceptors(InterceptorRegistry registry) {
                 registry.addInterceptor(new UserContextInterceptor())
+                        .addPathPatterns("/**")
+                        .excludePathPatterns(
+                                "/actuator/**",
+                                "/health/**",
+                                "/error",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/doc.html",
+                                "/h2-console/**"
+                        );
+                // E18 · 后台写操作留痕。★ 注册在 UserContextInterceptor 之后（要靠它还原操作人）、
+                // 但在 PermissionInterceptor **之前** —— 顺序反过来的话，越权被拒的请求
+                // 根本走不到审计拦截器的 afterCompletion（Spring 只为 preHandle 成功过的
+                // 拦截器回调）→「连续失败的提权尝试」这类最该被看见的信号全部丢失。
+                registry.addInterceptor(new AuditInterceptor(auditSinkProvider))
                         .addPathPatterns("/**")
                         .excludePathPatterns(
                                 "/actuator/**",

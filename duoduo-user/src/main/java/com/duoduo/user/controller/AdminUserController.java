@@ -2,6 +2,8 @@ package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.user.dto.UserDtos.AdminUserView;
 import com.duoduo.user.dto.UserDtos.RoleChangeRequest;
 import com.duoduo.user.dto.UserDtos.RoleChangeResult;
@@ -20,6 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>权限边界在 {@code AdminUserService}（与 {@code AdminListingController} 同一先例：
  * guard 放服务层）—— 这里只做「解析请求、调服务、格式化响应」。
  * 网关白名单不含 {@code /api/admin/**}，所有请求必须带登录令牌。
+ *
+ * <p>E18 起 {@code changeRole} 带 {@link Audited}：留痕由拦截器统一采集
+ * （谁 / 何时 / 从哪个 IP / 哪条链路 / 成功还是失败），服务层只补「目标是谁、
+ * 角色从什么变成什么」。这条端点**不再**自己写审计表 —— 一个动作两条记录
+ * 会让审计页上的计数失去意义。
  */
 @RestController
 @RequestMapping("/api/admin/users")
@@ -41,6 +48,7 @@ public class AdminUserController {
     }
 
     @PostMapping("/{id}/role")
+    @Audited(action = AuditAction.USER_ROLE_CHANGE)
     public ApiResponse<RoleChangeResult> changeRole(@PathVariable Long id,
                                                     @RequestBody RoleChangeRequest request) {
         return ApiResponse.ok(adminUserService.changeRole(id, request.role()));

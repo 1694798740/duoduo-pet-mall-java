@@ -4,10 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.web.sched.SchedLeaderLock;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditLogRecord;
+import com.duoduo.common.audit.AuditOutcome;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.support.LicenseExpiry;
@@ -65,14 +66,14 @@ public class MerchantLicenseJob {
     private static final int BATCH_LIMIT = 200;
 
     /** 审计动作：系统因资质过期停业 */
-    private static final String ACTION_SUSPEND = "MERCHANT_LICENSE_SUSPEND";
+    private static final AuditAction ACTION_SUSPEND = AuditAction.MERCHANT_LICENSE_SUSPEND;
     /** 系统动作的 actorId 占位（t_audit_log.actor_id 非空；0 = 平台系统） */
     private static final long SYSTEM_ACTOR = 0L;
 
     private final MerchantMapper merchantMapper;
     private final MerchantMaterialMapper materialMapper;
     private final MerchantLicenseNotifier notifier;
-    private final AuditLogMapper auditLogMapper;
+    private final AuditLogService auditLogService;
     private final SnowflakeIdGenerator idGenerator;
     private final SchedLeaderLock leaderLock;
     private final boolean enabled;
@@ -80,14 +81,14 @@ public class MerchantLicenseJob {
     public MerchantLicenseJob(MerchantMapper merchantMapper,
                               MerchantMaterialMapper materialMapper,
                               MerchantLicenseNotifier notifier,
-                              AuditLogMapper auditLogMapper,
+                              AuditLogService auditLogService,
                               SnowflakeIdGenerator idGenerator,
                               SchedLeaderLock leaderLock,
                               @Value("${duoduo.merchant.license.sweep-enabled:true}") boolean enabled) {
         this.merchantMapper = merchantMapper;
         this.materialMapper = materialMapper;
         this.notifier = notifier;
-        this.auditLogMapper = auditLogMapper;
+        this.auditLogService = auditLogService;
         this.idGenerator = idGenerator;
         this.leaderLock = leaderLock;
         this.enabled = enabled;
@@ -304,19 +305,22 @@ public class MerchantLicenseJob {
      * 因为哪份证到期、停了哪家店」，而不是「谁点的按钮」。
      */
     private void writeAudit(MerchantEntity merchant, String label, LocalDateTime expireAt) {
-        try {
-            AuditLogEntity record = new AuditLogEntity();
-            record.setId(idGenerator.nextId());
-            record.setActorId(SYSTEM_ACTOR);
-            record.setActorPhone("");
-            record.setAction(ACTION_SUSPEND);
-            record.setTargetId(merchant.getId());
-            record.setDetail("APPROVED -> SUSPENDED，依据：" + label + " 到期日 " + expireAt.toLocalDate());
-            record.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            auditLogMapper.insert(record);
-        } catch (Exception ex) {
+        // E18 · 统一走 AuditLogService，不再自己拼实体：
+        // 类目（TENANT）、目标类型、结果等维度由动作清单唯一决定，避免这一处漏填。
+        // 定时任务路径没有 HTTP 请求，因此不能靠 @Audited 注解，必须显式写。
+        boolean written = auditLogService.record(new AuditLogRecord(
+                SYSTEM_ACTOR, "", ACTION_SUSPEND.code(),
+                ACTION_SUSPEND.category().name(), AuditOutcome.SUCCESS.name(),
+                merchant.getId(), ACTION_SUSPEND.targetType(),
+                // 租户 = 店铺主体 userId（与 t_spu.seller_id 同一个键，不能用 merchant.id）
+                merchant.getOwnerUserId() == null ? 0L : merchant.getOwnerUserId(),
+                "APPROVED", "SUSPENDED",
+                null, com.duoduo.common.api.RequestIdHolder.get(),
+                "依据：" + label + " 到期日 " + expireAt.toLocalDate(),
+                LocalDateTime.now(ZoneOffset.UTC).toString()));
+        if (!written) {
             // 留痕失败不阻断停业（停业是合规动作，必须成立），但必须吵到日志
-            log.error("资质停业留痕失败 merchantId={}", merchant.getId(), ex);
+            log.error("资质停业留痕失败 merchantId={}", merchant.getId());
         }
     }
 }

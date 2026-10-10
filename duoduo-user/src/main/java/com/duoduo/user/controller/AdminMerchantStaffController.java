@@ -2,6 +2,8 @@ package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.user.dto.MerchantDtos.StaffAdminView;
@@ -39,12 +41,14 @@ public class AdminMerchantStaffController {
     }
 
     @PostMapping("/{memberId}/disable")
+    @Audited(action = AuditAction.ADMIN_DISABLE_STAFF)
     public ApiResponse<StaffAdminView> disable(@PathVariable("memberId") long memberId) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(staffService.adminSetStatus(UserContext.requireUserId(), memberId, false));
     }
 
     @PostMapping("/{memberId}/enable")
+    @Audited(action = AuditAction.ADMIN_ENABLE_STAFF)
     public ApiResponse<StaffAdminView> enable(@PathVariable("memberId") long memberId) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(staffService.adminSetStatus(UserContext.requireUserId(), memberId, true));

@@ -1,6 +1,9 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.trade.dto.SeckillDtos.ActivityView;
 import com.duoduo.trade.dto.SeckillDtos.CreateActivityRequest;
@@ -41,6 +44,7 @@ public class AdminSeckillController {
 
     /** 创建秒杀活动（原价缺省取商品当前售价；余量自动装载进 Redis） */
     @PostMapping("/activities")
+    @Audited(action = AuditAction.SECKILL_CREATE)
     public ApiResponse<ActivityView> create(@Valid @RequestBody CreateActivityRequest request) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(seckillService.createActivity(request));
@@ -48,8 +52,11 @@ public class AdminSeckillController {
 
     /** 上下架（enabled=false 即对 C 端隐藏） */
     @PostMapping("/activities/{id}/status")
+    @Audited(action = AuditAction.SECKILL_STATUS)
     public ApiResponse<ActivityView> toggle(@PathVariable Long id, @Valid @RequestBody ToggleRequest request) {
         OperatorGuard.requireOperator();
+        AuditTrail.target(id, "SECKILL");
+        AuditTrail.change("enabled=" + (!request.enabled()), "enabled=" + request.enabled());
         return ApiResponse.ok(seckillService.toggle(id, request.enabled()));
     }
 
@@ -58,8 +65,12 @@ public class AdminSeckillController {
      * 已成交的活动不允许把开始时间改到未来。
      */
     @PutMapping("/activities/{id}")
+    @Audited(action = AuditAction.SECKILL_UPDATE)
     public ApiResponse<ActivityView> edit(@PathVariable Long id, @Valid @RequestBody EditActivityRequest request) {
         OperatorGuard.requireOperator();
+        // 编辑只放标题与时间（商品/秒杀价/配额刻意不给改，见 R74）
+        AuditTrail.target(id, "SECKILL");
+        AuditTrail.note("编辑标题/时间");
         return ApiResponse.ok(seckillService.editActivity(id, request));
     }
 
@@ -70,8 +81,10 @@ public class AdminSeckillController {
      * 删除时连带清理秒杀 SKU 行、已关闭订单的链接行与 Redis 余量键；`t_order` 一律留档。
      */
     @DeleteMapping("/activities/{id}")
+    @Audited(action = AuditAction.SECKILL_DELETE)
     public ApiResponse<Void> delete(@PathVariable Long id) {
         OperatorGuard.requireOperator();
+        AuditTrail.target(id, "SECKILL");
         seckillService.deleteActivity(id);
         return ApiResponse.ok();
     }

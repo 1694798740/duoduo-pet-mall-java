@@ -113,27 +113,51 @@ CREATE TABLE IF NOT EXISTS `t_user_address` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '收货地址簿';
 
 -- ============================================================================
--- 运营审计日志（A7）
+-- 后台操作审计日志（A7 建表 / E18 扩列）
 --
--- 记录「谁给谁改了什么」：角色变更等运营敏感操作逐条落库。
+-- 记录「谁在哪个租户上、对什么、做了什么、结果如何、从哪来」。
 -- 只追加、不更新、不删除（无 updated_at）：审计日志的价值在于不可篡改的顺序历史，
 -- 提供 UPDATE 语义只会诱使人去「修正历史」。
 --
--- detail 存紧凑变更摘要（如 `USER -> OPERATOR`），结构化扩展留待埋点表
--- t_analytics_event（仍预留），不在这里过早设计。
+-- E18 补齐四类原先缺失的信息（原表只有 actor_id/actor_phone/action/target_id/detail）：
+--   ① category  —— 动作类目；**SECURITY（权限/身份/敏感数据）与 FUNDS（资金）
+--      为不可删改档**，将来若做归档清理，这两个类目必须整体保留。
+--      判据的唯一实现在 duoduo-common 的 AuditCategory.immutable()，不在这里定义。
+--   ② outcome   —— 结果；失败的越权尝试同样留痕（「谁试过但没成功」是审计的一半价值）。
+--   ③ tenant_id —— 租户（店铺主体 userId）；0 = 平台级操作 / 自营。
+--   ④ before_value / after_value / ip / request_id —— 前后值（机读）+ 来源。
+--
+-- ★ 新增列的默认值让存量数据维持原状（category 默认 OTHER、outcome 默认 SUCCESS、
+--   tenant_id 默认 0）：把旧数据解释成更严的档位只会制造假线索（E15 的同一取舍）。
+-- ★ target_id 保持 NOT NULL，**0 表示「平台级操作、无单一目标」**（全站索引重建、
+--   资质巡检）。用 NULL 表示同一意思会让 `WHERE target_id = ?` 的语义分叉。
+-- ★ detail 仍是人读摘要；结构化比对走 before_value / after_value。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS `t_audit_log` (
-    `id`          BIGINT       NOT NULL COMMENT '雪花 ID',
-    `actor_id`    BIGINT       NOT NULL COMMENT '操作人用户 ID',
-    `actor_phone` VARCHAR(20)  NOT NULL COMMENT '操作人手机号（审计追责用，库表非日志通道）',
-    `action`      VARCHAR(50)  NOT NULL COMMENT '动作标识（如 USER_ROLE_CHANGE）',
-    `target_id`   BIGINT       NOT NULL COMMENT '目标对象 ID（如被改角色的用户）',
-    `detail`      VARCHAR(500) NOT NULL COMMENT '变更明细（old -> new）',
-    `created_at`  TIMESTAMP    NOT NULL,
+    `id`           BIGINT       NOT NULL COMMENT '雪花 ID',
+    `actor_id`     BIGINT       NOT NULL COMMENT '操作人用户 ID',
+    `actor_phone`  VARCHAR(20)  NOT NULL COMMENT '操作人手机号（审计追责用，库表非日志通道）',
+    `action`       VARCHAR(50)  NOT NULL COMMENT '动作标识（如 USER_ROLE_CHANGE）',
+    `category`     VARCHAR(20)  NOT NULL DEFAULT 'OTHER'
+                   COMMENT '动作类目：SECURITY/FUNDS/TENANT/CONTENT/OTHER；SECURITY 与 FUNDS 不可删改',
+    `outcome`      VARCHAR(16)  NOT NULL DEFAULT 'SUCCESS' COMMENT '结果：SUCCESS/FAILED',
+    `target_id`    BIGINT       NOT NULL COMMENT '目标对象 ID；0 = 平台级操作无单一目标',
+    `target_type`  VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '目标类型：USER/MERCHANT/PRODUCT/…',
+    `tenant_id`    BIGINT       NOT NULL DEFAULT 0 COMMENT '租户（店铺主体 userId）；0 = 平台级/自营',
+    `before_value` VARCHAR(500)          DEFAULT NULL COMMENT '变更前值（机读）；NULL = 不适用',
+    `after_value`  VARCHAR(500)          DEFAULT NULL COMMENT '变更后值（机读）；NULL = 不适用',
+    `ip`           VARCHAR(64)           DEFAULT NULL COMMENT '调用方 IP（网关 X-Real-IP）',
+    `request_id`   VARCHAR(64)           DEFAULT NULL COMMENT '链路 ID，与访问日志对账用',
+    `detail`       VARCHAR(500) NOT NULL COMMENT '变更明细（人读摘要，如 USER -> OPERATOR）',
+    `created_at`   TIMESTAMP    NOT NULL,
     PRIMARY KEY (`id`),
     KEY `idx_audit_actor` (`actor_id`),
-    KEY `idx_audit_target` (`target_id`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '运营审计日志';
+    KEY `idx_audit_target` (`target_id`),
+    KEY `idx_audit_created` (`created_at`),
+    KEY `idx_audit_actor_created` (`actor_id`, `created_at`),
+    KEY `idx_audit_tenant_created` (`tenant_id`, `created_at`),
+    KEY `idx_audit_category_created` (`category`, `created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '后台操作审计日志';
 
 -- ============================================================================
 -- 第三方商家租户（E9 建表 / E10 状态机 / E13 成员 / E15 资质有效期）

@@ -2,6 +2,9 @@ package com.duoduo.product.controller;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.product.support.search.SearchIndexer;
 import com.duoduo.product.support.search.SearchSyncJob;
@@ -72,6 +75,7 @@ public class SearchAdminController {
 
     /** 全量重建（重操作）：重建完成时间取决于目录规模；重建期间检索可能命中旧索引，属预期 */
     @PostMapping("/reindex")
+    @Audited(action = AuditAction.SEARCH_REINDEX)
     public ApiResponse<Map<String, Object>> reindex() {
         OperatorGuard.requireOperator();
         syncJob.fullSync();

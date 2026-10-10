@@ -70,6 +70,9 @@ class RolePermissionMatrixTest {
         EXPECTED_HOLDERS.put(Permission.ORDER_MQ_MANAGE, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.AFTERSALE_ARBITRATE, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.COUPON_TEMPLATE_MANAGE, Set.of("ADMIN", "OPERATOR"));
+        // 审计（E18）：运营也能看 —— 运营是后台操作的主体，看记录不改变任何事实；
+        // 真正的边界是「审计记录不可删改」（任何角色都没有修改入口）
+        EXPECTED_HOLDERS.put(Permission.AUDIT_LOG_READ, Set.of("ADMIN", "OPERATOR"));
         // 财务（E22 落地，当前仅 ADMIN）
         EXPECTED_HOLDERS.put(Permission.FINANCE_SETTLEMENT, Set.of("ADMIN"));
         // 商家端
@@ -79,7 +82,7 @@ class RolePermissionMatrixTest {
     // ---------------- 1. 逐条矩阵 ----------------
 
     @Test
-    @DisplayName("逐条矩阵：4 角色 × 18 权限点，每条都按真值表钉死")
+    @DisplayName("逐条矩阵：4 角色 × 19 权限点，每条都按真值表钉死")
     void every_role_permission_pair_matches_truth_table() {
         List<String> mismatches = new ArrayList<>();
         int checked = 0;

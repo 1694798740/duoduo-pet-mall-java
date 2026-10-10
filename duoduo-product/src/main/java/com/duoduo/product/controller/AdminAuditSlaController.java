@@ -1,6 +1,9 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.security.perm.Permission;
 import com.duoduo.common.security.perm.RequirePerm;
@@ -64,6 +67,7 @@ public class AdminAuditSlaController {
 
     /** 复核一条抽查任务：PASS / REJECT（判违规必须填原因） */
     @PostMapping("/samples/{id}/review")
+    @Audited(action = AuditAction.AUDIT_SLA_REVIEW)
     public ApiResponse<AuditSampleView> review(@PathVariable("id") Long id,
                                                @RequestBody ReviewRequest request) {
         String action = request == null ? null : request.action();
@@ -89,6 +93,7 @@ public class AdminAuditSlaController {
      * 线上出问题时有个不依赖等定时的抓手。反复点也不会重复建任务（唯一键幂等）。
      */
     @PostMapping("/sweep")
+    @Audited(action = AuditAction.AUDIT_SLA_SWEEP)
     public ApiResponse<SampleReport> sweep() {
         return ApiResponse.ok(sampleJob.sweepNow());
     }

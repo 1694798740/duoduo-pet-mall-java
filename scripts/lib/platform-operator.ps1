@@ -59,6 +59,36 @@ function New-PlatformOperatorSession {
     return @{ session = $sess; phone = $phone; roleSet = $roleSet; role = $lastRole }
 }
 
+function Clear-OperatorAuditTrail {
+    <#
+    .SYNOPSIS
+      清掉「本次夹具运营账号」作为**操作人**的审计行（E18 之后的收尾必做项）。
+    .DESCRIPTION
+      E18 起，后台**每一次写操作都会留痕** —— 包括冒烟脚本自己发起的那些
+      （建类目、改品牌状态、审闲置、强关订单、改角色……）。它们会以本次
+      随机手机号那个夹具账号为 `actor_id` 落进 `t_audit_log`。
+
+      不清的话有两层坏处：
+        ① 审计台账（它是「追责台账」）被测试噪声持续灌入，越跑越像真的；
+        ② 更隐蔽的一层：那个账号收尾后已降回 USER，台账里却留着
+           「一个 USER 干了这些运营动作」的记录 —— 将来真去查账会得出错误结论。
+
+      为什么按 `actor_id` 删是安全的：本函数只接受**本次运行随机生成的**手机号，
+      对应的 `user_id` 在整个库里只可能是这一个夹具账号，删除范围精确到它自己。
+      **绝不按时间/按动作/按库批量删** —— 那会把真实运营记录一起清掉。
+    .PARAMETER Phone
+      本次夹具运营账号的手机号（`New-PlatformOperatorSession` 返回值里的 `phone`）。
+    .OUTPUTS
+      删除后该 actor 剩余行数（应为 0），供调用方断言。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Phone)
+    & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
+        -e "DELETE a FROM t_audit_log a JOIN t_user u ON u.id = a.actor_id WHERE u.phone = '$Phone';" 2>&1 | Out-Null
+    $row = & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
+        -e "SELECT COUNT(*) FROM t_audit_log a JOIN t_user u ON u.id = a.actor_id WHERE u.phone = '$Phone';" 2>$null
+    return ("$row").Trim()
+}
+
 function Remove-PlatformOperatorPrivilege {
     <#
     .SYNOPSIS
@@ -69,12 +99,18 @@ function Remove-PlatformOperatorPrivilege {
       （E26 清理存量时就见过一批）。所以新套件一律在结尾调用本函数。
       刻意「降级」而不是「删号」：账号是本次随机手机号注册的，随时可再提权；
       而删号会牵连它参与过的业务数据，副作用大于收益。
+
+      ★ E18 起本函数**顺带清理该账号的审计行**（调用 `Clear-OperatorAuditTrail`）。
+      刻意合并在同一个收尾函数里而不是拆成两个让调用方各调一次：
+      「收尾要做两件事、但只记得做一件」是注定会发生的（E26 的根因就是收尾不可靠），
+      合并之后**现有 3 个调用点一行业务代码都没改就自动正确了**。
     .OUTPUTS
       收回后的角色字符串（应为 USER），供调用方断言。
     #>
     param([Parameter(Mandatory = $true)][string]$Phone)
     & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
         -e "UPDATE t_user SET role='USER' WHERE phone='$Phone';" 2>&1 | Out-Null
+    Clear-OperatorAuditTrail -Phone $Phone | Out-Null
     $row = & docker exec duoduo-mysql mysql -uduoduo -pduoduo -N -B -D duoduo_user `
         -e "SELECT role FROM t_user WHERE phone='$Phone';" 2>$null
     return ("$row").Trim()

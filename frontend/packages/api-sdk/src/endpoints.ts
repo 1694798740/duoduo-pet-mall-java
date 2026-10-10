@@ -26,6 +26,8 @@ import type {
   AdminCharts,
   AdminProductAuditRequest,
   AdminProductAuditView,
+  AuditLogQuery,
+  AuditLogView,
   AdminReport,
   AdminSettlementSummary,
   AdminUserView,
@@ -673,6 +675,22 @@ export const adminApi = {
    */
   deleteSeckillActivity: (id: string) =>
     api.del<void>(`/api/admin/seckill/activities/${id}`),
+
+  // ---- 后台操作审计日志（E18，落在 duoduo-user） ----
+
+  /**
+   * 检索审计记录（**只有读，没有写**）。
+   *
+   * 服务端刻意不提供任何修改 / 删除入口：审计的完整性靠「根本没有修改路径」来保证，
+   * 而不是靠「没人会去改」。将来若要按类目归档，必须先改服务端的档位判据
+   * （`AuditCategory.immutable()`）并让「允许删什么」变成一次显式决定。
+   *
+   * 过滤条件全部可选；**不带任何条件即「最近若干条」** —— 这正是打开页面那一下发出的请求。
+   * 时间参数接受 `2026-10-09`（整日，止端按「含」处理）或 `2026-10-09T13:00:00`；
+   * 格式不对服务端回 400 而不是静默忽略（静默忽略会让人以为「这段时间真的没发生什么」）。
+   */
+  auditLogs: (query?: AuditLogQuery) =>
+    api.get<PageResult<AuditLogView>>('/api/admin/audit-logs', { query }),
 };
 
 // ---------- 支付（/api/payments） ----------

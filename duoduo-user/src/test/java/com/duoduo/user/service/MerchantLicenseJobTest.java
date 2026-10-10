@@ -7,7 +7,6 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.common.web.sched.SchedLeaderLock;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMaterialEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.mapper.MerchantMaterialMapper;
 import com.duoduo.user.support.LicenseExpiry;
@@ -58,12 +57,12 @@ class MerchantLicenseJobTest {
     private final MerchantMapper merchantMapper = mock(MerchantMapper.class);
     private final MerchantMaterialMapper materialMapper = mock(MerchantMaterialMapper.class);
     private final MerchantLicenseNotifier notifier = mock(MerchantLicenseNotifier.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final SchedLeaderLock leaderLock = mock(SchedLeaderLock.class);
 
     private final MerchantLicenseJob job = new MerchantLicenseJob(merchantMapper, materialMapper,
-            notifier, auditLogMapper, idGenerator, leaderLock, true);
+            notifier, auditLogService, idGenerator, leaderLock, true);
 
     @BeforeAll
     static void initMybatisTableInfo() {
@@ -100,7 +99,7 @@ class MerchantLicenseJobTest {
         assertThat(merchant.getStatus()).isEqualTo("SUSPENDED");
         verify(notifier).notifySuspended(any(), eq("营业执照"), eq(endOfDay(2026, 6, 14)));
         verify(notifier).offShelfAll(OWNER_ID);       // 「停售」不是可选项
-        verify(auditLogMapper).insert(any());         // 平台单方面停业必须留痕
+        verify(auditLogService).record(any());       // 平台单方面停业必须留痕
     }
 
     @Test
@@ -266,7 +265,7 @@ class MerchantLicenseJobTest {
     @DisplayName("任务暂停：开关关闭时调度入口直接返回，不碰数据库")
     void disabledJobDoesNothing() {
         MerchantLicenseJob off = new MerchantLicenseJob(merchantMapper, materialMapper,
-                notifier, auditLogMapper, idGenerator, leaderLock, false);
+                notifier, auditLogService, idGenerator, leaderLock, false);
 
         off.sweep();
 

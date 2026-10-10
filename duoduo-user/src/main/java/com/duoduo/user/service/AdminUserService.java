@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.security.perm.Permission;
@@ -12,9 +13,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.UserDtos.AdminUserView;
 import com.duoduo.user.dto.UserDtos.RoleChangeResult;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.UserEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.RefreshTokenMapper;
 import com.duoduo.user.mapper.UserMapper;
 import com.duoduo.user.support.PermVersionPublisher;
@@ -74,21 +73,17 @@ public class AdminUserService {
     private static final Map<String, Integer> ROLE_RANK =
             Map.of("ADMIN", 0, "OPERATOR", 1, "SELLER", 2, "USER", 3);
 
-    private static final String ACTION_ROLE_CHANGE = "USER_ROLE_CHANGE";
 
     private final UserMapper userMapper;
-    private final AuditLogMapper auditLogMapper;
     private final RefreshTokenMapper refreshTokenMapper;
     private final SnowflakeIdGenerator idGenerator;
     private final PermVersionPublisher permVersionPublisher;
 
     public AdminUserService(UserMapper userMapper,
-                            AuditLogMapper auditLogMapper,
                             RefreshTokenMapper refreshTokenMapper,
                             SnowflakeIdGenerator idGenerator,
                             PermVersionPublisher permVersionPublisher) {
         this.userMapper = userMapper;
-        this.auditLogMapper = auditLogMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.idGenerator = idGenerator;
         this.permVersionPublisher = permVersionPublisher;
@@ -145,7 +140,10 @@ public class AdminUserService {
 
         String oldRole = target.getRole() == null ? "USER" : target.getRole().toUpperCase();
         if (oldRole.equals(newRole)) {
-            // 幂等：目标角色与当前一致，原样返回，不产生审计事件
+            // 幂等：目标角色与当前一致，原样返回，不产生审计事件。
+            // E18 起留痕由拦截器统一做，所以这里要**显式抑制** —— 否则「重复确认同一状态」
+            // 会变成一条记录，把审计信噪比稀释掉（这也是 E18 之前的行为）。
+            AuditTrail.skip("目标已是该角色，无实际变更");
             return new RoleChangeResult(toAdminView(target), "该用户已是 " + newRole + " 角色，未做变更");
         }
 
@@ -200,7 +198,12 @@ public class AdminUserService {
         // 吊销刷新令牌：**仅在广播失败时**作为兜底（见上）
         int revoked = broadcast ? 0 : refreshTokenMapper.revokeAllByUser(targetUserId);
 
-        writeAudit(actor, target, oldRole, newRole);
+        // E18 · 补充审计上下文（目标 + 前后值）。采集与落库由 AuditInterceptor 统一做：
+        // 一个动作只能有一条记录，所以这里不再自己写审计表。
+        // 租户一律 0：角色是平台级概念，不属于任何店铺 —— 这里若填了 actor 的 userId，
+        // 审计页会把它误显示成「某家店的动作」。
+        AuditTrail.target(target.getId(), "USER");
+        AuditTrail.change(oldRole, newRole);
 
         log.info("角色变更 actorId={} targetId={} {} -> {}，permVersion={}，副本广播={}，吊销刷新令牌 {} 条",
                 actor.userId(), targetUserId, oldRole, newRole, newVersion, broadcast, revoked);
@@ -210,18 +213,6 @@ public class AdminUserService {
                 : "角色已更新为 " + newRole + "；权限版本副本同步失败（Redis 不可用），已吊销该用户的刷新令牌（"
                 + revoked + " 条），其在线会话将重新登录后生效";
         return new RoleChangeResult(toAdminView(target), notice);
-    }
-
-    private void writeAudit(LoginUser actor, UserEntity target, String oldRole, String newRole) {
-        AuditLogEntity record = new AuditLogEntity();
-        record.setId(idGenerator.nextId());
-        record.setActorId(actor.userId());
-        record.setActorPhone(actor.phone());
-        record.setAction(ACTION_ROLE_CHANGE);
-        record.setTargetId(target.getId());
-        record.setDetail(oldRole + " -> " + newRole);
-        record.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
-        auditLogMapper.insert(record);
     }
 
     /** 运营视图（脱敏）：不给实名姓名、身份证掩码、完整手机号，理由见 DTO 注释 */

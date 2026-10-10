@@ -1,6 +1,9 @@
 package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleArbitrateRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleView;
@@ -42,6 +45,7 @@ public class AdminAfterSaleController {
 
     /** 裁定：APPROVE_REFUND（支持退款，会真的执行退款）/ REJECT（驳回），**必须填裁定说明** */
     @PostMapping("/{id}/arbitrate")
+    @Audited(action = AuditAction.AFTERSALE_ARBITRATE)
     public ApiResponse<AfterSaleView> arbitrate(@PathVariable Long id,
                                                @Valid @RequestBody AfterSaleArbitrateRequest request) {
         return ApiResponse.ok(afterSaleService.arbitrate(id, request));

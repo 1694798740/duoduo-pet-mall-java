@@ -17,7 +17,12 @@ import { Alert } from '@duoduo/shared/components/ui';
  */
 export { isAdminRole, isOperator } from '@duoduo/shared/lib/roles';
 
-/** 后台内部导航：把十个工作台挂到一条标签上 */
+/**
+ * 后台内部导航：把**标签导航里的工作台**挂到一条标签上。
+ * ★ 本数组**不等于** `AdminRoot.tsx` 的全部后台路由 —— 「入驻审核台」与「商家子账号」
+ *   刻意不在这里（它们从运营概览的待办入口进，属于"有活才去"的页面，常驻标签只会稀释注意力）。
+ *   因此：改标签时不要顺手拿两边的条数互相对齐，判据是**是否该常驻**。
+ */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
   { to: '/admin/audits', label: '内容审核', end: false },
@@ -31,6 +36,9 @@ const TABS = [
   { to: '/admin/orders', label: '订单干预', end: false },
   { to: '/admin/after-sales', label: '售后仲裁', end: false },
   { to: '/admin/operators', label: '运营账号', end: false },
+  // E18：操作审计与上面的「内容审核」同名易混，标签用「操作审计」并把路径写成
+  // /admin/operation-audits —— 前者是追责台账（只读），后者是内容审批队列（有操作列）。
+  { to: '/admin/operation-audits', label: '操作审计', end: false },
   { to: '/admin/seckill', label: '秒杀活动', end: false },
 ];
 

@@ -19,6 +19,7 @@ import { AdminDenied, isOperator } from './shared';
 import { AdminLoginPage } from './AdminLogin';
 import { AdminDashboardPage } from './Dashboard';
 import { AdminAuditsPage } from './Audits';
+import { AdminOperationAuditsPage } from './OperationAudits';
 import { AdminProductAuditsPage } from './ProductAudits';
 import { AdminAuditSlaPage } from './AuditSla';
 import { AdminMerchantsPage } from './Merchants';
@@ -91,6 +92,9 @@ export const AdminRoot: React.FC = () => (
       <Route path="/admin/merchants" element={<AdminMerchantsPage />} />
       <Route path="/admin/merchant-staff" element={<AdminMerchantStaffPage />} />
       <Route path="/admin/audits" element={<AdminAuditsPage />} />
+      {/* E18 操作审计：与上面的「内容审核」（/admin/audits，闲置内容审批队列）是两件事，
+          路径刻意分开 —— 前者是「谁在后台做了什么」的追责台账，后者是「等我放行的内容」待办队列。 */}
+      <Route path="/admin/operation-audits" element={<AdminOperationAuditsPage />} />
       <Route path="/admin/product-audits" element={<AdminProductAuditsPage />} />
       <Route path="/admin/audit-sla" element={<AdminAuditSlaPage />} />
       <Route path="/admin/categories" element={<AdminCategoriesPage />} />

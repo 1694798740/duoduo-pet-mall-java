@@ -1,6 +1,9 @@
 package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
@@ -48,6 +51,7 @@ public class ShareAdminReportController {
 
     /** 处理举报：ACCEPT（成立 → 内容下架）/ REJECT（不成立），**处理说明必填** */
     @PostMapping("/{id}/handle")
+    @Audited(action = AuditAction.SHARE_REPORT_HANDLE)
     public ApiResponse<ReportView> handle(@PathVariable Long id,
                                           @Valid @RequestBody ReportHandleRequest request) {
         LoginUser operator = OperatorGuard.requireOperator();

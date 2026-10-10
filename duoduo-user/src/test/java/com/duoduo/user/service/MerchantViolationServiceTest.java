@@ -3,15 +3,12 @@ package com.duoduo.user.service;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
-import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.MerchantViolationInfo;
 import com.duoduo.user.entity.MerchantEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.support.MerchantStatus;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -59,11 +56,15 @@ class MerchantViolationServiceTest {
 
     private final MerchantMapper merchantMapper = mock(MerchantMapper.class);
     private final MerchantLicenseNotifier notifier = mock(MerchantLicenseNotifier.class);
-    private final AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
-    private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
+    /**
+     * E18：留痕从「直接 writeAudit 写 mapper」收敛到唯一入口 {@link AuditLogService}。
+     * 单测里 mock 服务而不是 mock mapper，是因为要断言的正是「服务层调了这个统一入口」——
+     * 直接 mock mapper 会让「服务层绕过统一入口自己 insert」这种退化也通过。
+     */
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
 
     private final MerchantViolationService service = new MerchantViolationService(
-            merchantMapper, notifier, auditLogMapper, idGenerator);
+            merchantMapper, notifier, auditLogService);
 
     /**
      * 注册 MyBatis-Plus 的实体元数据：{@code LambdaUpdateWrapper.eq(MerchantEntity::getX, v)}
@@ -73,11 +74,6 @@ class MerchantViolationServiceTest {
     static void initMybatisMetadata() {
         MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
         TableInfoHelper.initTableInfo(assistant, MerchantEntity.class);
-    }
-
-    @BeforeEach
-    void setUp() {
-        when(idGenerator.nextId()).thenReturn(710000000000000999L);
     }
 
     private static MerchantEntity merchant(String status, int violationCount) {
@@ -175,7 +171,7 @@ class MerchantViolationServiceTest {
         assertThat(info.violationCount()).isEqualTo(3);
         verify(notifier).notifyViolationSuspended(any(), eq(3), eq("第 3 件商品违规"));
         verify(notifier).offShelfAll(OWNER_USER_ID);
-        verify(auditLogMapper).insert(any());
+        verify(auditLogService).record(any());
         // 停业用的是条件更新：CAS 里必须带 status='APPROVED'
         verify(merchantMapper, atLeastOnce()).update(isNull(), any());
     }
@@ -214,7 +210,10 @@ class MerchantViolationServiceTest {
         when(merchantMapper.selectOne(any())).thenReturn(merchant(MerchantStatus.APPROVED.name(), 2));
         stubReadBack(3);
         when(merchantMapper.update(isNull(), any())).thenReturn(1);
-        when(auditLogMapper.insert(any())).thenThrow(new IllegalStateException("审计库不可用"));
+        // 注意桩的是「返回 false」而不是「抛异常」：AuditLogService.record 的契约是
+        // **永不外抛**、用返回值表达失败（见其类注释）。让 mock 抛异常测的就不是真实契约，
+        // 而是一个本不该存在的场景 —— 那样的用例会给服务层加上一层没必要的 try/catch。
+        when(auditLogService.record(any())).thenReturn(false);
 
         MerchantViolationInfo info = service.markViolation(OWNER_USER_ID, "第 3 件商品违规");
 
@@ -237,7 +236,7 @@ class MerchantViolationServiceTest {
         assertThat(info.suspended()).isTrue();
         assertThat(info.violationCount()).isEqualTo(1);
         verify(notifier).notifyViolationSuspended(any(), eq(1), eq("执照与工商信息不符"));
-        verify(auditLogMapper).insert(any());
+        verify(auditLogService).record(any());
     }
 
     @Test

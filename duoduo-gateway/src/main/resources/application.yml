@@ -65,7 +65,10 @@ spring:
             # /api/seller/staff/** = 店员管理（E13）：落在 user 服务（成员是账号域事实），
             #   必须列在 trade 的 /api/seller/** 兜底**之前** —— 不加这段会被 trade 捕获后 404
             #   （与 product 的 /api/seller/products 同一优先级陷阱）
-            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
+            # /api/admin/audit-logs = 后台操作审计（E18）：审计表在用户库，
+            #   同样必须显式列出。★ 两段都要写：Ant 模式下 `/**` **不匹配无尾斜杠的集合端点**，
+            #   只写 `/api/admin/audit-logs/**` 会让列表接口 404（本项目已踩过一次）。
+            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product

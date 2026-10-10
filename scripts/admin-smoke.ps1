@@ -356,10 +356,16 @@ Check "闲置夹具已删除（库内复原）" ($left -eq '0') $left
 Sql 'duoduo_user' "UPDATE t_user SET role = 'USER' WHERE phone IN ('$phoneOp', '$phoneAd');" | Out-Null
 $roleBack = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE phone IN ('$phoneOp', '$phoneAd') AND role = 'USER';"
 Check "运营 / 管理员账号已降回 USER（库内复原）" ("$roleBack" -eq '2') $roleBack
-# A7 审计夹具行一并清掉（自建自毁，不污染真实审计流水）
-Sql 'duoduo_user' "DELETE FROM t_audit_log WHERE actor_id = $uidAd AND target_id IN ($uidU, $uidAd);" | Out-Null
-$auditLeft = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log WHERE actor_id = $uidAd;"
-Check "A7 审计日志夹具行已清除（库内复原）" ("$auditLeft" -eq '0') $auditLeft
+# 审计台账夹具行一并清掉（自建自毁，不污染真实审计流水）
+# ★ E18 起「后台每一次写操作都会留痕」—— 本套件跑过的建类目 / 改品牌状态 / 审闲置 /
+#   强关订单 / 改角色，全部会以这两个夹具账号为 actor_id 落进 t_audit_log。
+#   原先只按 `target_id IN (用户 id)` 删已经不够：那批行的 target_id 是类目/品牌/闲置/订单 id，
+#   一条都删不掉；而且它们留在台账里长得像"真人干的运营动作"，而那个账号收尾后已经降回 USER
+#   —— 将来真去查账会得出「一个普通用户干了这些运营操作」的错误结论。
+#   判据改为**按本次运行随机生成的手机号定位 actor_id**（精确到这两个账号自己，不碰任何既有行）。
+Sql 'duoduo_user' "DELETE a FROM t_audit_log a JOIN t_user u ON u.id = a.actor_id WHERE u.phone IN ('$phoneOp', '$phoneAd');" | Out-Null
+$auditLeft = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log a JOIN t_user u ON u.id = a.actor_id WHERE u.phone IN ('$phoneOp', '$phoneAd');"
+Check "A7 审计台账夹具行已清除（本次两个夹具账号的全部动作，库内复原）" ("$auditLeft" -eq '0') $auditLeft
 
 # ---------- 结果 ----------
 Write-Host ""

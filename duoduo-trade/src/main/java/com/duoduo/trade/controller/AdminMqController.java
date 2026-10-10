@@ -1,6 +1,9 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
@@ -50,6 +53,7 @@ public class AdminMqController {
      * 重放安全 —— 订单幂等键唯一索引保证不会重复建单。
      */
     @PostMapping("/dlq/replay")
+    @Audited(action = AuditAction.MQ_DLQ_REPLAY)
     public ApiResponse<DlqReplayResult> replay(@Valid @RequestBody DlqReplayRequest request) {
         OperatorGuard.requireOperator();
         int replayed = dlqService().replay(request.idempotentKey());

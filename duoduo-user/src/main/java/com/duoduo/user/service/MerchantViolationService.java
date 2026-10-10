@@ -4,9 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.MerchantViolationInfo;
-import com.duoduo.user.entity.AuditLogEntity;
 import com.duoduo.user.entity.MerchantEntity;
-import com.duoduo.user.mapper.AuditLogMapper;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditLogRecord;
+import com.duoduo.common.audit.AuditOutcome;
 import com.duoduo.user.mapper.MerchantMapper;
 import com.duoduo.user.support.MerchantStatus;
 import org.slf4j.Logger;
@@ -45,22 +46,19 @@ public class MerchantViolationService {
     /** 累计到此次数即自动升级为商家级停业 */
     public static final int SUSPEND_THRESHOLD = 3;
 
-    private static final String ACTION_SUSPEND = "MERCHANT_VIOLATION_SUSPEND";
+    private static final AuditAction ACTION_SUSPEND = AuditAction.MERCHANT_VIOLATION_SUSPEND;
     private static final long SYSTEM_ACTOR = 0L;
 
     private final MerchantMapper merchantMapper;
     private final MerchantLicenseNotifier notifier;
-    private final AuditLogMapper auditLogMapper;
-    private final SnowflakeIdGenerator idGenerator;
+    private final AuditLogService auditLogService;
 
     public MerchantViolationService(MerchantMapper merchantMapper,
                                     MerchantLicenseNotifier notifier,
-                                    AuditLogMapper auditLogMapper,
-                                    SnowflakeIdGenerator idGenerator) {
+                                    AuditLogService auditLogService) {
         this.merchantMapper = merchantMapper;
         this.notifier = notifier;
-        this.auditLogMapper = auditLogMapper;
-        this.idGenerator = idGenerator;
+        this.auditLogService = auditLogService;
     }
 
     /**
@@ -171,19 +169,20 @@ public class MerchantViolationService {
 
     /** 留痕：actor=系统(0)；留痕失败不阻断停业 */
     private void writeAudit(MerchantEntity merchant, int count, String reason, LocalDateTime now) {
-        try {
-            AuditLogEntity record = new AuditLogEntity();
-            record.setId(idGenerator.nextId());
-            record.setActorId(SYSTEM_ACTOR);
-            record.setActorPhone("");
-            record.setAction(ACTION_SUSPEND);
-            record.setTargetId(merchant.getId());
-            record.setDetail("APPROVED -> SUSPENDED，依据：累计 " + count + " 次商品违规（阈值 "
-                    + SUSPEND_THRESHOLD + "），最近一次原因：" + reason);
-            record.setCreatedAt(now);
-            auditLogMapper.insert(record);
-        } catch (Exception ex) {
-            log.error("违规停业留痕失败 merchantId={}", merchant.getId(), ex);
+        // E18 · 统一走 AuditLogService（本方法由内部端点触发，没有 HTTP 请求，
+        // 因此不能靠 @Audited 注解，必须显式写）。
+        boolean written = auditLogService.record(new AuditLogRecord(
+                SYSTEM_ACTOR, "", ACTION_SUSPEND.code(),
+                ACTION_SUSPEND.category().name(), AuditOutcome.SUCCESS.name(),
+                merchant.getId(), ACTION_SUSPEND.targetType(),
+                merchant.getOwnerUserId() == null ? 0L : merchant.getOwnerUserId(),
+                "APPROVED", "SUSPENDED",
+                null, com.duoduo.common.api.RequestIdHolder.get(),
+                "依据：累计 " + count + " 次商品违规（阈值 " + SUSPEND_THRESHOLD
+                        + "），最近一次原因：" + reason,
+                now.toString()));
+        if (!written) {
+            log.error("违规停业留痕失败 merchantId={}", merchant.getId());
         }
     }
 }

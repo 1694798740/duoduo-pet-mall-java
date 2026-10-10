@@ -68,7 +68,7 @@ jobs:
       # E17 起追加 perm-version-smoke.ps1：权限版本是**鉴权链路上**的判定，
       # 且它的失效方向是"静默放行"（Redis 读不到就放行）—— 这类套件不进 CI
       # 就只会在"权限没即时生效"这种没人报障的场景里悄悄腐烂。
-      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1
     steps:
       - uses: actions/checkout@v4
 

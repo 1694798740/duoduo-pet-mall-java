@@ -94,6 +94,22 @@ public final class Permission {
     /** 券模板管理。 */
     public static final String COUPON_TEMPLATE_MANAGE = "coupon:template:manage";
 
+    // ---------------- 审计 ----------------
+
+    /**
+     * 查看后台操作审计日志（E18）。
+     *
+     * <p><b>为什么 OPERATOR 也有</b>：运营正是后台操作的主体。审计日志对运营的价值是
+     * 「自查与互查」——「刚才那个商品是谁驳回的」「这条停业记录的依据是什么」，
+     * 这些问题的答案本来就在页面里；把运营挡在外面，只会让每一件小事都去找管理员口头确认，
+     * 而口头确认不留痕。真正的边界不在这里，而在**审计记录不可删改**
+     * （任何角色都没有修改入口，见 {@code AuditCategory.immutable()}）。
+     *
+     * <p>与 {@code FINANCE_SETTLEMENT} 的区别：那个点管的是「动钱」，
+     * 这个点管的是「看记录」。看记录不改变任何事实，因此不按资金档收紧。
+     */
+    public static final String AUDIT_LOG_READ = "audit:log:read";
+
     // ---------------- 财务 ----------------
 
     /**
@@ -145,6 +161,7 @@ public final class Permission {
         set.add(ORDER_MQ_MANAGE);
         set.add(AFTERSALE_ARBITRATE);
         set.add(COUPON_TEMPLATE_MANAGE);
+        set.add(AUDIT_LOG_READ);
         set.add(FINANCE_SETTLEMENT);
         set.add(SELLER_CONSOLE);
         return java.util.Collections.unmodifiableSet(set);

@@ -1,6 +1,9 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.ListingAuditRequest;
 import com.duoduo.product.dto.ProductDtos.ListingAuditView;
@@ -39,7 +42,10 @@ public class AdminListingController {
     }
 
     @PostMapping("/{id}/audit")
+    @Audited(action = AuditAction.LISTING_AUDIT)
     public ApiResponse<ListingAuditView> audit(@PathVariable Long id, @RequestBody ListingAuditRequest request) {
+        AuditTrail.target(id, "LISTING");
+        AuditTrail.change("待审核", request.action());
         return ApiResponse.ok(listingService.audit(id, request.action(), request.reason()));
     }
 }

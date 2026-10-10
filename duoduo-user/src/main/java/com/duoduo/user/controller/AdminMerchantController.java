@@ -1,6 +1,9 @@
 package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
@@ -60,6 +63,7 @@ public class AdminMerchantController {
      * 而不能等到下一轮 6 小时之后。处置动作全部是条件更新 + 只升档才提醒，可安全重复调用。
      */
     @PostMapping("/license-sweep")
+    @Audited(action = AuditAction.MERCHANT_LICENSE_SWEEP)
     public ApiResponse<MerchantLicenseJob.SweepReport> licenseSweep() {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(licenseJob.sweepNow());
@@ -73,6 +77,7 @@ public class AdminMerchantController {
 
     /** 开始审核：SUBMITTED → REVIEWING（幂等） */
     @PostMapping("/{id}/start-review")
+    @Audited(action = AuditAction.MERCHANT_AUDIT_START)
     public ApiResponse<ApplicationView> startReview(@PathVariable("id") String id) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(onboardingService.startReview(
@@ -81,6 +86,7 @@ public class AdminMerchantController {
 
     /** 通过并开店（幂等：重复通过返回现状） */
     @PostMapping("/{id}/approve")
+    @Audited(action = AuditAction.MERCHANT_APPROVE)
     public ApiResponse<ApplicationView> approve(@PathVariable("id") String id) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(onboardingService.approve(
@@ -89,6 +95,7 @@ public class AdminMerchantController {
 
     /** 驳回（结构化原因必填；结论一致时幂等） */
     @PostMapping("/{id}/reject")
+    @Audited(action = AuditAction.MERCHANT_REJECT)
     public ApiResponse<ApplicationView> reject(@PathVariable("id") String id,
                                                @RequestBody RejectRequest request) {
         OperatorGuard.requireOperator();
@@ -113,10 +120,13 @@ public class AdminMerchantController {
 
     /** 复核一条入驻抽查任务：PASS / REJECT（判违规必须填原因；判违规 = 直接停业 + 联动下架） */
     @PostMapping("/audit-sla/samples/{id}/review")
+    @Audited(action = AuditAction.AUDIT_SLA_REVIEW)
     public ApiResponse<com.duoduo.user.dto.MerchantAuditSlaDtos.AuditSampleView> reviewAuditSample(
             @PathVariable("id") String id,
             @RequestBody com.duoduo.user.dto.MerchantAuditSlaDtos.ReviewRequest request) {
         OperatorGuard.requireOperator();
+        // 目标 = 被复核的抽查任务（平台级动作里唯一有具体目标的一个）
+        AuditTrail.target(Long.parseLong(id), "AUDIT_SAMPLE");
         return ApiResponse.ok(sampleService.review(Long.valueOf(id),
                 request == null ? null : request.action(),
                 request == null ? null : request.note()));
@@ -131,6 +141,7 @@ public class AdminMerchantController {
 
     /** 立即跑一轮入驻抽查（抽昨天那批自动放行的店铺） */
     @PostMapping("/audit-sla/sweep")
+    @Audited(action = AuditAction.AUDIT_SLA_SWEEP)
     public ApiResponse<com.duoduo.user.dto.MerchantAuditSlaDtos.SampleReport> auditSampleSweep() {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(sampleJob.sweepNow());
