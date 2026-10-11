@@ -594,6 +594,9 @@ public class ProductService {
                     image,
                     nz(sku.getPrice()),
                     available,
+                    // S3：把原始两列一起给出去（对账要判 frozen > stock，见 SkuPurchaseView 注释）
+                    stock,
+                    frozen,
                     sellable,
                     spuStatus,
                     sku.getStatus(),
@@ -606,6 +609,18 @@ public class ProductService {
                             : ("self".equals(spu.getSupplyType()) ? 0L
                                 : (spu.getSellerId() == null ? 0L : spu.getSellerId())));
         }).toList();
+    }
+
+    /**
+     * 对账候选集（S3）：商品域里持有冻结库存、或库存异常的 SKU id。
+     *
+     * <p>与 {@link #purchaseViews} 的关系：那一个回答「我点名要的这几个 SKU 现在什么状态」，
+     * 这一个回答「**有哪些 SKU 值得去看**」。缺了后者，交易域只能拿自己已知的 SKU 去比，
+     * 「交易域少记了冻结」这个方向就永远测不到（详见 {@code SkuMapper.selectStockAlertSkuIds}）。
+     */
+    public List<Long> frozenHolderSkuIds() {
+        List<Long> ids = skuMapper.selectStockAlertSkuIds();
+        return ids == null ? List.of() : ids;
     }
 
     /** 把规格 JSON 拍平成「规格:2kg / 口味:冻干双拼」这样的可读串，前端直接展示 */

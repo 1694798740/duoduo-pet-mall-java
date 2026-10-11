@@ -211,6 +211,21 @@ public enum AuditAction {
     /** 欠款豁免 / 核销（write-off）。 */
     SETTLEMENT_DEBT_WRITE_OFF(AuditCategory.FUNDS, "SETTLEMENT"),
 
+    // ---------------- 对账（S3） ----------------
+
+    /**
+     * S3 · 手动触发一轮对账。
+     *
+     * <p><b>为什么"只是重新算一遍"也要留痕</b>：它对业务数据完全只读，但它会**覆盖**
+     * 当日已落库的那轮结论（同一天同一范围只保留一轮，见 {@code ReconService}）。
+     * 于是「昨天报表上那批差异怎么没了」这个问题，唯一能回答它的就是这条记录 ——
+     * 没有它，结论被重算掉之后无从解释，而"对账结果可信"正是这套功能唯一的产出。
+     *
+     * <p>归入 {@link AuditCategory#OTHER}：它既不动钱也不动内容，
+     * 动的是一份巡检结论，因此不属于 FUNDS / CONTENT 任何一档。
+     */
+    RECON_RUN_MANUAL(AuditCategory.OTHER, "RECON"),
+
     // ---------------- 运维 ----------------
 
     /** 消息队列死信重放。 */

@@ -136,6 +136,26 @@ public class ProductController {
         return ApiResponse.ok(productService.internalCategories());
     }
 
+    /**
+     * 对账用：商品域里**持有冻结库存**或库存异常的 SKU id 清单（S3，内部接口）。
+     *
+     * <p><b>为什么必须有这个"反查"入口，而不是只让交易域传自己知道的 SKU</b>：
+     * 交易域能给出的只有「我这边记着有冻结」的 SKU。只按这个集合去比，
+     * <b>「交易域少记了」这个方向永远测不到</b> —— 商品域明明有 5 件冻结、
+     * 交易域一条冻结记录都没有时，交易域根本不会把那个 SKU 送过来比。
+     * 单向的对账看起来在跑，实际只覆盖了一半的失效方向。
+     *
+     * <p>返回 id 清单而不是明细：调用方（交易域）本来就要再调一次
+     * {@code /internal/skus/batch} 拿原始库存两列，多传一份明细只是重复。
+     *
+     * <p>判据刻意写得宽（冻结不为 0、或库存为负都算），因为这是一个
+     * **候选集**而不是结论集：宽一点只会让对账多看几个 SKU，窄一点就会漏测。
+     */
+    @GetMapping("/internal/skus/frozen-holders")
+    public ApiResponse<List<Long>> frozenHolders() {
+        return ApiResponse.ok(productService.frozenHolderSkuIds());
+    }
+
     /** 逗号分隔的 id 串 → 列表；非法片段直接跳过（宁可少过滤，也不要因为脏参数整单 400） */
     private static List<Long> parseIds(String csv) {
         if (csv == null || csv.isBlank()) {

@@ -128,4 +128,75 @@ public class ProductGateway {
             throw new BizException(ErrorCode.DEGRADED, "商品服务暂时不可用，请稍后重试", e);
         }
     }
+
+    // ==================== S3 对账专用：严格语义 ====================
+
+    /**
+     * 严格批量取 SKU 快照 —— <b>任何"读不到"都抛错，绝不静默返回空</b>。
+     *
+     * <p><b>为什么不能复用上面的 {@link #loadSnapshots}</b>：那个方法把 4xx 折成空 Map，
+     * 对购物车是对的（"这件商品查不到"就是业务事实）。但对账里「读不到」与「真没有」
+     * 是**两件完全不同的事**：
+     * <ul>
+     *   <li>真没有 → 商品域确实没这个 SKU → <b>是一条差异</b>（冻结挂在不存在的商品上）；</li>
+     *   <li>读不到 → 参数被拒 / 响应体为空 → <b>什么结论都没有</b>，
+     *       此时若按"真没有"处理，会把一次调用故障报成 N 条假差异 ——
+     *       而假差异的代价是人工排查一整轮，并且从此没人相信这份报表。</li>
+     * </ul>
+     * 所以这里宁可让整轮对账记成 FAILED（未知），也不产出可能错误的差异。
+     */
+    public Map<Long, SkuSnapshot> loadSnapshotsStrict(Collection<Long> skuIds) {
+        Set<Long> distinct = skuIds.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        String csv = distinct.stream().map(String::valueOf).collect(Collectors.joining(","));
+        ApiResponse<List<SkuSnapshot>> response =
+                callStrict(() -> productClient.batchSkus(csv), "批量查询 SKU（对账）");
+        if (response.data() == null) {
+            throw new BizException(ErrorCode.DEGRADED, "商品服务批量查询返回空数据体（对账）");
+        }
+        Map<Long, SkuSnapshot> map = new HashMap<>();
+        for (SkuSnapshot snap : response.data()) {
+            if (snap != null && snap.skuId() != null) {
+                map.put(snap.skuId(), snap);
+            }
+        }
+        return map;
+    }
+
+    /**
+     * 商品域持有冻结库存 / 库存异常的 SKU id（对账候选集，严格语义）。
+     *
+     * <p>为什么需要这个反查：交易域能送过来的只有"我这边记着有冻结"的 SKU，
+     * 只按那个集合比对，「交易域少记了冻结」这个方向永远闭合不了。
+     */
+    public List<Long> frozenHolderSkuIds() {
+        ApiResponse<List<Long>> response =
+                callStrict(productClient::frozenHolderSkus, "查询冻结库存候选 SKU（对账）");
+        if (response.data() == null) {
+            throw new BizException(ErrorCode.DEGRADED, "商品服务冻结候选查询返回空数据体（对账）");
+        }
+        return response.data().stream().filter(Objects::nonNull).toList();
+    }
+
+    /** 严格调用：响应缺失 / 4xx / 5xx / 超时一律抛 503 DEGRADED，调用方据此把整轮对账记成未知 */
+    private <T> T callStrict(java.util.function.Supplier<T> action, String what) {
+        try {
+            T result = action.get();
+            if (result == null) {
+                throw new BizException(ErrorCode.DEGRADED, "商品服务无响应（" + what + "）");
+            }
+            return result;
+        } catch (FeignException e) {
+            throw new BizException(ErrorCode.DEGRADED,
+                    "商品服务返回 " + e.status() + "（" + what + "）", e);
+        } catch (BizException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new BizException(ErrorCode.DEGRADED, "商品服务暂时不可用，请稍后重试", e);
+        }
+    }
 }

@@ -706,12 +706,15 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 因为机器上全局 `settings.xml` 的 `mirrorOf=*` 指向**已失效的公司私服** `100.wunding.com:1443`。
 > 用项目内配置可以绕开，**不需要改任何全局配置**。
 
-### 端到端冒烟（30 套接口断言 = 29 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
+### 端到端冒烟（31 套接口冒烟 = 30 套 PowerShell + 1 套 Node；22 套真实浏览器 UI 断言；小程序无浏览器 72 项）
 
-> **套件数量口径**：接口冒烟由 `scripts/*smoke.ps1` **自发现**（29 套，其中 `search-smoke` 需 ES，ES 未跑时**显式跳过并声明**），
-> 外加 node 冒烟 `scripts/e8-entry-scope-smoke.mjs`；
+> **套件数量口径**：`scripts/*smoke.ps1` 共 **31 个**，由 `run-all-smoke.ps1` **按文件名通配自发现**；
+> 另有 1 个 Node 冒烟 `scripts/e8-entry-scope-smoke.mjs` 显式列出。
+> 其中 `search-smoke.ps1` 需要 ES，未启动时**显式跳过并在汇总里说出来** ——
+> 此时汇总打印「共 31 套，通过 31 套，失败 0 套 / 已跳过 1 套」（静默跳过会让「全部通过」变成一句谎话）。
 > 浏览器 e2e 由 `scripts/e2e/*-ui-check.mjs` **自发现**（22 套）。
 > `scripts/check-all.ps1` 里的套件数**从目录实算**，不再写死 —— 写死的数字在加套件之后会变成假话，而没人会记得改它。
+> CI 的「冒烟子集」是**显式清单**（`SMOKE_SCRIPTS`），新套件不会自动进 CI：要按"它的失效方向是不是静默"决定加不加。
 
 > **✅ 本地库数据漂移已根治（2026-10-09 · E27 完成）**：一键全量冒烟此前在本地库上有 **9 套红**，
 > 经逐套归因**全部非代码回归**，现已从根上消掉，不再需要"看到红先判断是不是漂移"：
@@ -1115,6 +1118,39 @@ duoduo-pet-mall-java/
 | POST | `/api/admin/audit-sla/sweep` | **手动触发一轮抽查**：抽的是**昨天**那批自动放行商品（与定时器同口径，避免"点两次看到两个结果"）；**不看开关、不抢选主锁**；返回 `candidates/created/skipped/ratePercent/reasons`，幂等靠 `uk_biz_date`（重复点 `created=0`） | 运营 |
 | GET/POST | `/api/admin/merchants/audit-sla/samples`、`/samples/{id}/review`、`/metrics`、`/sweep` | **入驻侧同链路**（店铺维度，路径前缀 `/api/admin/merchants`）：判违规走 `suspendByAudit` —— **资质造假是主体资格问题，直接停业、不攒次数**，停业用条件更新（`WHERE status='APPROVED'`，抢不到就不发通知不写留痕）；停业后**联动下架该店全部商品** | 运营 |
 | GET | `/api/admin/audit-logs?actorId=&action=&category=&outcome=&targetId=&tenantId=&from=&to=&page=&pageSize=` | **E18 操作审计检索**：按操作人 / 动作标识 / 类目 / 结果 / 目标 / 租户 / 时间范围过滤，时间参数**两端都含**、起止颠倒或格式非法 **400**。返回 `immutable` 布尔值（**由服务端下发，前端不自行判断**）。**只有读，没有写/改/删** —— 审计表在代码层就没有 UPDATE / DELETE 路径（静态断言逐字扫描全仓） | 运营 |
+| GET | `/api/admin/recon/runs?limit=` | **S3 对账轮次列表**（钱 / 库存两个范围各自一轮）：`{bizDate, scope, status, checkedCount, diffCount, highCount, startedAt, finishedAt, message}`。`status` 三态 **`CLEAN` / `DIRTY` / `FAILED`** —— `FAILED` 表示**没跑成**（依赖服务读不到 / 校验对象数为 0），**它与 `CLEAN` 的差别就是「报表一片绿但事实未知」与「真的没问题」的差别** | 运营 |
+| GET | `/api/admin/recon/runs/{runId}/diffs?limit=` | **某一轮的差异明细**：按严重度（HIGH 优先）+ 规则 + 目标排序，带 `expected` / `actual` / `detail`（人能看懂的一句话）。**轮次不存在 → 404**（返回空列表会让「这一轮没有差异」与「这一轮不存在」混在一起） | 运营 |
+| GET | `/api/admin/recon/rules` | **规则清单（源码声明 vs 运行时同一份）**：13 条（钱 8 / 库存 5），每条带 `scope` / `severity` / `refType`。冒烟脚本拿它和**源码正则数出来的条数**比对 —— 防「写了没上」 | 运营 |
+| POST | `/api/admin/recon/runs` | **手动触发一轮对账**（唯一写端点）：`{bizDate?, scope?}`，默认今天 + 两个范围都跑。**同日重复触发是覆盖而非累积**（先删当天该轮次的明细再重算，靠 `uk_recon_run_day_scope` 兜底），返回两个范围里**最严重**的那个结论。动作码 `RECON_RUN_MANUAL` —— 触发本身不改业务数据，但它**会覆盖当天已存的结论**，所以必须留痕（否则"昨天的差异怎么没了"只能靠猜） | 运营 |
+
+**★ S3 对账口径（每日自动对账 + 提醒）**
+
+- **两个范围独立成败**：`MONEY` 与 `STOCK` 各落一条 `t_recon_run`。合并成一个范围的话，
+  一次商品服务抖动会让整轮 `FAILED`，**连带把一个本来完全正确的钱对账结论也变成"未知"**。
+- **对账 ≠ 把同一个函数算两次**：每条规则必须比**两个不同来源**（订单表 vs 托管表、交易域冻结台账 vs 商品域 `frozen_stock`）。
+  拿同一个计算函数调两遍是恒等式，不是检查。唯一例外是 `MONEY_FEE_ILLEGAL`，它**故意不比费率**。
+- **★ 钱是「政策的函数」，不是「当前费率的函数」**：拿库里存的历史 `platform_fee` 去比**今天的**费率，
+  本地库实测产生 **92 条费率不符 + 375 条"自营被抽佣"** —— 全部是假的（那些单结算时费率还是 1%，
+  或早于 E22 的自营免佣规则）。所以每日对账只做**结构性非法**检查（费率为负 / 佣金大于金额 / 金额为负），
+  **费率类比较归回归测试**（`settlement-smoke`），不归每日对账。
+- **`FAILED` 是一等状态**：取数抛异常、依赖服务不可用、`checkedCount == 0` 一律落 `FAILED`。
+  `syncStatusFromCounts` 带 `AND status <> 'FAILED'`，**`FAILED` 永不被重新标成 `CLEAN`**。
+  `checked_count == 0` 必须判 `FAILED` 的理由与铁律 2 同族：0 个对象必然「没有差异」，
+  于是"什么都没看"与"看了且没问题"在报表上完全一样。
+  **验证方式**：`docker stop duoduo-app-product` → STOCK 必须 `FAILED` 且带失败原因，同时 MONEY 不受影响。
+- **同日重跑覆盖而非累积**：先 `deleteByRunOfDay` 再 `deleteByDayAndScope`，靠唯一键而不是应用层"查后写"。
+- **计数必须回表读**：插入明细后重新 `COUNT(*)` 回写 —— `uk_recon_diff` 可能去重，
+  否则报表说 5 条、点开只有 4 条。
+- **跨域两向覆盖**：交易域只能送去"它知道有 FROZEN 的 SKU"，那个方向**永远发现不了**「交易域漏记冻结」。
+  所以商品域新增反查 `GET /api/products/internal/skus/frozen-holders`，候选集 = 两个来源的**并集**。
+- **严格读 vs 宽松读**：`ProductGateway` 原有的宽松读把 4xx 折成空 Map（购物车场景是对的：
+  "这个商品不存在"是业务事实）；对账新增 `loadSnapshotsStrict` / `callStrict`，
+  **任何**异常都抛 503 DEGRADED —— 对账里"读不到"≠"确实没有"，把前者当后者会把一次调用失败变成 N 条假差异。
+- **暴露原始两列而不是 `availableStock`**：出参 `availableStock = max(0, stock - frozenStock)` 会把
+  `frozenStock > stock` 这个异常**夹成 0**，前端只显示"售罄" —— 异常被一个看起来很合理的降级掩盖掉了。
+- **提醒边界（刻意的）**：本轮不外接告警通道，只有 WARN 日志（带最多 10 条明细）+ 后台页 + 严重度计数。
+- **★ 网关路由必须显式加 `/api/admin/recon`**：这个坑已经栽过 5 次（A11 / E14 / E18 / A3 / S3），
+  现已固化为静态检查 `scripts/lib/check-gateway-routes.ps1`（250 条服务端路径逐条要求被网关覆盖，接 CI 第一步）。
 
 **权限模型**：统一 `OperatorGuard.requireOperator()`（OPERATOR / ADMIN，忽略大小写）；
 网关层 `/api/admin/**` 不进白名单（未登录 401），服务层校验角色（非运营 403）——两层各挡一种流量。

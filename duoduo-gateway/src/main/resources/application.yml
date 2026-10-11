@@ -103,7 +103,15 @@ spring:
             # /api/seckill/** 与 /api/admin/seckill/** = 限时秒杀（A14）：活动表与配额在交易库。
             #   列表/详情不进白名单（网关统一鉴权，未登录只影响下单不影响浏览看实现取舍，
             #   这里与 cart/orders 同口径处理）；下单与管理端由服务端校验登录/operator
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**
+            # /api/admin/recon/** = 钱与库存每日对账（S3）：轮次/差异/规则清单与手动触发，
+            #   两批数据（托管单、冻结台账）都在交易库，落回 trade 服务。
+            #   同样必须显式列出 —— 这是本文件第 5 次记同一个坑：product / trade / fulfilment
+            #   的路由都按具体子路径列举，漏一段的**唯一表现就是 404**，不报错、不告警，
+            #   看起来和「服务没起来」「接口写错了」一模一样（S3 首轮冒烟 27 项失败全由此而来：
+            #   控制器在镜像里、直连端口也活着，只是网关没放行）。
+            #   裸路径与通配一并写：将来若加集合型端点（无尾斜杠），漏写只会再静默 404 一次
+            #   —— /api/admin/audit-logs 当初就是这么栽的。
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**,/api/admin/recon,/api/admin/recon/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

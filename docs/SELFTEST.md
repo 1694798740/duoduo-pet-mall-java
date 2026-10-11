@@ -12,9 +12,13 @@
 
 | 层 | 干什么 | 耗时 | 什么时候跑 |
 |---|---|---|---|
-| **体检** | 静态自检 + 编译 + 核心冒烟 3 套 | ~5 分钟 | 每次改完代码 |
+| **体检** | 静态自检（两个守卫脚本，不需要容器）+ 编译 + 核心冒烟 3 套 | ~5 分钟 | 每次改完代码 |
 | **域级** | 只跑你改的那个域对应的冒烟 + 前端 e2e | ~3 分钟/套 | 提测前 |
-| **全量** | 23 套冒烟 + 契约 + 小程序 + 浏览器 e2e + 压测 | ~40 分钟 | 交付前 |
+| **全量** | 31 套冒烟（约 17 分钟）+ 契约 + 小程序 + 浏览器 e2e + 压测 | ~40 分钟 | 交付前 |
+
+> ★ **跑全量时别中途离开**：这套脚本是长任务，若所在的终端/会话被回收，
+> 它会**卡在半途且不报错**（表现是日志停止增长），此时数据库里可能留下夹具。
+> 判断依据是**日志还在不在增长**，而不是「屏幕不动了」。
 
 ### 0.2 判定一律看**退出码**，不要靠读中文输出
 
@@ -175,37 +179,47 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 
 ## 3. 功能点清单（功能 → 用哪套脚本验 → 多少项）
 
-### 3.1 接口冒烟（23 套，`scripts\*smoke.ps1`）
+### 3.1 接口冒烟（31 套 `scripts\*smoke.ps1`，共 2086 项；另有 1 套 Node 冒烟）
 
 | # | 功能域 | 脚本 | 项数 |
 |---|---|---|---|
-| 1 | 全链路基础（网关 + 用户域 + 商品域） | `smoke.ps1` | 55 |
+| 1 | 全链路基础（网关 + 用户域 + 商品域） | `smoke.ps1` | 62 |
 | 2 | 购物车 | `trade-smoke.ps1` | 87 |
 | 3 | 下单 / 拆单 / 库存冻结 | `order-smoke.ps1` | 77 |
 | 4 | 支付 / 订单状态机 / 超时关单 | `payment-smoke.ps1` | 72 |
-| 5 | 担保交易 / 资金托管 / 放款 / 退款 / 自动收货 | `settlement-smoke.ps1` | 125 |
+| 5 | 担保交易 / 资金托管 / 放款 / 退款 / 自动收货（含 E22 佣金与 T+7） | `settlement-smoke.ps1` | 149 |
 | 6 | 沙箱支付渠道 / 预下单 / 回调验签 | `pay-channel-smoke.ps1` | 62 |
-| 7 | 卖家中心（入驻 / 归属隔离 / 发货 / 对账） | `seller-smoke.ps1` | 101 |
-| 8 | 平台管理后台（权限 / 报表 / 审核 / 强关） | `admin-smoke.ps1` | 72 |
-| 9 | 评价与晒单 | `review-smoke.ps1` | 59 |
-| 10 | 历史订单托管单回补 | `backfill-smoke.ps1` | 88 |
-| 11 | 售后仲裁工单 | `aftersale-smoke.ps1` | 101 |
-| 12 | 图片上传 | `upload-smoke.ps1` | 8 |
-| 13 | 物流轨迹 | `logistics-smoke.ps1` | 79 |
-| 14 | 信用分 | `credit-smoke.ps1` | 82 |
-| 15 | 优惠券 | `coupon-smoke.ps1` | 145 |
-| 16 | 收货地址簿 | `address-smoke.ps1` | 82 |
-| 17 | 跨域 ID 精度 | `id-precision-smoke.ps1` | 56 |
-| 18 | 微信登录绑定 | `wechat-auth-smoke.ps1` | 26 |
-| 19 | 微信绑定 | `wechat-bind-smoke.ps1` | 24 |
-| 20 | AI 导购 | `ai-smoke.ps1` | 37 |
-| 21 | ES 商品检索（**需 ES 在跑**） | `search-smoke.ps1` | 40 |
-| 22 | 限时秒杀 | `seckill-smoke.ps1` | 51 |
-| 23 | 消息队列 | `mq-smoke.ps1` | 47 |
-| 24 | Python 探针（不进上面的一键运行器） | `r58-restock-idempotent-smoke.py` 10 / `r58-compensate-smoke.py` 22 / `r58-listing-edit-delete-smoke.py` 33 | 65 |
+| 7 | 卖家中心（入驻 / 归属隔离 / 发货 / 对账） | `seller-smoke.ps1` | 107 |
+| 8 | 平台管理后台（权限 / 报表 / 审核 / 强关） | `admin-smoke.ps1` | 73 |
+| 9 | 后台 2FA + IP 白名单（E21） | `admin-2fa-smoke.ps1` | 56 |
+| 10 | 评价与晒单 | `review-smoke.ps1` | 61 |
+| 11 | 历史订单托管单回补 | `backfill-smoke.ps1` | 92 |
+| 12 | 售后仲裁工单 | `aftersale-smoke.ps1` | 101 |
+| 13 | 图片上传 | `upload-smoke.ps1` | 8 |
+| 14 | 物流轨迹 | `logistics-smoke.ps1` | 79 |
+| 15 | 信用分 | `credit-smoke.ps1` | 82 |
+| 16 | 优惠券 | `coupon-smoke.ps1` | 145 |
+| 17 | 收货地址簿 | `address-smoke.ps1` | 82 |
+| 18 | 跨域 ID 精度（只断言 JSON 原始文本） | `id-precision-smoke.ps1` | 56 |
+| 19 | 微信登录绑定 | `wechat-auth-smoke.ps1` | 26 |
+| 20 | 微信绑定 | `wechat-bind-smoke.ps1` | 24 |
+| 21 | AI 导购 | `ai-smoke.ps1` | 39 |
+| 22 | ES 商品检索（**需 ES 在跑**，否则按设计跳过） | `search-smoke.ps1` | 40 |
+| 23 | 限时秒杀 | `seckill-smoke.ps1` | 51 |
+| 24 | 消息队列 / 死信 / 重放 | `mq-smoke.ps1` | 48 |
+| 25 | 后台操作审计（E18） | `audit-log-smoke.ps1` | 58 |
+| 26 | 审核 SLA 与事后抽查（E28） | `audit-sla-smoke.ps1` | 62 |
+| 27 | 权限版本即时生效（E17） | `perm-version-smoke.ps1` | 34 |
+| 28 | 越权回归矩阵（E19） | `privilege-matrix-smoke.ps1` | 82 |
+| 29 | 租户隔离硬化（E20） | `tenant-isolation-smoke.ps1` | 37 |
+| 30 | 代运营工单（E23） | `proxy-ops-smoke.ps1` | 121 |
+| 31 | **钱与库存每日自动对账（S3）** | `recon-smoke.ps1` | 53 |
+| 32 | 三端入口收窄（Node 冒烟，**不进上面的一键运行器**） | `e8-entry-scope-smoke.mjs` | 以退出码为准 |
+| 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
 
 > 项数会随迭代增长，**以脚本自己打印的「通过 N 项」为准**，本表只用来定位该跑哪一套。
-> 当前实测：一键运行器 23 套合计 **1551 项**，全部通过。
+> **最近一次实测（2026-10-11）**：一键运行器 **31 套全部通过、合计 2086 项、0 失败**，
+> `search-smoke` 因本机未起 ES 而**显式跳过**（汇总里明写「已跳过 1 套」）。
 
 ### 3.2 前端 / 小程序 / 性能
 
@@ -214,11 +228,12 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序静态自检 | `node scripts/check-miniprogram.js` | 8 条规则，0 错 0 警 |
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
-| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | 17 套 661 项（首页 / **商品详情页** / 地址簿 / 商家端 / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **商家端看板** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注**） |
+| 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | **22 套**（首页 / **商品详情页** / 地址簿 / 商家端 / **商家端看板** / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注** / 审核 SLA / 商品审核 / 资质有效期 / 商家店员 / 审核台）。单套调试：`-Only <名字>` |
+| ⚠️ e2e 假红的头号原因是**数据脏** | — | e2e 断言「商品图零裂图」。若历史冒烟**中途被中断**，会残留一条带 `https://example.com/…` 占位图的夹具评价；它挂在种子商品上 → **首页与详情页同时报裂图**，看起来像代码回归。判据：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';`（应为 0）。`review-smoke.ps1` 已加**开机清扫**自动处理 |
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 42 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
-| 后端单测 | `mvn -o test` | 228 项 |
+| 后端单测 | `mvn -o test` | **685 项 / 66 个测试类**（11 个模块；2026-10-11 实测 0 失败） |
 
 ---
 
@@ -435,6 +450,9 @@ done
 | 20 | `docker compose build trade` 报 no such service | 服务名不对 | 正确名字是 `duoduo-trade-app` |
 | 21 | 断言「闲置数据应为 8 条」红了，实际 42 条 | 断言写死了**当前条数**而不是不变性质 | 改成 `-ge 8` 之类钉「性质」的写法 |
 | 22 | 前端页面计数排序错乱（"10" < "9"） | 计数字段被序列化成**字符串**下发 | 加进 `LongToStringJacksonModule.NUMERIC_LONG_FIELDS` |
+| 23 | **e2e 的 `home` 与 `product-detail` 同时报「商品图零裂图」失败** | **数据脏**：上一轮冒烟被中断，残留一条带 `https://example.com/…` 占位图的**夹具评价**，挂在种子商品上 → 首页与详情页都渲染出裂图。**看起来像两套页面同时回归，实际是数据** | `SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';` 应为 0；`review-smoke.ps1` 现在**开机自动清扫**，也可手工 `DELETE FROM t_review WHERE images LIKE '%example.com%';` |
+| 24 | 全量冒烟跑到一半**卡住不报错**、日志不再增长 | 承载它的终端/会话被回收（长任务挂在壳里）；**不是脚本自己挂** | 判断依据是**日志还在不在增长**；重跑时别中途离开，或改用一键自检（`check-all.ps1`）逐段跑 |
+| 25 | `extract-api-contract.py --check` 报「文档落后于源码」 | 加了新端点但没重新生成契约 | 跑 `python scripts/extract-api-contract.py`（**加了接口就必须跑**，否则这条检查迟早红） |
 | 23 | 压测第二档 0 样本 | 夹具只按一档的量准备 | 池子要按「预算 × 并发档数」给 |
 | 24 | 直连 `127.0.0.1:8081` / `:8082` 一律 404，连累 address / credit / id-precision / review / wechat-auth 五套冒烟 | **宿主上有别的进程占了 `127.0.0.1:8081/8082`**（比 docker-proxy 的 `0.0.0.0:8081/8082` 更具体，抢走 loopback 流量）。`netstat -ano \| findstr :8081` 看 PID，再 `tasklist /FI "PID eq <pid>"` 认人 | 换一条能到容器的地址重跑：`-User http://<本机局域网IP>:8081`、`-Product http://<本机局域网IP>:8082`；或先关掉占用进程。**别改脚本默认值**——别的机器上没有这个占用 |
 | 25 | `docker compose --profile search up -d duoduo-es` 报 `bind: An attempt was made to access a socket in a way forbidden by its access permissions` | Windows 把 9200 划进了**保留端口区间**（`netsh interface ipv4 show excludedportrange protocol=tcp`，本机是 9149–9248） | ES 不需要发布宿主端口，容器间走 `duoduo-es:9200` 即可。用 `docker run --network duoduo-pet-mall-java_default` 起、**不带 `-p`**；`run-all-smoke` 探不到 9200 会显式跳过 search 套 |

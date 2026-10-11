@@ -35,6 +35,15 @@ public interface ProductClient {
     @GetMapping("/internal/skus/batch")
     ApiResponse<List<SkuSnapshot>> batchSkus(@RequestParam("ids") String skuIds);
 
+    /**
+     * S3 对账用：商品域里持有冻结库存（或库存异常）的 SKU id 清单。
+     *
+     * <p>必须存在的理由见 {@code ProductGateway#frozenHolderSkuIds} ——
+     * 只有反查入口，才能把「交易域少记了冻结」这个方向也覆盖住。
+     */
+    @GetMapping("/internal/skus/frozen-holders")
+    ApiResponse<List<Long>> frozenHolderSkus();
+
     /** 冻结库存（下单时调用）：可售余量足够才成功 */
     @PostMapping("/skus/stock/freeze")
     ApiResponse<StockChangeOutcome> freezeStock(@RequestBody StockChangePayload payload);

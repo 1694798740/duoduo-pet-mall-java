@@ -203,6 +203,17 @@ public final class ProductDtos {
             String image,
             long price,
             int availableStock,
+            /**
+             * 总库存与冻结库存的**原始两列**（S3 对账专用）。
+             *
+             * <p>为什么不复用上面的 {@code availableStock}：那一个是
+             * {@code max(0, stock - frozenStock)} —— 那个 {@code max} 恰好把
+             * {@code frozenStock > stock} 这个异常**夹成了 0**。前台只会显示"已售罄"，
+             * 看不出库存在算错；异常被一个看似合理的展示层兜底吞掉了。
+             * 对账必须看原始值，这也正是「对账要独立于展示口径」的具体体现。
+             */
+            int stock,
+            int frozenStock,
             boolean sellable,
             String spuStatus,
             String skuStatus,

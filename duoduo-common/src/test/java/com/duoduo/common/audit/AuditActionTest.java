@@ -166,7 +166,8 @@ class AuditActionTest {
         // 若是有意新增，请同时更新这里的数字，并在总纲 §5 记录。
         // E21：新增 3 个两步验证动作（USER_TOTP_ENABLE / USER_TOTP_DISABLE / USER_TOTP_RESET），39 → 42。
         // E23：新增 3 个代运营动作（ORDER_PROXY_SHIP / AFTERSALE_PROXY_PROCESS / PRODUCT_PROXY_OFF_SHELF），42 → 45。
-        assertThat(AuditAction.values()).hasSize(45);
+        // S3：新增 1 个对账动作（RECON_RUN_MANUAL），45 → 46。
+        assertThat(AuditAction.values()).hasSize(46);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

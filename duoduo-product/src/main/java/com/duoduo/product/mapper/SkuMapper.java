@@ -5,9 +5,11 @@ import com.duoduo.product.entity.SkuEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * SKU 数据访问。
@@ -104,4 +106,21 @@ public interface SkuMapper extends BaseMapper<SkuEntity> {
     int restockStock(@Param("skuId") Long skuId,
                      @Param("quantity") int quantity,
                      @Param("updatedAt") LocalDateTime updatedAt);
+
+    /**
+     * 对账候选集（S3）：持有冻结库存、或库存本身异常的 SKU id。
+     *
+     * <p><b>为什么这个查询必须存在</b>：交易域能送过来的只有「我这边记着有冻结」的 SKU。
+     * 只按那个集合比对，「交易域少记了」这个方向永远测不到：
+     * 商品域有 5 件冻结、交易域一条记录都没有时，那个 SKU 根本不会进入比对集。
+     * 有了这个反查入口，两个方向才都是闭合的。
+     *
+     * <p>条件写得宽是有意的 —— 这是**候选集**不是结论集：
+     * 宽了只让对账多看几个 SKU，窄了就会漏测。
+     * {@code COALESCE} 与上面几个写操作保持同一姿势（历史数据里 frozen_stock 可能为 NULL，
+     * NULL 参与比较结果为 NULL，会**静默不返回**）。
+     */
+    @Select("SELECT id FROM t_sku "
+            + "WHERE COALESCE(frozen_stock, 0) <> 0 OR stock < 0")
+    List<Long> selectStockAlertSkuIds();
 }

@@ -1,7 +1,8 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
 > 更新时间：2026-09-29（**R57 已完成 · 必修 6 项全绿**：AI 导购对标行业共识改造 —— **M1 约束硬过滤**（预算/品类在商品域 **SQL 里生效**，提示词约束的只是措辞不是可见性；`ConstraintParser` 规则解析三状态「解析到 / 没提 / 提了没听懂必须告知」）+ **M2 召回独立超时**（300ms/1.5s，与 LLM 15s 分开）+ **M3 限流键不可伪造**（网关**先剥离再写入** `X-Real-IP`；登录用 userId）+ **全站总配额** + **M4 输出护栏**（绝对化用语 + 价格与候选一致性；命中换事实版回复而非拒绝）+ **M5 失败出口**（物流/售后类「答不了」给入口）+ **澄清反问一次给可点选项**（`clarify` + 前端 chips）+ **M6 测试真绿**（预算断言从「仅 llm 模式」改为**无条件必查**——CI 跑 mock 导致其长期空转假绿）+ 单测 29 + 前端 23 + 冒烟 37 + 回归 346 全绿；**★ 单测当场抓到两个真缺陷**：「预算 200 以内」被 MAX/MIN 两套正则同位重匹配成 min=max=200（便宜货被误杀）、「最便宜的是哪个？」被当成预算未解析）｜**R56 已完成 · 自测 172 项 + 回归 614 项全绿**：分享圈补全 —— 评论与回复与评论点赞、关注流（跨域取「我关注的人」）、删除/编辑自己的分享（**软删**；原帖删除后转发单引用块显示「原内容已被作者删除」）、举报与**运营处理台**（后台第 8 个页签）、话题标签 `#`；**★ 本轮抓到三个真缺陷**：新计数字段漏进数字白名单（`commentCount`/`replyCount`/`shareCount` 下发成字符串 → 「按次数排序」退化成字典序）、DTO 的 `@Size(max=2)` 把「截断」变成 400、评论创建回执缺昵称。R57 AI 必修+加强 待办）｜**R55 已完成**（自测 101 项 + 回归 342 项全绿：通知体系补全 —— 补上此前**从未实现的生产者**端点、私信落库即写通知、**通知 + 私信合并未读口径落服务端**、tabBar 角标收敛到唯一出口 `utils/unread.js` 并新增 4 类刷新点、首页卡片式弹窗 `components/notice-toast`、通知页分类 chip 与触底分页；**★ 实测发现并修掉「一条私信被数两次」**：私信会另写一条 `bizType=MESSAGE` 通知行当入口，该行必须从通知未读里排除，且 `<> 'MESSAGE'` 对 `IS NULL` 返回 NULL → 必须显式写 `IS NULL OR`。R55 目标口径（用户点选）：分享圈四项全做 / 角标「通知 + 私信合并成一个数字」/ 首页顶部滑入小卡片 4 秒自动收起 / AI 必修 + 建议加强；R56 分享圈、R57 AI 待办）｜R54（**已完成 · 真机验收已通过**）：成色胶囊框过大 / 导航栏冗余通知入口 / 浏览与想要两个计数口径分开——**用户真机验收报障三条**：① 跳蚤市场成色筛选标签「全部成色/全新/九成新/良好可用」的胶囊背景框过大、未贴合文字；② 小程序右上角残留一个通知图标，与导航栏通知按钮重复；③ 「多少人想要」计数口径不对 —— 用户明确要求拆成两个：**浏览**（页面每被打开或刷新一次 +1，**同一用户可累加**）与**想要**（只按**咨询行为**统计，买家首次咨询计 1 人，同一买家不重复计数）。**逐条根因**：① `.fm-chip` 没有**显式高度**也没定 `line-height`（高度由字号 + 内边距撑出），且 `.fm-chips` 是 `display:flex` 又落在 `scroll-view` 里 —— flex 子项默认 `align-items:stretch` **会被拉伸到与容器等高** → 背景框比文字高出一截、各排高矮不一，圆角大于半高时还会从胶囊退化成「胖椭圆」；纯样式问题。② 导航栏 `nb-msg` 💬 与 tabBar 居中「通知」页**指向同一页面**（R50 重排后形成重复入口）。③ 卡片只有 `viewCount` 一个数、文案却写「N 人看过」—— **把可累加的「次数」说成「人数」**，而「想要」根本没有独立结构，也就不存在去重口径。**修复**：① `.fm-chips` 加 `align-items:center`（阻止拉伸）+ `.fm-chip` **显式定高** `height:48rpx` / `line-height:1` / `flex:none` / `border-radius:24rpx`（恰为半高）；② 删 `nav-bar` 三件套的 `.nb-msg` 图标与 `goNotice()`、三处页面清掉 `msg="{{false}}"`，**tabBar 通知入口必须保留**（删掉会让通知页再也进不去且无编译报错）；③ DDL 新增 `t_listing.want_count` + **去重表 `t_listing_want(listing_id, buyer_id)`（主键即去重键）**，`ListingMapper.insertWantIgnore`（`INSERT IGNORE`）**只有真插进去（返回 1）才给计数器 +1**（应用层「先查再写」并发下会双写），新增 `POST /api/listings/internal/{id}/want`（**刻意用 POST**：写操作，GET 会被预取/重试刷歪），social 域 `MessageService.send` 在 LISTING 消息落库后 best-effort 上报（**异常只 warn**——消息已发出，不该因附属统计判成发送失败），三处 DTO 补 `wantCount`，前端三页改「N 次浏览 + N 人想要」，详情页开 `enablePullDownRefresh` 让「刷新也算一次」落地。**★ 防复发**：`check-miniprogram.js` 规则 7 增补 3 条胶囊约定（error 级，反向验证 3/3 命中）+ 新增 `r54-listing-want-smoke.py`（26 项）+ `r54-miniprogram-copy-test.js`（23 项，含「tabBar 通知入口仍在」与下拉刷新行为）。**验证**：r54 探针 **26/0** + 前端单测 **23/0** + 回归 r53b **26/26** · r53 **28/28** · r52 **57/57** · 聊天热修 **17/17** · api-id-payload **19/19** · flea-mine-filter **42/42** · short-time **12/12** + 静态自检 **0 错 0 警** + 双容器 healthy + DDL 落库校验通过。**★ 本轮最重要的教训：静态规则的假阴性比不检查更危险** —— 规则 7 首版用正则匹配声明时**匹配到了注释里写出的同名声明**，故意删掉真声明后仍报 0 错，给出「已验证」的假象；修法是匹配前**先剥 CSS 注释**（`stripCssComments()`）。 ——以下为上一轮（R53 热修二）：——用户真机验收报障三条：① 按钮文字长了折行、忽大忽小（我的闲置页尤甚）；② 闲置「0 人看过」查看后仍为 0；③ 同一件闲置同时出现在「审核中」与「在售」。**逐条根因**：① 小程序 button **自带 28rpx/侧内边距**，与 `flex:1` 一起挤压文字框 → 长文案折两行；我的闲置筛选条 6 个标签缺 `flex:none` 被压窄，「审核中/审核失败/已下架/已售出」全折行 —— **行数不同即行高不同**，这就是「忽大忽小」；纯样式问题。② **全仓搜不到任何写入 `view_count` 的代码**（只有字段定义 / DTO 出参 / 种子数据）——`t_listing.view_count` 永远是初始值。③ 服务端 `status` 与 `auditStatus` **正交两维**（新发布条目天然 `ON_SALE + PENDING`），而小程序「在售」标签**只传 `status=ON_SALE`、漏了 `auditStatus=APPROVED`** → 待审件被同时捞进「在售」（**服务端一直正确，缺陷在前端拼参数**）。**修复**：① `app.wxss` 的 `.btn`/`.btn-mini` 加 `white-space:nowrap` 兜底 + product / flea-detail / flea-mine 三处页面显式定尺寸与 `flex:none`，筛选条改「**不换行 + 横向滚动**」；② `ListingMapper` 新增**数据库侧原子自增**（读-改-写并发会丢更新）+ `ListingService.detail` 在可见性校验后自增并把新值回填本次响应（**首次查看即 1**），只在公开详情计数、`ownerDetail` 不计、异常只 `warn` 不阻断；③ `flea-mine` 新增 `FILTER_PARAMS` 构成**不重不漏**划分（审核两标签只带 `auditStatus`，交易三标签**必须同带 `auditStatus=APPROVED`**），徽章改**单一状态**（审核态优先），上架 / 下架 / 重提三个按钮权限同源推导。**★ 防复发**：`check-miniprogram.js` 新增**规则 7**（error 级：按钮禁换行 + 横向成员 `flex:none`，已用「故意改坏」**反向验证 6 处全命中**）+ 新增 `flea-mine-filter-test.js`（**真实加载页面、桩 `wx.request` 断言实际查询串** 42 项）+ 新增 `r53b-listing-view-status-smoke.py` 26 项。**验证**：r53b **26/0** + flea-mine-filter **42/0** + 回归 R53 **28/28** · R52 **57/57** · 聊天热修 **17/17** + 静态自检 **0 错**。**教训：接口探针测不到「前端拼参数」；「有字段、有出参、没写入」是最隐蔽的一类缺陷。** ——以下为上一轮（R53 热修）：——用户真机验收报障三条：官方客服会话「内容已删除」、跳蚤市场私信「任何消息都发不出 + 控制台 404」、12:33 发出显示 04:33。**排查确认 ①② 同源**：`miniprogram/utils/api.js` 的 `message.send` 对 `receiverId`/`bizId`/`productId`/`listingId` 做 `Number()` 强转 —— id 是 18~19 位十进制，超出 JS Number 的 53 位有效精度（`Number('710000000000000001') === 710000000000000000`），服务端按错值查库 → `404 用户不存在` → 前端把 NOT_FOUND 文案化成「内容不存在或已删除」。**之所以"之前能发"**：ASK/LISTING 首条由服务端按商品/闲置归属定人（忽略前端 receiverId），掩盖了缺陷；落到 TEXT 才暴露。**③ 根因**：后端时间契约本就是 **UTC + `Z`**（`LocalDateTime.now(ZoneOffset.UTC)` + `toInstant(ZoneOffset.UTC).toString()`），前端 `shortTime` 却 `replace('Z','')` 主动删标记后裸切片 → **全站 13 个页面统一少 8 小时**（函数被聊天/订单/优惠券/秒杀/分享圈/通知等共用）。**修复**：四处 id 一律 `String()` 上行（后端 Long 自动转换）、`share.publish` 与 `share-detail` 的 `spuId` 同族隐患一并修；`shortTime` 重写为「按 UTC 解析 → 转设备本地时区」（手写逐段解析，绕开 iOS JSC 对纳秒 ISO 串的解析差异）。**★ 防复发三道防线**：`check-miniprogram.js` 新增规则 6（error 级，禁止对 `xxxId` 做 `Number()`）+ `api-id-payload-test.js`（真实加载 api.js、桩掉 `wx.request` 断言出参 19 项）+ `short-time-test.js`（时区换算 12 项，含反回归断言）。**验证**：`r53-hotfix-chat-smoke.py` **17/0** + `api-id-payload-test.js` **19/19** + `short-time-test.js` **12（北京）/10（UTC）** + R53 探针 28/28 + R52 探针 57/57 + 静态自检 0 错。**关键教训：探针只测后端 = 假绿** —— 凡是「前端拼装请求体」的契约（id 类型、时区语义），必须有一条直接执行前端代码的单测。以下为第五十三轮内容：——第五十三轮 · 闲置详情卖家卡与问一问 + 详情购买按钮过渡态 + 我的闲置审核态体系——**① 详情页卖家卡与「我想要」（LISTING 问一问全链路）**：product 域新增跨域事实源 `GET /api/listings/internal/cards`（InternalTokenFilter 保护，`InternalListingView` 含 `sellerId`），social 域新增 `ListingClient` + `ListingCardBrief` 契约副本；`bizType=LISTING` 收件人由服务端按 `listing.sellerId` 定（不信前端）、咨询会话豁免「非互关一条」、会话键上下文段升级为 **`ConvContext` record**（none/product/listing 三态统一拼装，商品段 `:p{spuId}` 与闲置段 `:l{listingId}` 平行不共存，双参同带 400）；会话列表/会话页/已读全链路支持闲置卡（type=LISTING，前端分流 `images.listingImage`，列表前缀 🏷️）。**★ 本轮最大的坑（启动即炸）**：`ListingClient` 与既有 `ProductClient` 同为 `@FeignClient(name="duoduo-product")`，同名 `FeignClientSpecification` 注册冲突 `BeanDefinitionOverrideException`，social 容器 unhealthy —— **同一服务多个 Feign 接口必须各配唯一 `contextId`**（`productCard`/`listingCard`），contextId 只影响 bean 命名不影响服务发现。**★ 前端防 401 副作用**：卖家卡数据源复用他人主页公开端点 `api.social.follow.profile(sellerId)` 聚合（零新增后端契约），但 profile 落 `/api/socials/**` 需登录——免登访客逛详情页会 401 → 清登录态 → 触发全局静默重登/跳登录；修法 `loadSeller` **无令牌不发请求**直接占位「卖家」。**② 购买按钮过渡态**：完整 C2C 担保交易（下单/锁定/托管/放款）属设计稿 Batch-3，且设计稿 §12-6 明确**上线前必须核实微信类目资质**——本轮按钮弹「担保交易即将上线」modal 并引导问一问，不做假下单（边界已登记任务清单）。**③ 我的闲置审核态体系（正交双维度）**：`mine/list` 新增 `auditStatus` 白名单参数（PENDING/APPROVED/REJECTED，可与 `status` 组合过滤，非法 400）；**审核驳回时 `status` 同步落 `OFF_SHELF`**（驳回条目不再混入「在售」）；新增 `GET /api/listings/mine/{id}`（卖家视角详情 `ListingOwnerView` 全集字段含驳回原因；`requireOwned` 统一收口，404/403 刻意区分）与 `POST /api/listings/{id}/resubmit`（仅 REJECTED 可调，PENDING/APPROVED 均 422；重提=内容更新 + 回 PENDING + status→ON_SALE + 清驳回原因，实名与违禁词全部复检——发布/重提共用 `normalizeForWrite()` 闸门）；小程序 `flea-mine` 筛选扩 6 项 + 「修改并重新提审」按钮（驳回条目直接进编辑页）、`flea-publish` 编辑模式（`?id=&mode=edit` 拉 owner 详情回填，`fen2yuan` 分↔元换算）。**验证**：新增 `scripts/r53-listing-detail-mine-smoke.py` **28/28 PASS**（A 审核维度过滤 5 + M LISTING 问一问 8 + R 驳回→修改→重提闭环 15，运营账号真实审核链）+ R52 回归 **57/57** + 双容器 healthy + 静态自检 0 错。**状态码口径已固定**：参数校验错 400 / 业务规则违例 422（探针 M6/R7/R12 首轮预期笔误已修正——服务端行为一直正确）。以下为第五十二轮内容：——第五十二轮 · 跳蚤市场发布链路补全 + 结算预览端点 + 405 修复——**① 发布链路**：后端由「仅 2 个只读端点」补成完整 C2C 闭环 —— `POST /api/listings`（发布）、`GET /api/listings/mine/list`（我的发布）、`POST /api/listings/{id}/status`（上/下架），新增 3 个 record（`ListingPublishRequest`/`ListingStatusRequest`/`ListingMineView`）+ `ListingService` 6 个私有校验方法（实名校验→违禁词→限流→默认成色 GOOD→图片去重限 9→价格上限 99999 元）；**安全设计是路径本身**：`/api/listings/search` 与 `/api/listings/*`（均两段）免登只读，三条写路径全部三段（`/mine/list`、`/{id}/status`）或单段（`POST /api/listings`）——因为网关白名单**按路径匹配、不区分 HTTP 方法**，若写 `/api/listings/**` 会把三条写端点一起放行成「匿名 UGC 直写入库」。**② 结算预览**：新增 `POST /api/orders/preview`，新增 `PreviewOrderRequest`/`PreviewOrderPreview`/`PreviewOrderResult`、`OrderService.previewOrder`；**关键取舍**：券试算走新增的**只读** `trial`（`POST /api/coupons/internal/trial`），绝不复用 `lock` —— `lock` 是跨服务写（占券），预览若调它，用户每改一次数量就被占一次券，最后没提交还得等 TTL 解锁；`precheck` 被 `lock`/`trial` 共用，保证「预览能用」与「下单能用」结论一致。**③ 405 修复**：`ErrorCode` 新增 `METHOD_NOT_ALLOWED`(405)、`GlobalExceptionHandler` 新增 `HttpRequestMethodNotSupportedException` handler。**★ 本轮最重要的坑**：`duoduo-common-web` 是**多服务共用模块**，首轮只重建了 product/trade/marketing/gateway 四个服务，**user/fulfilment/ai/social 内嵌的 `common-web` 仍是旧版**（`PUT /api/users/me` 仍回 500）；且 `mvn -pl ... -am install` 因增量检测 9 秒跳过打包（jar 时间戳没变）—— 改用 `mvn -q -o -DskipTests clean package -pl <四个模块>` 强制重打，逐层解包复检 `含 405 异常引用 = True` 才通过。**教训：改共用模块必须重建全部依赖方，且要验证构建产物内容而非只看退出码。** **④ 小程序**：新增 4 页（跳蚤市场列表 / 发布表单 / 我的闲置 / 闲置详情，共 16 文件）+ 首页入口 + 我的页「我的闲置」菜单 + `api.js` 的 `listing` 命名空间 + `images.js` 的 `listingImage`（复用商品图池省主包）+ 手绘 `flea.png` 图标（纯 Python zlib+struct，318 字节，品牌色 #4f6ef7）。**验证**：`r52-listing-preview-smoke.py` **57/57 PASS** + `r51-full-acceptance.py` **155/155 PASS 0 FAIL**（H3b 缺陷闭环）。**R52 热修（用户真机验收发现）**：发布闲置 403「没有权限执行该操作」——根因是三个前端缺口叠加：① 小程序**无实名认证页**（后端 `POST /api/users/me/realname` 一直就绪）；② `flea-publish` 只预检了登录没预检实名；③ `request.js` 把 `FORBIDDEN` 一刀切覆盖成通用文案、吞掉后端「该操作需要先完成实名认证」。修复：新增 `pages/realname`（成功后立即 `refreshSession()` 静默换新令牌——`realNameVerified` 在访问令牌 claim 里，后端 refresh 重读库签发，换完即发不必重登）+ 发布页实名预检引导卡（onShow 复查）+ FORBIDDEN 透传后端文案 + profile 实名入口，app.json 28 页。端到端探针 6/6 + r52 回归 57/57 + 静态自检 0 错误。以下为第五十轮内容：——第五十轮 · 通知中心上线 + tabBar 重排 + 全页面通知入口 + record 计数器类型缺陷根治——**① tabBar**：分类移出（首页已有入口）、通知升为**居中第 3 位**（首页/分享圈/通知/购物车/我的），分类降普通页带返回键；`switchTab` 引用与 index/notification/profile 三处 tab 清单全局同步。**② 通知中心**：启用 R47 已建齐的 `t_social_notice`/`t_social_notice_read`（零 DDL），`NoticeController` 4 端点，定向通知与公告统一视图、已读统一记集合表、他人通知 404；小程序 `pages/notification` 4 件套 + tabBar 角标 + 种子 3 公告（SQL 17 + 06）。**③ 全页面通知入口**：`nav-bar` 内置右上角 💬（R48 的 📩 改回短信样式）+ 新增 `back` 返回键，22 页统一自绘导航（chat/ai 高度扣 `navTotal`）。**④ ★ record 计数器类型根治**：字段名白名单只对普通 POJO 生效，record 走 `POJOPropertiesCollector` 分支绕过 writer 替换 → `UnreadCount.count` 是 `"3"` 而 `PageResult.total` 是 `3`（R47 `FollowCounts`、R49 `ConversationView.unread` 同病）；模块新增公开 `NumericLongSerializer`，record 计数/金额字段显式标注，本域 9 处已标注。**验证**：`r50-notice-smoke.py` 18/18 + social 43/43 + r49 15/15 + r48 8/8 + CI 子集 id-precision 56/56 与 smoke 55/55 + 静态自检 0 错误 + 自建一致性核对全过。以下为第四十五轮内容：——第四十五轮 · 模拟器启动失败热修——**根因**：微信 tabBar 上限 5 项，第四十四轮加分享圈成 6 项，`app.json` 静态校验不过（`["tabBar"]["list"] 不能超过 5 项`），工具拒绝启动模拟器。**修复**：tabBar 收敛为 首页/分类/分享圈/购物车/我的（订单 tab 移除，「我的 → 我的订单」入口替代）；orders 恢复原生导航栏（非 tab 页需返回键，R41 自绘栏改造还原）；cart/after-sales/checkout/seckill 四处 `switchTab(orders)` 改 `navigateTo|redirectTo`；index/profile 的 tab 页清单同步。验证：app.json 合法且 tabBar=5、7 个改动 js 语法全过、switchTab 残留清零、静态自检 0 错误。以下为第四十四轮内容：——分享静默登录根治 + 分享圈升一级 tab + 点赞/收藏/转发。
-> **当前进度（2026-10-11 · 最新）**：**E23 已完成 —— P3 收官**（代运营最小版：平台代第三方店铺 代发货 / 代处理售后 / 代下架，唯一入口是**店主给出的一次性工单**；新套件 `proxy-ops-smoke.ps1` **121/0**、新增单测 **32** 项；**顺带把商品域"是不是自营"的口径收敛成一个出口**，并修掉两个"只有真跑起来才现形"的缺陷：审计动作码在接收方落库成 `UNKNOWN`、自营正对照因夹具取空而退化成 405）。按《开发执行总纲》的顺序，**P0 / P1 / P2 已全部收口**；P4 已完成 E26 / E27 / E28，剩 E24/E25 不在关键路径；**P3：E16 ~ E23 全部 ✅**；下一步 S3（钱与库存每日自动对账），随后进入用户的一轮完整验收。本轮详情见 §6 变更记录首条。
+> **当前进度（2026-10-11 · 最新）**：**S3「钱与库存每日自动对账 + 提醒」已完成**（交易域新增 `t_recon_run` / `t_recon_diff` 两表 + 13 条判据（钱 8 / 库存 5）+ 每日 03:30 选主调度 + 后台 4 个端点；新套件 `recon-smoke.ps1` **53/0**、新增单测 **16** 项）。**★ 本轮抓到一个真缺陷**：接口全 404 —— 控制器已在镜像里、服务也活着，只是**网关路由按子路径列举时漏了 `/api/admin/recon/**`**（本文件第 5 次记同一个坑）→ 已修，并**固化成静态检查** `scripts/lib/check-gateway-routes.ps1`（250 条服务端路径逐条要求被网关覆盖，已接入 CI 第一步与 `check-all.ps1`，负对照验证过）。另有一条设计裁决值得记住：**钱是"政策的函数"** —— 拿历史单据的 `platform_fee` 去比**今天的**费率会产生 92 + 375 条纯假差异，费率类比较归回归测试、不归每日对账。
+> 上一轮：**E23 已完成 —— P3 收官**（代运营最小版：平台代第三方店铺 代发货 / 代处理售后 / 代下架，唯一入口是**店主给出的一次性工单**；新套件 `proxy-ops-smoke.ps1` **121/0**、新增单测 **32** 项；**顺带把商品域"是不是自营"的口径收敛成一个出口**，并修掉两个"只有真跑起来才现形"的缺陷：审计动作码在接收方落库成 `UNKNOWN`、自营正对照因夹具取空而退化成 405）。按《开发执行总纲》的顺序，**P0 / P1 / P2 已全部收口**；P4 已完成 E26 / E27 / E28，剩 E24/E25 不在关键路径；**P3：E16 ~ E23 全部 ✅**；**下一步进入用户的一轮完整验收**。本轮详情见 §6 变更记录首条。
 > 工程：`D:\智能体项目\duoduo-pet-mall-java`（Java 微服务正式版）
 > 运行方式：**Docker 优先**（中间件 + 业务服务全部容器化，已跑通）
 > 远端：https://github.com/1694798740/duoduo-pet-mall-java （私有）
@@ -213,6 +214,92 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-10-11（S3 钱与库存每日自动对账 + 提醒）
+
+**一句话**：每天凌晨系统自己把「交易库里的钱和库存」重算一遍，
+和「商品域 / 托管台账实际记的」逐笔比 —— 对不上就落一条差异明细并告警；
+**没跑成**（依赖服务挂了）必须如实记成「未完成」，不许记成「全绿」。
+
+**为什么这件事必须做**：E22 之后钱变成了「可提现 / 待结算 / 冻结中 / 累计到账」四栏，
+每一栏都是**多张表推导出来的结论**，任何一处写错都不会报错、只会让某个人的余额长期错一点点；
+库存同理（冻结台账 + 商品域 `frozen_stock` 是两个不同的存储，靠跨服务调用同步，中间失败会**静默残留**）。
+这类缺陷的共性是**没有报错、没有异常、没人报障**，只能靠"每天把两个来源比一遍"发现。
+S2 已经建立了调度单实例假设（`SchedLeaderLock`），S3 复用同一套选主。
+
+**★ 三条设计裁决（都是"怎么失败"的选择，不是实现细节）**
+
+1. **对账 ≠ 把同一个函数算两次**。每条规则必须比**两个不同来源**；
+   拿同一个计算函数调两遍是恒等式，不是检查。唯一例外是 `MONEY_FEE_ILLEGAL`，
+   它**故意不比费率**（见第 2 条），只查三个与策略无关的结构性非法（费率为负 / 佣金大于金额 / 金额为负）。
+2. **★ 钱是"政策的函数"，不是"当前费率的函数"**。
+   第一版拿「库里存的 `platform_fee`」与「**今天的**费率」比 —— 本地库实测**92 条费率不符 + 375 条自营被抽佣**，
+   **全部是假差异**：那些单据结算时费率还是 1%（12 900 的金额收 129），
+   另一些早于 E22 的自营免佣规则。`SettlementEntity` 的注释里其实早就写着
+   「费率会随运营策略调整，而历史单据必须保留**结算当刻**的口径」。
+   裁决：**费率类比较属于回归测试（settlement-smoke），不属于每日对账**；
+   每日对账只比"两个来源对同一事实的记录是否一致"。
+   已把这条写进 `ReconRule` 类注释与单测 `钱_费率历史不产生假差异()`（12 900 收 129 必须 `isEmpty`）。
+3. **`FAILED` 是一等状态**（三态 `CLEAN` / `DIRTY` / `FAILED`）。
+   最危险的失败模式是**把"没跑"记成"全绿"** —— 报表一片绿而事实未知。
+   所以：取数抛异常 / `checkedCount == 0` / 读依赖服务失败，一律落 `FAILED`，
+   并且 `syncStatusFromCounts` 带 `AND status <> 'FAILED'`，`FAILED` 永不被重新标成 `CLEAN`。
+   真验证方式：`docker stop duoduo-app-product` 后跑 STOCK 对账 → 必须是 `FAILED`（冒烟第 11 节就是这么做的）。
+
+**交付物**
+
+| 面 | 内容 |
+|---|---|
+| 表 | `t_recon_run`（`uk_recon_run_day_scope` 唯一键）/ `t_recon_diff`（`uk_recon_diff(run_id, rule, ref_type, ref_id)`） |
+| 判据层 | `ReconScope`（钱/库存两范围）/ `ReconStatus`（三态）/ `ReconRule`（13 条：钱 8 + 库存 5）/ `ReconJudgement`（纯函数，无 DB / 无 Spring / 无时钟） |
+| 服务层 | `ReconService`（`ReconSourceMapper` 取数 + `ProductGateway` 严格读 + `persist` + `alert`）、`@Scheduled(cron)` 每日 03:30、`SchedLeaderLock` 选主 |
+| 跨域 | 商品域新增 `GET /api/products/internal/skus/frozen-holders`（反查"有冻结或负库存"的 SKU）；`SkuSnapshot` / `SkuPurchaseView` 暴露**原始** `stock` / `frozenStock` |
+| 接口 | `GET /api/admin/recon/runs`、`GET /api/admin/recon/runs/{id}/diffs`、`GET /api/admin/recon/rules`、`POST /api/admin/recon/runs`（唯一写端点，`@Audited(RECON_RUN_MANUAL)`，`OperatorGuard.requireOperator()`） |
+| 单测 | `ReconJudgementTest` **16/0**（含**声明-执行守卫**：`ReconRule.ALL` 每条都必须同时有命中用例与不命中用例） |
+| 冒烟 | `scripts/recon-smoke.ps1` **53/0**（12 小节，见下） |
+| 静态守卫 | 新增 `scripts/lib/check-gateway-routes.ps1`（见"★ 本轮抓到的第 1 个缺陷"） |
+
+**★ 本轮抓到的 2 个缺陷**
+
+1. **网关路由漏配 → 27 项断言全 404（首轮冒烟 26 通过 / 27 失败）**。
+   控制器**已经编译进镜像**（`unzip -l` 能看到 `AdminReconController.class`）、
+   trade 服务也活着（直连 8083 匿名返回 401），但经网关的请求**全部 404** ——
+   因为网关路由是按**具体子路径**列举的（`Path=/api/cart/**,…`），`/api/admin/recon/**` 漏了。
+   这是本文件第 5 次记同一个坑（A11 / E14 / E18 / A3 之后）。
+   排查时它和「服务没起来」「接口没写」长得**一模一样**，所以修完立刻固化成静态检查：
+   `check-gateway-routes.ps1` 把「类级基路径 + 方法级路径」拼成 **250 条实际路径**逐条要求被网关模式覆盖，
+   并已接入 **CI 第一步** 与 `check-all.ps1` 的 `[0/5]`。
+   负对照已验证：临时删掉 recon 那段路由 → 它**精确报出** `/api/admin/recon/rules`、`/runs`、`/runs/{runId}/diffs` 三条。
+2. **`checked_count == 0` 必须判 `FAILED`**（编码期发现）。
+   0 个对象必然「没有差异」，于是"什么都没看"与"看了且没问题"在报表上完全一样 ——
+   和铁律 2「空结果与链路没接通长得一样」同族。冒烟第 3 节专门断言 `checkedCount > 0`。
+
+**其他值得记的取舍**
+
+- **同日重跑覆盖而非累积**：先 `deleteByRunOfDay` 再 `deleteByDayAndScope`，靠唯一键而不是应用层查后写。
+- **计数必须回表读**：`syncCountsFromDiffs` 在插入后重新 `COUNT(*)` ——
+  `uk_recon_diff` 可能去重，否则报表说 5 条、点开只有 4 条。
+- **跨域两向覆盖**：交易域只能送去"它知道有 FROZEN 的 SKU"，那个方向**永远发现不了**「交易域漏记冻结」；
+  所以加了反查端点 `frozen-holders`，候选集 = 两天来源的并集。
+- **严格读 vs 宽松读**：`ProductGateway` 原有的宽松读把 4xx 折成空 Map（购物车场景是对的：
+  "这个商品不存在"是业务事实）；对账新增 `loadSnapshotsStrict` / `frozenHolderSkuIds` / `callStrict`，
+  **任何**异常都抛 503 DEGRADED —— 对账里"读不到"≠"确实没有"，把前者当成后者会把一次调用失败变成 N 条假差异。
+- **为什么暴露原始两列而不是 `availableStock`**：出参 `availableStock = max(0, stock - frozenStock)` 会把
+  `frozenStock > stock` 这个异常**夹成 0**，前端只显示"售罄" —— 异常被一个看起来很合理的降级掩盖掉了。
+- **两个范围独立成败**：钱和库存分开落 `t_recon_run`，否则一次商品服务抖动会让整个对账 `FAILED`，
+  连带把一个本来完全正确的钱对账结论也变成"未知"。
+- **提醒边界**：本轮不外接告警通道（WARN 日志 + 后台页 + 严重度计数），已在代码注释里写明这是刻意的边界。
+- **审计动作码在收件方翻译**：新增 `RECON_RUN_MANUAL` 后**必须一起重建 `duoduo-user`**
+  （`AuditAction.parse()` 跑在 user 域的 `AuditLogService` 里），否则落库成 `UNKNOWN`。
+  冒烟第 10 节同时断言「`RECON_RUN_MANUAL` 有记录」与「近 20 分钟无 `UNKNOWN`」。
+
+**冒烟 12 小节**：① DDL 就绪 ② 规则清单**源码声明 vs 运行时**（正则数源码、比对 `/rules` 返回）③ 判权（买家 403 ×3 / 匿名 401 / 直连端口 401）
+④ 干净基线（`checkedCount > 0`、非 `FAILED`、报表条数 == 明细表条数）
+⑤~⑦ **三对「造差异 → 断言命中 → 复原 → 断言消失」**（托管金额 ≠ 订单实付 / 放款状态缺放款时间 / 跨域冻结不一致 + `frozen > stock`）
+⑧ 僵尸冻结（现场插 `'95'` 段夹具行，带唯一键守卫）⑨ 同日覆盖重跑 + 无孤儿明细
+⑩ 入参边界（非法范围 400 / 非法日期 400 / 不存在的轮次 404 / 不传日期=今天）
+⑪ **手动触发留痕 + 无 `UNKNOWN`** ⑫ **停 `duoduo-app-product` → STOCK 必须 `FAILED` 且带失败原因，同时 MONEY 不受影响**，随后 `docker start` + 等健康 + 复跑不再是 `FAILED`
+⑬ 收尾自证复原（托管金额回原值 / 无 `95` 段残留 / 临时提权的运营已降回 `USER`）
 
 ### 2026-10-11（E23 代运营最小版 · **P3 最后一项，P3 收官**）
 
@@ -432,8 +519,8 @@
   `check-bundle-isolation.mjs` 三端产物互不包含。
 - 顺带跑通：`check-smoke-static.ps1` 49 个脚本全合规（含 BOM 与 Check 判据规则）。
 
-**遗留（下一轮）**：**S3 钱与库存每日自动对账 + 提醒**（可与结算的调度合并做；落点：trade 域新增每日对账任务，
-复用 `SchedLeaderLock` 选主，差异超阈值告警；口径必须**独立复算**，不能拿同一个 `SettlementService` 自己对自己）。
+**遗留（下一轮）**：~~S3 钱与库存每日自动对账 + 提醒~~ —— **✅ 已完成 2026-10-11**（见本文件 §6 首条；
+`recon-smoke.ps1` 53/0 + 单测 16 + 新增网关路由覆盖静态守卫）。
 另：**S18「AI 空推荐兜底口径」已由 E23 顺带作答**（见本轮 §6 首条）：模型**明确给空数组** → 如实转达保持空；
 **没给结构化 id / id 全对不上** → 兜底前 3 条。两者以前在代码里长得一样（都是空），现用 `structured` 标志分开。
 另：`SellerSummary` / `AdminDtos.SettlementSummary` 等其余 record 仍有同款字符串化隐患
@@ -3583,6 +3670,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1
 
 # 限时秒杀（26 项；匿名边界 / 运营准入 / 下单幂等 replay / 限购 / 售罄 / 取消回补）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1
+
+# 钱与库存每日自动对账（S3；53 项 12 小节。**注意第 12 节会真的把商品服务停掉再启动**，约 1 分钟）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recon-smoke.ps1
+
+# ---------- 静态守卫（不需要容器 / 不需要编译，几秒） ----------
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-smoke-static.ps1      # 断言绑定 + .ps1 必须带 UTF-8 BOM
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-gateway-routes.ps1    # S3 起：250 条服务端 /api/ 路径必须都被网关 Path 模式覆盖
+#   ↑ 后者挡的是「服务加了接口、忘了在网关加路径段」—— 唯一表现是 404，与「服务没起来」「接口没写」长得一样（已栽 5 次）。
+#     改网关 application.yml 之后**必须重建网关 jar 与镜像**才不会白改。
 
 # ---------- 小程序自检 + 前端契约单测（纯本地 Node/Python，不需要容器） ----------
 node scripts/check-miniprogram.js                 # 静态自检 8 条规则（含雪花 id 禁 Number()、按钮禁折行、胶囊必须显式定高、角标必须走统一 utils）；0 错 0 警

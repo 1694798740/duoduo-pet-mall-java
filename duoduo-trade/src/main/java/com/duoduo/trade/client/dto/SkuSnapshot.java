@@ -30,6 +30,14 @@ public record SkuSnapshot(
         String image,
         long price,
         int availableStock,
+        /**
+         * 总库存与冻结库存的**原始两列**（S3 对账专用，与商品侧 {@code SkuPurchaseView} 同名对齐）。
+         *
+         * <p>与 {@code availableStock} 的区别：那一个是 {@code max(0, stock - frozenStock)}，
+         * 把 {@code frozenStock > stock} 夹成了 0。对账要判这个异常，必须拿原始值。
+         */
+        int stock,
+        int frozenStock,
         boolean sellable,
         String spuStatus,
         String skuStatus,

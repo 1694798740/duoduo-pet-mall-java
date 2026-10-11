@@ -316,3 +316,37 @@ CREATE TABLE t_seckill_order (
 );
 CREATE UNIQUE INDEX uk_seckill_order_no ON t_seckill_order (order_no);
 CREATE INDEX idx_seckill_order_user ON t_seckill_order (user_id, activity_id);
+-- ---------- 对账轮次与差异明细（S3：钱与库存每日自动对账） ----------
+-- 口径详见 docs/sql/incremental/34-s3-recon.sql：一天一个 (biz_date, scope) 唯一，
+-- 同日重跑覆盖而非累积；FAILED（没跑成）必须与 CLEAN（跑了且干净）分得开。
+CREATE TABLE t_recon_run (
+    id            BIGINT       NOT NULL,
+    biz_date      DATE         NOT NULL,
+    scope         VARCHAR(20)  NOT NULL,
+    status        VARCHAR(20)  NOT NULL,
+    checked_count INT          NOT NULL DEFAULT 0,
+    diff_count    INT          NOT NULL DEFAULT 0,
+    high_count    INT          NOT NULL DEFAULT 0,
+    started_at    TIMESTAMP    NOT NULL,
+    finished_at   TIMESTAMP    NULL,
+    message       VARCHAR(500) NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_recon_run_day_scope ON t_recon_run (biz_date, scope);
+CREATE INDEX idx_recon_run_recent ON t_recon_run (started_at);
+CREATE TABLE t_recon_diff (
+    id         BIGINT       NOT NULL,
+    run_id     BIGINT       NOT NULL,
+    rule       VARCHAR(48)  NOT NULL,
+    severity   VARCHAR(10)  NOT NULL,
+    ref_type   VARCHAR(20)  NOT NULL,
+    ref_id     BIGINT       NOT NULL,
+    expected   VARCHAR(60)  NULL,
+    actual     VARCHAR(60)  NULL,
+    detail     VARCHAR(300) NULL,
+    created_at TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_recon_diff ON t_recon_diff (run_id, rule, ref_type, ref_id);
+CREATE INDEX idx_recon_diff_run ON t_recon_diff (run_id, severity);
+CREATE INDEX idx_recon_diff_ref ON t_recon_diff (ref_type, ref_id);

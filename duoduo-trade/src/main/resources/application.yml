@@ -95,6 +95,19 @@ duoduo:
     # E22 · 售后期（天）= 放款后资金的 T+N 冻结天数；冻结的意义是盖住退款窗口。
     # 同样必须与 SettlementService 的 @Value 默认值一致。
     settlement-hold-days: ${SETTLEMENT_HOLD_DAYS:7}
+    # ── S3 · 钱与库存每日自动对账 ──────────────────────────────
+    recon:
+      # 每日执行的时刻（cron，服务端时区按容器 UTC）。默认 UTC 03:30 = 北京时间 11:30，
+      # 刻意放在业务低峰且离补偿调度（每分钟一轮）有足够间隔。
+      cron: ${RECON_CRON:0 30 3 * * *}
+      # 回看窗口（天）：钱侧只对账这个窗口内创建的单据。
+      # ★ 代价是明写的：窗口之外的历史问题不会被发现。取这个值是与"每日全表扫"之间的取舍。
+      #   冻结侧例外 —— FROZEN 状态不论多老都要看（它持续占住库存且正常情况下很少）。
+      lookback-days: ${RECON_LOOKBACK_DAYS:90}
+      # 订单已完成 → 应放款的宽限小时数。不留宽限会在每次自动确认收货当天报一遍假差异。
+      release-grace-hours: ${RECON_RELEASE_GRACE_HOURS:24}
+      # 冻结过期多久算"补偿停摆"。过期本身正常（下一轮补偿会处理），超期一整轮才是异常。
+      freeze-stale-hours: ${RECON_FREEZE_STALE_HOURS:24}
     # ── A11 · 削峰队列（RocketMQ）────────────────────────────
     # order-mode=queue：POST /api/orders/queued 入队，消费者异步执行与同步端点
     #   完全相同的 placeOrder（幂等/状态机代码级复用）；sync（默认）：MQ 相关 Bean

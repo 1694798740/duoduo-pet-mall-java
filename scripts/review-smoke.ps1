@@ -150,6 +150,27 @@ for ($i = 0; $i -lt 40; $i++) {
 }
 Check "履约服务 /actuator/health 就绪" $fulfilReady
 
+# ---------- 0.5 开机清扫：历史残留的评价夹具 ----------
+#
+# 【为什么需要它】§11 的清理是按 `order_no` 删的。若上一轮**中途被中断**（Ctrl-C、
+# 会话被回收、机器重启），那一条评价会留在库里 —— 而它挂的是**种子商品**，
+# 于是商城首页与商品详情页都会渲染出一张 `https://example.com/review-1.jpg` 的**裂图**。
+#
+# 【真实发生过】2026-10-10 的残留（订单已被删、评价还在）让 2026-10-11 的
+# `home` 与 `product-detail` 两套真实浏览器 e2e **同时变红**，断言报「商品图零裂图」失败。
+# 现象像代码回归（两套页面同时坏），真因是**数据脏** —— 与本文档 §6 第 1 条同族。
+#
+# 【判据为什么安全】`example.com` 是 RFC 2606 保留域名，**真实评价不可能指向它**，
+# 所以「图片里出现 example.com」是本套件夹具的**专属标记**，删它不会误伤任何真实数据。
+# 只删图片带该标记的行；正常路径下这里应当删 0 行。
+$leftover = Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';"
+if ($leftover -ne '0') {
+    Write-Host "  [清场] 发现 $leftover 条历史残留的评价夹具（图片带 example.com 标记），先删掉"
+    Sql 'duoduo_fulfilment' "DELETE FROM t_review WHERE images LIKE '%example.com%';" | Out-Null
+}
+$leftoverAfter = Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';"
+Check "开机清扫：库里没有残留的评价夹具（残留会让首页/详情页 e2e 报裂图）" ($leftoverAfter -eq '0') "left=$leftoverAfter"
+
 # ---------- 1. 夹具：SKU 快照 ----------
 Write-Host ""
 Write-Host "> 夹具（从接口动态取）"

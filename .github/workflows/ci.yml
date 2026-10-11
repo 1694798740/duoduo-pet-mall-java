@@ -39,6 +39,14 @@ jobs:
         shell: pwsh
         run: ./scripts/lib/check-smoke-static.ps1
 
+      # ★ 同样放在最前面：也是纯静态（只读 application.yml + *Controller.java），
+      #   不需要编译产物。它挡的是"服务加了接口、忘了在网关加路径段"——
+      #   那种漏**唯一表现就是 404**，与"服务没起来""接口没写"长得一模一样，
+      #   本项目已栽 5 次（最近一次是 S3 对账：27 条断言全 404）。
+      - name: 网关路由覆盖自检（服务端 /api/ 路径必须都有网关 Path 模式）
+        shell: pwsh
+        run: ./scripts/lib/check-gateway-routes.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -76,7 +84,10 @@ jobs:
       # 就只会在"权限没即时生效"这种没人报障的场景里悄悄腐烂。
       # E19 起追加 privilege-matrix-smoke.ps1：越权矩阵同理 —— 它的失效方向是
       # 「注解没注册/网关兜住了 → 断言照样绿」，必须有一台机器每天替我们盯着。
-      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1
+      # S3 起追加 recon-smoke.ps1：它的核心断言是**三态**里的 FAILED
+      #（依赖服务挂了必须记"没跑成"，不许记"全绿"）—— 这一条只有在
+      # 真停一个容器时才验得出来，本地人工跑必然被省略。
+      SMOKE_SCRIPTS: smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1,recon-smoke.ps1
     steps:
       - uses: actions/checkout@v4
 
