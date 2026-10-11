@@ -206,8 +206,13 @@ public class GatewaySecurityProperties {
             // 小程序/T 商城令牌即使带过来，也会在这里被挡下（角色校验是第二道，这里只是收窄）
             "/api/admin/**", List.of(ClientEntry.ADMIN),
             // 商家经营面：只有第三方商家平台站点能调。
-            // 注：平台运营「代运营」需要从后台调商家接口 —— 那是 P3 的功能，
-            // 届时把 ClientEntry.ADMIN 加进本列表即可（配置项，无需改代码逻辑）
+            // ★ E23 落地时的实测结论（此处原写「届时把 ADMIN 加进本列表即可」，现已作废）：
+            //   代运营**不需要**放开这一条 —— 平台侧的动作端点全部落在 /api/admin/** 下
+            //   （`AdminProxyController`：/api/admin/orders/{orderNo}/proxy-ship、
+            //   /api/admin/products/{spuId}/proxy-off-shelf），由上面的 /api/admin/** 规则放行；
+            //   工单的「发起 / 作废」留在商家端（/api/seller/proxy-requests），只归商家。
+            //   也就是说：**代运营的授权方向是商家→平台，不是让平台拿到商家入口。**
+            //   所以这条保持「仅 MERCHANT」是对的，不要因为「平台要代运营」而顺手加 ADMIN。
             "/api/seller/**", List.of(ClientEntry.MERCHANT)
     ));
 

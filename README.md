@@ -1081,8 +1081,12 @@ duoduo-pet-mall-java/
 - **审计动作码**：`ORDER_PROXY_SHIP`(CONTENT) / `AFTERSALE_PROXY_PROCESS`(FUNDS) /
   `PRODUCT_PROXY_OFF_SHELF`(CONTENT)，留痕 `detail` 里带工单号；**被拒的尝试也留痕**（`outcome=FAILED`）。
   ★ 新增动作码 = 新增一个"接收方（`duoduo-user`）也要认识"的契约，**只重建发送方不够**。
-- **遗留**：`PUT`/`DELETE /api/seller/products/{spuId}` 目前仍允许平台运营改/删第三方商品，
+- **遗留**：`PUT /api/seller/products/{spuId}`（编辑商品）目前仍允许平台运营修改第三方店铺的商品，
   与上下架的收窄口径不一致，已登记为遗留项（影响面与回滚方式不同，单独评估）。
+  ★ 校正：**并没有** `DELETE /api/seller/products/{spuId}` 这个端点 —— 商品只能上下架（`POST /{spuId}/status`，
+  只接受 `ON_SALE` / `OFF_SHELF`）与编辑，不存在删除路径。此处此前写成「改/删」，是照着当时的
+  `删除` 一起写的、并未核对控制器；`SellerProductController` 里没有 `@DeleteMapping`，
+  `SellerProductService` 也没有删除方法。**登记遗留项时同样要核到端点上，不能凭印象写。**
 
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
