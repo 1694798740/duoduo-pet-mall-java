@@ -17,8 +17,9 @@ param(
     [string]$Trade = 'http://127.0.0.1:8083',
     [string]$Password = 'duoduo123',
     [string]$InternalToken = 'duoduo-local-dev-internal-token',
-    # 必须与交易服务配置的 duoduo.trade.platform-fee-bps 一致（默认 100 = 1%）
-    [int]$PlatformFeeBps = 100,
+    # 必须与交易服务配置的 duoduo.trade.platform-fee-bps 一致
+    # （E22 起默认 600 = 6%，此前是 100 = 1%）
+    [int]$PlatformFeeBps = 600,
     [switch]$SkipDbCheck
 )
 
@@ -86,11 +87,6 @@ function Call([string]$method, [string]$uri, $session, $bodyObj, [hashtable]$hea
 }
 
 function Register([string]$phone, [string]$nickname) {
-
-# 平台运营会话：自营订单归平台（seller_id=0），只有 OPERATOR 能发货 ——
-# 迁移前脚本用买家会话调旧的 /api/orders/{no}/ship（无归属校验），迁移后必须换身份。
-$op = New-PlatformOperatorSession -Gateway $Gateway -Password $Password
-$sessOp = $op.session
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $r = Call 'Post' "$Gateway/api/auth/register" $s @{ phone = $phone; password = $Password; nickname = $nickname }
     if ($r.status -eq 409) { $r = Call 'Post' "$Gateway/api/auth/login" $s @{ phone = $phone; password = $Password } }
@@ -214,12 +210,20 @@ $c1 = PlaceAndPay $sessA $SKU_A 2 $SKU_B 1 '场景一'
 Check "场景一：下单并支付成功（200）" $c1.ok $c1.step
 $on1 = $c1.orderNo
 $pay1 = [long]$c1.pay.amount
-$fee1 = FeeOf $pay1 $PlatformFeeBps
 
 $r = Call 'Get' "$Gateway/api/orders/$on1" $sessA $null
 Check "支付后订单详情内嵌托管信息（非空）" ($null -ne $r.body.data.settlement)
 Check "托管金额 = 订单实付（$pay1 分）" ([long]$r.body.data.settlement.amount -eq $pay1) $r.body.data.settlement.amount
-Check "平台佣金按 $PlatformFeeBps bp 计算正确（$fee1 分）" ([long]$r.body.data.settlement.platformFee -eq $fee1) $r.body.data.settlement.platformFee
+
+# ★ E22：佣金口径分两种 —— 自营（seller_id = 0）**免佣**，第三方按 $PlatformFeeBps 抽佣。
+#   判据取**接口返回的 sellerId**，不查库：这样 -SkipDbCheck 时这条也照常跑。
+#   夹具商品属于平台自营，所以此处期望佣金为 0 —— 不是"没算"，而是"按规则不该收"。
+#   第三方路径的取整公式由 SettlementServiceFeeTest 单测覆盖（冒烟夹具里只有自营商品）。
+$selfSeller = ([string]$r.body.data.settlement.sellerId -eq '0')
+$fee1 = if ($selfSeller) { [long]0 } else { FeeOf $pay1 $PlatformFeeBps }
+Check "★ E22：佣金口径正确（自营免佣 / 第三方 $PlatformFeeBps bp，期望 $fee1 分）" `
+    ([long]$r.body.data.settlement.platformFee -eq $fee1) `
+    "sellerId=$($r.body.data.settlement.sellerId) 实收佣金=$($r.body.data.settlement.platformFee) 期望=$fee1"
 Check "卖家可得 = 托管金额 − 佣金（$($pay1 - $fee1) 分）" ([long]$r.body.data.settlement.sellerAmount -eq ($pay1 - $fee1)) $r.body.data.settlement.sellerAmount
 Check "托管状态为 CUSTODY（资金在平台）" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
 Check "托管文案为「托管中」" ($r.body.data.settlement.statusLabel -eq '托管中') $r.body.data.settlement.statusLabel
@@ -274,6 +278,138 @@ Check "重复确认收货未二次放款（releasedAt 未被改写）" ($r.body.
 if (-not $SkipDbCheck) {
     Check "托管单仍只有 1 行、状态 RELEASED" ((Sql 'duoduo_trade' "SELECT CONCAT(COUNT(*),'/',COALESCE(MAX(status),'-')) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq '1/RELEASED')
     Check "released_at 已落库" ((Sql 'duoduo_trade' "SELECT CASE WHEN released_at IS NULL THEN 'null' ELSE 'set' END FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq 'set')
+
+    # ---------- E22 口径（放款即记账、T+7 才可提现）----------
+    # ★ 这一条是 E22 的核心变化：release_at 与 released_at **不再相等**。
+    #   前者是"什么时候能取"，后者是"钱什么时候变成他的" —— 分开存才能表达
+    #   "钱已经是他的、但还在售后期内取不走"这个中间状态。
+    Check "★ E22：release_at 晚于 released_at（可提现时刻被推后）" `
+        ((Sql 'duoduo_trade' "SELECT CASE WHEN release_at > released_at THEN 'later' ELSE 'same' END FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq 'later') `
+        "release_at=$(Sql 'duoduo_trade' "SELECT IFNULL(release_at,'NULL') FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');")"
+    Check "★ E22：售后期差额恰为 7 天（T+7）" `
+        ((Sql 'duoduo_trade' "SELECT DATEDIFF(release_at, released_at) FROM t_settlement WHERE order_id=(SELECT id FROM t_order WHERE order_no='$on1');") -eq '7')
+}
+
+# 钱包接口可用性 + 不串数据：运营（非本单卖家本人）查自己的钱包，应为 200 且金额全 0。
+# ★ 刻意用"运营"而不是"订单卖家"来查：脚本里没有订单卖家本人的会话（发货是运营代发的），
+#   而这条断言真正要证明的是「接口通、且不会把别人的钱算给我」——
+#   若哪天租户/归属过滤写错，这里会立刻变成非 0。
+$r = Call 'Get' "$Gateway/api/seller/settlements/wallet" $sessShip $null
+Check "★ E22：卖家钱包接口返回 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
+Check "★ E22：非本单卖家查钱包，金额全 0（不串别人的钱）" `
+    ([long]$r.body.data.pendingAmount -eq 0 -and [long]$r.body.data.frozenAmount -eq 0 -and [long]$r.body.data.netWithdrawableAmount -eq 0) `
+    "pending=$($r.body.data.pendingAmount) frozen=$($r.body.data.frozenAmount) net=$($r.body.data.netWithdrawableAmount)"
+Check "★ E22：钱包回述售后期天数 = 7" ([int]$r.body.data.holdDays -eq 7) "holdDays=$($r.body.data.holdDays)"
+
+# ---------- 4.5 E22-4：结算账单（租户 × 周期，双侧同源） ----------
+Write-Host ""
+Write-Host "> E22-4：结算账单（租户 × 周期）"
+
+# ★ 时间断言前必须**归一化**再比。
+#   pwsh 7 的 ConvertFrom-Json 会把 ISO 串自动转成 [datetime]（PS 5.1 不转），
+#   于是 `$r.body.data.periodStart -match 'T00:00:00Z$'` 这类写法在 CI 上恒假 ——
+#   典型的「本机绿、CI 红」成因（AGENTS 铁律 10）。这里统一转回 UTC 的 ISO 串。
+function IsoUtc([object]$v) {
+    if ($null -eq $v) { return '' }
+    return ([datetimeoffset]$v).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+
+$period = [DateTime]::UtcNow.ToString('yyyy-MM')
+$expectStart = "$period-01T00:00:00Z"
+$expectEnd = ([datetime]::ParseExact("$period-01", 'yyyy-MM-dd', $null).AddMonths(1)).ToString('yyyy-MM-dd') + 'T00:00:00Z'
+
+$r = Call 'Get' "$Gateway/api/seller/settlements/bills?period=$period" $sessShip $null
+$bill = $r.body.data
+Check "★ E22：商家端结算账单返回 200" ($r.status -eq 200) "status=$($r.status)"
+Check "★ E22：账单周期原样回述（$period）" ("$($bill.period)" -eq $period) "$($bill.period)"
+Check "★ E22：账单起点 = 本月初 00:00Z" ((IsoUtc $bill.periodStart) -eq $expectStart) (IsoUtc $bill.periodStart)
+Check "★ E22：账单终点 = 下月初 00:00Z（左闭右开，跨月不重不漏）" ((IsoUtc $bill.periodEnd) -eq $expectEnd) (IsoUtc $bill.periodEnd)
+# 跨字段自洽：卖家应得恒等于「订单金额 − 佣金」。两项出自同一条 SQL 的同一趟扫描，
+# 若哪天被拆成两条查询，这条会立刻变红 —— 而拆开之后不一致的概率不低。
+Check "★ E22：账单自洽 —— 卖家应得 = 订单金额 − 佣金" `
+    (([long]$bill.sellerEarningAmount) -eq ([long]$bill.orderAmount - [long]$bill.platformFeeAmount)) `
+    "order=$($bill.orderAmount) fee=$($bill.platformFeeAmount) seller=$($bill.sellerEarningAmount)"
+
+# ★ 同源证据：账单的「余额段」必须与钱包接口**逐分一致**。
+#   两边各算一遍最常见的后果是"钱包说能提 500、账单说 480"，而用户只会相信小的那个，
+#   于是另一个页面在他眼里就成了"系统在骗人"。这条断言就是钉住这一点的。
+$w = Call 'Get' "$Gateway/api/seller/settlements/wallet" $sessShip $null
+Check "★ E22：账单余额段与钱包接口逐分一致（同源）" `
+    (([long]$bill.pendingAmount -eq [long]$w.body.data.pendingAmount) -and `
+     ([long]$bill.frozenAmount -eq [long]$w.body.data.frozenAmount) -and `
+     ([long]$bill.withdrawableAmount -eq [long]$w.body.data.withdrawableAmount) -and `
+     ([long]$bill.outstandingDebt -eq [long]$w.body.data.outstandingDebt)) `
+    "bill=$($bill.pendingAmount)/$($bill.frozenAmount)/$($bill.withdrawableAmount)/$($bill.outstandingDebt) wallet=$($w.body.data.pendingAmount)/$($w.body.data.frozenAmount)/$($w.body.data.withdrawableAmount)/$($w.body.data.outstandingDebt)"
+
+# 非法周期必须被拒：**不许**静默回落到当前月 —— 回落的后果是"我查 9 月、系统给 10 月"，
+# 页面一切正常，只有答案是错的（最难被发现的一类）。
+$bad = Call 'Get' "$Gateway/api/seller/settlements/bills?period=2026-13" $sessShip $null
+Check "★ E22：非法周期被拒（400），不静默回落当前月" ($bad.status -eq 400) "status=$($bad.status)"
+
+# —— 平台端：权限点 + 双侧一致性 ——
+$tenantId = [string]$bill.tenantId
+$rq = Call 'Get' "$Gateway/api/admin/settlements/bills?tenantId=$tenantId&period=$period" $sessShip $null
+Check "★ E22：运营查租户结算账单被拒（403，财务权限点生效）" ($rq.status -eq 403) "status=$($rq.status)"
+
+$phoneFin = $null
+if ($SkipDbCheck) {
+    Write-Host "  [SKIP] 已指定 -SkipDbCheck：跳过财务权限**正对照**（提权需要直接改库）"
+} else {
+    # 正对照夹具：随机手机号现场注册 → 库内提权为 ADMIN → 重新登录。
+    # ★ 刻意**不**沿用既有管理员账号：那会污染真实账号的角色，也不可重复。
+    $phoneFin = '137' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+    Register $phoneFin '结算测试-财务' | Out-Null
+    $finOk = $false
+    for ($i = 0; $i -lt 5; $i++) {
+        Sql 'duoduo_user' "UPDATE t_user SET role='ADMIN' WHERE phone='$phoneFin';" | Out-Null
+        Start-Sleep -Milliseconds 200
+        if ((Sql 'duoduo_user' "SELECT role FROM t_user WHERE phone='$phoneFin';") -eq 'ADMIN') { $finOk = $true; break }
+    }
+    # 夹具三纪律之一：**建不起必须显式报红**。悄悄跳过后续断言等于把"没测"记成"通过"。
+    Check "★ E22：财务夹具——ADMIN 角色写库成功（建不起即报红）" $finOk "phone=$phoneFin"
+
+    $sessFin = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $lg = Call 'Post' "$Gateway/api/auth/login" $sessFin @{ phone = $phoneFin; password = $Password }
+    Check "★ E22：财务夹具——提权后重新登录成功（令牌里带新角色）" ($lg.status -eq 200) "status=$($lg.status)"
+
+    $ra = Call 'Get' "$Gateway/api/admin/settlements/bills?tenantId=$tenantId&period=$period" $sessFin $null
+    Check "★ E22：财务（ADMIN）查租户账单返回 200（正对照）" ($ra.status -eq 200) "status=$($ra.status)"
+    Check "★ E22：平台端与商家端账单**逐分一致**（双侧同源）" `
+        (([long]$ra.body.data.orderAmount -eq [long]$bill.orderAmount) -and `
+         ([long]$ra.body.data.platformFeeAmount -eq [long]$bill.platformFeeAmount) -and `
+         ([long]$ra.body.data.releasedAmount -eq [long]$bill.releasedAmount) -and `
+         ([long]$ra.body.data.withdrawableAmount -eq [long]$bill.withdrawableAmount) -and `
+         ([long]$ra.body.data.outstandingDebt -eq [long]$bill.outstandingDebt)) `
+        "admin=$($ra.body.data.orderAmount)/$($ra.body.data.platformFeeAmount) seller=$($bill.orderAmount)/$($bill.platformFeeAmount)"
+    Check "★ E22：平台端账单回述同一 tenantId（不串租户）" ("$($ra.body.data.tenantId)" -eq $tenantId) "want=$tenantId got=$($ra.body.data.tenantId)"
+
+    # ★★ 防「空结果被当成正常」★★
+    #   上面那几条同源断言用的租户是夹具运营账号 —— 他名下**一张托管单都没有**，
+    #   所以四个口径全是 0，"两边都 0" 无法区分「口径一致」与「聚合恒空/链路没接通」。
+    #   自营订单的 seller_id = 0，而本套件刚刚建了 4 张自营订单，
+    #   所以 tenantId=0 的账单**必须有真实入账** —— 这才证明聚合真的读到了数据。
+    $self = Call 'Get' "$Gateway/api/admin/settlements/bills?tenantId=0&period=$period" $sessFin $null
+    Check "★ E22：自营（tenantId=0）账单返回 200" ($self.status -eq 200) "status=$($self.status)"
+    Check "★ E22：自营账单本期确有入账（笔数>0，防「聚合恒空被当成正常」）" `
+        (([long]$self.body.data.orderCount -gt 0) -and ([long]$self.body.data.orderAmount -gt 0)) `
+        "count=$($self.body.data.orderCount) amount=$($self.body.data.orderAmount)"
+
+    if (-not $SkipDbCheck) {
+        # 独立复算：同一条口径在库里再算一遍。账单若把时间列写错（比如用 released_at
+        # 去算"本期入账"），笔数与金额会双双对不上 —— 这是唯一能不靠读代码发现它的办法。
+        $dbStart = "$period-01 00:00:00"
+        $dbEnd = ([datetime]::ParseExact("$period-01", 'yyyy-MM-dd', $null).AddMonths(1)).ToString('yyyy-MM-dd') + ' 00:00:00'
+        $dbCnt = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement WHERE seller_id=0 AND created_at >= '$dbStart' AND created_at < '$dbEnd';"
+        $dbAmt = Sql 'duoduo_trade' "SELECT COALESCE(SUM(amount),0) FROM t_settlement WHERE seller_id=0 AND created_at >= '$dbStart' AND created_at < '$dbEnd';"
+        Check "★ E22：账单「本期入账」与库内独立复算一致（笔数）" ("$dbCnt" -eq "$([long]$self.body.data.orderCount)") "db=$dbCnt bill=$($self.body.data.orderCount)"
+        Check "★ E22：账单「本期入账」与库内独立复算一致（金额，分）" ("$dbAmt" -eq "$([long]$self.body.data.orderAmount)") "db=$dbAmt bill=$($self.body.data.orderAmount)"
+    }
+
+    # 不指定租户必须被拒，而不是"返回全平台的账"—— 后者会被当成某个租户的账单来用。
+    $rb = Call 'Get' "$Gateway/api/admin/settlements/bills?period=$period" $sessFin $null
+    Check "★ E22：平台端未指定租户被拒（400）" ($rb.status -eq 400) "status=$($rb.status)"
+    $rc = Call 'Get' "$Gateway/api/admin/settlements/bills?tenantId=$tenantId&period=2026-13" $sessFin $null
+    Check "★ E22：平台端非法周期被拒（400）" ($rc.status -eq 400) "status=$($rc.status)"
 }
 
 # 已放款的订单不能再退款（钱已到卖家手里，需走追偿）
@@ -465,13 +601,15 @@ if ($SkipDbCheck) {
     Check "两个 SKU 冻结量均为 0" ((Sql 'duoduo_product' "SELECT COALESCE(SUM(frozen_stock),0) FROM t_sku WHERE id IN ($SKU_A,$SKU_B);") -eq '0')
 }
 
-# ---------- 收尾：夹具运营账号降回 USER + 清掉它留下的审计行 ----------
-# 本套件为拿到后台入口提了**两个**临时运营账号（发货会话 + 通用会话）。不收尾的话，
-# 每跑一轮就在库里留两个永久可进平台后台的账号（E26 清理存量时就见过一批）；
+# ---------- 收尾：夹具后台账号降回 USER + 清掉它留下的审计行 ----------
+# 本套件为拿到后台入口提了临时运营账号（发货会话）与临时财务账号（E22-4 的正对照）。
+# 不收尾的话，每跑一轮就在库里留几个永久可进平台后台的账号（E26 清理存量时就见过一批）；
 # 而 E18 起后台每次写操作都会留痕 —— 那些审计行还会假装成"真人干过的运营动作"。
 # 放在所有 Check 之后：不新增断言，断言总数守卫的期望值不受影响。
-foreach ($fx in @($opShip, $op)) {
-    if ($null -ne $fx -and "$($fx.phone)" -ne '') { Remove-PlatformOperatorPrivilege -Phone $fx.phone | Out-Null }
+$fxPhones = @($opShip.phone)
+if ($null -ne $phoneFin -and "$phoneFin" -ne '') { $fxPhones += $phoneFin }
+foreach ($p in $fxPhones) {
+    if ($null -ne $p -and "$p" -ne '') { Remove-PlatformOperatorPrivilege -Phone $p | Out-Null }
 }
 
 # ---------- 汇总 ----------

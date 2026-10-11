@@ -1,6 +1,10 @@
 package com.duoduo.trade.service;
 
+import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
+import com.duoduo.common.context.UserContext;
+import com.duoduo.common.exception.BizException;
+import com.duoduo.common.security.perm.Permission;
 import com.duoduo.trade.dto.AdminDtos.AbnormalSettlement;
 import com.duoduo.trade.dto.AdminDtos.AdminReport;
 import com.duoduo.trade.dto.AdminDtos.SettlementSummary;
@@ -8,6 +12,8 @@ import com.duoduo.trade.dto.AnalyticsDtos;
 import com.duoduo.trade.dto.AnalyticsDtos.AdminCharts;
 import com.duoduo.trade.dto.AnalyticsDtos.Slice;
 import com.duoduo.trade.dto.AnalyticsDtos.TrendPoint;
+import com.duoduo.trade.dto.SettlementDtos.SellerWalletView;
+import com.duoduo.trade.dto.SettlementDtos.SettlementBill;
 import com.duoduo.trade.entity.SettlementEntity;
 import com.duoduo.trade.mapper.OrderMapper;
 import com.duoduo.trade.mapper.SettlementMapper;
@@ -35,10 +41,63 @@ public class AdminOpsService {
 
     private final SettlementMapper settlementMapper;
     private final OrderMapper orderMapper;
+    /** E22 · 钱包口径的唯一来源：平台侧与商家侧必须调用同一个方法，不允许各算一遍 */
+    private final SettlementService settlementService;
 
-    public AdminOpsService(SettlementMapper settlementMapper, OrderMapper orderMapper) {
+    public AdminOpsService(SettlementMapper settlementMapper,
+                           OrderMapper orderMapper,
+                           SettlementService settlementService) {
         this.settlementMapper = settlementMapper;
         this.orderMapper = orderMapper;
+        this.settlementService = settlementService;
+    }
+
+    /**
+     * E22 · 指定租户的钱包（待结算 / 冻结中 / 可提现 / 欠款）。
+     *
+     * <p><b>与商家端同源</b>：直接调 {@code SettlementService.walletOf}。
+     * 平台侧与商家侧看到的可提现金额必须逐分一致 ——
+     * 两边各算一遍是本项目明确禁止的模式（同 E20「判定点只有一个」的纪律）：
+     * 一旦分叉，出现的是"平台说能提 500、商家看到 480"这种谁也说不清谁对的分歧。
+     *
+     * <p>权限用 {@link Permission#FINANCE_SETTLEMENT}（矩阵里**仅 ADMIN**）：
+     * 资金视图比"看订单"更敏感，它暴露的是平台抽佣总额与卖家欠款规模。
+     * 与 {@link #settlementSummary()} 的差别正在于此 —— 那个是"全平台对不对得上"的运维视图（运营也要看），
+     * 这个是"某个租户能拿走多少钱"的财务视图。
+     */
+    public SellerWalletView tenantWallet(Long tenantId) {
+        OperatorGuard.requireOperator();
+        LoginUser actor = UserContext.require();
+        if (!actor.hasPerm(Permission.FINANCE_SETTLEMENT)) {
+            throw BizException.forbidden("查看租户资金钱包需要财务权限（仅管理员）");
+        }
+        if (tenantId == null) {
+            throw BizException.validation("请指定租户（店铺主体 userId）");
+        }
+        return settlementService.walletOf(tenantId);
+    }
+
+    /**
+     * E22 · 指定租户的结算账单（租户 × 周期）。
+     *
+     * <p><b>与商家端同源</b>：直接调 {@code SettlementService.billOf}。
+     * 平台看到的账单必须与商家看到的一模一样（逐分一致），否则对账会变成
+     * 一场"谁的数据才对"的争论 —— 而这种争论在技术上无解，因为两边都自认为对。
+     *
+     * <p>权限同 {@link #tenantWallet}：{@link Permission#FINANCE_SETTLEMENT}（仅 ADMIN）。
+     * 账单比钱包更敏感的地方在于它同时暴露**平台抽佣总额**，
+     * 那是平台的商业条款，不能给到运营角色。
+     */
+    public SettlementBill tenantBill(Long tenantId, String period) {
+        OperatorGuard.requireOperator();
+        LoginUser actor = UserContext.require();
+        if (!actor.hasPerm(Permission.FINANCE_SETTLEMENT)) {
+            throw BizException.forbidden("查看租户结算账单需要财务权限（仅管理员）");
+        }
+        if (tenantId == null) {
+            throw BizException.validation("请指定租户（店铺主体 userId）");
+        }
+        return settlementService.billOf(tenantId, period);
     }
 
     /** 全平台托管资金汇总（托管中 / 已放款 / 已退回） */

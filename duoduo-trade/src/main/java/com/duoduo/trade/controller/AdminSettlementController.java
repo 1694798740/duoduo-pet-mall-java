@@ -9,6 +9,8 @@ import com.duoduo.trade.dto.AdminDtos.BackfillResult;
 import com.duoduo.trade.dto.AdminDtos.CompensateRequest;
 import com.duoduo.trade.dto.AdminDtos.SellerDebtView;
 import com.duoduo.trade.dto.AdminDtos.SettlementSummary;
+import com.duoduo.trade.dto.SettlementDtos.SellerWalletView;
+import com.duoduo.trade.dto.SettlementDtos.SettlementBill;
 import com.duoduo.trade.service.AdminOpsService;
 import com.duoduo.trade.service.SellerDebtService;
 import com.duoduo.trade.service.SettlementBackfillService;
@@ -50,6 +52,30 @@ public class AdminSettlementController {
     @GetMapping("/summary")
     public ApiResponse<SettlementSummary> summary() {
         return ApiResponse.ok(adminOpsService.settlementSummary());
+    }
+
+    /**
+     * E22 · 指定租户的钱包（待结算 / 冻结中 / 可提现 / 欠款）。
+     *
+     * <p>权限为 {@code finance:settlement}（仅 ADMIN），理由见 {@code AdminOpsService.tenantWallet}。
+     * 与商家端 {@code /api/seller/settlements/wallet} **同一段计算**（逐分一致）。
+     */
+    @GetMapping("/wallets")
+    public ApiResponse<SellerWalletView> tenantWallet(@RequestParam Long tenantId) {
+        return ApiResponse.ok(adminOpsService.tenantWallet(tenantId));
+    }
+
+    /**
+     * E22 · 指定租户的结算账单（租户 × 周期）。
+     *
+     * <p>{@code period} 形如 {@code 2026-10} 或 {@code 2026-10-05}；不传 = 当前月。
+     * 与商家端 {@code /api/seller/settlements/bills} **同一段计算**（逐分一致）。
+     * 权限为 {@code finance:settlement}（仅 ADMIN），理由见 {@code AdminOpsService.tenantBill}。
+     */
+    @GetMapping("/bills")
+    public ApiResponse<SettlementBill> tenantBill(@RequestParam Long tenantId,
+                                                  @RequestParam(required = false) String period) {
+        return ApiResponse.ok(adminOpsService.tenantBill(tenantId, period));
     }
 
     /** 异常挂账：已付款却缺托管单的订单 */

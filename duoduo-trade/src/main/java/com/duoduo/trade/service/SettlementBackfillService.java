@@ -109,7 +109,9 @@ public class SettlementBackfillService {
             if (targetStatus == null) {
                 continue;
             }
-            long fee = settlementService.platformFeeOf(amount);
+            // E22：佣金按「卖家」判定 —— 自营（seller_id = 0）免佣，回补也必须走同一口径，
+            // 否则回补出来的历史单据会与实时结算的费率不一致（对账时表现为"同样金额佣金不同"）。
+            long fee = settlementService.platformFeeOf(sellerId, amount);
 
             items.add(new BackfillItem(orderNo, orderStatus, targetStatus, amount, fee));
             switch (targetStatus) {

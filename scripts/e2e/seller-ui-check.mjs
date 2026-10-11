@@ -269,11 +269,55 @@ check('详情页出现物流信息（中通快递）', t.includes('中通快递'
 check('详情页出现资金区', t.includes('资金') || t.includes('托管'), null);
 await shot('sel_order_detail.png');
 
-step('UI：/seller/settlements 资金对账');
+step('UI：/seller/settlements 结算与提现');
+
+// ★ E22 先做**接口层**预检，再谈页面。
+//   理由：页面上「待结算 / 可提现」都是格式化后的字符串，从文本反推数值既脆弱又看不出量级；
+//   而"页面显示了 0"与"接口根本没通、前端兜底显示 0"在肉眼上完全一样（铁律 2）。
+//   所以在接口层先把口径钉住，UI 层只负责证明"这些数字真的渲染出来了"。
+const walletApi = (await call('GET', '/api/seller/settlements/wallet', undefined, seller.jar)).data;
+const ledgerApi = (await call('GET', '/api/seller/settlements?page=1&pageSize=20', undefined, seller.jar)).data;
+check('★ E22：钱包接口返回售后期天数 7', walletApi?.holdDays === 7, walletApi?.holdDays);
+check(
+  '★ E22：钱包「待结算」= 台账「托管中·你可得」（同源，且都 > 0）',
+  walletApi?.pendingAmount === ledgerApi?.custodySellerAmount && walletApi?.pendingAmount > 0,
+  `${walletApi?.pendingAmount} vs ${ledgerApi?.custodySellerAmount}`,
+);
+check(
+  '★ E22：可提现（净额）= max(0, 毛额 − 欠款)',
+  walletApi?.netWithdrawableAmount === Math.max(0, walletApi.withdrawableAmount - walletApi.outstandingDebt),
+  JSON.stringify(walletApi),
+);
+const billApi = (await call('GET', '/api/seller/settlements/bills', undefined, seller.jar)).data;
+check(
+  '★ E22：账单周期为本月，且本期入账笔数 ≥ 2（夹具刚下过两单）',
+  /^\d{4}-\d{2}$/.test(billApi?.period ?? '') && billApi.orderCount >= 2,
+  JSON.stringify({ period: billApi?.period, orderCount: billApi?.orderCount }),
+);
+check(
+  '★ E22：账单快照段与钱包逐分一致（同源）',
+  billApi?.pendingAmount === walletApi?.pendingAmount &&
+    billApi?.withdrawableAmount === walletApi?.withdrawableAmount &&
+    billApi?.outstandingDebt === walletApi?.outstandingDebt,
+  JSON.stringify({ bill: billApi?.pendingAmount, wallet: walletApi?.pendingAmount }),
+);
+check(
+  '★ E22：账单自洽 —— 卖家应得 = 订单金额 − 佣金',
+  billApi?.sellerEarningAmount === billApi?.orderAmount - billApi?.platformFeeAmount,
+  JSON.stringify({ o: billApi?.orderAmount, f: billApi?.platformFeeAmount, s: billApi?.sellerEarningAmount }),
+);
+
 await page.goto(`${MERCHANT}/seller/settlements`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(900);
 t = await textNow();
-check('对账页出现「资金对账」', t.includes('资金对账'), t.slice(0, 60));
+check('对账页出现「结算与提现」', t.includes('结算与提现'), t.slice(0, 60));
+// E22 · 钱包四栏必须都渲染出来。少任何一栏，用户就看不到"钱卡在哪一段"。
+check('★ E22：页面渲染「可提现」', t.includes('可提现'), null);
+check('★ E22：页面渲染「待结算」', t.includes('待结算'), null);
+check('★ E22：页面渲染「冻结中」', t.includes('冻结中'), null);
+check('★ E22：页面渲染「累计到账」', t.includes('累计到账'), null);
+check('★ E22：页面解释冻结原因（售后期 N 天）', t.includes('售后期'), null);
+check('★ E22：页面渲染本期账单区块', t.includes('账单'), null);
 check('对账页列出这笔订单', t.includes(b.orderNo), b.orderNo);
 check('对账页出现金额（¥）', t.includes('¥'), null);
 await shot('sel_settlements.png');

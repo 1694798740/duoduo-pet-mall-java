@@ -284,7 +284,7 @@ export const SellerDashboardPage: React.FC = () => {
                 全部卖出订单
               </Link>
               <Link className="btn btn-ghost btn-sm" to="/seller/settlements">
-                资金对账
+                结算与提现
               </Link>
               <Link className="btn btn-ghost btn-sm" to="/seller/after-sales">
                 售后处理

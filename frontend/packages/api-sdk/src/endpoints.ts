@@ -99,6 +99,8 @@ import type {
   TotpSetupView,
   TotpStatusView,
   SellerSummary,
+  SellerWalletView,
+  SettlementBill,
   SettlementPage,
   SettlementView,
   ShipRequest,
@@ -431,6 +433,25 @@ export const sellerApi = {
   /** 我的资金托管单；status 可选 CUSTODY / RELEASED / REFUNDED，汇总不受过滤影响 */
   settlements: (query?: { status?: string; page?: number; pageSize?: number }) =>
     api.get<SettlementPage>('/api/seller/settlements', { query }),
+
+  /**
+   * E22 · 我的钱包：「我现在能取多少」的**唯一答案**。
+   *
+   * 与 {@link settlements} 的分工：那个是明细台账（每笔钱在哪），这个是四个数
+   * （待结算 / 冻结中 / 可提现 / 累计到账）。
+   * ★ 前端**不要**从明细里自己加总 —— 冻结规则一变，自己加的总就会与提现结果对不上，
+   *   而对不上的那个数恰好是用户最在意的。展示什么就以这里返回的为准。
+   */
+  wallet: () => api.get<SellerWalletView>('/api/seller/settlements/wallet'),
+
+  /**
+   * E22 · 我的结算账单（租户 × 周期）。
+   *
+   * period 形如 `2026-10`（整月）或 `2026-10-05`（单日）；不传 = 当前月。
+   * 格式非法服务端返回 400（**不会**静默回落到当前月 —— 那会让"查 9 月看到 10 月"不报错）。
+   */
+  bill: (query?: { period?: string }) =>
+    api.get<SettlementBill>('/api/seller/settlements/bills', { query }),
 
   // ---- 商品管理（/api/seller/products/**，落在 duoduo-product 服务） ----
 

@@ -509,6 +509,67 @@ export interface SettlementPage {
   refundedAmount: number;
 }
 
+/**
+ * E22 · 卖家钱包：「我现在能取多少」的唯一答案。
+ *
+ * ★ `netWithdrawableAmount` 才是真正能提的数，`withdrawableAmount` 是抵扣欠款前的毛额。
+ *   两个都给，是因为用户看到「有 500 可提、却被扣了 200 欠款」时需要能对上账；
+ *   只给净额会让人以为系统少给了钱。
+ */
+export interface SellerWalletView {
+  /** 待结算：钱还在平台托管，订单尚未确认收货 */
+  pendingAmount: number;
+  /** 冻结中：已记账到卖家名下，但仍在售后期内（T+N 未到期），取不出去 */
+  frozenAmount: number;
+  /** 可提现（毛额）：已过售后期，尚未抵扣欠款 */
+  withdrawableAmount: number;
+  /** 累计到账：已记账给卖家的总额（含冻结中与已被垫付的） */
+  releasedAmount: number;
+  /** 未结欠款（平台垫付形成） */
+  outstandingDebt: number;
+  /** 可提现（净额）= 毛额 − 欠款，且不小于 0；**提现以此为准** */
+  netWithdrawableAmount: number;
+  /** 下一笔资金解冻时间（ISO-8601 UTC）；当前无冻结资金时为 null */
+  nextReleaseAt: string | null;
+  /** 售后期天数，前端据此解释「为什么还不能提」 */
+  holdDays: number;
+}
+
+/**
+ * E22 · 结算账单（租户 × 周期）。
+ *
+ * ★ 两段刻意分开，因为回答的是两个问题、可信度也不同：
+ *   - 「本期发生额」按事件时间严格过滤，任何一天重跑都是同一个数（财务要的可复核性）；
+ *   - 「余额快照」与钱包页同源，所以同一时刻两处显示的可提现必然是同一个数。
+ * 金额一律整数「分」；periodStart 含、periodEnd 不含（左闭右开）。
+ */
+export interface SettlementBill {
+  period: string;
+  periodStart: string;
+  periodEnd: string;
+  tenantId: string;
+  // —— 本期发生额 ——
+  orderAmount: number;
+  platformFeeAmount: number;
+  sellerEarningAmount: number;
+  orderCount: number;
+  releasedAmount: number;
+  releasedSellerAmount: number;
+  releasedCount: number;
+  unfrozenAmount: number;
+  unfrozenCount: number;
+  refundedAmount: number;
+  refundedCount: number;
+  advancedAmount: number;
+  advancedCount: number;
+  // —— 余额快照（与钱包同源，非期末值）——
+  pendingAmount: number;
+  frozenAmount: number;
+  withdrawableAmount: number;
+  outstandingDebt: number;
+  snapshotAt: string;
+}
+
 /** 卖家发货请求；物流信息可选，随状态日志留痕 */
 export interface ShipRequest {
   logisticsCompany?: string;

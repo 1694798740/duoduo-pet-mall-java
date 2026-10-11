@@ -204,6 +204,42 @@ public class SellerService {
      * 而「托管中多少、已到账多少」是对账问题的答案。
      * 若让汇总跟着过滤条件走，用户勾一个「已放款」就会以为自己只赚了这么多。
      */
+    /**
+     * E22 · 我的钱包：待结算 / 冻结中 / 可提现 / 累计到账 / 欠款。
+     *
+     * <p>与 {@link #settlements} 的分工：那个回答"每一笔钱在哪"（明细台账），
+     * 这个回答"我现在能取多少"（一个数）。两者口径同源，前端**不允许**从明细里自己加总 ——
+     * 那样一旦冻结规则变化，页面就会给出错的数，而错的那个数恰好是用户最在意的。
+     *
+     * <p>店主的钱包就是"他自己的 userId 名下"的钱（租户键 = 店铺主体 userId，E20 口径）。
+     */
+    public com.duoduo.trade.dto.SettlementDtos.SellerWalletView wallet() {
+        SellerScope scope = requireSellerScope();
+        if (scope.staffMember()) {
+            // 与 settlements 同一道门：钱是"店主的事"，店员是"干活的人"
+            throw BizException.forbidden("店员账号不可查看结算与提现信息，请联系店主");
+        }
+        return settlementService.walletOf(UserContext.requireUserId());
+    }
+
+    /**
+     * E22 · 我的结算账单（租户 × 周期）。
+     *
+     * <p>与 {@link #wallet()} 的关系：钱包回答"现在能取多少"，账单回答
+     * "这个周期里钱是怎么动的"。账单的**快照段**直接复用钱包口径，
+     * 所以同一时刻两个页面上的"可提现"必然是同一个数。
+     *
+     * <p>与 {@link #settlements} 一样挡掉店员：账单里含着抽佣总额，
+     * 那既是店主的收入信息，也是平台的商业条款，不该由店员看到。
+     */
+    public com.duoduo.trade.dto.SettlementDtos.SettlementBill bill(String period) {
+        SellerScope scope = requireSellerScope();
+        if (scope.staffMember()) {
+            throw BizException.forbidden("店员账号不可查看结算与提现信息，请联系店主");
+        }
+        return settlementService.billOf(UserContext.requireUserId(), period);
+    }
+
     public SettlementPage settlements(String status, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
         if (scope.staffMember()) {

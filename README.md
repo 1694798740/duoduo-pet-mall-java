@@ -751,7 +751,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1           
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 77 项：下单拆单 + 库存冻结
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 72 项：支付幂等 + 状态机 + 超时关单
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 125 项：担保交易 + 资金托管 + 退款
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 149 项：担保交易 + 资金托管 + 退款 + E22 佣金/T+7/钱包/账单（双端同源 + 库内复算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
@@ -1012,6 +1012,26 @@ duoduo-pet-mall-java/
 | POST | `/api/seller/orders/{orderNo}/ship` | **发货**（填物流公司/单号，落 `t_order` 并回显）；资金**仍托管**，不触发放款 | 归属校验 |
 | POST | `/api/seller/orders/{orderNo}/refund` | **售后退款**（已付款/已发货；已完成需追偿或平台垫付，返回 422） | 归属校验 |
 | GET | `/api/seller/settlements` | 结算对账（分页 + 全量汇总金额） | 卖家或运营 |
+| GET | `/api/seller/settlements/wallet` | **E22 · 我的钱包**：待结算/冻结中/可提现(净额)/累计到账/欠款/下次解冻 | 卖家（店员 403） |
+| GET | `/api/seller/settlements/bills` | **E22 · 结算账单**（租户 × 周期）；`period` 形如 `2026-10` 或 `2026-10-05`，不传=当前月，非法 400 | 卖家（店员 403） |
+
+**E22 佣金与结算口径（4 条规则，唯一出处都在 `SettlementService`）**：
+
+- **抽佣 6%（600 bp）**，四舍五入到分：`(amount × bps + 5000) / 10000`。
+  **自营（`seller_id = 0`）免佣** —— 佣金从左手交到右手，收了只会让指标虚增。
+  费率走配置 `duoduo.trade.platform-fee-bps`，配 0 即全平台免佣。
+- **T+7 可提现**：`released_at`（记账）与 `release_at`（可提现）分开存，
+  合成一个字段表达不了"钱已经是他的、但还不能取"。
+- **欠款抵扣**：可提现 = 已解冻 − 未结欠款，且不小于 0；**只算 RELEASED 不算 ADVANCED**
+  （垫付的钱卖家没拿到，算进去会出现"越退款越有钱"的错账）。
+- **双端同源**：商家端与平台端的钱包/账单调**同一个**服务方法，逐分一致 ——
+  两边各算一遍的后果是"平台说能提 500、商家看到 480"，而那种分歧在技术上无解。
+
+**★ record 金额字段必须显式 `@JsonSerialize(using = NumericLongSerializer.class)`**
+`LongToStringJacksonModule` 的字段名白名单只对普通 POJO 生效，**record 组件不流经那条路径**，
+不标注就会以字符串下发（前端声明 number、实况 `"25800"`，`/` 靠隐式转换侥幸正确，
+`+` 变拼接、`===` 恒 false、`.toFixed()` 抛错）。`sellerId` / `tenantId` 这类**标识**刻意不标。
+
 
 **权限模型（刻意的三条边界）**：
 
@@ -1036,6 +1056,8 @@ duoduo-pet-mall-java/
 |---|---|---|---|
 | GET | `/api/admin/reports/overview` | 运营报表：GMV / 总订单 / 已付款 / 退款率 / 转化率（全平台口径，SQL 聚合） | 运营 |
 | GET | `/api/admin/settlements/summary` | 资金对账：托管中 / 已放款 / 已退回三组金额与笔数、佣金 | 运营 |
+| GET | `/api/admin/settlements/wallets?tenantId=` | **E22 · 指定租户的钱包**（与商家端 `/api/seller/settlements/wallet` 同一段计算，逐分一致） | `finance:settlement`（仅 ADMIN） |
+| GET | `/api/admin/settlements/bills?tenantId=&period=` | **E22 · 指定租户的结算账单**（租户 × 周期，与商家端同一段计算） | `finance:settlement`（仅 ADMIN） |
 | POST | `/api/admin/settlements/compensate` | **平台垫付退款**（已完成订单退款：金额按买家实付记卖家欠款，托管单 `RELEASED→ADVANCED`，订单进 `REFUNDED`；**不回补库存**；`uk_seller_debt_order` 保证一笔订单只垫付一次，重复调用 409） | 运营 |
 | GET | `/api/admin/settlements/debts` | 卖家欠款列表（可按 `status=OUTSTANDING/SETTLED/WRITTEN_OFF` 过滤） | 运营 |
 | POST | `/api/admin/settlements/debts/{id}/settle` · `/write-off` | 欠款收回 / 核销（CAS 条件更新，二次调用 409） | 运营 |

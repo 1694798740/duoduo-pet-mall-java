@@ -1,6 +1,8 @@
 package com.duoduo.trade.dto;
 
+import com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer;
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -88,19 +90,24 @@ public final class SellerDtos {
      * <p>汇总刻意不受分页影响：分页只是「一次看不完」，
      * 而「我一共托管多少钱、已到账多少」是对账问题的答案，
      * 让前端拿当前页的数字相加只会得到一个随页码变化的假答案。
+     *
+     * <p>★ 每个「量」字段都要显式标注 {@code @JsonSerialize}：
+     * {@code LongToStringJacksonModule} 的字段名白名单只对普通 POJO 生效，
+     * **record 组件不流经那条路径**，不标注就会以字符串下发（前端声明的是 number）。
+     * 详见 {@code SettlementDtos} 的类注释。
      */
     public record SettlementPage(
             List<SettlementView> items,
-            long total,
+            @JsonSerialize(using = NumericLongSerializer.class) long total,
             int page,
             int pageSize,
-            long custodyAmount,
-            long custodyFee,
-            long custodySellerAmount,
-            long releasedAmount,
-            long releasedFee,
-            long releasedSellerAmount,
-            long refundedAmount
+            @JsonSerialize(using = NumericLongSerializer.class) long custodyAmount,
+            @JsonSerialize(using = NumericLongSerializer.class) long custodyFee,
+            @JsonSerialize(using = NumericLongSerializer.class) long custodySellerAmount,
+            @JsonSerialize(using = NumericLongSerializer.class) long releasedAmount,
+            @JsonSerialize(using = NumericLongSerializer.class) long releasedFee,
+            @JsonSerialize(using = NumericLongSerializer.class) long releasedSellerAmount,
+            @JsonSerialize(using = NumericLongSerializer.class) long refundedAmount
     ) {
     }
 }

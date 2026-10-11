@@ -7,6 +7,8 @@ import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.RefundRequest;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.SellerDtos.SellerSummary;
+import com.duoduo.trade.dto.SettlementDtos.SellerWalletView;
+import com.duoduo.trade.dto.SettlementDtos.SettlementBill;
 import com.duoduo.trade.dto.SellerDtos.SettlementPage;
 import com.duoduo.trade.dto.SellerDtos.ShipRequest;
 import com.duoduo.trade.service.SellerService;
@@ -112,5 +114,31 @@ public class SellerController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.ok(sellerService.settlements(status, page, pageSize));
+    }
+
+    /**
+     * E22 · 我的钱包：待结算 / 冻结中 / 可提现 / 累计到账 / 欠款。
+     *
+     * <p>与 {@link #settlements} 的分工：那个是明细台账（"每笔钱在哪"），
+     * 这个是**一个数**（"我现在能取多少"）。口径与服务层同源，
+     * 前端不要从明细里自己加总 —— 冻结规则一变，自己加的总就会与提现结果对不上。
+     */
+    @GetMapping("/settlements/wallet")
+    public ApiResponse<SellerWalletView> wallet() {
+        return ApiResponse.ok(sellerService.wallet());
+    }
+
+    /**
+     * E22 · 我的结算账单（租户 × 周期）。
+     *
+     * <p>{@code period} 形如 {@code 2026-10}（整月）或 {@code 2026-10-05}（单日）；
+     * 不传 = 当前月。格式非法返回 400 而不是回落到当前月 ——
+     * 回落的后果是"我查 9 月、系统给我 10 月"，且不报错。
+     *
+     * <p>与钱包接口的关系见 {@code SellerService.bill}：账单快照段直接复用钱包口径。
+     */
+    @GetMapping("/settlements/bills")
+    public ApiResponse<SettlementBill> bill(@RequestParam(required = false) String period) {
+        return ApiResponse.ok(sellerService.bill(period));
     }
 }
