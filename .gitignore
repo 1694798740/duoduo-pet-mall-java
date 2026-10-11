@@ -43,3 +43,6 @@ scripts/e2e/node_modules/
 # R73：订单数据备份快照（环境数据，不入库）与一次性探针输出
 scripts/backup/
 scripts/tmp_*
+
+# 本地密钥（GitHub PAT 等）：只落本机，绝不入库
+.secrets/
