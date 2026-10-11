@@ -171,8 +171,18 @@ public class TwoFactorService {
         update.setId(userId);
         update.setTotpEnabled(true);
         update.setTotpBoundAt(now);
-        // 把"完成绑定的这一枚码"的时间步也记下：它已经用掉了，不能转身再拿去登录
-        update.setTotpLastStep(step);
+        // ★ 刻意**不**记录 totp_last_step —— 这一行是踩过坑之后才删掉的。
+        //
+        //   原先这里写了 `update.setTotpLastStep(step)`，想法是"这枚码已经用掉了"。但它带来两个后果：
+        //     ① 用户绑完之后最自然的下一步就是立刻登录一次验证效果，而这时防重放会把他拒掉，
+        //        提示"该验证码已被使用" —— 用户完全无法理解（"我刚绑好怎么就错了？"）；
+        //     ② 更隐蔽的是它让测试**依赖运行时刻**：绑定与随后的登录若落在同一个 30 秒窗口内，
+        //        就会算出同一枚码而被拒 —— 表现为"本机时而绿时而红、CI 上随机红"，
+        //        而产品行为其实完全正确。E21 的 CI 失败正是被这一条绊住的。
+        //
+        //   安全上并不亏：重放"绑定用的那枚码"仍需要同时掌握密码，且窗口只有 ±30 秒；
+        //   而真正的防重放规则 ——「**登录**成功才记录时间步、同一枚码不得二次登录」—— 原样保留
+        //   （见 assertAndAdvanceStep）。绑定是"配置动作"，不是"认证动作"，两者不该共用同一个计数器。
         update.setUpdatedAt(now);
         userMapper.updateById(update);
 

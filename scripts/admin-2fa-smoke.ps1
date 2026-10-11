@@ -35,7 +35,7 @@ $ProgressPreference = 'SilentlyContinue'
 $pass = 0
 $fail = 0
 $failures = @()
-$declared = 54
+$declared = 56
 
 function Check([string]$name, [bool]$ok, $extra) {
     if ($ok) {
@@ -156,14 +156,31 @@ try {
 } catch { }
 Check "网关可达（/api/categories → 200）" $ready "网关未就绪，后续断言无意义"
 if (-not $ready) {
+    # ★ 刻意**不**用裸 `exit 1`：ci-run.ps1 是靠解析"通过 X 项，失败 Y 项"这一行来统计的，
+    #   裸退出会让 CI 汇总表显示 `pass=0 fail=0` —— 信息量为零，
+    #   只能靠人工翻原始日志才知道是"网关不可达"。（E21 的 CI 失败排查踩过这个坑。）
+    #   走完标准汇总路径后，失败原因会直接出现在 CI 的失败清单里。
     Write-Host ""
-    Write-Host "=== 冒烟结果：网关不可达，已中止 ==="
+    Write-Host "=================================================================="
+    Write-Host "  [GUARD-ABORT] 前置条件未满足，其余断言未执行（声明 $declared）"
+    Write-Host "=== 冒烟结果：通过 $pass 项，失败 $fail 项 ==="
+    Write-Host "失败清单："
+    $failures | ForEach-Object { Write-Host "  - $_" }
     exit 1
 }
 
 # ---------- 1. 夹具 ----------
 Write-Host ""
 Write-Host "> 1. 夹具（现场建：账号 + 提权 + 令牌）"
+
+# ★ 先自检 schema：本机老库需要手工执行 incremental/32-e21-admin-2fa.sql，
+#   而 CI 是全新数据卷、由 01-duoduo-user.sql 直接建好。两者只要有一边漏了，
+#   后续所有 /api/auth/2fa/** 调用都会 500 —— 而"500 全线刷屏"这种失败形态
+#   很难一眼看出根因是"少了一列"，所以在这里先把它钉死。
+$colCount = Sql 'duoduo_user' "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='duoduo_user' AND TABLE_NAME='t_user' AND COLUMN_NAME IN ('totp_secret','totp_enabled','totp_bound_at','totp_last_step');"
+Check "（前置）E21 迁移已应用：t_user 的 4 个 totp 列齐备" ("$colCount" -eq '4') "实际命中 '$colCount' 列（缺列会让后续 2FA 接口全部 500）"
+$tableCount = Sql 'duoduo_user' "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='duoduo_user' AND TABLE_NAME='t_totp_recovery_code';"
+Check "（前置）E21 迁移已应用：恢复码表存在" ("$tableCount" -eq '1') "实际命中 '$tableCount' 张"
 
 function Register([string]$phone) {
     $r = Call 'Post' "$Gateway/api/auth/register" @{ phone = $phone; password = $Password; nickname = "2FA夹具$phone" } $null
