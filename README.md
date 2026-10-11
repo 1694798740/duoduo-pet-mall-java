@@ -744,8 +744,8 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > CI 子集（本地 / GitHub Actions 同一入口，**17 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1`。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
-> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**129 个端点**与 `docs/agent/04` 逐条核对）；
-> `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**（当前 **241 个端点**），
+> **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**252 个端点**与 `docs/agent/04` 逐条核对）；
+> `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**（当前 **389 个端点**），
 > 加 `--check` 即变门禁（文档落后于源码时退出码 1）—— 端点清单不再靠手工维护。
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 

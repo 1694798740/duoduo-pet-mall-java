@@ -42,6 +42,36 @@
                                                                                                }
                                                                              }
                                                                 },
+                  "/api/coupons/internal/trial":  {
+                                                      "post":  {
+                                                                   "tags":  [
+                                                                                "coupon-internal-controller"
+                                                                            ],
+                                                                   "operationId":  "trial",
+                                                                   "requestBody":  {
+                                                                                       "content":  {
+                                                                                                       "application/json":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/LockRequest"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                   },
+                                                                                       "required":  true
+                                                                                   },
+                                                                   "responses":  {
+                                                                                     "200":  {
+                                                                                                 "description":  "OK",
+                                                                                                 "content":  {
+                                                                                                                 "*/*":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/ApiResponseLockResult"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                             }
+                                                                                             }
+                                                                                 }
+                                                               }
+                                                  },
                   "/api/coupons/internal/sweep":  {
                                                       "post":  {
                                                                    "tags":  [
@@ -317,6 +347,70 @@
                                                                                          }
                                                                           }
                                                        },
+                                       "LockRequest":  {
+                                                           "required":  [
+                                                                            "code",
+                                                                            "orderNo",
+                                                                            "userId"
+                                                                        ],
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "code":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                              "userId":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                              "orderNo":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                              "orderAmount":  {
+                                                                                                  "minimum":  0,
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              }
+                                                                          }
+                                                       },
+                                       "ApiResponseLockResult":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "code":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                        "message":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                        "data":  {
+                                                                                                     "$ref":  "#/components/schemas/LockResult"
+                                                                                                 },
+                                                                                        "requestId":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                        "timestamp":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int64"
+                                                                                                      }
+                                                                                    }
+                                                                 },
+                                       "LockResult":  {
+                                                          "type":  "object",
+                                                          "properties":  {
+                                                                             "success":  {
+                                                                                             "type":  "boolean"
+                                                                                         },
+                                                                             "code":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                             "discountAmount":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                             "reason":  {
+                                                                                            "type":  "string"
+                                                                                        }
+                                                                         }
+                                                      },
                                        "ApiResponseSweepResult":  {
                                                                       "type":  "object",
                                                                       "properties":  {
@@ -396,70 +490,6 @@
                                                                                              }
                                                                             }
                                                          },
-                                       "LockRequest":  {
-                                                           "required":  [
-                                                                            "code",
-                                                                            "orderNo",
-                                                                            "userId"
-                                                                        ],
-                                                           "type":  "object",
-                                                           "properties":  {
-                                                                              "code":  {
-                                                                                           "type":  "string"
-                                                                                       },
-                                                                              "userId":  {
-                                                                                             "type":  "integer",
-                                                                                             "format":  "int64"
-                                                                                         },
-                                                                              "orderNo":  {
-                                                                                              "type":  "string"
-                                                                                          },
-                                                                              "orderAmount":  {
-                                                                                                  "minimum":  0,
-                                                                                                  "type":  "integer",
-                                                                                                  "format":  "int64"
-                                                                                              }
-                                                                          }
-                                                       },
-                                       "ApiResponseLockResult":  {
-                                                                     "type":  "object",
-                                                                     "properties":  {
-                                                                                        "code":  {
-                                                                                                     "type":  "string"
-                                                                                                 },
-                                                                                        "message":  {
-                                                                                                        "type":  "string"
-                                                                                                    },
-                                                                                        "data":  {
-                                                                                                     "$ref":  "#/components/schemas/LockResult"
-                                                                                                 },
-                                                                                        "requestId":  {
-                                                                                                          "type":  "string"
-                                                                                                      },
-                                                                                        "timestamp":  {
-                                                                                                          "type":  "integer",
-                                                                                                          "format":  "int64"
-                                                                                                      }
-                                                                                    }
-                                                                 },
-                                       "LockResult":  {
-                                                          "type":  "object",
-                                                          "properties":  {
-                                                                             "success":  {
-                                                                                             "type":  "boolean"
-                                                                                         },
-                                                                             "code":  {
-                                                                                          "type":  "string"
-                                                                                      },
-                                                                             "discountAmount":  {
-                                                                                                    "type":  "integer",
-                                                                                                    "format":  "int64"
-                                                                                                },
-                                                                             "reason":  {
-                                                                                            "type":  "string"
-                                                                                        }
-                                                                         }
-                                                      },
                                        "ConsumeRequest":  {
                                                               "required":  [
                                                                                "orderNo"

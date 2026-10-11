@@ -14,7 +14,7 @@
 |---|---|---|---|
 | **体检** | 静态自检（两个守卫脚本，不需要容器）+ 编译 + 核心冒烟 3 套 | ~5 分钟 | 每次改完代码 |
 | **域级** | 只跑你改的那个域对应的冒烟 + 前端 e2e | ~3 分钟/套 | 提测前 |
-| **全量** | 31 套冒烟（约 17 分钟）+ 契约 + 小程序 + 浏览器 e2e + 压测 | ~40 分钟 | 交付前 |
+| **全量** | 31 套冒烟（2026-10-11 实测 **15 分 26 秒**）+ 契约 + 小程序 + 浏览器 e2e（实测 **10 分 14 秒**）+ 压测 | 约半小时 | 交付前 |
 
 > ★ **跑全量时别中途离开**：这套脚本是长任务，若所在的终端/会话被回收，
 > 它会**卡在半途且不报错**（表现是日志停止增长），此时数据库里可能留下夹具。
@@ -179,7 +179,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 
 ## 3. 功能点清单（功能 → 用哪套脚本验 → 多少项）
 
-### 3.1 接口冒烟（31 套 `scripts\*smoke.ps1`，共 2086 项；另有 1 套 Node 冒烟）
+### 3.1 接口冒烟（一键运行器 31 套；本轮实测 = 30 套实际执行 + 1 套按设计跳过）
 
 | # | 功能域 | 脚本 | 项数 |
 |---|---|---|---|
@@ -192,7 +192,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 7 | 卖家中心（入驻 / 归属隔离 / 发货 / 对账） | `seller-smoke.ps1` | 107 |
 | 8 | 平台管理后台（权限 / 报表 / 审核 / 强关） | `admin-smoke.ps1` | 73 |
 | 9 | 后台 2FA + IP 白名单（E21） | `admin-2fa-smoke.ps1` | 56 |
-| 10 | 评价与晒单 | `review-smoke.ps1` | 61 |
+| 10 | 评价与晒单 | `review-smoke.ps1` | 62 |
 | 11 | 历史订单托管单回补 | `backfill-smoke.ps1` | 92 |
 | 12 | 售后仲裁工单 | `aftersale-smoke.ps1` | 101 |
 | 13 | 图片上传 | `upload-smoke.ps1` | 8 |
@@ -218,8 +218,21 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
 
 > 项数会随迭代增长，**以脚本自己打印的「通过 N 项」为准**，本表只用来定位该跑哪一套。
-> **最近一次实测（2026-10-11）**：一键运行器 **31 套全部通过、合计 2086 项、0 失败**，
-> `search-smoke` 因本机未起 ES 而**显式跳过**（汇总里明写「已跳过 1 套」）。
+> **最近一次实测（2026-10-11，原始日志 `logs/s3-final-smoke.txt`，EXIT=0，耗时 15 分 26 秒）**：
+> 运行器汇总 **共 31 套 / 通过 31 套 / 失败 0 套**，即 **31 套全部真跑了**
+> （**30 套 PowerShell 合计 2087 项** + **1 套 Node 17 项** = **2104 项断言**）。
+> ★ 运行器的「共 N 套」口径 = **实际执行**（读 `run-all-smoke.ps1:130` 的 `$results.Count` 确认过），
+> **按设计跳过的那套不在里面**，另行打印「已跳过 N 套」并逐条点名：
+> 本次为 `search-smoke.ps1`（ES 未运行）。**所有计数都不含它。**
+>
+> ★ **本条曾写「合计 2086 项」，已弃用。** 两个错都要记：
+> ① 那个数字**当时是手填的**，不是算出来的 —— 手填的数字没有任何东西去核它，写错也不会有检查变红；
+> ② 我后来重算时又用 `awk` 按套件名求和，正则写成 `^[a-z0-9-]+-smoke\.ps1`，
+> **漏掉了没有连字符前缀的 `smoke.ps1`**，于是得数少了 62 —— **又是「静默少算一套」**，
+> 而且这次是我自己的统计脚本犯的（跟 `check-all.ps1` 头注里那个 `*-smoke.ps1` 通配符坑是**同一个**：
+> 要求名字里带连字符，就会把最基础的那套漏掉）。
+> 现在一律**先取运行器原文，再逐套列举求和，并交叉核对两个来源是否相等**；
+> 生成验收包的那支脚本（`.workbuddy/build-acceptance-doc.py`）也只是搬运与求和，**不再手填任何数字**。
 
 ### 3.2 前端 / 小程序 / 性能
 
@@ -231,7 +244,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | **22 套**（首页 / **商品详情页** / 地址簿 / 商家端 / **商家端看板** / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注** / 审核 SLA / 商品审核 / 资质有效期 / 商家店员 / 审核台）。单套调试：`-Only <名字>` |
 | ⚠️ e2e 假红的头号原因是**数据脏** | — | e2e 断言「商品图零裂图」。若历史冒烟**中途被中断**，会残留一条带 `https://example.com/…` 占位图的夹具评价；它挂在种子商品上 → **首页与详情页同时报裂图**，看起来像代码回归。判据：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';`（应为 0）。`review-smoke.ps1` 已加**开机清扫**自动处理 |
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 42 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
-| 接口契约 | `python scripts/extract-api-contract.py --check` | 241 个端点 |
+| 接口契约 | `python scripts/extract-api-contract.py --check` | 389 个端点 |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | **685 项 / 66 个测试类**（11 个模块；2026-10-11 实测 0 失败） |
 
@@ -257,7 +270,7 @@ cd frontend; npm run build               # 预期：tsc 与 vite 均无报错，
 & 'C:\Program Files\Java\latest\jdk-21\jdk21\bin\java.exe' "-Dclassworlds.conf=$M\bin\m2.conf" ... -B test
 ```
 
-**预期**：`BUILD SUCCESS`，228 项测试 0 失败。
+**预期**：`BUILD SUCCESS`，**685 项测试 0 失败**（66 个测试类；2026-10-11 实测）。
 
 ### 4.3 接口冒烟
 
@@ -278,7 +291,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1 -O
 python scripts/extract-api-contract.py --check
 ```
 
-**预期**：`PASS`，241 个端点与源码一致。改了端点/字段必须重跑，它会拦住「文档与代码分家」。
+**预期**：`PASS`，**389 个端点**与源码一致（2026-10-11 实测）。改了端点/字段必须重跑，它会拦住「文档与代码分家」。
 
 ### 4.5 小程序「无浏览器」自动化
 
@@ -301,12 +314,15 @@ node scripts/mp-harness/behavior.test.js               # 页面行为（31 项�
 ### 4.6 前端真实浏览器 e2e
 
 ```powershell
-# 一键：起 dev server → 跑 15 套 → 建/拆券夹具 → 收尾
+# 一键：起 dev server → 跑 22 套 → 建/拆券夹具 → 收尾
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1
 powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包含那套
 ```
 
-**预期**：17 套全 PASS，合计 661 项。判定同样看退出码。
+**预期**：**22 套全 PASS**（2026-10-11 实测 972 项断言，退出码 0）。判定同样看退出码。
+
+> ★ **e2e 假红的第一大原因是数据脏，不是代码**：两套页面同时报错时先查库里有没有残留夹具
+> （见 §6 第 23 条：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';` 应为 0）。
 
 其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
 `home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
@@ -473,12 +489,18 @@ done
 
 - [ ] `node scripts/check-miniprogram.js` → 0 错 0 警
 - [ ] `frontend: npm run build` → 退出码 0
-- [ ] `mvn -o test` → BUILD SUCCESS（228 项）
-- [ ] `scripts\run-all-smoke.ps1` → 23 套全通过，0 失败
-- [ ] `python scripts/extract-api-contract.py --check` → PASS
+- [ ] `scripts\check-all.ps1` 的 `[0/5]` 两个静态守卫 → 退出码 0（断言写法与 BOM、**网关路由覆盖 250 条**）
+- [ ] `mvn -o test` → BUILD SUCCESS（**685 项 / 66 个测试类**，2026-10-11 实测）
+- [ ] `scripts\run-all-smoke.ps1` → **共 31 套 / 通过 31 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
+- [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
-- [ ] `scripts\e2e\run-ui-checks.ps1` → 15 套全 PASS
+- [ ] `scripts\e2e\run-ui-checks.ps1` → **22 套全 PASS**
 - [ ] `python scripts/perf/bench.py --check` → 全部达标
 - [ ] 8 个模块容器内 jar md5 与宿主机一致
-- [ ] 跑完做一次数据体检：FROZEN = 0
+- [ ] 跑完做一次数据体检：FROZEN = 0，且**没有残留的 `example.com` 评价夹具**
 - [ ] `README.md`、`docs/PLAN.md` 与代码**同一次提交**更新
+
+> ★ **这些数字只是「最近一次实测的参考值」，判据一律是退出码**：
+> 加了一套测试、或某套多项断言，数字都会变，**但只要没失败就不该判红**；
+> 反过来，**数字对得上也不代表通过** —— 必须看退出码。
+> （写死数字当门禁，会在加测试后变成一句假话；`check-all.ps1` 的套件数就是从目录实算的。）

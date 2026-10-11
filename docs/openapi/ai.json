@@ -82,7 +82,10 @@
                                                                                               "items":  {
                                                                                                             "$ref":  "#/components/schemas/ChatTurn"
                                                                                                         }
-                                                                                          }
+                                                                                          },
+                                                                              "clarified":  {
+                                                                                                "type":  "boolean"
+                                                                                            }
                                                                           }
                                                        },
                                        "ChatTurn":  {
@@ -139,9 +142,43 @@
                                                                                                    },
                                                                                "mode":  {
                                                                                             "type":  "string"
-                                                                                        }
+                                                                                        },
+                                                                               "clarify":  {
+                                                                                               "$ref":  "#/components/schemas/ClarifyView"
+                                                                                           },
+                                                                               "followUps":  {
+                                                                                                 "type":  "array",
+                                                                                                 "items":  {
+                                                                                                               "type":  "string"
+                                                                                                           }
+                                                                                             }
                                                                            }
                                                         },
+                                       "ClarifyOption":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "label":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                                "send":  {
+                                                                                             "type":  "string"
+                                                                                         }
+                                                                            }
+                                                         },
+                                       "ClarifyView":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "question":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                              "options":  {
+                                                                                              "type":  "array",
+                                                                                              "items":  {
+                                                                                                            "$ref":  "#/components/schemas/ClarifyOption"
+                                                                                                        }
+                                                                                          }
+                                                                          }
+                                                       },
                                        "ProductRecommendation":  {
                                                                      "type":  "object",
                                                                      "properties":  {
@@ -200,7 +237,13 @@
                                                                                           },
                                                                                  "hint":  {
                                                                                               "type":  "string"
-                                                                                          }
+                                                                                          },
+                                                                                 "quickQuestions":  {
+                                                                                                        "type":  "array",
+                                                                                                        "items":  {
+                                                                                                                      "type":  "string"
+                                                                                                                  }
+                                                                                                    }
                                                                              }
                                                           }
                                    }

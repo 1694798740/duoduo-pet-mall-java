@@ -11,12 +11,409 @@
                     }
                 ],
     "paths":  {
+                  "/api/uploads":  {
+                                       "post":  {
+                                                    "tags":  [
+                                                                 "upload-controller"
+                                                             ],
+                                                    "operationId":  "upload",
+                                                    "requestBody":  {
+                                                                        "content":  {
+                                                                                        "application/json":  {
+                                                                                                                 "schema":  {
+                                                                                                                                "required":  [
+                                                                                                                                                 "file"
+                                                                                                                                             ],
+                                                                                                                                "type":  "object",
+                                                                                                                                "properties":  {
+                                                                                                                                                   "file":  {
+                                                                                                                                                                "type":  "string",
+                                                                                                                                                                "format":  "binary"
+                                                                                                                                                            }
+                                                                                                                                               }
+                                                                                                                            }
+                                                                                                             }
+                                                                                    }
+                                                                    },
+                                                    "responses":  {
+                                                                      "200":  {
+                                                                                  "description":  "OK",
+                                                                                  "content":  {
+                                                                                                  "*/*":  {
+                                                                                                              "schema":  {
+                                                                                                                             "$ref":  "#/components/schemas/ApiResponseMapStringString"
+                                                                                                                         }
+                                                                                                          }
+                                                                                              }
+                                                                              }
+                                                                  }
+                                                }
+                                   },
+                  "/api/shares":  {
+                                      "post":  {
+                                                   "tags":  [
+                                                                "share-controller"
+                                                            ],
+                                                   "operationId":  "create",
+                                                   "requestBody":  {
+                                                                       "content":  {
+                                                                                       "application/json":  {
+                                                                                                                "schema":  {
+                                                                                                                               "$ref":  "#/components/schemas/ShareCreateRequest"
+                                                                                                                           }
+                                                                                                            }
+                                                                                   },
+                                                                       "required":  true
+                                                                   },
+                                                   "responses":  {
+                                                                     "200":  {
+                                                                                 "description":  "OK",
+                                                                                 "content":  {
+                                                                                                 "*/*":  {
+                                                                                                             "schema":  {
+                                                                                                                            "$ref":  "#/components/schemas/ApiResponseShareView"
+                                                                                                                        }
+                                                                                                         }
+                                                                                             }
+                                                                             }
+                                                                 }
+                                               }
+                                  },
+                  "/api/shares/{id}/repost":  {
+                                                  "post":  {
+                                                               "tags":  [
+                                                                            "share-controller"
+                                                                        ],
+                                                               "operationId":  "repost",
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "id",
+                                                                                      "in":  "path",
+                                                                                      "required":  true,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 }
+                                                                                  }
+                                                                              ],
+                                                               "requestBody":  {
+                                                                                   "content":  {
+                                                                                                   "application/json":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/RepostRequest"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                               },
+                                                                                   "required":  true
+                                                                               },
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseShareView"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                              },
+                  "/api/shares/{id}/report":  {
+                                                  "post":  {
+                                                               "tags":  [
+                                                                            "share-controller"
+                                                                        ],
+                                                               "operationId":  "report",
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "id",
+                                                                                      "in":  "path",
+                                                                                      "required":  true,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 }
+                                                                                  }
+                                                                              ],
+                                                               "requestBody":  {
+                                                                                   "content":  {
+                                                                                                   "application/json":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ReportRequest"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                               },
+                                                                                   "required":  true
+                                                                               },
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseReportView"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                              },
+                  "/api/shares/{id}/like":  {
+                                                "post":  {
+                                                             "tags":  [
+                                                                          "share-controller"
+                                                                      ],
+                                                             "operationId":  "toggleLike",
+                                                             "parameters":  [
+                                                                                {
+                                                                                    "name":  "id",
+                                                                                    "in":  "path",
+                                                                                    "required":  true,
+                                                                                    "schema":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               }
+                                                                                }
+                                                                            ],
+                                                             "responses":  {
+                                                                               "200":  {
+                                                                                           "description":  "OK",
+                                                                                           "content":  {
+                                                                                                           "*/*":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseEngagementState"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                                       }
+                                                                                       }
+                                                                           }
+                                                         }
+                                            },
+                  "/api/shares/{id}/favorite":  {
+                                                    "post":  {
+                                                                 "tags":  [
+                                                                              "share-controller"
+                                                                          ],
+                                                                 "operationId":  "toggleFavorite",
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "id",
+                                                                                        "in":  "path",
+                                                                                        "required":  true,
+                                                                                        "schema":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   }
+                                                                                    }
+                                                                                ],
+                                                                 "responses":  {
+                                                                                   "200":  {
+                                                                                               "description":  "OK",
+                                                                                               "content":  {
+                                                                                                               "*/*":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseEngagementState"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                                           }
+                                                                                           }
+                                                                               }
+                                                             }
+                                                },
+                  "/api/shares/{id}/edit":  {
+                                                "post":  {
+                                                             "tags":  [
+                                                                          "share-controller"
+                                                                      ],
+                                                             "operationId":  "edit",
+                                                             "parameters":  [
+                                                                                {
+                                                                                    "name":  "id",
+                                                                                    "in":  "path",
+                                                                                    "required":  true,
+                                                                                    "schema":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               }
+                                                                                }
+                                                                            ],
+                                                             "requestBody":  {
+                                                                                 "content":  {
+                                                                                                 "application/json":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ShareEditRequest"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                             },
+                                                                                 "required":  true
+                                                                             },
+                                                             "responses":  {
+                                                                               "200":  {
+                                                                                           "description":  "OK",
+                                                                                           "content":  {
+                                                                                                           "*/*":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseShareView"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                                       }
+                                                                                       }
+                                                                           }
+                                                         }
+                                            },
+                  "/api/shares/{id}/delete":  {
+                                                  "post":  {
+                                                               "tags":  [
+                                                                            "share-controller"
+                                                                        ],
+                                                               "operationId":  "delete",
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "id",
+                                                                                      "in":  "path",
+                                                                                      "required":  true,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 }
+                                                                                  }
+                                                                              ],
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseVoid"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                              },
+                  "/api/shares/{id}/comments":  {
+                                                    "post":  {
+                                                                 "tags":  [
+                                                                              "share-comment-controller"
+                                                                          ],
+                                                                 "operationId":  "create_1",
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "id",
+                                                                                        "in":  "path",
+                                                                                        "required":  true,
+                                                                                        "schema":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   }
+                                                                                    }
+                                                                                ],
+                                                                 "requestBody":  {
+                                                                                     "content":  {
+                                                                                                     "application/json":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/CommentCreateRequest"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                 },
+                                                                                     "required":  true
+                                                                                 },
+                                                                 "responses":  {
+                                                                                   "200":  {
+                                                                                               "description":  "OK",
+                                                                                               "content":  {
+                                                                                                               "*/*":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseCommentView"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                                           }
+                                                                                           }
+                                                                               }
+                                                             }
+                                                },
+                  "/api/shares/comments/{commentId}/report":  {
+                                                                  "post":  {
+                                                                               "tags":  [
+                                                                                            "share-comment-controller"
+                                                                                        ],
+                                                                               "operationId":  "report_1",
+                                                                               "parameters":  [
+                                                                                                  {
+                                                                                                      "name":  "commentId",
+                                                                                                      "in":  "path",
+                                                                                                      "required":  true,
+                                                                                                      "schema":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                  }
+                                                                                              ],
+                                                                               "requestBody":  {
+                                                                                                   "content":  {
+                                                                                                                   "application/json":  {
+                                                                                                                                            "schema":  {
+                                                                                                                                                           "$ref":  "#/components/schemas/ReportRequest"
+                                                                                                                                                       }
+                                                                                                                                        }
+                                                                                                               },
+                                                                                                   "required":  true
+                                                                                               },
+                                                                               "responses":  {
+                                                                                                 "200":  {
+                                                                                                             "description":  "OK",
+                                                                                                             "content":  {
+                                                                                                                             "*/*":  {
+                                                                                                                                         "schema":  {
+                                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseReportView"
+                                                                                                                                                    }
+                                                                                                                                     }
+                                                                                                                         }
+                                                                                                         }
+                                                                                             }
+                                                                           }
+                                                              },
+                  "/api/shares/comments/{commentId}/like":  {
+                                                                "post":  {
+                                                                             "tags":  [
+                                                                                          "share-comment-controller"
+                                                                                      ],
+                                                                             "operationId":  "toggleLike_1",
+                                                                             "parameters":  [
+                                                                                                {
+                                                                                                    "name":  "commentId",
+                                                                                                    "in":  "path",
+                                                                                                    "required":  true,
+                                                                                                    "schema":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "format":  "int64"
+                                                                                                               }
+                                                                                                }
+                                                                                            ],
+                                                                             "responses":  {
+                                                                                               "200":  {
+                                                                                                           "description":  "OK",
+                                                                                                           "content":  {
+                                                                                                                           "*/*":  {
+                                                                                                                                       "schema":  {
+                                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseEngagementState"
+                                                                                                                                                  }
+                                                                                                                                   }
+                                                                                                                       }
+                                                                                                       }
+                                                                                           }
+                                                                         }
+                                                            },
                   "/api/reviews":  {
                                        "post":  {
                                                     "tags":  [
                                                                  "review-controller"
                                                              ],
-                                                    "operationId":  "create",
+                                                    "operationId":  "create_2",
                                                     "requestBody":  {
                                                                         "content":  {
                                                                                         "application/json":  {
@@ -167,7 +564,7 @@
                                                        "tags":  [
                                                                     "after-sale-controller"
                                                                 ],
-                                                       "operationId":  "create_1",
+                                                       "operationId":  "create_3",
                                                        "requestBody":  {
                                                                            "content":  {
                                                                                            "application/json":  {
@@ -192,6 +589,78 @@
                                                                      }
                                                    }
                                       },
+                  "/api/aftersales/{id}/return-shipment":  {
+                                                               "post":  {
+                                                                            "tags":  [
+                                                                                         "after-sale-controller"
+                                                                                     ],
+                                                                            "operationId":  "shipReturn",
+                                                                            "parameters":  [
+                                                                                               {
+                                                                                                   "name":  "id",
+                                                                                                   "in":  "path",
+                                                                                                   "required":  true,
+                                                                                                   "schema":  {
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              }
+                                                                                               }
+                                                                                           ],
+                                                                            "requestBody":  {
+                                                                                                "content":  {
+                                                                                                                "application/json":  {
+                                                                                                                                         "schema":  {
+                                                                                                                                                        "$ref":  "#/components/schemas/AfterSaleReturnShipRequest"
+                                                                                                                                                    }
+                                                                                                                                     }
+                                                                                                            },
+                                                                                                "required":  true
+                                                                                            },
+                                                                            "responses":  {
+                                                                                              "200":  {
+                                                                                                          "description":  "OK",
+                                                                                                          "content":  {
+                                                                                                                          "*/*":  {
+                                                                                                                                      "schema":  {
+                                                                                                                                                     "$ref":  "#/components/schemas/ApiResponseAfterSaleView"
+                                                                                                                                                 }
+                                                                                                                                  }
+                                                                                                                      }
+                                                                                                      }
+                                                                                          }
+                                                                        }
+                                                           },
+                  "/api/aftersales/{id}/return-receipt":  {
+                                                              "post":  {
+                                                                           "tags":  [
+                                                                                        "after-sale-controller"
+                                                                                    ],
+                                                                           "operationId":  "receiveReturn",
+                                                                           "parameters":  [
+                                                                                              {
+                                                                                                  "name":  "id",
+                                                                                                  "in":  "path",
+                                                                                                  "required":  true,
+                                                                                                  "schema":  {
+                                                                                                                 "type":  "integer",
+                                                                                                                 "format":  "int64"
+                                                                                                             }
+                                                                                              }
+                                                                                          ],
+                                                                           "responses":  {
+                                                                                             "200":  {
+                                                                                                         "description":  "OK",
+                                                                                                         "content":  {
+                                                                                                                         "*/*":  {
+                                                                                                                                     "schema":  {
+                                                                                                                                                    "$ref":  "#/components/schemas/ApiResponseAfterSaleView"
+                                                                                                                                                }
+                                                                                                                                 }
+                                                                                                                     }
+                                                                                                     }
+                                                                                         }
+                                                                       }
+                                                          },
                   "/api/aftersales/{id}/reply":  {
                                                      "post":  {
                                                                   "tags":  [
@@ -264,6 +733,47 @@
                                                                                    }
                                                                  }
                                                     },
+                  "/api/admin/share-reports/{id}/handle":  {
+                                                               "post":  {
+                                                                            "tags":  [
+                                                                                         "share-admin-report-controller"
+                                                                                     ],
+                                                                            "operationId":  "handle",
+                                                                            "parameters":  [
+                                                                                               {
+                                                                                                   "name":  "id",
+                                                                                                   "in":  "path",
+                                                                                                   "required":  true,
+                                                                                                   "schema":  {
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              }
+                                                                                               }
+                                                                                           ],
+                                                                            "requestBody":  {
+                                                                                                "content":  {
+                                                                                                                "application/json":  {
+                                                                                                                                         "schema":  {
+                                                                                                                                                        "$ref":  "#/components/schemas/ReportHandleRequest"
+                                                                                                                                                    }
+                                                                                                                                     }
+                                                                                                            },
+                                                                                                "required":  true
+                                                                                            },
+                                                                            "responses":  {
+                                                                                              "200":  {
+                                                                                                          "description":  "OK",
+                                                                                                          "content":  {
+                                                                                                                          "*/*":  {
+                                                                                                                                      "schema":  {
+                                                                                                                                                     "$ref":  "#/components/schemas/ApiResponseReportView"
+                                                                                                                                                 }
+                                                                                                                                  }
+                                                                                                                      }
+                                                                                                      }
+                                                                                          }
+                                                                        }
+                                                           },
                   "/api/admin/aftersales/{id}/arbitrate":  {
                                                                "post":  {
                                                                             "tags":  [
@@ -305,6 +815,302 @@
                                                                                           }
                                                                         }
                                                            },
+                  "/uploads/{filename}":  {
+                                              "get":  {
+                                                          "tags":  [
+                                                                       "upload-controller"
+                                                                   ],
+                                                          "operationId":  "serve",
+                                                          "parameters":  [
+                                                                             {
+                                                                                 "name":  "filename",
+                                                                                 "in":  "path",
+                                                                                 "required":  true,
+                                                                                 "schema":  {
+                                                                                                "type":  "string"
+                                                                                            }
+                                                                             }
+                                                                         ],
+                                                          "responses":  {
+                                                                            "200":  {
+                                                                                        "description":  "OK",
+                                                                                        "content":  {
+                                                                                                        "*/*":  {
+                                                                                                                    "schema":  {
+                                                                                                                                   "type":  "string",
+                                                                                                                                   "format":  "binary"
+                                                                                                                               }
+                                                                                                                }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                          },
+                  "/api/shares/{id}":  {
+                                           "get":  {
+                                                       "tags":  [
+                                                                    "share-controller"
+                                                                ],
+                                                       "operationId":  "detail",
+                                                       "parameters":  [
+                                                                          {
+                                                                              "name":  "id",
+                                                                              "in":  "path",
+                                                                              "required":  true,
+                                                                              "schema":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         }
+                                                                          }
+                                                                      ],
+                                                       "responses":  {
+                                                                         "200":  {
+                                                                                     "description":  "OK",
+                                                                                     "content":  {
+                                                                                                     "*/*":  {
+                                                                                                                 "schema":  {
+                                                                                                                                "$ref":  "#/components/schemas/ApiResponseShareView"
+                                                                                                                            }
+                                                                                                             }
+                                                                                                 }
+                                                                                 }
+                                                                     }
+                                                   }
+                                       },
+                  "/api/shares/topics":  {
+                                             "get":  {
+                                                         "tags":  [
+                                                                      "share-controller"
+                                                                  ],
+                                                         "operationId":  "hotTopics",
+                                                         "parameters":  [
+                                                                            {
+                                                                                "name":  "limit",
+                                                                                "in":  "query",
+                                                                                "required":  false,
+                                                                                "schema":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int32",
+                                                                                               "default":  10
+                                                                                           }
+                                                                            }
+                                                                        ],
+                                                         "responses":  {
+                                                                           "200":  {
+                                                                                       "description":  "OK",
+                                                                                       "content":  {
+                                                                                                       "*/*":  {
+                                                                                                                   "schema":  {
+                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseListTopicView"
+                                                                                                                              }
+                                                                                                               }
+                                                                                                   }
+                                                                                   }
+                                                                       }
+                                                     }
+                                         },
+                  "/api/shares/topics/{name}":  {
+                                                    "get":  {
+                                                                "tags":  [
+                                                                             "share-controller"
+                                                                         ],
+                                                                "operationId":  "topicFeed",
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "name",
+                                                                                       "in":  "path",
+                                                                                       "required":  true,
+                                                                                       "schema":  {
+                                                                                                      "type":  "string"
+                                                                                                  }
+                                                                                   },
+                                                                                   {
+                                                                                       "name":  "page",
+                                                                                       "in":  "query",
+                                                                                       "required":  false,
+                                                                                       "schema":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int32",
+                                                                                                      "default":  1
+                                                                                                  }
+                                                                                   },
+                                                                                   {
+                                                                                       "name":  "pageSize",
+                                                                                       "in":  "query",
+                                                                                       "required":  false,
+                                                                                       "schema":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int32",
+                                                                                                      "default":  10
+                                                                                                  }
+                                                                                   }
+                                                                               ],
+                                                                "responses":  {
+                                                                                  "200":  {
+                                                                                              "description":  "OK",
+                                                                                              "content":  {
+                                                                                                              "*/*":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ApiResponsePageResultShareView"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                                          }
+                                                                                          }
+                                                                              }
+                                                            }
+                                                },
+                  "/api/shares/mine/list":  {
+                                                "get":  {
+                                                            "tags":  [
+                                                                         "share-controller"
+                                                                     ],
+                                                            "operationId":  "mine",
+                                                            "parameters":  [
+                                                                               {
+                                                                                   "name":  "page",
+                                                                                   "in":  "query",
+                                                                                   "required":  false,
+                                                                                   "schema":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int32",
+                                                                                                  "default":  1
+                                                                                              }
+                                                                               },
+                                                                               {
+                                                                                   "name":  "pageSize",
+                                                                                   "in":  "query",
+                                                                                   "required":  false,
+                                                                                   "schema":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int32",
+                                                                                                  "default":  10
+                                                                                              }
+                                                                               }
+                                                                           ],
+                                                            "responses":  {
+                                                                              "200":  {
+                                                                                          "description":  "OK",
+                                                                                          "content":  {
+                                                                                                          "*/*":  {
+                                                                                                                      "schema":  {
+                                                                                                                                     "$ref":  "#/components/schemas/ApiResponsePageResultShareView"
+                                                                                                                                 }
+                                                                                                                  }
+                                                                                                      }
+                                                                                      }
+                                                                          }
+                                                        }
+                                            },
+                  "/api/shares/feed":  {
+                                           "get":  {
+                                                       "tags":  [
+                                                                    "share-controller"
+                                                                ],
+                                                       "operationId":  "feed",
+                                                       "parameters":  [
+                                                                          {
+                                                                              "name":  "page",
+                                                                              "in":  "query",
+                                                                              "required":  false,
+                                                                              "schema":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32",
+                                                                                             "default":  1
+                                                                                         }
+                                                                          },
+                                                                          {
+                                                                              "name":  "pageSize",
+                                                                              "in":  "query",
+                                                                              "required":  false,
+                                                                              "schema":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32",
+                                                                                             "default":  10
+                                                                                         }
+                                                                          },
+                                                                          {
+                                                                              "name":  "scope",
+                                                                              "in":  "query",
+                                                                              "required":  false,
+                                                                              "schema":  {
+                                                                                             "type":  "string"
+                                                                                         }
+                                                                          }
+                                                                      ],
+                                                       "responses":  {
+                                                                         "200":  {
+                                                                                     "description":  "OK",
+                                                                                     "content":  {
+                                                                                                     "*/*":  {
+                                                                                                                 "schema":  {
+                                                                                                                                "$ref":  "#/components/schemas/ApiResponsePageResultShareView"
+                                                                                                                            }
+                                                                                                             }
+                                                                                                 }
+                                                                                 }
+                                                                     }
+                                                   }
+                                       },
+                  "/api/shares/comments":  {
+                                               "get":  {
+                                                           "tags":  [
+                                                                        "share-comment-controller"
+                                                                    ],
+                                                           "operationId":  "list",
+                                                           "parameters":  [
+                                                                              {
+                                                                                  "name":  "shareId",
+                                                                                  "in":  "query",
+                                                                                  "required":  true,
+                                                                                  "schema":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "parentId",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "page",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int32",
+                                                                                                 "default":  1
+                                                                                             }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "pageSize",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int32",
+                                                                                                 "default":  20
+                                                                                             }
+                                                                              }
+                                                                          ],
+                                                           "responses":  {
+                                                                             "200":  {
+                                                                                         "description":  "OK",
+                                                                                         "content":  {
+                                                                                                         "*/*":  {
+                                                                                                                     "schema":  {
+                                                                                                                                    "$ref":  "#/components/schemas/ApiResponsePageResultCommentView"
+                                                                                                                                }
+                                                                                                                 }
+                                                                                                     }
+                                                                                     }
+                                                                         }
+                                                       }
+                                           },
                   "/api/reviews/seller/{sellerId}/credit":  {
                                                                 "get":  {
                                                                             "tags":  [
@@ -500,7 +1306,7 @@
                                                         "tags":  [
                                                                      "review-controller"
                                                                  ],
-                                                        "operationId":  "mine",
+                                                        "operationId":  "mine_1",
                                                         "parameters":  [
                                                                            {
                                                                                "name":  "page",
@@ -572,7 +1378,7 @@
                                                            "tags":  [
                                                                         "after-sale-controller"
                                                                     ],
-                                                           "operationId":  "detail",
+                                                           "operationId":  "detail_1",
                                                            "parameters":  [
                                                                               {
                                                                                   "name":  "id",
@@ -653,7 +1459,7 @@
                                                            "tags":  [
                                                                         "after-sale-controller"
                                                                     ],
-                                                           "operationId":  "mine_1",
+                                                           "operationId":  "mine_2",
                                                            "parameters":  [
                                                                               {
                                                                                   "name":  "status",
@@ -698,12 +1504,62 @@
                                                                          }
                                                        }
                                            },
+                  "/api/admin/share-reports":  {
+                                                   "get":  {
+                                                               "tags":  [
+                                                                            "share-admin-report-controller"
+                                                                        ],
+                                                               "operationId":  "list_1",
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "status",
+                                                                                      "in":  "query",
+                                                                                      "required":  false,
+                                                                                      "schema":  {
+                                                                                                     "type":  "string"
+                                                                                                 }
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "page",
+                                                                                      "in":  "query",
+                                                                                      "required":  false,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int32",
+                                                                                                     "default":  1
+                                                                                                 }
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "pageSize",
+                                                                                      "in":  "query",
+                                                                                      "required":  false,
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int32",
+                                                                                                     "default":  20
+                                                                                                 }
+                                                                                  }
+                                                                              ],
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponsePageResultReportView"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                               },
                   "/api/admin/aftersales":  {
                                                 "get":  {
                                                             "tags":  [
                                                                          "admin-after-sale-controller"
                                                                      ],
-                                                            "operationId":  "list",
+                                                            "operationId":  "list_2",
                                                             "parameters":  [
                                                                                {
                                                                                    "name":  "status",
@@ -751,6 +1607,401 @@
               },
     "components":  {
                        "schemas":  {
+                                       "ApiResponseMapStringString":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "object",
+                                                                                                          "additionalProperties":  {
+                                                                                                                                       "type":  "string"
+                                                                                                                                   }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "ShareCreateRequest":  {
+                                                                  "required":  [
+                                                                                   "spuId"
+                                                                               ],
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "spuId":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
+                                                                                     "content":  {
+                                                                                                     "maxLength":  500,
+                                                                                                     "minLength":  0,
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                     "topics":  {
+                                                                                                    "type":  "array",
+                                                                                                    "items":  {
+                                                                                                                  "type":  "string"
+                                                                                                              }
+                                                                                                }
+                                                                                 }
+                                                              },
+                                       "ApiResponseShareView":  {
+                                                                    "type":  "object",
+                                                                    "properties":  {
+                                                                                       "code":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                       "message":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                       "data":  {
+                                                                                                    "$ref":  "#/components/schemas/ShareView"
+                                                                                                },
+                                                                                       "requestId":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                       "timestamp":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     }
+                                                                                   }
+                                                                },
+                                       "ShareView":  {
+                                                         "type":  "object",
+                                                         "properties":  {
+                                                                            "id":  {
+                                                                                       "type":  "integer",
+                                                                                       "format":  "int64"
+                                                                                   },
+                                                                            "userId":  {
+                                                                                           "type":  "integer",
+                                                                                           "format":  "int64"
+                                                                                       },
+                                                                            "spuId":  {
+                                                                                          "type":  "integer",
+                                                                                          "format":  "int64"
+                                                                                      },
+                                                                            "productTitle":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                            "productImage":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                            "minPrice":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                            "content":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                            "nickname":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                            "avatar":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                            "createdAt":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                            "likeCount":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int64"
+                                                                                          },
+                                                                            "favoriteCount":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              },
+                                                                            "commentCount":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             },
+                                                                            "liked":  {
+                                                                                          "type":  "boolean"
+                                                                                      },
+                                                                            "favorited":  {
+                                                                                              "type":  "boolean"
+                                                                                          },
+                                                                            "shareType":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                            "parentId":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                            "parentNickname":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                            "parentContent":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                            "parentDeleted":  {
+                                                                                                  "type":  "boolean"
+                                                                                              },
+                                                                            "edited":  {
+                                                                                           "type":  "boolean"
+                                                                                       },
+                                                                            "topics":  {
+                                                                                           "type":  "array",
+                                                                                           "items":  {
+                                                                                                         "type":  "string"
+                                                                                                     }
+                                                                                       },
+                                                                            "mine":  {
+                                                                                         "type":  "boolean"
+                                                                                     }
+                                                                        }
+                                                     },
+                                       "RepostRequest":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "content":  {
+                                                                                                "maxLength":  500,
+                                                                                                "minLength":  0,
+                                                                                                "type":  "string"
+                                                                                            }
+                                                                            }
+                                                         },
+                                       "ReportRequest":  {
+                                                             "type":  "object",
+                                                             "properties":  {
+                                                                                "reason":  {
+                                                                                               "maxLength":  200,
+                                                                                               "minLength":  0,
+                                                                                               "type":  "string"
+                                                                                           }
+                                                                            }
+                                                         },
+                                       "ApiResponseReportView":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "code":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                        "message":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                        "data":  {
+                                                                                                     "$ref":  "#/components/schemas/ReportView"
+                                                                                                 },
+                                                                                        "requestId":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                        "timestamp":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int64"
+                                                                                                      }
+                                                                                    }
+                                                                 },
+                                       "ReportView":  {
+                                                          "type":  "object",
+                                                          "properties":  {
+                                                                             "id":  {
+                                                                                        "type":  "integer",
+                                                                                        "format":  "int64"
+                                                                                    },
+                                                                             "targetType":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                             "targetId":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int64"
+                                                                                          },
+                                                                             "reporterId":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            },
+                                                                             "reason":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                             "status":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                             "createdAt":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                             "handledBy":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int64"
+                                                                                           },
+                                                                             "handledAt":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                             "handleNote":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                             "targetExcerpt":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                             "targetAuthorId":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                             "targetShareId":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               }
+                                                                         }
+                                                      },
+                                       "ApiResponseEngagementState":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/EngagementState"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "EngagementState":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "active":  {
+                                                                                                 "type":  "boolean"
+                                                                                             },
+                                                                                  "count":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            }
+                                                                              }
+                                                           },
+                                       "ShareEditRequest":  {
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "content":  {
+                                                                                                   "maxLength":  500,
+                                                                                                   "minLength":  0,
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                                   "topics":  {
+                                                                                                  "type":  "array",
+                                                                                                  "items":  {
+                                                                                                                "type":  "string"
+                                                                                                            }
+                                                                                              }
+                                                                               }
+                                                            },
+                                       "ApiResponseVoid":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "code":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                  "message":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                  "data":  {
+                                                                                               "type":  "object"
+                                                                                           },
+                                                                                  "requestId":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                  "timestamp":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                }
+                                                                              }
+                                                           },
+                                       "CommentCreateRequest":  {
+                                                                    "type":  "object",
+                                                                    "properties":  {
+                                                                                       "content":  {
+                                                                                                       "maxLength":  300,
+                                                                                                       "minLength":  0,
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                       "parentCommentId":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                   }
+                                                                },
+                                       "ApiResponseCommentView":  {
+                                                                      "type":  "object",
+                                                                      "properties":  {
+                                                                                         "code":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                         "message":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                         "data":  {
+                                                                                                      "$ref":  "#/components/schemas/CommentView"
+                                                                                                  },
+                                                                                         "requestId":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                         "timestamp":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       }
+                                                                                     }
+                                                                  },
+                                       "CommentView":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "id":  {
+                                                                                         "type":  "integer",
+                                                                                         "format":  "int64"
+                                                                                     },
+                                                                              "shareId":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int64"
+                                                                                          },
+                                                                              "userId":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                              "nickname":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                              "avatar":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                              "content":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                              "createdAt":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                              "likeCount":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            },
+                                                                              "liked":  {
+                                                                                            "type":  "boolean"
+                                                                                        },
+                                                                              "mine":  {
+                                                                                           "type":  "boolean"
+                                                                                       },
+                                                                              "replyToNickname":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                              "replyCount":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             }
+                                                                          }
+                                                       },
                                        "ItemReview":  {
                                                           "type":  "object",
                                                           "properties":  {
@@ -1142,6 +2393,18 @@
                                                                                                      "type":  "integer",
                                                                                                      "format":  "int64"
                                                                                                  },
+                                                                                "returnCourier":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                "returnTrackingNo":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                "returnShippedAt":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                "returnReceivedAt":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
                                                                                 "createdAt":  {
                                                                                                   "type":  "string"
                                                                                               },
@@ -1171,6 +2434,25 @@
                                                                                                          }
                                                                                        }
                                                                     },
+                                       "AfterSaleReturnShipRequest":  {
+                                                                          "required":  [
+                                                                                           "courierCompany",
+                                                                                           "trackingNo"
+                                                                                       ],
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "courierCompany":  {
+                                                                                                                    "maxLength":  64,
+                                                                                                                    "minLength":  0,
+                                                                                                                    "type":  "string"
+                                                                                                                },
+                                                                                             "trackingNo":  {
+                                                                                                                "maxLength":  64,
+                                                                                                                "minLength":  0,
+                                                                                                                "type":  "string"
+                                                                                                            }
+                                                                                         }
+                                                                      },
                                        "AfterSaleReplyRequest":  {
                                                                      "required":  [
                                                                                       "action"
@@ -1187,6 +2469,22 @@
                                                                                                   }
                                                                                     }
                                                                  },
+                                       "ReportHandleRequest":  {
+                                                                   "required":  [
+                                                                                    "action"
+                                                                                ],
+                                                                   "type":  "object",
+                                                                   "properties":  {
+                                                                                      "action":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                      "note":  {
+                                                                                                   "maxLength":  200,
+                                                                                                   "minLength":  0,
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                                  }
+                                                               },
                                        "AfterSaleArbitrateRequest":  {
                                                                          "required":  [
                                                                                           "result"
@@ -1203,6 +2501,138 @@
                                                                                                      }
                                                                                         }
                                                                      },
+                                       "ApiResponseListTopicView":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "code":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                           "message":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                           "data":  {
+                                                                                                        "type":  "array",
+                                                                                                        "items":  {
+                                                                                                                      "$ref":  "#/components/schemas/TopicView"
+                                                                                                                  }
+                                                                                                    },
+                                                                                           "requestId":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                           "timestamp":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         }
+                                                                                       }
+                                                                    },
+                                       "TopicView":  {
+                                                         "type":  "object",
+                                                         "properties":  {
+                                                                            "name":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                            "shareCount":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int64"
+                                                                                           }
+                                                                        }
+                                                     },
+                                       "ApiResponsePageResultShareView":  {
+                                                                              "type":  "object",
+                                                                              "properties":  {
+                                                                                                 "code":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                                 "message":  {
+                                                                                                                 "type":  "string"
+                                                                                                             },
+                                                                                                 "data":  {
+                                                                                                              "$ref":  "#/components/schemas/PageResultShareView"
+                                                                                                          },
+                                                                                                 "requestId":  {
+                                                                                                                   "type":  "string"
+                                                                                                               },
+                                                                                                 "timestamp":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "format":  "int64"
+                                                                                                               }
+                                                                                             }
+                                                                          },
+                                       "PageResultShareView":  {
+                                                                   "type":  "object",
+                                                                   "properties":  {
+                                                                                      "items":  {
+                                                                                                    "type":  "array",
+                                                                                                    "items":  {
+                                                                                                                  "$ref":  "#/components/schemas/ShareView"
+                                                                                                              }
+                                                                                                },
+                                                                                      "total":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                                      "page":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int32"
+                                                                                               },
+                                                                                      "pageSize":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int32"
+                                                                                                   },
+                                                                                      "pageCount":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32"
+                                                                                                    }
+                                                                                  }
+                                                               },
+                                       "ApiResponsePageResultCommentView":  {
+                                                                                "type":  "object",
+                                                                                "properties":  {
+                                                                                                   "code":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                   "message":  {
+                                                                                                                   "type":  "string"
+                                                                                                               },
+                                                                                                   "data":  {
+                                                                                                                "$ref":  "#/components/schemas/PageResultCommentView"
+                                                                                                            },
+                                                                                                   "requestId":  {
+                                                                                                                     "type":  "string"
+                                                                                                                 },
+                                                                                                   "timestamp":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                               }
+                                                                            },
+                                       "PageResultCommentView":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "items":  {
+                                                                                                      "type":  "array",
+                                                                                                      "items":  {
+                                                                                                                    "$ref":  "#/components/schemas/CommentView"
+                                                                                                                }
+                                                                                                  },
+                                                                                        "total":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                        "page":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int32"
+                                                                                                 },
+                                                                                        "pageSize":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int32"
+                                                                                                     },
+                                                                                        "pageCount":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int32"
+                                                                                                      }
+                                                                                    }
+                                                                 },
                                        "ApiResponseCreditView":  {
                                                                      "type":  "object",
                                                                      "properties":  {
@@ -1571,7 +3001,55 @@
                                                                                                             "format":  "int32"
                                                                                                         }
                                                                                       }
-                                                                   }
+                                                                   },
+                                       "ApiResponsePageResultReportView":  {
+                                                                               "type":  "object",
+                                                                               "properties":  {
+                                                                                                  "code":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                                  "message":  {
+                                                                                                                  "type":  "string"
+                                                                                                              },
+                                                                                                  "data":  {
+                                                                                                               "$ref":  "#/components/schemas/PageResultReportView"
+                                                                                                           },
+                                                                                                  "requestId":  {
+                                                                                                                    "type":  "string"
+                                                                                                                },
+                                                                                                  "timestamp":  {
+                                                                                                                    "type":  "integer",
+                                                                                                                    "format":  "int64"
+                                                                                                                }
+                                                                                              }
+                                                                           },
+                                       "PageResultReportView":  {
+                                                                    "type":  "object",
+                                                                    "properties":  {
+                                                                                       "items":  {
+                                                                                                     "type":  "array",
+                                                                                                     "items":  {
+                                                                                                                   "$ref":  "#/components/schemas/ReportView"
+                                                                                                               }
+                                                                                                 },
+                                                                                       "total":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                       "page":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int32"
+                                                                                                },
+                                                                                       "pageSize":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32"
+                                                                                                    },
+                                                                                       "pageCount":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int32"
+                                                                                                     }
+                                                                                   }
+                                                                }
                                    }
                    },
     "x-openapi":  {
