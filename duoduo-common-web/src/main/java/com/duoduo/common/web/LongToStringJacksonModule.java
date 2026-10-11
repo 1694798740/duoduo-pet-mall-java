@@ -149,10 +149,16 @@ public class LongToStringJacksonModule extends SimpleModule {
     /**
      * 显式「按数字输出」的 Long 序列化器（第五十轮新增）。
      *
-     * <p>用途：Java {@code record} 组件的计数字段（如 {@code UnreadCount.count}）——
-     * 白名单修饰器对 record 不生效（见 {@code NumericFieldPreservingModifier} 局限说明），
-     * 需要在字段上直接标注本序列化器，让计数保持 JSON 数字，与
-     * {@code PageResult.total} 等普通 POJO 字段的类型口径一致。
+     * <p>用途：把某个字段**强制**按 JSON 数字输出，常用于「字段名不在白名单里、
+     * 但语义上确实是要参与运算的量」这种个别情况。
+     *
+     * <p><b>★ 不再是为了 record 而加</b>：本类此前写的是「白名单修饰器对 record 不生效，
+     * 因此 record 的计数/金额字段必须逐个标注」。该结论**在 2026-10-11 被实测推翻**
+     * （见 {@code LongToStringJacksonModuleTest}，4/4 通过：同一个序列化器下，
+     * record 与普通类的行为**完全一致** —— 字段名命中白名单即数字、否则转字符串）。
+     * 所以给 record 加注解是**可选的保险丝**，不是必需的补偿；
+     * 新增金额/计数类字段的正确做法是**把它加进 {@link #NUMERIC_LONG_FIELDS}**
+     * （按名字生效，对两种形态都管用），而不是给某个 record 单独打补丁。
      *
      * <pre>
      * public record UnreadCount(
@@ -184,13 +190,24 @@ public class LongToStringJacksonModule extends SimpleModule {
      * 把该类字段的 writer **替换成标准版**（{@code BeanPropertyWriter} 默认行为
      * 即写数字），从而覆盖掉全局的 ToString 序列化器。
      *
-     * <p><b>已知局限（第五十轮补记）</b>：本机制只对**普通 POJO** 生效 ——
-     * Java {@code record} 的属性由 {@code POJOPropertiesCollector} 的 record 分支
-     * 直接构造，不流经 {@code changeProperties}，白名单对其失效，record 组件里的
-     * {@code long} 会被当标识转成字符串（如 {@code UnreadCount.count} 下发 {@code "3"}，
-     * 而同一接口族的 {@code PageResult.total} 是数字 {@code 3} —— 同语义两种类型）。
-     * 因此 record 组件里的计数 / 金额字段必须显式标注
-     * {@code @JsonSerialize(using = NumericLongSerializer.class)}。
+     * <p><b>适用范围（2026-10-11 实测更正）</b>：本机制对**普通 POJO 与 {@code record}
+     * 同样生效**。
+     *
+     * <p>这里原先写着「本机制只对普通 POJO 生效 —— record 的属性由
+     * {@code POJOPropertiesCollector} 的 record 分支直接构造，不流经
+     * {@code changeProperties}，白名单对其失效」。该说法**已被实验推翻**：
+     * {@code LongToStringJacksonModuleTest} 把「普通类」与「record」两种形态用同一个
+     * ObjectMapper 各序列化一次，四类断言全过 —— 两者的行为完全一致
+     * （命中白名单的 {@code payAmount} 是数字、未命中的 {@code someNumber} 与标识
+     * {@code spuId} 是字符串）。集成侧也有旁证：{@code scripts/id-precision-smoke.ps1}
+     * 里那些「金额必须是 JSON 数字」的断言，被测对象恰恰是 record
+     * （{@code OrderView.payAmount} / {@code TemplateView.thresholdAmount}），全绿。
+     *
+     * <p><b>为什么这条注释必须改掉</b>：按旧说法，后来者会得出「全站一批 record 的金额
+     * 正在以字符串下发」的错误结论（转而做大批无用的补标注），并且**在真正的漏标发生时
+     * 失去警觉** —— 真正会漏的是「语义是金额、但**名字不在白名单里**」的新字段
+     * （例如新写的 {@code extraFee}），它与「哪个类承载它」无关。
+     * 判据始终是**字段名**，一视同仁。
      */
     private static final class NumericFieldPreservingModifier extends BeanSerializerModifier {
 

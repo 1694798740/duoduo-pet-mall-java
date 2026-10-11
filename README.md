@@ -343,7 +343,7 @@
 **第五十一轮（2026-09-28）** — **小程序全流程验收（登录注册 / 微信登录 / 支付 / 退款 / 发货 / 退货 / 售后 / 个人中心 / 跳蚤市场 / 关注通知分享点赞收藏）**。产出《小程序全面排查报告》《小程序修复清单》与问题清单；本章程两处待修问题（结算预览缺失、方法错误回 500）与跳蚤市场发布链路建议均在本轮（五十二轮）闭环。
 
 **最近更新：2026-09-28（第五十轮）** — **通知中心上线 + tabBar 重排 + 全页面通知入口 + record 计数器类型缺陷根治**。
-① **tabBar 重排**：用户要求「分类」移出底部导航（首页已有分类入口），空位换成「通知」并置于**居中第 3 位** —— 首页/分享圈/**通知**/购物车/我的；分类降为普通页（`back` 返回键，首页「全部分类」入口仍在），全局排查 `switchTab` 引用与三处自维护 tab 清单（index/notification/profile）同步。② **通知中心**（启用 R47 已建齐的 `t_social_notice` + `t_social_notice_read`）：后端 `duoduo-social` 新增 `NoticeController` 4 端点（列表 / 未读数 / 单条已读 / 全部已读），**定向通知与全站公告统一为一个视图**；已读统一记在集合表（`(notice_id, user_id)` 复合主键，撞键即幂等）—— 表上行本就没有已读列，**零 DDL 变更**；他人通知标已读返 **404**（不区分「不存在/无权限」，防枚举）。小程序新增 `pages/notification` 4 件套（未读蓝点 / 点击标已读并跳落地页 / 全部已读 / tabBar 角标 `setTabBarBadge` / 私信未读合计入口），种子 3 条公告（增量 SQL `17-notification-center.sql` + `06` 种子同步）。③ **通知入口全页面显示**：`nav-bar` 组件内置右上角图标（由 R48 的 📩 改回**短信样式 💬**），并新增 `back` 返回键属性 —— 全部 22 个页面改用自绘导航栏（`navigationStyle: custom`），聊天页/AI 页整页高度按导航栏高度扣减（`calc(100vh - navTotal)`）。④ **★ 根治 record 组件计数器类型缺陷（R47 遗留）**：`LongToStringJacksonModule` 的字段名白名单只对**普通 POJO** 生效，Java `record` 组件的属性由 `POJOPropertiesCollector` 的 record 分支直接构造、不流经 `BeanPropertyWriter` 替换 —— 于是 `UnreadCount.count` 下发字符串 `"3"` 而同一接口族 `PageResult.total` 是数字 `3`，**同语义两种类型**（R47 的 `FollowCounts.followers/following`、R49 的 `ConversationView.unread` 同病）。修法：模块新增公开的 `NumericLongSerializer`，record 里的计数/金额字段显式标注 `@JsonSerialize(using = …)`，本域 **9 处**已标注。
+① **tabBar 重排**：用户要求「分类」移出底部导航（首页已有分类入口），空位换成「通知」并置于**居中第 3 位** —— 首页/分享圈/**通知**/购物车/我的；分类降为普通页（`back` 返回键，首页「全部分类」入口仍在），全局排查 `switchTab` 引用与三处自维护 tab 清单（index/notification/profile）同步。② **通知中心**（启用 R47 已建齐的 `t_social_notice` + `t_social_notice_read`）：后端 `duoduo-social` 新增 `NoticeController` 4 端点（列表 / 未读数 / 单条已读 / 全部已读），**定向通知与全站公告统一为一个视图**；已读统一记在集合表（`(notice_id, user_id)` 复合主键，撞键即幂等）—— 表上行本就没有已读列，**零 DDL 变更**；他人通知标已读返 **404**（不区分「不存在/无权限」，防枚举）。小程序新增 `pages/notification` 4 件套（未读蓝点 / 点击标已读并跳落地页 / 全部已读 / tabBar 角标 `setTabBarBadge` / 私信未读合计入口），种子 3 条公告（增量 SQL `17-notification-center.sql` + `06` 种子同步）。③ **通知入口全页面显示**：`nav-bar` 组件内置右上角图标（由 R48 的 📩 改回**短信样式 💬**），并新增 `back` 返回键属性 —— 全部 22 个页面改用自绘导航栏（`navigationStyle: custom`），聊天页/AI 页整页高度按导航栏高度扣减（`calc(100vh - navTotal)`）。④ **★ 根治 record 组件计数器类型缺陷（R47 遗留）**：`LongToStringJacksonModule` 的字段名白名单只对**普通 POJO** 生效，Java `record` 组件的属性由 `POJOPropertiesCollector` 的 record 分支直接构造、不流经 `BeanPropertyWriter` 替换 —— 于是 `UnreadCount.count` 下发字符串 `"3"` 而同一接口族 `PageResult.total` 是数字 `3`，**同语义两种类型**（R47 的 `FollowCounts.followers/following`、R49 的 `ConversationView.unread` 同病）。修法：模块新增公开的 `NumericLongSerializer`，record 里的计数/金额字段显式标注 `@JsonSerialize(using = …)`，本域 **9 处**已标注。★ **2026-10-11 更正**：本段对**机制**的归因（「白名单只对普通 POJO 生效、record 不流经那条路径」）经实验推翻 —— 见下文「**金额 / 计数字段的类型口径**」；当时观察到的现象是真的，但"record 必须逐个标注"这个结论不成立（白名单对 POJO 与 record 一视同仁）。
 **验证**：新增 `scripts/r50-notice-smoke.py` **18/18**（含 `count` 必须为 JSON 数字的类型守卫，作为该缺陷的回归防线）+ 社交域回归 `social-smoke` **43/43** + `r49-ask-thread-smoke` **15/15** + `r48-ask-smoke` **8/8** + CI 子集 `id-precision` **56/56** 与 `smoke` **55/55** + 小程序静态自检 **0 错误**；自建核对脚本验证 tabBar=5、全部页面 `navigationStyle:custom` ↔ `<nav-bar>` 一一对应、`wx.switchTab` 无指向非 tab 页的残留、三处 tab 清单与 `app.json` 一致。
 **踩坑**：① 新增接口漏 `@Param` import、`.select(X::class)` 是 Kotlin 写法，Java 编译期即失败 —— 先编译再部署，别等运行时；② 通知表**没有** `read_at` 列（那是私信表的），设计前先 `SHOW CREATE TABLE` 对齐实况而不是照着 schema 记忆写 SQL。
 
@@ -1038,10 +1038,22 @@ duoduo-pet-mall-java/
 - **双端同源**：商家端与平台端的钱包/账单调**同一个**服务方法，逐分一致 ——
   两边各算一遍的后果是"平台说能提 500、商家看到 480"，而那种分歧在技术上无解。
 
-**★ record 金额字段必须显式 `@JsonSerialize(using = NumericLongSerializer.class)`**
-`LongToStringJacksonModule` 的字段名白名单只对普通 POJO 生效，**record 组件不流经那条路径**，
-不标注就会以字符串下发（前端声明 number、实况 `"25800"`，`/` 靠隐式转换侥幸正确，
-`+` 变拼接、`===` 恒 false、`.toFixed()` 抛错）。`sellerId` / `tenantId` 这类**标识**刻意不标。
+**★ 金额 / 计数字段的类型口径（2026-10-11 实测更正）**
+
+`LongToStringJacksonModule` 的规则是**按字段名**判：命中 `NUMERIC_LONG_FIELDS`（金额 / 计数 / epoch 时间戳）→ 保持 JSON 数字，
+否则（绝大多数 `Long` 是 id）→ 转成字符串。
+
+这里原先写着「**该白名单只对普通 POJO 生效，record 组件不流经那条路径，所以 record 的金额字段必须逐个标注**」。
+**该说法已被实验推翻**：新增的 `LongToStringJacksonModuleTest` 用同一个 ObjectMapper 把「普通类」与「record」各序列化一次，
+**4/4 通过、行为完全一致**（命中白名单的 `payAmount` 是数字；未命中的 `someNumber` 与标识 `spuId` 是字符串）。
+集成侧旁证：`scripts/id-precision-smoke.ps1`（**56/0**）里那 14 条「金额必须是 JSON 数字」的断言，
+被测对象恰恰是 record（`OrderView.payAmount` / `TemplateView.thresholdAmount` …）。
+
+- 因此 **record 上加 `@JsonSerialize(using = NumericLongSerializer.class)` 是可选的保险丝**，不是必需补偿（既有 34 处保留不动）；
+- **真正会漏的只有一种**：语义是金额/计数、但**名字没登记进白名单**的新字段（例如新写的 `extraFee`）——
+  它会被**静默**字符串化成 `"12900"`，不报任何错，只表现为前端 `+` 变拼接、`===` 恒 false、`.toFixed()` 抛错。
+  **新增这类字段请把它加进 `NUMERIC_LONG_FIELDS`**（按名字生效，POJO 与 record 都管用），不要给单个 record 打补丁；
+- `sellerId` / `tenantId` 这类**标识**刻意不标（标识不该参与算术）。
 
 
 **权限模型（刻意的三条边界）**：
