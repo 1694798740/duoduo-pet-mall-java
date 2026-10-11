@@ -45,6 +45,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -99,6 +100,9 @@ public class SellerProductService {
 
     private static final String SUPPLY_SELF = "self";
     private static final String SUPPLY_MERCHANT = "merchant";
+
+    /** 平台自营在 {@code t_spu.seller_id} 上的哨兵值（不是一个真实的店铺 id） */
+    private static final long PLATFORM_SELF_SELLER_ID = 0L;
 
     // ---------------- E28 · 审核来源与自动放行 ----------------
 
@@ -535,6 +539,10 @@ public class SellerProductService {
         String target = normalizeAction(action);
 
         SpuEntity spu = requireOwned(spuId, scope);
+        // ★ E23 收窄：`requireOwned` 对平台运营一律放行（platformScope），
+        //   这在商品还没有第三方归属时是对的，但 E27 之后
+        //   「平台能改别人的商品」就是越权。第三方商品必须走代运营 + 工单。
+        requireProxyForThirdParty(spu, scope);
         if (STATUS_ON_SALE.equals(target)) {
             requireShopActive(scope);
             if (isMerchantSupplied(spu) && !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
@@ -550,6 +558,122 @@ public class SellerProductService {
             log.info("商品 {} 由卖家 {} 上下架：{} -> {}", spuId, UserContext.require().userId(), from, target);
         }
         return toView(spu, skuStatsOf(spuId));
+    }
+
+    // ---------------- E23 · 代运营（商品域）的两个入口 ----------------
+
+    /**
+     * 当前登录者所属的**店铺主体 userId**（代运营申请用）。
+     *
+     * <p>平台运营（{@code platformScope}）在此被**显式拒绝**，而不是让它带着自己的
+     * userId 往下走、最后在归属校验那里得到一个 404。两者的区别很重要：
+     * 403 说清的是「平台账号不能替商家授权」这个规则，
+     * 而 404 会被读成「这个商品不存在」，让人去查数据而不是查流程。
+     *
+     * <p>店员允许通过：店员以店铺主体身份行动是既有口径（E13），
+     * 而且店员本就是店主授权出来的 —— 它不构成「平台替商家授权」这一例外。
+     */
+    public Long requireStoreOwnerUserId() {
+        SellerScope scope = requireSellerScope();
+        if (scope.platformScope() || scope.ownerUserId() == null) {
+            throw BizException.forbidden(
+                    "代运营申请必须由店铺（店主或店员）发起；平台账号不能替商家作出授权");
+        }
+        return scope.ownerUserId();
+    }
+
+    /**
+     * 代运营专用：强制下架（E23）。
+     *
+     * <p><b>为什么单独开一个方法，而不是复用 {@link #changeStatus}</b>：
+     * 后者带着「平台运营只能动自营商品」的门禁（{@link #requireProxyForThirdParty}），
+     * 而这正是代运营要合法跨过的那条线。复用就必须在方法里加一个
+     * 「是不是代运营调用」的开关参数 —— 那种开关迟早会在某个调用点被传错，
+     * 而传错的方向恰好是「越权被放行」。
+     *
+     * <p><b>这里为什么不做归属与授权校验</b>：调用方
+     * {@code ProxyOpsService.proxyOffShelf} 已经在**同一个事务内**完成了
+     * 工单完整性 + 租户一致性校验并消费了工单。把校验复制一份到这里，
+     * 只会得到两份会各自漂移的判据；本方法把自己限制为「纯粹的写」，
+     * 并且只被代运营调用。
+     *
+     * <p>幂等：状态已经是 {@code OFF_SHELF} 时不再落库，但仍返回视图 ——
+     * 目标是「让它不在售」，已达成即成功。
+     */
+    @Transactional
+    public SellerProductView forceOffShelfByProxy(Long spuId, String reason) {
+        SpuEntity spu = spuMapper.selectById(spuId);
+        if (spu == null) {
+            throw BizException.notFound("商品");
+        }
+        if (isPlatformSelf(spu)) {
+            throw BizException.businessRule("商品 " + spuId
+                    + " 属于平台自营，不能通过代运营下架（平台可直接处置）");
+        }
+        if (!STATUS_OFF_SHELF.equals(spu.getStatus())) {
+            String from = spu.getStatus();
+            spu.setStatus(STATUS_OFF_SHELF);
+            spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+            spuMapper.updateById(spu);
+            log.info("代运营下架商品 {}（店铺 {}）：{} -> {}，原因：{}",
+                    spuId, spu.getSellerId(), from, STATUS_OFF_SHELF, reason);
+        }
+        return toView(spu, skuStatsOf(spuId));
+    }
+
+    /**
+     * E23 · 平台运营对**第三方店铺**的商品没有直接处置权。
+     *
+     * <h2>这条规则是从哪里来的</h2>
+     * 商品域给平台运营的可见范围是 {@code platformScope = true}，归属校验一律放行。
+     * 在商品还没有第三方归属的年代，这没问题 —— 平台管的就是自己的货。
+     * 但从 E27 起 {@code t_spu.seller_id} 会指向真实第三方卖家，
+     * 同一段代码的含义就从「平台管自己的货」变成了「平台能改别人的商品」。
+     * 这不是新增限制，而是把一个**已经变味**的既有行为收回到它原本的语义上。
+     *
+     * <h2>为什么只拦上/下架，不顺手拦编辑与删除</h2>
+     * 因为这一项（E23）要解决的是「代下架」这一个动作的直接路径。
+     * 把编辑、删除、改价一并拦掉当然更严，但那是另一个决定（影响面、回滚方式、
+     * 运营既有习惯都不同），应当单独评估，而不是借一次收窄顺手改变更多行为 ——
+     * 顺手扩大改动范围，会让「这次上线到底改了什么」变得说不清。
+     * 同类风险已登记为遗留项。
+     */
+    private static void requireProxyForThirdParty(SpuEntity spu, SellerScope scope) {
+        if (!scope.platformScope()) {
+            // 店主 / 店员：归属由 requireOwned 判，不属于本次收窄范围
+            return;
+        }
+        if (isPlatformSelf(spu)) {
+            // 平台自营：平台管自己的货，不需要任何授权
+            return;
+        }
+        throw BizException.forbidden("商品 " + spu.getId() + " 属于第三方店铺（主体 "
+                + spu.getSellerId() + "），平台不能直接上下架；如确需处理，"
+                + "请由该店铺店主在商家端发起代运营申请，再由平台持工单执行"
+                + "（POST /api/admin/products/{spuId}/proxy-off-shelf）");
+    }
+
+    /**
+     * 这个商品是不是**平台自营**。
+     *
+     * <h2>为什么是两个条件的「与」，而不是只看 seller_id</h2>
+     * 本域对「自营 / 第三方」的**权威口径是 {@code t_spu.supply_type}**
+     * （见 {@code ProductService} 里"平台自营商品（supply_type='self'）"的注释，
+     * 以及本类的 {@link #isMerchantSupplied}）；{@code seller_id = 0} 只是自营在
+     * 归属列上的哨兵值，是一个**派生**信号。
+     *
+     * <p>两个信号在今天的库里是一致的，但一致是**数据现状**，不是**定义**。
+     * 只看 {@code seller_id} 的话，一旦某个自营商品被挂到平台客服账号名下
+     * （非 0 的 seller_id，supply_type 仍是 self），它就会被判成第三方：
+     * 平台会突然"处置不了自己的货"，而且报错信息会言之凿凿地说它属于第三方店铺 ——
+     * 这种错不在安全上危险，但极难排查，因为它只在数据出现偏差时才现形。
+     *
+     * <p>所以这里取**两个信号的与**：只有当"归属是哨兵值"**且**"供货类型不是商家供货"
+     * 时才算自营。任一信号指向第三方，就按第三方对待 —— 这个方向是刻意选的：
+     * 判重的代价是多一张工单，判轻的代价是越权。
+     */
+    public static boolean isPlatformSelf(SpuEntity spu) {
+        return nz(spu.getSellerId()) == PLATFORM_SELF_SELLER_ID && !isMerchantSupplied(spu);
     }
 
     /**

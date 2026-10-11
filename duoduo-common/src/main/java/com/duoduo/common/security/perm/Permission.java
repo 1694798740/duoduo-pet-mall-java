@@ -101,6 +101,23 @@ public final class Permission {
     /** 售后仲裁：运营裁定退款 / 责任归属。 */
     public static final String AFTERSALE_ARBITRATE = "aftersale:arbitrate";
 
+    /**
+     * E23 · 代运营白名单动作（代发货 / 代处理售后 / 代下架）。
+     *
+     * <p><b>为什么单独立一个点，而不是复用 {@code ORDER_OPS} / {@code PRODUCT_AUDIT}</b>：
+     * 那些点是「平台对自己管辖范围内的事务做处置」，而这个点动的是**第三方店铺的经营资产**
+     * （替他发货、下他的商品、裁他的售后）—— 两者的影响面完全不同。
+     * 单独立点才能做到「平台能干什么」与「平台能替谁干什么」分开回答：
+     * 将来若要收紧（比如只允许 ADMIN 代操作），改这一个点的授权即可，
+     * 不必顺带把「强关订单」这类平台自家事务一起收紧。
+     *
+     * <p> granted 给 ADMIN 与 OPERATOR（平台后台的日常处置者是运营）。
+     * **这个点的存在不等于可以随手用** —— 每个动作都必须关联工单 + 填写事由并全量留痕；
+     * 第三方店铺的**常规**操作路径（卖家发货 / 卖家上下架 / 卖家处理售后）依旧按归属校验拒绝平台，
+     * 这里只是那三条受控例外。
+     */
+    public static final String TENANT_PROXY_OPS = "tenant:proxy-ops";
+
     /** 券模板管理。 */
     public static final String COUPON_TEMPLATE_MANAGE = "coupon:template:manage";
 
@@ -171,6 +188,7 @@ public final class Permission {
         set.add(ORDER_SECKILL_MANAGE);
         set.add(ORDER_MQ_MANAGE);
         set.add(AFTERSALE_ARBITRATE);
+        set.add(TENANT_PROXY_OPS);
         set.add(COUPON_TEMPLATE_MANAGE);
         set.add(AUDIT_LOG_READ);
         set.add(FINANCE_SETTLEMENT);

@@ -73,6 +73,11 @@ class RolePermissionMatrixTest {
         EXPECTED_HOLDERS.put(Permission.ORDER_SECKILL_MANAGE, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.ORDER_MQ_MANAGE, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.AFTERSALE_ARBITRATE, Set.of("ADMIN", "OPERATOR"));
+        // E23 · 代运营白名单动作：**ADMIN + OPERATOR**。这是显式写下的一句决定 ——
+        // 平台后台的日常处置者是运营，代发货 / 代处理售后 / 代下架三类动作
+        // 都是他们替第三方店铺收尾的日常工作；真正的护栏不是"谁能调"，
+        // 而是"每个动作都必须关联工单 + 填事由 + 全量留痕"。
+        EXPECTED_HOLDERS.put(Permission.TENANT_PROXY_OPS, Set.of("ADMIN", "OPERATOR"));
         EXPECTED_HOLDERS.put(Permission.COUPON_TEMPLATE_MANAGE, Set.of("ADMIN", "OPERATOR"));
         // 审计（E18）：运营也能看 —— 运营是后台操作的主体，看记录不改变任何事实；
         // 真正的边界是「审计记录不可删改」（任何角色都没有修改入口）

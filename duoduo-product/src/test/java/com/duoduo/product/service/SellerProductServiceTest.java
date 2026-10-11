@@ -218,6 +218,69 @@ class SellerProductServiceTest {
                 .hasMessageContaining("不属于当前账号");
     }
 
+    // ---------------- E23 · 代运营：平台运营对第三方商品的口子已收窄 ----------------
+
+    /**
+     * 收窄的理由：商品域给运营的可见范围是 {@code platformScope = true}，归属校验一律放行。
+     * 在商品还没有第三方归属的年代这没问题（平台管的就是自己的货），
+     * 但从 E27 起 {@code t_spu.seller_id} 指向真实第三方卖家，
+     * 同一段代码的含义就变成了「平台能改别人的商品」。
+     * <p>这条断言守的是「已经收窄」，而不是「本来就不行」—— 它是在钉住一次行为变更。
+     */
+    @Test
+    void E23_运营不能直接下架第三方商品_必须走代运营工单() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "第三方商品", null));
+
+        assertThatThrownBy(() -> service.changeStatus(9001L, "OFF_SHELF"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("第三方店铺")
+                // 提示必须指向**可执行的下一步**：只说「不允许」会让运营反复重试
+                .hasMessageContaining("proxy-off-shelf");
+        verify(spuMapper, never()).updateById(any(SpuEntity.class));
+    }
+
+    @Test
+    void E23_正对照_运营仍可直接下架自营商品() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 0L, "自营商品", null, "self", "APPROVED", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        // 自营是平台自己的货，收窄不该把它一起拦住 —— 否则「平台连自己的商品都动不了」
+        assertThat(service.changeStatus(9001L, "OFF_SHELF").status()).isEqualTo("OFF_SHELF");
+    }
+
+    @Test
+    void E23_店主改自己的商品不受收窄影响() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "我的商品", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.changeStatus(9001L, "OFF_SHELF").status()).isEqualTo("OFF_SHELF");
+    }
+
+    /**
+     * 代运营申请入口必须由被代理方发起。若平台既能授权又能执行，
+     * 这套机制只是给越权操作加了一道填写框 —— 审计记录很完整，而它证明的事实不存在。
+     */
+    @Test
+    void E23_平台账号不能替商家发起代运营申请() {
+        UserContext.set(operator());
+
+        assertThatThrownBy(service::requireStoreOwnerUserId)
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不能替商家作出授权");
+    }
+
+    @Test
+    void E23_正对照_店主能拿到自己的店铺主体userId() {
+        UserContext.set(seller(101L));
+
+        assertThat(service.requireStoreOwnerUserId()).isEqualTo(101L);
+    }
+
     @Test
     void 非卖家角色进不了商家端() {
         UserContext.set(plainUser(101L));

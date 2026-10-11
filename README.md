@@ -953,6 +953,11 @@ duoduo-pet-mall-java/
 | PUT | `/api/seller/products/{spuId}` | **编辑商品**（全内容字段；**内容变更即回 `PENDING` 并恢复在售**——审核结论针对「当时那段内容」，放它继续挂着过审等于允许「先过审、再改违规内容」；非本店 403） | 需登录 |
 | POST | `/api/seller/products/{spuId}/status` | **上下架**（`ON_SALE`/`OFF_SHELF`）。**上架门禁**：目标态为在售时要求已过审，否则 **422** 并给出下一步提示（是「等审核」还是「去改内容」）；平台自营不受限 | 需登录 |
 | POST | `/api/seller/products/{spuId}/resubmit` | **重新提交审核**（仅 `REJECTED` 可调，`PENDING`/`APPROVED` 均 422） | 需登录 |
+| POST | `/api/seller/products/proxy-requests` | **E23 · 申请代运营（商品类）**：`{targetType:'PRODUCT', targetRef:spuId, actionType:'OFF_SHELF', reason}`；`tenant_id` **由登录态推导**、不由请求体指定 | 店主 / 店员（**平台账号 403**） |
+| GET | `/api/seller/products/proxy-requests` | **E23 · 我的商品类工单**（只列本店；跨店看不到） | 店主 / 店员 |
+| POST | `/api/seller/products/proxy-requests/{workOrderNo}/void` | **E23 · 撤销未执行的工单**（已消费/已撤销 400；不是本店的 404） | 店主 / 店员 |
+| GET | `/api/admin/products/proxy-work-orders` | **E23 · 平台待办（商品域）**：可按 `tenantId` 或 `targetRef`(spuId) 筛选 | 运营 / 管理员（进门），执行另需权限点 |
+| POST | `/api/admin/products/{spuId}/proxy-off-shelf` | **E23 · 代下架**：`{workOrderNo, reason}` 均必填；**持有效工单**才能替第三方店铺下架；自营商品走这里 **422** | `tenant:proxy-ops` |
 | GET | `/api/admin/products` | **商品审核台**（只列**第三方**商品：自营免审，混进队列只会干扰待办；待审排最前；可按 `sellerId` 筛选） | 运营 / 管理员 |
 | GET | `/api/admin/products/{spuId}` | **审核详情**（带全部背审材料，运营不必点进二级页） | 运营 / 管理员 |
 | POST | `/api/admin/products/{spuId}/audit` | **审核结论**（`action=APPROVE`/`REJECT`；**驳回必填原因**，否则 400；**可重入**——允许改判，把改判逼成改库才会留下无法追溯的结论；驳回同时把 `status` 压成 `OFF_SHELF`） | 运营 / 管理员 |
@@ -1014,6 +1019,9 @@ duoduo-pet-mall-java/
 | GET | `/api/seller/settlements` | 结算对账（分页 + 全量汇总金额） | 卖家或运营 |
 | GET | `/api/seller/settlements/wallet` | **E22 · 我的钱包**：待结算/冻结中/可提现(净额)/累计到账/欠款/下次解冻 | 卖家（店员 403） |
 | GET | `/api/seller/settlements/bills` | **E22 · 结算账单**（租户 × 周期）；`period` 形如 `2026-10` 或 `2026-10-05`，不传=当前月，非法 400 | 卖家（店员 403） |
+| POST | `/api/seller/proxy-requests` | **E23 · 申请代运营（订单类）**：`{targetType:'ORDER', targetRef:orderNo, actionType:'SHIP'\|'AFTERSALE', reason}`；工单号带 `WO-ORD-` 前缀，`tenant_id` 由登录态推导 | 店主 / 店员（**平台账号 403**） |
+| GET | `/api/seller/proxy-requests` | **E23 · 我的订单类工单**（含 `openCount`） | 店主 / 店员 |
+| POST | `/api/seller/proxy-requests/{workOrderNo}/void` | **E23 · 撤销未执行的工单** | 店主 / 店员 |
 
 **E22 佣金与结算口径（4 条规则，唯一出处都在 `SettlementService`）**：
 
@@ -1046,6 +1054,33 @@ duoduo-pet-mall-java/
 > `/api/seller/**` **不在网关白名单里**（必须带登录态），也不受 `InternalTokenFilter` 管辖。
 > 内部凭据只能证明「你是自己人」，证明不了「这单是你的」。
 
+**E23 代运营口径（平台替第三方店铺做事，唯一的合法入口是一张工单）**
+
+- **默认阻断**：平台账号对第三方店铺的订单 / 商品**没有任何直接权限**
+  （订单侧 `seller_id` 归属校验 403；商品侧 `changeStatus` 收窄为「只有自营才能直接改」）。
+- **唯一例外 = 店主给出的工单**，六个条件同时成立才算有效授权：
+  ① 工单存在 ② 状态 `OPEN` ③ `target_type` 对得上 ④ `action_type` 对得上
+  ⑤ `target_ref` 就是本次目标 ⑥ `tenant_id` = 目标的店铺主体 userId。
+  判据顺序刻意是「先 400/404（授权能不能用）→ 再 403（对不对得上）」：
+  运营看到 400 知道查工单、看到 403 知道查归属，两类事故的处理方式完全不同。
+- **白名单三个动作**：代发货 / 代处理售后 / 代下架。执行时**必须**填执行说明，全量写审计。
+- **一次性消费（CAS）**：`UPDATE ... WHERE id=? AND status='OPEN'`，影响行数 0 → **409 必须中止**；
+  消费与动作在**同一个本地事务**里 —— 这正是工单表在交易库与商品库**各放一张**、
+  而不是放共享库的原因（跨服务只能"先消费再调用"，中间失败会烧掉授权却没干活）。
+  两表列名逐列相同，**共享的是契约不是代码**。
+- **可撤销**：`OPEN → VOID`；已消费/已撤销的工单再用 → 400。
+- **平台不能自己造授权**：平台账号调申请入口一律 403 —— 若能自己授权再自己执行，
+  这套机制就只是个填写框，审计记录会很完整而它证明的事实并不存在。
+- **商品域的"自营"判据是两个信号的与**：`supply_type != 'merchant'` **且** `seller_id = 0`
+  （`SellerProductService.isPlatformSelf`，全仓唯一出口）。任一信号指向第三方就按第三方走 ——
+  判重的代价是多走一步流程，判轻的代价是越权。**归属校验只用 `seller_id` 是不安全的**：
+  它会让"归属列被改错"变成一条免授权通道。
+- **审计动作码**：`ORDER_PROXY_SHIP`(CONTENT) / `AFTERSALE_PROXY_PROCESS`(FUNDS) /
+  `PRODUCT_PROXY_OFF_SHELF`(CONTENT)，留痕 `detail` 里带工单号；**被拒的尝试也留痕**（`outcome=FAILED`）。
+  ★ 新增动作码 = 新增一个"接收方（`duoduo-user`）也要认识"的契约，**只重建发送方不够**。
+- **遗留**：`PUT`/`DELETE /api/seller/products/{spuId}` 目前仍允许平台运营改/删第三方商品，
+  与上下架的收窄口径不一致，已登记为遗留项（影响面与回滚方式不同，单独评估）。
+
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
 **失效条目不计入结算金额** —— 否则结算页金额与订单金额会对不上。
@@ -1069,6 +1104,9 @@ duoduo-pet-mall-java/
 | POST | `/api/admin/listings/{id}/audit` | 审核：`APPROVE` / `REJECT`（驳回必须填原因）；`audit_reason` / `audit_at` 落库留痕 | 运营 |
 | GET | `/api/admin/orders`、`/{orderNo}` | 全平台订单列表（状态 / 订单号前缀过滤）与详情（无归属限制） | 运营 |
 | POST | `/api/admin/orders/{orderNo}/force-close` | **强制关单**（仅待付款）：复用状态机合法流转 + 作废未支付支付单 + 释放冻结 + 状态日志记 OPERATOR | 运营 |
+| GET | `/api/admin/orders/proxy-work-orders` | **E23 · 平台待办（交易域工单）**：可按 `tenantId` 或 `targetRef`(orderNo) 筛选 | 运营 / 管理员（进门） |
+| POST | `/api/admin/orders/{orderNo}/proxy-ship` | **E23 · 代发货**：`{workOrderNo, reason, logisticsCompany, logisticsNo}`；**持本店有效工单**才能替第三方发货；自营订单 **422**、他人订单 **403** | `tenant:proxy-ops` |
+| POST | `/api/admin/orders/{orderNo}/proxy-aftersale` | **E23 · 代处理售后**：`{workOrderNo, reason}`；转调 `refundInternal`（与内部凭据入口同一段状态机） | `tenant:proxy-ops` |
 | GET | `/api/admin/users?role=&keyword=` | **运营账号列表**（A7）：分页 + 角色过滤 + 关键字（手机号/昵称模糊匹配）；**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号 | 运营/ADMIN |
 | POST | `/api/admin/users/{id}/role` | **变更用户角色**（A7，**仅 ADMIN**）：角色白名单（USER/SELLER/OPERATOR/ADMIN）；自己降权 **422**、最后一个 ADMIN 不可降 **422**、同角色幂等 200 不留审计；每次变更写 `t_audit_log`；目标用户**重新登录后**新角色生效（notice 提示） | ADMIN |
 | GET | `/api/admin/audit-sla/samples?status=&page=&pageSize=` | **E28 事后抽查队列**（商品域）：`status` 取 `PENDING`（默认，待复核）/ `PASSED` / `REJECTED`，不传=全部；**待复核按建单时间升序**（先来先做，24h 响应时长的守门就是它），已复核按复核时间倒序；视图冗余带出 `spuTitle` 与 `sellerId`，队列里一眼看出"该看哪件" | 运营 |

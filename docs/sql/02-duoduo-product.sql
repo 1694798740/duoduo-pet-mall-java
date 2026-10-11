@@ -223,6 +223,32 @@ CREATE TABLE t_listing_want (
   DEFAULT CHARSET = utf8mb4;
 
 
+-- ---------- 代运营工单（E23 · 商品域） ----------
+-- 平台代第三方店铺下架商品的**授权凭证**：没有工单的强制下架 = 越权。
+-- 与交易库（03-duoduo-trade.sql）那张同名同构，列定义刻意逐字一致 ——
+-- 将来若要合并成一处，迁移就是一次纯搬运，而不是先对齐两套字段语义的重构。
+-- 放在商品库而不是 duoduo_user：核验工单与执行下架必须在**同一个本地事务**内完成，
+-- 跨服务的「核验通过 / 动作执行」之间存在中间态，不是能用补偿糊过去的东西。
+CREATE TABLE t_proxy_work_order (
+    id                BIGINT       NOT NULL COMMENT '雪花 id',
+    work_order_no     VARCHAR(48)  NOT NULL COMMENT '工单号（WO-PRD- 前缀）',
+    tenant_id         BIGINT       NOT NULL COMMENT '被代运营的店铺主体 userId（= owner_user_id）',
+    target_type       VARCHAR(16)  NOT NULL COMMENT 'ORDER / PRODUCT（本库只允许 PRODUCT）',
+    target_ref        VARCHAR(64)  NOT NULL COMMENT '目标对象：PRODUCT 存 spuId 字符串',
+    action_type       VARCHAR(32)  NOT NULL COMMENT 'SHIP / AFTERSALE / OFF_SHELF（本库只允许 OFF_SHELF）',
+    reason            VARCHAR(255) NOT NULL COMMENT '事由（申请人必填）',
+    requester_user_id BIGINT       NOT NULL COMMENT '申请人 userId —— 必须是该店铺店主本人',
+    status            VARCHAR(16)  NOT NULL DEFAULT 'OPEN' COMMENT 'OPEN / CONSUMED / VOID',
+    consumed_at       TIMESTAMP    NULL COMMENT '执行时刻（UTC）',
+    consumed_by       BIGINT       NULL COMMENT '执行人 userId（运营 / 管理员）',
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC）',
+    updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间（UTC）',
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_proxy_wo_no ON t_proxy_work_order (work_order_no);
+CREATE INDEX idx_proxy_wo_target ON t_proxy_work_order (target_type, target_ref, status);
+CREATE INDEX idx_proxy_wo_tenant ON t_proxy_work_order (tenant_id, status);
+
 -- ============================================================
 -- 商品域种子数据（local profile 每次启动重建）
 -- 说明：

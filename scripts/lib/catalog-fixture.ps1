@@ -209,7 +209,7 @@ function Resolve-DogFoodSpuFixture {
       「宠物主粮」，商品域再展开成「自己 + 子类目」过滤 —— 挂错类目会被类目条件筛掉，
       表现为"召回还是空的"，与没建夹具长得一模一样。
     .OUTPUTS
-      @{ Id; CreatedIds }
+      @{ Id; CategoryId; CreatedIds }
     #>
     param([switch]$SkipDbCheck)
     if ($SkipDbCheck) {
@@ -226,6 +226,26 @@ function Resolve-DogFoodSpuFixture {
     $id = New-CatalogFixtureSpu -Title 'E27夹具·幼犬狗粮 2kg' -Subtitle '幼犬狗粮 · 冒烟夹具' `
         -CategoryId $catId -Price 12900
     $created.Add($id) | Out-Null
+
+    # ★ 必须同时给一条**有货的 SKU**。
+    #
+    # 只有 SPU 没有 SKU 时，候选卡片下发的 inStock=false（判据是"有没有可售余量"）。
+    # 实测（2026-10-11，qwen3.8-flash）：同一个提示词连发 6 次，
+    # 「无 SKU」形态出现 1 次推荐列表为空 —— 模型正文写着「为您找到一款符合的：…」，
+    # 结构化 ids 却给了空数组，因为"名字对得上、但没货"让它左右为难。
+    # 于是断言「推荐列表非空」会变成一条**看模型心情**的断言：本机绿、CI 红，
+    # 或者反过来 —— 而失败信息里只有一句"推荐列表非空"，看不出是夹具少了一条 SKU。
+    # 补上有货 SKU 后同样提示词连发 4 次全部非空，且这是**真实前置条件**：
+    # 能被推荐的商品本来就该是买得到的。
+    #
+    # 为什么 SPU 与 SKU 都算进 CreatedIds：拆除函数按 spu_id 删 SKU、按 id 删 SPU，
+    # 两件事都要发生；少删 SKU 会让"跑完自毁"变成一句谎话（脏 SKU 会挂到已删除的 SPU 上）。
+    $skuId = New-CatalogFixtureSku -SpuId $id -Price 12900 -Stock 50 -Status 'ACTIVE' -Label '犬粮召回夹具'
+    $created.Add($skuId) | Out-Null
+    $skuBack = Invoke-ProductSql -Query "SELECT CONCAT(spu_id,'/',stock,'/',status) FROM t_sku WHERE id=$skuId;"
+    if ("$skuBack" -ne "$id/50/ACTIVE") {
+        throw "犬粮召回夹具的 SKU 建立失败：id=$skuId 期望 $id/50/ACTIVE 实得 '$skuBack'"
+    }
 
     return @{
         Id         = "$id"

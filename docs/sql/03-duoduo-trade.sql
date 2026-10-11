@@ -227,6 +227,32 @@ CREATE TABLE t_seller_debt (
 CREATE UNIQUE INDEX uk_seller_debt_order ON t_seller_debt (order_id);
 CREATE INDEX idx_seller_debt_seller ON t_seller_debt (seller_id, status);
 
+-- ---------- 代运营工单（E23） ----------
+-- 平台对第三方店铺的经营资产（替他发货 / 替他裁售后 / 替他下架）默认无权直接操作；
+-- 唯一的例外必须有**授权凭证**与**事由** —— 工单就是那个凭证。
+-- 没有它，「平台替商家做了操作」在库里只是一行审计记录，回答不了「商家同意了吗」。
+-- 一次性消费（OPEN → CONSUMED）：状态只有三个，已消费的**不允许**回到 OPEN。
+-- 商品库有一张同名同构的表（见 02-duoduo-product.sql），理由见 incremental/33。
+CREATE TABLE t_proxy_work_order (
+    id                BIGINT       NOT NULL COMMENT '雪花 id',
+    work_order_no     VARCHAR(48)  NOT NULL COMMENT '工单号（WO-ORD- 前缀）',
+    tenant_id         BIGINT       NOT NULL COMMENT '被代运营的店铺主体 userId（= owner_user_id）',
+    target_type       VARCHAR(16)  NOT NULL COMMENT 'ORDER / PRODUCT（本库只允许 ORDER）',
+    target_ref        VARCHAR(64)  NOT NULL COMMENT '目标对象：ORDER 存订单号',
+    action_type       VARCHAR(32)  NOT NULL COMMENT 'SHIP / AFTERSALE / OFF_SHELF',
+    reason            VARCHAR(255) NOT NULL COMMENT '事由（申请人必填）',
+    requester_user_id BIGINT       NOT NULL COMMENT '申请人 userId —— 必须是该店铺店主本人',
+    status            VARCHAR(16)  NOT NULL DEFAULT 'OPEN' COMMENT 'OPEN / CONSUMED / VOID',
+    consumed_at       TIMESTAMP    NULL COMMENT '执行时刻（UTC）',
+    consumed_by       BIGINT       NULL COMMENT '执行人 userId（运营 / 管理员）',
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC）',
+    updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间（UTC）',
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_proxy_wo_no ON t_proxy_work_order (work_order_no);
+CREATE INDEX idx_proxy_wo_target ON t_proxy_work_order (target_type, target_ref, status);
+CREATE INDEX idx_proxy_wo_tenant ON t_proxy_work_order (tenant_id, status);
+
 -- ---------- 削峰下单任务台账（A11） ----------
 -- 异步下单的中间态落点：受理 PENDING / 成功 PLACED / 业务失败 FAILED（带原因）。
 -- 幂等靠唯一键（与订单表幂等键同构）：双击/重试重复入队撞索引，返回已有任务。

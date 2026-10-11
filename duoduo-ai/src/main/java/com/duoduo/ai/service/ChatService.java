@@ -559,16 +559,36 @@ public class ChatService {
                 ids 只能从候选里挑，最多 4 个，按推荐优先级排序；一个都不合适就给空数组 []。
                 """;
         String raw = dashScopeClient.chat(prompt, toMessages(history), message, 512);
-        LlmReply parsed = parseLlmReply(raw, candidates);
+        LlmReply parsed = parseLlmReply(raw);
+        List<ProductCandidate> selected = selectByIds(candidates, parsed.ids());
 
-        // 模型明确表示没有合适的：如实转达，不回退成「硬推全部候选」
-        if (parsed.ids().isEmpty()) {
+        // ① 模型**明确**给了空数组：如实转达「这几款都不太合适」，不回退成「硬推全部候选」。
+        //    判据必须同时看「有没有结构化段」与「id 是否为空」两个事实：
+        //    只看 id 为空会把「压根没按格式回」也算成"模型说没有"（见 ② 的注释）。
+        if (parsed.structured() && parsed.ids().isEmpty()) {
             String reply = parsed.reply().isBlank()
                     ? "这几款里暂时没有特别符合你要求的，换个描述试试？比如「幼猫粮 200 元内」。"
                     : parsed.reply();
             return new ChatResponse(reply, List.of(), "llm", null, List.of());
         }
-        return new ChatResponse(parsed.reply(), toRecommendations(parsed.selected()), "llm", null, List.of());
+        // ② 输出不可用于挑选商品：没给结构化 id，或给了 id 但一条都对不上（抄错/自编号）。
+        //    处置沿用既定口径「退化展示候选前 3 条」——「不得编造商品」这条闸已经在
+        //    selectByIds 里生效（不存在的 id 一律丢弃），丢完之后总得有东西可展示，
+        //    否则用户看到的是「正文在推荐、下面一条都没有」这种自相矛盾的回复。
+        //
+        //    ★ 为什么判据是 selected 而不是 parsed.ids()：
+        //      parseLlmReply 里原先自己做了「没按格式 → 取候选前 3 条」的兜底，
+        //      但调用方紧接着又用 `ids.isEmpty()` 判了一次并返回空列表 ——
+        //      于是那段兜底**永远不生效**，日志却照旧打印「退化展示候选前 3 条」。
+        //      日志说一套、代码做另一套，是比这个 bug 本身更难查的东西。
+        //      现在兜底只有一个出口（这里），日志与行为不可能再分叉。
+        if (selected.isEmpty()) {
+            log.warn("LLM 回复无法用于挑选商品（structured={} ids={}），退化展示候选前 3 条",
+                    parsed.structured(), parsed.ids());
+            return new ChatResponse(parsed.reply(), toRecommendations(topN(candidates, 3)),
+                    "llm", null, List.of());
+        }
+        return new ChatResponse(parsed.reply(), toRecommendations(selected), "llm", null, List.of());
     }
 
     /**
@@ -604,8 +624,15 @@ public class ChatService {
                 : (cents / 100) + "." + String.format("%02d", abs % 100);
     }
 
-    /** LLM 回复的解析结果：话术正文 + 被选中的候选（已按 id 反查回真实商品） */
-    private record LlmReply(String reply, List<ProductCandidate> selected, List<Long> ids) {
+    /**
+     * LLM 回复的解析结果：话术正文 + 模型给出的 id + **模型有没有给出结构化 id 段**。
+     *
+     * <p>{@code structured} 是必须单独带出来的一个事实：{@code {"ids":[]}}（模型明说
+     * 「这些都不合适」）与「整段 JSON 都没给」（模型没守格式）在「id 列表」上看**完全一样**
+     * —— 都是空。但两者该有不同的处置：前者如实转达，后者该退回候选兜底。
+     * 用同一个字段表达两件事，就必然有一类被处置错。
+     */
+    private record LlmReply(String reply, List<Long> ids, boolean structured) {
     }
 
     /** 出口规则：关键词组 → 出口话术 */
@@ -615,10 +642,16 @@ public class ChatService {
     /**
      * 解析「正文 + 结构化 id」的混合回复。
      *
-     * <p>解析失败不抛错：模型偶尔不守格式是常态，此时**退化为只展示候选前 3 条**
-     * （宁可少推，也不把候选全量倒给用户）。正文本身仍然可用，不因格式问题丢回复。
+     * <p>解析失败不抛错：模型偶尔不守格式是常态，此时**把这件事实如实报给调用方**
+     * （{@code structured=false}），由调用方决定展示什么 —— 本方法刻意**不做任何兜底**。
+     *
+     * <p><b>为什么兜底必须只留一个出口</b>：这里原先自己做了「没按格式 → 取候选前 3 条」，
+     * 而调用方紧接着又用 {@code ids.isEmpty()} 判了一次并返回空列表 ——
+     * 那段兜底从未生效，日志却照旧打印「退化展示候选前 3 条」。
+     * 两处各自看起来都对，合起来是「日志说一套、代码做另一套」，
+     * 而这类问题在排查时最贵：日志是排查者唯一信任的东西。
      */
-    private static LlmReply parseLlmReply(String raw, List<ProductCandidate> candidates) {
+    private static LlmReply parseLlmReply(String raw) {
         String text = raw == null ? "" : raw.trim();
         int jsonAt = text.lastIndexOf("{\"ids\"");
         if (jsonAt < 0) {
@@ -626,14 +659,10 @@ public class ChatService {
             jsonAt = text.lastIndexOf("{\"ids\"");
         }
         if (jsonAt < 0) {
-            // 没按格式回：正文照用，推荐退化为候选前 3 条
-            log.warn("LLM 回复未含结构化 id，退化展示候选前 3 条");
-            return new LlmReply(text, candidates.subList(0, Math.min(3, candidates.size())), List.of());
+            return new LlmReply(text, List.of(), false);
         }
         String reply = text.substring(0, jsonAt).trim();
-        List<Long> ids = parseIds(text.substring(jsonAt));
-        List<ProductCandidate> selected = selectByIds(candidates, ids);
-        return new LlmReply(reply, selected, ids);
+        return new LlmReply(reply, parseIds(text.substring(jsonAt)), true);
     }
 
     /** 容错：模型可能写成 ```json 包裹或带空格 `{"ids": [...]}`，统一压成无空格的规范形态再定位 */

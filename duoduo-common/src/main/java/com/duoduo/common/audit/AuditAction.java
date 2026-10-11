@@ -171,6 +171,32 @@ public enum AuditAction {
     /** 售后仲裁裁定。归入 FUNDS：裁定结果决定退款与责任归属。 */
     AFTERSALE_ARBITRATE(AuditCategory.FUNDS, "AFTERSALE"),
 
+    // ---------------- 代运营（E23 · 三个白名单动作） ----------------
+
+    /**
+     * E23 · 平台代第三方店铺发货。
+     *
+     * <p>归入 {@link AuditCategory#CONTENT} 而不是 FUNDS：发货本身不动钱
+     * （资金仍在托管，放款要等确认收货）。它的敏感点在**身份** ——
+     * 平台以店铺的名义对一个不属于平台的订单做了处置，
+     * 审计要回答的是「谁替谁、凭什么（工单）、发了什么」。
+     * （归档判据：动钱 → FUNDS；动的是别人的经营资产 → CONTENT。）
+     */
+    ORDER_PROXY_SHIP(AuditCategory.CONTENT, "ORDER"),
+
+    /**
+     * E23 · 平台代第三方店铺处理售后（同意退款 / 驳回）。
+     *
+     * <p>归入 FUNDS：与 {@link #AFTERSALE_ARBITRATE} 同理，裁定结果直接决定退款。
+     * 刻意**不**复用同一个动作标识 —— 「平台替自己的售后做裁定」与
+     * 「平台替第三方店铺做裁定」是两类需要分开检索与追责的事实，
+     * 合成一个标识后「代运营都干了什么」就再也查不出来了。
+     */
+    AFTERSALE_PROXY_PROCESS(AuditCategory.FUNDS, "AFTERSALE"),
+
+    /** E23 · 平台代第三方店铺下架商品。 */
+    PRODUCT_PROXY_OFF_SHELF(AuditCategory.CONTENT, "PRODUCT"),
+
     // ---------------- 资金 ----------------
 
     /** 结算单回补。 */
