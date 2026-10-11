@@ -85,11 +85,16 @@ duoduo:
     max-items-per-order: ${MAX_ITEMS_PER_ORDER:50}
     # 单个 SKU 单次最多购买数量
     max-quantity-per-sku: ${MAX_QTY_PER_SKU:200}
-    # 平台佣金费率（基点，1 bp = 万分之一）。100 bp = 1%；配 0 即免佣。
+    # 平台佣金费率（基点，1 bp = 万分之一）。E22 起默认 600 bp = 6%；配 0 即免佣。
     # 佣金从托管金额里扣，余下打给卖家；历史单据保留结算当刻的口径，不随费率调整而变。
-    platform-fee-bps: ${PLATFORM_FEE_BPS:100}
+    # ★ 这里必须与 SettlementService 的 @Value 默认值保持一致：yml 里的值会**覆盖**代码默认值，
+    #   只改代码不改 yml 会让费率"看起来生效、实际没生效"（曾经踩过：测试绿、冒烟按自营免佣也绿）。
+    platform-fee-bps: ${PLATFORM_FEE_BPS:600}
     # 发货后多少天自动确认收货并放款给卖家；配 0 或负数即关闭（仅手动确认收货）
     auto-receipt-days: ${AUTO_RECEIPT_DAYS:7}
+    # E22 · 售后期（天）= 放款后资金的 T+N 冻结天数；冻结的意义是盖住退款窗口。
+    # 同样必须与 SettlementService 的 @Value 默认值一致。
+    settlement-hold-days: ${SETTLEMENT_HOLD_DAYS:7}
     # ── A11 · 削峰队列（RocketMQ）────────────────────────────
     # order-mode=queue：POST /api/orders/queued 入队，消费者异步执行与同步端点
     #   完全相同的 placeOrder（幂等/状态机代码级复用）；sync（默认）：MQ 相关 Bean

@@ -385,7 +385,7 @@ Spring Cloud Gateway（WebFlux/Netty），启动类 `GatewayApplication`。
   `PENDING_PAYMENT → PAID | CLOSED`；`PAID → SHIPPED | REFUNDED`；`SHIPPED → COMPLETED | REFUNDED`；`COMPLETED/CLOSED/REFUNDED` 终态。每次迁移写 `t_order_status_log`。
 - `support/OrderNoGenerator`：21 位纯数字订单号。
 - `payment/PaymentChannel`（SPI：`code()`、`instantSuccess()`、`prepay()`、`verifyCallback()`）、`PaymentChannelRegistry`（未知渠道直接拒绝，不回退 mock）、`MockPaymentChannel`、`SandboxPaymentChannel`（预下单二维码 → 收银台 → HMAC-SHA256 回调，含时间戳窗口与头/报文时间一致性）。
-- `SettlementService`（托管台账 CAS：CUSTODY→RELEASED/REFUNDED；佣金 `PLATFORM_FEE_BPS` 默认 100bp=1%）、`SettlementBackfillService`（历史单回补，dryRun 预演、逐条独立提交、幂等靠 `uk_settle_order`）、`SellerDebtService`（卖家欠款台账）、`SellerService`、`AdminOpsService`、`CartService`。
+- `SettlementService`（托管台账 CAS：CUSTODY→RELEASED/REFUNDED；佣金 `PLATFORM_FEE_BPS` 默认 600bp=6%，自营 `seller_id=0` 免佣；`walletOf` 是"卖家能取多少钱"的唯一定义）、`SettlementBackfillService`（历史单回补，dryRun 预演、逐条独立提交、幂等靠 `uk_settle_order`）、`SellerDebtService`（卖家欠款台账）、`SellerService`、`AdminOpsService`、`CartService`。
 - `client/`：`ProductClient/ProductGateway`（快照+库存，4xx 按业务缺失、5xx 转 DEGRADED）、`MarketingClient/MarketingGateway`（券 lock/trial/release/consume/sweep，release 带 scene 排障）、`UserAddressClient/UserAddressGateway`（地址快照）、`LogisticsClient/LogisticsNotifier`（轨迹）、`SocialNoticeClient/OrderNotifier`（通知）、`MembershipClient`、`AuditLogClient`；`config/InternalCallConfig` 统一注入 HMAC 头。
 - 削峰：`mq/OrderPlaceProducer`、`OrderPlaceConsumer`（复用同一 `placeOrder`，失败重试 2 次进 RocketMQ DLQ）、`OrderPlacePayload`；`service/OrderPlaceService`、`entity/OrderPlaceTaskEntity(t_order_place_task)`；`support/OrderPlaceGuard`（Sentinel 资源 `order-place`，QPS 默认 100，超限 429）；`DlqService`。`sync/queue` 双模式由 `duoduo.trade.order-mode` 控制。
 - 秒杀：`SeckillService`（Redis 原子预扣挡量，Redis 不可用降级纯 DB 原子扣减）、`SeckillActivity/Sku/OrderEntity`（三张表）。
@@ -643,7 +643,7 @@ SeckillActivity 1—N SeckillSku；SeckillOrder（秒杀配额台账）
 | `DUODUO_JWT_SECRET` | 本地开发占位串（生产必改） | JWT 签名（网关与 user 共享） |
 | `INTERNAL_TOKEN` | duoduo-local-dev-internal-token | HMAC 根密钥（生产必改） |
 | `INTERNAL_SKEW_SECONDS / INTERNAL_CALLER_SECRETS` | 300 / 空 | 内部签名窗口、按调用方独立密钥 |
-| `ORDER_EXPIRE_MINUTES / SWEEP_* / PLATFORM_FEE_BPS / AUTO_RECEIPT_DAYS` | 30 / 60000,30000,200 / 100 / 7 | 关单超时、扫描参数、佣金基点、自动收货天数 |
+| `ORDER_EXPIRE_MINUTES / SWEEP_* / PLATFORM_FEE_BPS / AUTO_RECEIPT_DAYS / SETTLEMENT_HOLD_DAYS` | 30 / 60000,30000,200 / 600 / 7 / 7 | 关单超时、扫描参数、佣金基点、自动收货天数、售后期（T+N 冻结天数） |
 | `SANDBOX_CASHIER_URL / SANDBOX_CALLBACK_SECRET / SANDBOX_EXPIRE_MINUTES` | 127.0.0.1:8080/sandbox/pay / 占位 / 15 | 沙箱收银台、回调 HMAC、支付单有效期 |
 | `DUODUO_TRADE_ORDER_MODE / ROCKETMQ_* / DUODUO_TRADE_PLACE_QPS` | sync / namesrv:9876 / 100 | 削峰模式与限流 |
 | `COUPON_LOCK_TTL_MINUTES` | 35 | 券锁定 TTL（必须略大于 30） |

@@ -32,8 +32,9 @@ param(
     [string]$Trade = 'http://127.0.0.1:8083',
     [string]$Password = 'duoduo123',
     [string]$InternalToken = 'duoduo-local-dev-internal-token',
-    # 必须与交易服务配置的 duoduo.trade.platform-fee-bps 一致（默认 100 = 1%）
-    [int]$PlatformFeeBps = 100,
+    # 必须与交易服务配置的 duoduo.trade.platform-fee-bps 一致
+    # （E22 起默认 600 = 6%，此前是 100 = 1%）
+    [int]$PlatformFeeBps = 600,
     [int]$SKU = 2001,
     [switch]$SkipDbCheck
 )
@@ -147,6 +148,12 @@ $H_INTERNAL = @{ 'X-Internal-Token' = 'internal' }
 $phoneOp = '137' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $phoneU = '136' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $phoneB = '135' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+# E22 · 第三方卖家夹具：佣金断言必须有意义。
+# 本套件的商品是平台自营（seller_id=0），而 E22 起**自营免佣** ——
+# 若夹具保持自营，"佣金按 $PlatformFeeBps bp 重算"这条断言会退化成"佣金 = 0"恒真，
+# 也就是说它从此**证明不了任何事**（回补把费率算错也不会红）。所以把 A / B 两单
+# 改挂到一个真实注册的第三方账号名下，让"按费率重算"真正被验证到。
+$phoneS = '134' + (Get-Random -Minimum 10000000 -Maximum 99999999)
 $recv = @{ receiverName = '小林'; receiverPhone = '13900000000'; receiverAddress = '上海市浦东新区张江路 1 号' }
 
 Write-Host ""
@@ -184,6 +191,13 @@ $sessU = $regU.session
 $regB = Register $phoneB '回补测试-买家'
 Check "买家账号注册/登录成功" ($regB.result.status -eq 200) $regB.result.status
 $sessB = $regB.session
+
+# 第三方卖家夹具：只需要一个**非 0 的 userId** 作为 seller_id（不要求他真会开店），
+# 因为回补只按 t_order.seller_id 判定"是不是自营"。
+$regS = Register $phoneS '回补测试-第三方卖家'
+Check "第三方卖家夹具账号注册成功" ($regS.result.status -eq 200) $regS.result.status
+$uidS = [long]$regS.result.body.data.id
+Check "（夹具）取得第三方卖家 userId（非 0，否则免佣判据失效）" ($uidS -gt 0) $uidS
 
 # ---------- 2. 权限边界（三层） ----------
 # 参数走查询串（?dryRun=true），不带请求体 —— 与接口设计一致，也避开「默认 Content-Type → 415」的坑。
@@ -269,6 +283,18 @@ $payC = [long]$cC.order.payAmount
 $payD = [long]$cD.order.payAmount
 Write-Host "  A=$onA ($payA 分) ｜ B=$onB ｜ C=$onC ｜ D=$onD"
 
+# 把 A 改挂到第三方卖家名下（A 只会停在 PAID，不会有人替它发货，归属改了无副作用）。
+# 建不起必须**显式报红**：归属没改成，后面的佣金断言就会静默退化成"自营免佣恒 0"。
+$aIsThirdParty = $false
+if (-not $SkipDbCheck) {
+    Sql 'duoduo_trade' "UPDATE t_order SET seller_id = $uidS WHERE order_no = '$onA';" | Out-Null
+    $gotA = Sql 'duoduo_trade' "SELECT seller_id FROM t_order WHERE order_no = '$onA';"
+    $aIsThirdParty = ("$gotA" -eq "$uidS")
+}
+Check "（夹具）A 已改挂第三方卖家（否则佣金断言退化为自营免佣恒 0）" $aIsThirdParty "seller_id=$gotA"
+# 期望佣金：第三方按费率四舍五入；自营（含 -SkipDbCheck 时没改成归属）按规则就是 0。
+$feeA = if ($aIsThirdParty) { FeeOf $payA $PlatformFeeBps } else { [long]0 }
+
 # ---------- 5. 制造缺口：删掉 A/B 的托管单（真实复现 I-14） ----------
 Write-Host ""
 Write-Host "> 制造缺口：删除 A / B 的托管单，再走 B 的发货 + 确认收货"
@@ -290,6 +316,18 @@ Check "C 订单已为 REFUNDED" ($r.body.data.orderStatus -eq 'REFUNDED') $r.bod
 
 $r = Call 'Post' "$Trade/api/orders/internal/sweep" $null $null $H_INTERNAL
 Check "手动触发补偿调度成功（入库补偿等收口）" ($r.status -eq 200) $r.status
+
+# 把 B 也改挂到第三方卖家名下。**必须在 B 发货与确认收货之后**：
+# 发货走运营会话，只对自营订单有权限；改成第三方后再改归属就没有这个约束了。
+# B 的托管单已在上面删除，改归属不会牵连任何已存在的资金记录。
+$bIsThirdParty = $false
+if (-not $SkipDbCheck) {
+    Sql 'duoduo_trade' "UPDATE t_order SET seller_id = $uidS WHERE order_no = '$onB';" | Out-Null
+    $gotB = Sql 'duoduo_trade' "SELECT seller_id FROM t_order WHERE order_no = '$onB';"
+    $bIsThirdParty = ("$gotB" -eq "$uidS")
+}
+Check "（夹具）B 已改挂第三方卖家（发货/收货之后才改，避开运营发货的归属校验）" $bIsThirdParty "seller_id=$gotB"
+$feeB = if ($bIsThirdParty) { FeeOf $payB $PlatformFeeBps } else { [long]0 }
 
 if (-not $SkipDbCheck) {
     Sql 'duoduo_trade' "DELETE FROM t_settlement WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$onC');" | Out-Null
@@ -328,7 +366,7 @@ $itemB = @($r.body.data.items | Where-Object { $_.orderNo -eq $onB })[0]
 Check "计划：B（COMPLETED）→ RELEASED" ($null -ne $itemB -and $itemB.settlementStatus -eq 'RELEASED') ($itemB | ConvertTo-Json -Compress)
 $itemC = @($r.body.data.items | Where-Object { $_.orderNo -eq $onC })[0]
 Check "计划：C（REFUNDED）→ REFUNDED" ($null -ne $itemC -and $itemC.settlementStatus -eq 'REFUNDED') ($itemC | ConvertTo-Json -Compress)
-Check "计划：A 的佣金按 $PlatformFeeBps bp 算对（$(FeeOf $payA $PlatformFeeBps) 分）" ($null -ne $itemA -and [long]$itemA.platformFee -eq (FeeOf $payA $PlatformFeeBps)) $itemA.platformFee
+Check "计划：A 的佣金口径正确（第三方 $PlatformFeeBps bp / 自营免佣，期望 $feeA 分）" ($null -ne $itemA -and [long]$itemA.platformFee -eq $feeA) $itemA.platformFee
 
 $sumAfterDry = Summary $sessOp
 Check "★ dryRun 后托管金额一分未动（托管中）" ($null -ne $sumAfterDry -and [long]$sumAfterDry.custodyAmount -eq [long]$sumBeforeDry.custodyAmount) "before=$($sumBeforeDry.custodyAmount) after=$($sumAfterDry.custodyAmount)"
@@ -389,14 +427,14 @@ $r = Call 'Get' "$Gateway/api/orders/$onA/settlement" $sessB $null
 Check "A：托管单已补出（200）" ($r.status -eq 200) $r.status
 Check "A：状态为 CUSTODY（已付款未完成 → 钱应留在托管）" ($r.body.data.status -eq 'CUSTODY') $r.body.data.status
 Check "A：金额 = 订单实付（$payA 分）" ([long]$r.body.data.amount -eq $payA) $r.body.data.amount
-Check "A：佣金 = $PlatformFeeBps bp 算出的 $(FeeOf $payA $PlatformFeeBps) 分" ([long]$r.body.data.platformFee -eq (FeeOf $payA $PlatformFeeBps)) $r.body.data.platformFee
-Check "A：卖家可得 = 金额 − 佣金" ([long]$r.body.data.sellerAmount -eq ($payA - (FeeOf $payA $PlatformFeeBps))) $r.body.data.sellerAmount
+Check "A：佣金口径正确（期望 $feeA 分 = $PlatformFeeBps bp / 自营免佣）" ([long]$r.body.data.platformFee -eq $feeA) $r.body.data.platformFee
+Check "A：卖家可得 = 金额 − 佣金" ([long]$r.body.data.sellerAmount -eq ($payA - $feeA)) $r.body.data.sellerAmount
 Check "A：未放款（releasedAt 为空）" ([string]::IsNullOrEmpty($r.body.data.releasedAt)) $r.body.data.releasedAt
 
 $r = Call 'Get' "$Gateway/api/orders/$onB/settlement" $sessB $null
 Check "B：状态为 RELEASED（已完成 → 钱应已放款）" ($r.body.data.status -eq 'RELEASED') $r.body.data.status
 Check "B：金额 = 订单实付（$payB 分）" ([long]$r.body.data.amount -eq $payB) $r.body.data.amount
-Check "B：佣金按 $PlatformFeeBps bp 算对" ([long]$r.body.data.platformFee -eq (FeeOf $payB $PlatformFeeBps)) $r.body.data.platformFee
+Check "B：佣金口径正确（第三方 $PlatformFeeBps bp / 自营免佣，期望 $feeB 分）" ([long]$r.body.data.platformFee -eq $feeB) $r.body.data.platformFee
 Check "B：放款时间非空（补出来的放款必须带时间）" (-not [string]::IsNullOrEmpty($r.body.data.releasedAt)) $r.body.data.releasedAt
 $bRel = $r.body.data.releasedAt
 $odB = Call 'Get' "$Gateway/api/orders/$onB" $sessB $null

@@ -17,7 +17,7 @@ param(
     [string]$Gateway = 'http://127.0.0.1:8080',
     [string]$Trade = 'http://127.0.0.1:8083',
     [string]$Password = 'duoduo123',
-    [int]$PlatformFeeBps = 100,
+    [int]$PlatformFeeBps = 600,
     [int]$SKU = 2001,
     [switch]$SkipDbCheck
 )
@@ -218,11 +218,16 @@ $c1 = PlaceAndPay $sessBuyer $SKU 1 '订单A'
 Check "（准备）订单 A 下单并支付成功（200）" $c1.ok $c1.step
 $onA = $c1.orderNo
 $payA = [long]$c1.pay.amount
-$feeA = FeeOf $payA $PlatformFeeBps
 
 $c2 = PlaceAndPay $sessBuyer $SKU 1 '订单B'
 Check "（准备）订单 B 下单并支付成功（200）" $c2.ok $c2.step
 $onB = $c2.orderNo
+# 注意：**不要**在这里算「订单 A 的佣金期望值」。
+#   托管单的 platform_fee 是在 openCustody（支付成功那一刻）就写死的，
+#   而本脚本的归属夹具是**支付之后**才把 seller_id 改成卖家的 ——
+#   事后改归属不会重算佣金（"结算当刻快照"是刻意设计，见 SettlementService.platformFeeOf）。
+#   所以对 A 算一个第三方佣金期望值，只会得到一条永远为假的断言、或者被写成"0 也对"的空断言。
+#   E22 的 6% 佣金在 §12 有真实断言：那里商品是**下单前**就划给卖家的，佣金确实按第三方抽。
 
 if (-not $onA -or -not $onB) {
     Write-Host "订单夹具创建失败，终止。"
@@ -472,6 +477,27 @@ if ($SkipDbCheck) {
             Check "★ 托管单 seller_id 同步为该卖家" ((Sql 'duoduo_trade' "SELECT s.seller_id FROM t_settlement s JOIN t_order o ON o.id=s.order_id WHERE o.order_no='$($own.orderNo)';") -eq "$sellerId")
             $r = Call 'Get' "$Gateway/api/seller/orders?pageSize=50" $sessSeller $null
             Check "★ 商家端订单列表能看到这笔新订单" ((@($r.body.data.items | Where-Object { $_.orderNo -eq $own.orderNo }).Count) -eq 1)
+
+            # ★ E22 佣金口径 —— 这是本脚本里**唯一能真实验证 6% 抽佣的位置**。
+            #   为什么不能放在 §4 那笔订单 A 上：托管单的 platform_fee 在 openCustody
+            #   （支付成功那一刻）就写死了，而 §4 的归属夹具是**支付之后**才改 seller_id，
+            #   事后改归属不会重算佣金。只有这里的商品是**下单前**就划给卖家的
+            #   （supply_type=merchant + seller_id），托管单在下单时就是"第三方卖家"，
+            #   佣金才会真的按 $PlatformFeeBps 抽出来。
+            #   反过来，若这里断言写成"佣金 == 0 也对"，就等于什么都没验 —— 别那么写。
+            $payOwn = [long]$own.pay.amount
+            $feeOwn = FeeOf $payOwn $PlatformFeeBps
+            Check "（E22 夹具）这笔订单的佣金期望值不为 0（否则下面的断言退化成恒真）" ($feeOwn -gt 0) $feeOwn
+            $r = Call 'Post' "$Gateway/api/seller/orders/$($own.orderNo)/ship" $sessSeller @{ logisticsNo = 'SF-OWN-0001' }
+            Check "（E22）第三方订单发货成功（200）" ($r.status -eq 200) $r.status
+            Check "（E22）发货不等于放款：托管仍为 CUSTODY" ($r.body.data.settlement.status -eq 'CUSTODY') $r.body.data.settlement.status
+            Check "★ E22：佣金按 $PlatformFeeBps bp 抽（期望 $feeOwn 分）" ([long]$r.body.data.settlement.platformFee -eq $feeOwn) $r.body.data.settlement.platformFee
+            Check "★ E22：卖家可得 = 托管金额 − 佣金" ([long]$r.body.data.settlement.sellerAmount -eq ($payOwn - $feeOwn)) $r.body.data.settlement.sellerAmount
+
+            $r = Call 'Post' "$Gateway/api/orders/$($own.orderNo)/confirm" $sessBuyer $null
+            Check "（E22）买家确认收货后托管转 RELEASED" ($r.body.data.settlement.status -eq 'RELEASED') $r.body.data.settlement.status
+            Check "★ E22：放款后佣金口径不变（仍是 $feeOwn 分，事后调费率不改历史单）" ([long]$r.body.data.settlement.platformFee -eq $feeOwn) $r.body.data.settlement.platformFee
+            Check "★ E22：放款后卖家可得不变" ([long]$r.body.data.settlement.sellerAmount -eq ($payOwn - $feeOwn)) $r.body.data.settlement.sellerAmount
         }
     } else {
         Check "归属链路：SKU A 库存充足" $false "stock=$stockA"
