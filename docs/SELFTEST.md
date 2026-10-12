@@ -464,6 +464,33 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-md-bare-ti
 #   两种都验过一次（2026-10-12）：形态一精确报 README.md:1959、形态二精确报 README.md:11。
 ```
 
+### 4.10b 图表主题接入点契约自检（S10；改 `chartTheme.ts` / `charts.tsx` 后必做）
+
+```powershell
+# currentChartThemeMode() 是「全站图表主题的唯一接入点」——四条约定一起守（纯静态 + 真 import 该模块）
+node scripts\lib\check-chart-theme-contract.mjs
+#    预期：exit 0，末尾「结果：PASS=13 FAIL=0」
+#    四条约定（任何一条失守，「将来做全局深色主题只改这一处」就变成空话）：
+#      ① 函数真的读 document.documentElement.dataset.theme（不是写死 light 的死代码）；
+#      ② 回落正确：只有精确的 dark 才返回 dark；未设置 / 空串 / 其他值 / 无 document 一律 light；
+#      ③ charts.tsx 在**组件内**求值 —— 出现模块级 `const T = chartTheme();` 会报红，
+#         因为模块级常量只在首次加载算一次，主题切了图表不会跟着变；
+#      ④ 代码里不出现 prefers-color-scheme（会造成浅底 + 深轴线的不可读组合）。
+#    ★ 判据分两层：动态（替换 globalThis.document 后真调用，验 7 种取值）+ 静态（读源码文本验 ①②③④）。
+#    ★ 源文件扫到 0 行直接判违规（「什么都没扫到」与「扫了、结果干净」长得一样）。
+
+# 反向验证（证明守卫真的在判，注入违规 -> 必须 exit 1 并点名）
+#   注入①  把函数体改回 `return 'light';`                      -> [FAIL] ★ data-theme="dark" → dark
+#   注入②  charts.tsx 里加模块级 `const T = chartTheme();`      -> [FAIL] ③ 没有模块级 const T …
+#   注入③  代码里加 matchMedia('(prefers-color-scheme: dark)') -> [FAIL] ④ 代码中不出现 prefers-color-scheme
+#   三种都验过一次（2026-10-12）：各 exit 1 且精确点名；还原后复跑 13/13 PASS。
+```
+
+配套 e2e：`node scripts\e2e\admin-charts-ui-check.mjs` 第 ④ 段（该套现在 **36 项**）——
+其中「★ dark 与 light 的 canvas 像素指纹不同」是「dark 一套配色不是死代码」的端到端证据。
+判据用 **canvas 像素抽样指纹**而非截图文件哈希：同一像素重新编码成 PNG 的字节也可能不同（压缩非确定性），
+拿文件哈希会假红。
+
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
 
 ```powershell

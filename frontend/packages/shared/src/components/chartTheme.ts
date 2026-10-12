@@ -6,18 +6,21 @@
  * 改配色就得回到图表实现里翻常量 —— 而且很容易只改一半（改了三处漏第五处），
  * 结果出现「深色坐标轴文字压在浅色卡片上」这种不可读的组合。
  *
- * <p><b>当前状态（如实说明）</b>：**应用本身没有深色主题**
- * （`styles.css` 只有一套浅色变量，没有 `data-theme` 切换、也没有 `prefers-color-scheme` 分支）。
- * 因此 {@link currentChartThemeMode} **恒返回 `'light'`**，dark 一套是**备好的**、
- * 还没有消费方 —— 这是刻意的：不做「只有图表变深」的半成品（那会让图表与卡片背景打架）。
+ * <p><b>当前状态（如实说明）</b>：**应用本身还没有深色主题**
+ * （`styles.css` 只有一套浅色变量，没有任何地方写 `data-theme`、也没有 `prefers-color-scheme` 分支）。
+ * 因此 {@link currentChartThemeMode} 在运行时实际仍恒为 `'light'`，dark 一套是**备好的**、
+ * 暂时没有真实消费方 —— 这是刻意的：不做「只有图表变深」的半成品（那会让图表与卡片背景打架）。
  *
  * <p><b>一条明确的约定</b>：图表主题**跟随应用主题，不跟随操作系统的 `prefers-color-scheme`**。
  * 原因：应用卡片背景是固定的浅色，图表若自行按系统偏好变深，就会出现浅底 + 浅字/深轴线的不可读组合。
  * 要支持深色，正确路径是**先把全局主题做了**（CSS 变量 + `data-theme`），再让本文件跟随它。
  * e2e（`admin-charts-ui-check.mjs`）里有一条断言专门钉住这个约定，防止将来只改图表造成的半修复。
  *
- * <p><b>将来怎么接</b>：只有 {@link currentChartThemeMode} 一个函数需要改 ——
- * 读 `document.documentElement.dataset.theme` 即可，图表实现与各页面都不用动。
+ * <p><b>怎么接（接入点已就绪）</b>：{@link currentChartThemeMode} **已改为读
+ * `<html>` 的 `data-theme`**，取值规则见该函数注释。应用将来实现全局深色主题时，
+ * 只需在主题切换处设置 `document.documentElement.dataset.theme` 并触发一次重渲染，
+ * 图表实现与各页面都不用动。配套地，`charts.tsx` 已从「模块级常量」改为**组件内求值** ——
+ * 否则主题变了图表不会跟着变（模块级常量只在首次加载时算一次）。
  */
 
 export type ChartThemeMode = 'light' | 'dark';
@@ -89,13 +92,21 @@ export const CHART_THEMES: Record<ChartThemeMode, ChartTheme> = {
 };
 
 /**
- * 当前图表主题。
+ * 当前图表主题：**跟随应用主题**（`<html data-theme="...">`）。
  *
- * <p>**应用暂无深色主题** → 恒 `'light'`。将来接全局主题时**只改这一个函数**。
- * 刻意不读 `prefers-color-scheme`：见文件头「一条明确的约定」。
+ * <p>接入点收成这一个函数 —— 应用做全局深色主题时，只需在切换主题的地方设置
+ * `document.documentElement.dataset.theme` 并触发一次重渲染，图表侧无需改动。
+ *
+ * <p><b>取值规则</b>：仅当 `data-theme === 'dark'` 时返回 `'dark'`；
+ * 其余情况（未设置、空串、其他值、非浏览器环境没有 `document`）**一律回落 `'light'`**。
+ * 当前应用尚未实现深色主题、没有地方设置 `data-theme`，因此运行时行为与「恒 light」一致。
+ *
+ * <p>刻意不读 `prefers-color-scheme`：见文件头「一条明确的约定」。
  */
 export function currentChartThemeMode(): ChartThemeMode {
-  return 'light';
+  if (typeof document === 'undefined') return 'light';
+  const theme = document.documentElement?.dataset?.theme;
+  return theme === 'dark' ? 'dark' : 'light';
 }
 
 /** 取某模式下的主题；缺省取当前应用主题 */

@@ -258,6 +258,66 @@ step('③ 图表主题：不跟随系统深色（避免与浅色卡片打架）'
   await ctx.close();
 }
 
+// ---------------- ④ 主题接入点（S10）：<html data-theme> 真的会改图表配色 ----------------
+step('④ 图表主题接入点：切到 data-theme="dark" 时图表配色真的改变');
+{
+  // S10 前半。chartTheme.ts 的 currentChartThemeMode() 读 <html data-theme>，
+  // charts.tsx 在**组件内**求值（不再是模块级常量 —— 那样主题切了不会生效）。
+  // 本段是「能走到 dark 分支」的端到端证据（铁律 19：凡降级/兜底必写能走到那个分支的测试）：
+  // 不注入 data-theme 的话，那一套 dark 配色永远是死代码，坏了也没人知道。
+  //
+  // ★ 判据用 **canvas 像素抽样指纹**，不用截图文件的哈希 ——
+  //   同一像素重新编码成 PNG 的字节也可能不同（压缩非确定性），拿文件哈希会假红。
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1200 }, locale: 'zh-CN' });
+  await ctx.addCookies([...op.jar].map(([name, value]) => ({ name, value, domain: 'admin.localhost', path: '/' })));
+  const page = await ctx.newPage();
+
+  /** 抽样读 canvas 像素做指纹（步长 97：够快，且对配色变化敏感） */
+  const canvasFingerprint = async () => {
+    await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 15000 });
+    return page.evaluate(() => {
+      const c = document.querySelector('canvas');
+      const g = c.getContext('2d');
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 97) h = (Math.imul(h, 31) + d[i]) >>> 0;
+      return { hash: h, w: c.width, hh: c.height };
+    });
+  };
+
+  // ① 默认加载：应用没有任何地方写 data-theme → 图表应走 light
+  await page.goto(`${ADMIN_UI}/admin`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const defaultTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  const light = await canvasFingerprint();
+
+  // ② 强制 dark：必须在页面脚本执行**之前**设上 —— React 只在渲染时求值，
+  //    页面加载完再改属性不会触发重渲染。用 addInitScript + reload 保证顺序。
+  await page.addInitScript(() => {
+    const apply = () => {
+      if (document.documentElement) { document.documentElement.setAttribute('data-theme', 'dark'); return true; }
+      return false;
+    };
+    if (!apply()) {
+      new MutationObserver((_, ob) => { if (apply()) ob.disconnect(); })
+        .observe(document, { childList: true, subtree: true });
+    }
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const forcedTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  const dark = await canvasFingerprint();
+
+  check('④ 默认加载时应用未设置 data-theme（图表走 light）', defaultTheme === null, defaultTheme);
+  check('④ 注入的 data-theme="dark" 确实生效（证明注入方式可靠、断言有效）', forcedTheme === 'dark', forcedTheme);
+  check('★ ④ dark 与 light 的 canvas 像素指纹不同（图表主题真的被消费，不是死代码）',
+    light.hash !== dark.hash, `light=${light.hash} dark=${dark.hash}`);
+  check('④ 两次渲染的 canvas 尺寸一致（排除「因为尺寸变了才不同」）',
+    light.w === dark.w && light.hh === dark.hh, `light=${light.w}x${light.hh} dark=${dark.w}x${dark.hh}`);
+
+  await ctx.close();
+}
+
 // ---------------- 收尾：运营夹具降权（不留多余后台入口） ----------------
 // 与 seckill / share-report 同一处置：e2e 用「随机手机号 + 库提权」建的 OPERATOR
 // 必须收尾降权，否则每跑一次就在库里多留一个**能登录平台后台**的账号。

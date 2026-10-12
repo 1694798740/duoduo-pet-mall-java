@@ -41,22 +41,12 @@ echarts.use([
  * 配色与轴线/提示框样式**全部来自 `chartTheme.ts`**（R74-6：图表主题的唯一来源）。
  * 本文件不再出现任何硬编码色值 —— 将来接深色主题只需改 `currentChartThemeMode()` 一处。
  *
+ * <p>★ 这些值在**组件内**求值（不是模块级常量）：图表主题跟随 `<html data-theme>`，
+ * 而模块级常量只在首次加载时算一次 —— 主题切了图表不会跟着变。见 {@link Chart} 内注释。
+ *
  * <p>{@code transitionDuration: 0} 是关键：ECharts 的浮层默认自带一段淡入，
  * 鼠标快速划过多个柱子时会出现「提示框还在追鼠标」的滞后感。设为 0 后它跟着指针就位。
  */
-const T = chartTheme();
-const PALETTE = T.palette;
-const AXIS_LABEL = T.axisLabel;
-const SPLIT_LINE = { lineStyle: { color: T.splitLine } } as const;
-const TOOLTIP = {
-  transitionDuration: 0,
-  backgroundColor: T.tooltip.backgroundColor,
-  borderColor: T.tooltip.borderColor,
-  borderWidth: 1,
-  padding: [8, 12],
-  textStyle: { color: T.tooltip.textColor, fontSize: 12 },
-  extraCssText: T.tooltip.extraCssText,
-} as const;
 
 type Slice = AnalyticsSlice;
 type Trend = AnalyticsTrendPoint;
@@ -84,6 +74,25 @@ export interface ChartProps {
 const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+
+  /**
+   * 图表主题：跟随应用主题（`<html data-theme>`），**在组件内求值**。
+   * `chartTheme()` 返回的是 `CHART_THEMES[mode]` 里的**同一个对象引用**，
+   * 所以把它写进 useMemo 依赖不会导致每次渲染都重算 option。
+   */
+  const T = chartTheme();
+  const PALETTE = T.palette;
+  const AXIS_LABEL = T.axisLabel;
+  const SPLIT_LINE = { lineStyle: { color: T.splitLine } } as const;
+  const TOOLTIP = {
+    transitionDuration: 0,
+    backgroundColor: T.tooltip.backgroundColor,
+    borderColor: T.tooltip.borderColor,
+    borderWidth: 1,
+    padding: [8, 12],
+    textStyle: { color: T.tooltip.textColor, fontSize: 12 },
+    extraCssText: T.tooltip.extraCssText,
+  } as const;
 
   /** 全为 0 或没有数据 —— 显式出空态，不画一张「看起来坏了」的平图 */
   const empty = useMemo(() => {
@@ -186,7 +195,7 @@ const Chart: React.FC<ChartProps> = ({ type, data, height = 240, money, unit }) 
         data: values,
       }],
     };
-  }, [type, data, money, unit]);
+  }, [type, data, money, unit, T]);
 
   useEffect(() => {
     const el = boxRef.current;

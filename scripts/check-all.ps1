@@ -81,7 +81,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -109,6 +109,13 @@ Record '第三方依赖安全自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 #   两种写法在 GitHub / 腾讯文档渲染都正常；没有门禁的话，"内容丢失"只能靠人工逐行比对发现。
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-md-bare-tick.ps1') 2>&1 | Select-Object -Last 3 | Write-Host
 Record '文档飞书吞行/吞字自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# 图表主题接入点契约（S10）—— currentChartThemeMode() 是全站图表主题的**唯一接入点**，
+# 它「将来做全局深色主题只改这一处」的价值全靠四条约定撑着：读 <html data-theme> /
+# 回落正确（只有精确 dark 才切深色）/ 消费端在**组件内**求值（模块级常量主题切了不生效）/
+# 不引入 prefers-color-scheme（会造成浅底+深轴线的不可读组合）。四条都不会自己报错 ——
+# 尤其「接入点是死代码」这一条，没有门禁就静默腐烂。纯静态 + 真 import 该模块，放这里最便宜。
+& node (Join-Path $repo 'scripts\lib\check-chart-theme-contract.mjs') 2>&1 | Select-Object -Last 3 | Write-Host
+Record '图表主题接入点契约' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"
