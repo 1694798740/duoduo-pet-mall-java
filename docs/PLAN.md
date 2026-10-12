@@ -204,6 +204,30 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-12（五）· S7 网页端全站未读角标（对齐小程序口径）
+
+**做了什么**
+- `api-sdk`：`types.ts` 新增 `UnreadSummary { notice, message, total }`；`endpoints.ts` 的 `noticeApi` 新增
+  `unreadSummary()` → `GET /api/socials/notices/unread-summary`（**服务端已合并的 total，前端不自己相加**）。
+- `shared/src/store/app.tsx`（整体重写）：新增未读状态与实现 —— `unread` / `refreshUnread` / `clearUnread` /
+  `startUnreadPolling` / `stopUnreadPolling`，`UNREAD_POLL_MS = 60 * 1000`。**请求单飞**（`useRef` 存 in-flight Promise，
+  并发调用复用同一个）；**失败刻意不清零**（网络抖一下就把未读抹掉，比停在旧值更让人困惑）；未登录清角标。
+- `apps/mall/src/components/Layout.tsx`：顶栏头像按钮内挂**全站角标**（`>99 → '99+'`）；菜单里的
+  「通知中心（N）」「私信（N）」改读同一份状态（**删掉了此前那套「打开菜单时现取」的独立实现**）；
+  刷新点三处 —— 打开头像菜单 / `visibilitychange` 回前台 / 60 秒兜底轮询。
+
+**★ 一个结构性约束（改这块之前先读）**
+- `AppProvider` 在 `AuthProvider` **外层**（`main.tsx` 的嵌套顺序），Provider 里拿不到 `useAuth`。
+  因此 **Provider 只提供状态与实现，轮询的启停由消费方驱动**（商城端 `Layout.tsx` 按 `loggedIn` 启停）。
+  好处是三端共用 Provider 时，后台端 / 商家端不会被动获得「买家未读」的轮询。
+
+**验证**
+- `npm run typecheck` 三端 0 错；`check-frontend-imports` 467 条全解析；`check-bundle-isolation` 三端隔离通过。
+- 重建 `duoduo-web-app`（healthy）→ e2e `notice-chat-follow` **50 项全过 / 0 失败**（原 42 → 50，新增 ④ 段 8 项）：
+  断言「**首页**顶栏就有角标（不只在通知页 —— 这是 S7 的核心承诺）」、「角标数字 == `unread-summary` 的 `total`」、
+  「未登录访客没有头像菜单、也就没有角标」。
+- 自检方法见 `docs/SELFTEST.md` §4.10c。
+
 ### 2026-10-12（四）· S15 行尾符规范化（`.gitattributes`）+ S10 图表主题接入点加固 · 顺带抓到两处「假绿」
 
 **S15 · 仓库行尾统一为 LF（提交 `064ddeb`）**
@@ -1504,20 +1528,22 @@ Mockito 打桩不解析服务发现；只有容器启动炸 `No Feign Client for
 **R74-5 · Web 端私信页（会话列表 + 会话详情）**
 - 新增 `pages/Messages.tsx`（列表）与 `pages/Chat.tsx`（详情），路由 `/messages`、`/messages/:peerId`（均 `RequireAuth`）；
   `api/endpoints.ts` 新增 `messageApi`，`api/types.ts` 补 `ConversationView` / `ChatMessageView` / `MessagePageData`；
-  头像下拉加「私信」入口（未读数**打开菜单时现取**，不为它加全站轮询；角标合并口径仍由小程序 `utils/unread.js` 负责，Web 不另建一套）。
+  头像下拉加「私信」入口（**R75 起升级为全站未读角标** —— 见下文「R75-1」：不再只在打开菜单时现取，
+  改为顶栏头像上挂角标 + 三处刷新；合并口径**仍由服务端 `unread-summary` 负责，Web 不另建一套**）。
 - 两条必须显式呈现的服务端口径：**`canSend=false` 时禁用输入并说明原因**（非互关每人限发一条，咨询会话豁免）——
   否则用户点发送后静默失败，会以为「消息发丢了」；**`mine` 用服务端下发的字段**，前端不自己比 userId。
 - v1 边界（刻意不做，避免半成品）：实时推送（用「刷新」按钮 + 发送后自动拉取）；富卡片消息渲染（`bizType != TEXT` 按文本展示）。
   会话键的上下文段（`productId` / `listingId`）**只透传不拼装** —— 会话键是服务端的事实。
 
-**R74-4 · 新增「通知 / 私信 / 关注」浏览器套件**（`scripts/e2e/notice-chat-follow-ui-check.mjs`，**42 项**，自包含）
+**R74-4 · 新增「通知 / 私信 / 关注」浏览器套件**（`scripts/e2e/notice-chat-follow-ui-check.mjs`，**R74 时 42 项 → R75 起 50 项**，自包含）
 - 为什么必须补：这三条是每天都会走的动线，而 17 套 e2e 里覆盖为 **0**。代价已经出现 ——
   **Web 通知页的分类 chip 从 R67 起就是错的**：写的是后端不存在的 `AFTERSALE` / `SOCIAL` / `NOTICE`，
   于是「售后 / 互动 / 公告」**一律筛出空列表**，而真实存在的 `FRIEND` / `MERCHANT` 只能显示英文原名。
   根因是**前端自己发明了一套分类**，而分类是业务事实（服务端白名单 `SYSTEM/ANNOUNCEMENT/FRIEND/MERCHANT/ORDER` 才是唯一来源）。
   本套件把 chip **逐个真筛**（含曾经失效的那几个），这个缺陷因此再也回不去。
 - 覆盖：① 通知（夹具推送 3 类 → chip 逐个真筛 → 全部已读后未读归零）；② 私信（列表 → 会话 → 发送 → **非互关限一条**：
-  页面禁用输入 + 说明原因，且**服务端同样拒绝**第二条）；③ 关注与粉丝（两个名单各自出现对方；**互关后 `canSend` 恢复**）。
+  页面禁用输入 + 说明原因，且**服务端同样拒绝**第二条）；③ 关注与粉丝（两个名单各自出现对方；**互关后 `canSend` 恢复**）；
+  ④ **全站未读角标**（R75 新增：在**首页**顶栏就能读到角标 → 数字 == `unread-summary.total` → 未登录访客无角标）。
 - 两个夹具坑（都已写进源码注释）：**内部端点不经网关** —— `/api/socials/internal/**` 只认内部签名、
   没有用户会话，经网关调用会被网关判成未登录直接 **401**（不是内部过滤器的 403），套件改为**直连 social:8087**；
   **雪花 id 必须按字符串传** —— 首版写了 `Number(meId)`，19 位超出 JS 安全整数被静默改写末位，

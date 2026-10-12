@@ -205,6 +205,7 @@
 - **修法**：收敛到唯一出口 `utils/unread.js`，新增 **4 类刷新点** —— `app.onShow`（冷启 + 回前台）+ 首页 / 分享圈 / 我的三个 tab 的 `onShow` + **60s 轮询**（`app.onHide` 清理定时器）。并发请求**单飞**（复用 `inflight`）；**请求失败返回 `-1` 而不是 `0`**，避免「网络抖一下就把未读提示抹掉」。
 - **99 封顶**：微信 tabBar 角标超过两位会被裁成省略号，故 `>99 → '99+'`。
 - **静态规则新增第 8 条**：全仓禁止绕过 `utils/unread.js` 直接调 `setTabBarBadge`（error 级；匹配前**先剥注释** —— 注释里提到这个名字正是 R54 那次假阴性的来源）。
+- **★ 网页商城同口径对齐（2026-10-12 补）**：`Web` 端此前只做到「打开头像菜单时现取一次未读数」，且是**自己把通知数与私信数相加**（等于把服务端的合并口径又抄了一份）。现改为读同一个 `GET /api/socials/notices/unread-summary` 的 `total`，并把角标挂到**顶栏头像**上（**任意页面可见**，不只在通知页）。刷新点三处：打开头像菜单 / `visibilitychange` 回前台 / **60 秒兜底轮询**；请求单飞、**失败不清零**、未登录清角标 —— 与小程序逐条一致。实现落在 `shared/src/store/app.tsx`（状态与实现）与 `apps/mall/src/components/Layout.tsx`（按登录态启停），自检见 `docs/SELFTEST.md` §4.10c。
 
 **④ 首页卡片式弹窗（新组件 `components/notice-toast`）**
 - 顶部滑入小卡片，**4 秒自动收起**、可点击进入对应页面；**同来源 5 分钟冷却**（key 取 `bizType:bizId`，无 bizId 退化为 `notice:id`，最多记 50 条），避免同一会话连发消息反复弹。
@@ -1546,7 +1547,7 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 |---|---|---|---|
 | GET | `/api/socials/notices?page=&pageSize=&category=` | 通知列表（定向通知 + 全站公告合并视图；`category` 可选 `SYSTEM` / `ANNOUNCEMENT` / `FRIEND` / `MERCHANT` / `ORDER`） | 需登录 |
 | GET | `/api/socials/notices/unread-count` | 通知未读数（**已排除私信通知行**） | 需登录 |
-| GET | `/api/socials/notices/unread-summary` | **合并未读** `{notice, message, total}` —— tabBar 角标的**唯一数据源** | 需登录 |
+| GET | `/api/socials/notices/unread-summary` | **合并未读** `{notice, message, total}` —— 角标的**唯一数据源**（小程序 tabBar 角标与**网页商城顶栏角标**都读它，两端同口径） | 需登录 |
 | POST | `/api/socials/notices/{noticeId}/read` | 标记单条已读（幂等；他人 / 不存在 404，不区分以防枚举） | 需登录 |
 | POST | `/api/socials/notices/read-all` | 全部已读（幂等） | 需登录 |
 | GET | `/api/socials/messages/unread-count` | 私信未读数（**按条计**，对齐主流 App 的「3 条未读」语义） | 需登录 |
@@ -1575,6 +1576,11 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 `utils/notice.js`（跳转与弹窗冷却）、`components/notice-toast`（顶部滑入卡片，4s 自动收起）。
 `scripts/check-miniprogram.js` **第 8 条规则**（error 级）全仓禁止绕过 `utils/unread.js` 直接调 `setTabBarBadge`。
 自测：`scripts/r55-notice-smoke.py`（42 项）+ `scripts/r55-unread-badge-test.js`（59 项）。
+
+网页商城侧（**2026-10-12 对齐**）：`packages/shared/src/store/app.tsx`（未读状态 + 实现）+
+`apps/mall/src/components/Layout.tsx`（**顶栏头像角标**，按登录态启停轮询）。同样读 `unread-summary` 的 `total`，
+刷新点三处（打开菜单 / 回前台 / 60s 轮询）、请求单飞、**失败不清零**。
+e2e：`scripts/e2e/notice-chat-follow-ui-check.mjs`（**50 项**，④ 段专测角标）；自检步骤见 `docs/SELFTEST.md` §4.10c。
 
 ---
 

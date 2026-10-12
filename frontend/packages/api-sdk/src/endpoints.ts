@@ -95,6 +95,7 @@ import type {
   ShareTopicView,
   ShareView,
   UnreadCount,
+  UnreadSummary,
   TotpEnableView,
   TotpSetupView,
   TotpStatusView,
@@ -1047,6 +1048,13 @@ export const noticeApi = {
   list: (query?: { category?: string; page?: number; pageSize?: number }) =>
     api.get<NoticePageData>('/api/socials/notices', { query }),
   unreadCount: () => api.get<UnreadCount>('/api/socials/notices/unread-count'),
+  /**
+   * 未读汇总：**通知 + 私信合并口径**（服务端算好再下发，前端不自己相加）。
+   *
+   * 这是全站未读角标的**唯一数据源** —— 与小程序 `utils/unread.js` 同接口、同口径。
+   * 返回同源同刻的三个计数，页面可拿 `message` 单独显示「私信 N 条」而不必再发一次请求。
+   */
+  unreadSummary: () => api.get<UnreadSummary>('/api/socials/notices/unread-summary'),
   /** 标记单条已读（幂等） */
   markRead: (id: string) => api.post<void>(`/api/socials/notices/${id}/read`),
   /** 全部已读（幂等） */

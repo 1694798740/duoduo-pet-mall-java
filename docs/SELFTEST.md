@@ -244,7 +244,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
 | 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | **22 套**（首页 / **商品详情页** / 地址簿 / 商家端 / **商家端看板** / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注** / 审核 SLA / 商品审核 / 资质有效期 / 商家店员 / 审核台）。单套调试：`-Only <名字>` |
 | ⚠️ e2e 假红的头号原因是**数据脏** | — | e2e 断言「商品图零裂图」。若历史冒烟**中途被中断**，会残留一条带 `https://example.com/…` 占位图的夹具评价；它挂在种子商品上 → **首页与详情页同时报裂图**，看起来像代码回归。判据：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';`（应为 0）。`review-smoke.ps1` 已加**开机清扫**自动处理 |
-| 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 42 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
+| 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 50 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 端点总数由脚本写在契约文档末尾（`合计 N 个端点`）——**这里不抄数字**（抄来的必然落后，且没有检查能发现） |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | **685 项 / 66 个测试类**（11 个模块；2026-10-11 实测 0 失败） |
@@ -337,7 +337,7 @@ powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包
 
 其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
 `home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
-`admin-charts`（28）、`my-listings`（47）、`seckill`（45）、`address`（64）；
+`admin-charts`（36）、`my-listings`（47）、`seckill`（45）、`address`（64）；
 其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
 
 **商品详情页套件**（`scripts/e2e/product-detail-ui-check.mjs`，20 项，第七十三轮）单独跑：
@@ -491,6 +491,39 @@ node scripts\lib\check-chart-theme-contract.mjs
 判据用 **canvas 像素抽样指纹**而非截图文件哈希：同一像素重新编码成 PNG 的字节也可能不同（压缩非确定性），
 拿文件哈希会假红。
 
+### 4.10c 网页端全站未读角标自检（S7；改 `store/app.tsx` / 商城 `Layout.tsx` 后必做）
+
+```powershell
+# 走一键运行器（★ 不要直接 node xxx-ui-check.mjs —— 那会打默认的 :5173 dev server 而报 ERR_CONNECTION_REFUSED）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 `
+  -Only notice-chat-follow -UiBase http://localhost:8088
+#    预期：通过 50 项，失败 0 项；末行「notice-chat-follow : PASS」
+#    -UiBase 会把 UI_BASE 交给子进程，且不再启动/管理 dev server（容器已在跑）
+```
+
+**这一节守的三件事**：
+
+| 判据 | 静默失效会长什么样 |
+|---|---|
+| **角标出现在首页顶栏**（而不只在通知页） | 只在通知页刷新的老毛病会复发 —— 用户在首页永远看不到数字，但通知页一切正常 |
+| **角标数字 == `unread-summary.total`** | 前端自己 `notice + message` 两处相加，服务端改了合并口径（如排除 `bizType=MESSAGE`）就悄悄不一致 |
+| **未登录访客无角标** | 未登录时请求 401 → 全局静默重登/跳登录，或被当成 0 个未读而把访客也显示成已登录态 |
+
+新增的一段（④）关键行：
+
+```
+[PASS] ★ ④ 首页顶栏就出现未读角标（不只在通知页 —— 这是 S7 的核心承诺）
+[PASS] ★ ④ 角标数字 == unread-summary 的 total（两端同口径，没有各算一套）
+[PASS] ④ 未登录访客没有头像菜单、也就没有未读角标
+```
+
+**实现口径（与小程序对齐，改动前先读这三条）**：
+
+1. **唯一数据源**是 `GET /api/socials/notices/unread-summary`（服务端已合并 `notice + message`）。Web 端**不自己相加**。
+2. **刷新点三处**：打开头像菜单 / `visibilitychange` 回前台 / **60 秒兜底轮询**（与小程序同频）。请求**单飞**（并发复用同一个 in-flight Promise）。
+3. **失败不清零** —— 网络抖一下就把未读抹掉，比数字停在旧值更让人困惑。未登录则清角标。
+4. ★ **轮询的启停由消费方驱动**：`AppProvider` 在 `AuthProvider` **外层**（见 `main.tsx` 嵌套顺序），拿不到 `useAuth` —— 所以 Provider 只提供状态与实现，由商城端 `Layout.tsx` 按 `loggedIn` 决定启停（后台/商家端不需要买家未读角标）。
+
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
 
 ```powershell
@@ -582,6 +615,7 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 | 13 | 评价晒单 | 提交后商品详情出现评价；**追评**单独展示；匿名评价昵称脱敏 |
 | 14 | 申请退款（未发货 / 已发货） | 未发货可直接退；已发货进售后流程 |
 | 15 | 我的订单列表按状态筛选 | 各状态条数与操作一致；已关闭订单不能再支付/取消 |
+| 16 | **网页商城顶栏头像角标（S7）** | 在**任意页**（不只通知页）顶栏头像就有未读数字；数字 == `GET /api/socials/notices/unread-summary` 的 `total`（**服务端合并口径，Web 不另算一套**）；点开菜单后「通知中心（N）/私信（N）」分项与角标同源；切到别的标签页再切回来数字会刷新；未登录访客没有头像菜单、也没有角标 |
 
 ### 5.2 卖家 / 商家端
 
@@ -616,7 +650,7 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 | 按钮文字 | 任何按钮都不折行（挤不下宁可横向滚动） |
 | 胶囊标签 | 高度与文字匹配，不能「框比字大」 |
 | 页面跳转 | 从「我的」进订单页能返回；非 tab 页有原生返回键 |
-| 未读角标 | 只有一个来源（`utils/unread.js`），不会把私信数两次 |
+| 未读角标 | 只有一个来源，不会把私信数两次：小程序走 `utils/unread.js`；**网页端走 `shared/src/store/app.tsx`**（读同一个 `unread-summary`），两端**服务端同一口径** |
 
 ---
 

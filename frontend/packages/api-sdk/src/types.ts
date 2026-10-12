@@ -1485,6 +1485,19 @@ export interface UnreadCount {
   count: number;
 }
 
+/**
+ * 未读汇总：**通知 + 私信合并口径**（服务端算好再下发，前端不自己相加）。
+ *
+ * 全站未读角标一律读这一个接口 —— 若各页面各算一遍（通知查一次、私信查一次再相加），
+ * 迟早出现「首页角标 3、切到通知页变 5」这类自相矛盾；用户不会怀疑口径，只会认为数字是错的。
+ * 与小程序 `utils/unread.js` 读的是同一个 `/api/socials/notices/unread-summary`。
+ */
+export interface UnreadSummary {
+  notice: number;
+  message: number;
+  total: number;
+}
+
 // ---------- 私信（R74-5 · Web 端补齐） ----------
 
 /**

@@ -1,5 +1,9 @@
 /**
- * 全局布局：顶部导航 + 购物车角标 + 用户菜单。
+ * 全局布局：顶部导航 + 购物车角标 + **未读角标（S7）** + 用户菜单。
+ *
+ * 未读角标由本组件**启用**（登录后开 60 秒兜底轮询、页面重新可见时刷新），
+ * 但口径与刷新实现都在 `@duoduo/shared/store/app` —— 本组件只决定「什么时候开着」。
+ * 结果就是：用户在**任何**页面（首页 / 商品详情 / 分享圈…）都能从顶栏头像上看到未读数。
  *
  * 导航项只保留本期真正有后端支撑的页面：
  * 领券中心已随 A5 上线（duoduo-marketing 已部署），故放到一级导航；
@@ -29,7 +33,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole, isOperator } from '@duoduo/shared/lib/roles';
-import { messageApi } from '@duoduo/api-sdk/endpoints';
 import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -74,13 +77,22 @@ const NAV: NavItem[] = [
   { to: '/seckill', label: '秒杀' },
 ];
 
+/** 角标文案：>99 统一成「99+」（三位数在这个尺寸下会被裁切） */
+const badgeText = (n: number) => (n > 99 ? '99+' : String(n));
+
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
-  const { cartCount, refreshCart } = useApp();
+  const {
+    cartCount,
+    refreshCart,
+    unread,
+    refreshUnread,
+    clearUnread,
+    startUnreadPolling,
+    stopUnreadPolling,
+  } = useApp();
   const [keyword, setKeyword] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
-  /** 私信未读数（R74-5）：打开头像菜单时现取，不为此加全站轮询 */
-  const [msgUnread, setMsgUnread] = useState(0);
   // 头像下拉的容器与触发按钮（R74-2：Esc / 点外部关闭、关掉后把焦点还给按钮）
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -96,15 +108,40 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     setMenuOpen(false);
   }, [location.pathname]);
 
-  // 私信未读数：菜单打开时拉一次；失败就当作 0（入口照常可达，不因一个数字挡路）
+  /**
+   * 未读角标（S7）：登录后启用全站 60 秒兜底轮询，登出即停并清零。
+   *
+   * 口径与刷新点都在 `@duoduo/shared/store/app`（唯一数据源 `unread-summary`，服务端合并通知与私信）；
+   * 这里只负责「什么时候启用」。R74-5 时「不为此加全站轮询」的取舍已被本轮决策取代 ——
+   * 那个取舍的代价是：用户停在别的页面时**完全看不到**新消息，而消息提醒的价值恰恰在那时候。
+   */
+  const loggedIn = Boolean(user);
   useEffect(() => {
-    if (!menuOpen || !user) return;
-    let alive = true;
-    void messageApi.unreadCount()
-      .then((r) => { if (alive) setMsgUnread(r?.count ?? 0); })
-      .catch(() => { if (alive) setMsgUnread(0); });
-    return () => { alive = false; };
-  }, [menuOpen, user]);
+    if (!loggedIn) {
+      stopUnreadPolling();
+      clearUnread();
+      return undefined;
+    }
+    void refreshUnread();
+    startUnreadPolling();
+    return () => stopUnreadPolling();
+  }, [loggedIn, refreshUnread, clearUnread, startUnreadPolling, stopUnreadPolling]);
+
+  // 页面重新可见时立刻刷一次（对齐小程序的「回前台刷新」）：切走再回来不该还显示 60 秒前的数字
+  useEffect(() => {
+    if (!loggedIn) return undefined;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refreshUnread();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loggedIn, refreshUnread]);
+
+  // 打开头像菜单时也刷一次 —— 用户正要看这个数字，不该是 60 秒前那个
+  useEffect(() => {
+    if (!menuOpen || !loggedIn) return;
+    void refreshUnread();
+  }, [menuOpen, loggedIn, refreshUnread]);
 
   /**
    * 头像下拉的关闭行为（R74-2）。
@@ -205,9 +242,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
             <Link className="icon-btn" to="/cart" aria-label="购物车">
               🛒
-              {cartCount > 0 ? (
-                <span className="badge-dot">{cartCount > 99 ? '99+' : cartCount}</span>
-              ) : null}
+              {cartCount > 0 ? <span className="badge-dot">{badgeText(cartCount)}</span> : null}
             </Link>
 
             {user ? (
@@ -220,6 +255,10 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   onClick={() => setMenuOpen((v) => !v)}
                 >
                   👤 <span className="small">{user.nickname}</span>
+                  {/* 全站可见的未读角标（S7）：用户在任何页面都能看到有新消息 —— 这正是本轮的核心诉求 */}
+                  {unread.total > 0 ? (
+                    <span className="badge-dot">{badgeText(unread.total)}</span>
+                  ) : null}
                 </button>
                 {menuOpen ? (
                   <div
@@ -256,14 +295,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/share/mine" style={{ display: 'block' }}>
                       我的分享
                     </Link>
+                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回），不再各查各的 */}
                     <Link className="nav-link" to="/notifications" style={{ display: 'block' }}>
-                      通知中心
+                      通知中心{unread.notice > 0 ? `（${badgeText(unread.notice)}）` : ''}
                     </Link>
-                    {/* 私信（R74-5）：未读数在**打开菜单时**现取 —— 不为此加全站轮询：
-                        这个数字只在用户看菜单的那一刻有意义，且角标口径（通知+私信合并）
-                        由小程序 utils/unread.js 统一负责，Web 端不另建一套。 */}
                     <Link className="nav-link" to="/messages" style={{ display: 'block' }}>
-                      私信{msgUnread > 0 ? `（${msgUnread > 99 ? '99+' : msgUnread}）` : ''}
+                      私信{unread.message > 0 ? `（${badgeText(unread.message)}）` : ''}
                     </Link>
                     <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
                       关注与粉丝

@@ -325,6 +325,64 @@ step('③ 关注与粉丝：两个名单 + 互关后私信恢复可发');
     consoleErrors.filter((e) => !/favicon|status of (401|403|404)/i.test(e)).length === 0, consoleErrors.slice(0, 4));
 }
 
+// ---------------- ④ 未读角标（S7）：全站可见 + 合并口径一致 ----------------
+step('④ 未读角标：顶栏全站可见，且数字与 unread-summary 合并口径一致');
+{
+  // ① 段已把通知全部标为已读、② 段读了私信，所以这里从「有未读」重新造一次。
+  // ⚠️ 不写死期望数字：③ 关注段也会产生通知（「X 关注了你」），数量随实现变。
+  //    改为**与接口的 total 对拍** —— 这才是「口径一致」这句话的可执行版本。
+  const push2 = await call('POST', `${SOCIAL}/api/socials/internal/notices`, {
+    items: [{
+      userId: meId,
+      category: 'SYSTEM',
+      title: `${MARK} 未读角标用例`,
+      content: '用于验证 S7：Web 端全站未读角标',
+    }],
+  }, null, internalHeaders('POST'));
+  check('④ 夹具：再推 1 条未读通知', push2.status === 200, `${push2.status} ${push2.raw?.slice(0, 160)}`);
+
+  const summary = await call('GET', '/api/socials/notices/unread-summary', undefined, me.jar);
+  const total = Number(summary.data?.total ?? -1);
+  check('④ 合并口径接口可用，且 total == notice + message（不变量）',
+    summary.status === 200
+      && total === Number(summary.data?.notice ?? -2) + Number(summary.data?.message ?? -2),
+    summary.data);
+
+  // ★ 核心断言：在**首页**（不是通知页）就能看到顶栏角标 —— S7 的诉求正是「任何页面都能看到」
+  const { page, consoleErrors, httpErrors } = await newPage();
+  await login(page, me.phone);
+  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+
+  const badge = await page.evaluate(() => {
+    // 顶栏头像按钮（aria-haspopup=menu）里的角标 —— 用该选择器把它与购物车角标区分开
+    const btn = document.querySelector('button[aria-haspopup="menu"]');
+    const el = btn?.querySelector('.badge-dot');
+    return { text: el?.textContent?.trim() ?? null, hasBtn: Boolean(btn) };
+  });
+  check('④ 首页能看到顶栏头像按钮（角标的载体存在）', badge.hasBtn, badge);
+  check('★ ④ 首页顶栏就出现未读角标（不只在通知页 —— 这是 S7 的核心承诺）',
+    badge.text !== null, badge);
+  check('★ ④ 角标数字 == unread-summary 的 total（两端同口径，没有各算一套）',
+    badge.text === String(total > 99 ? '99+' : total), { badge: badge.text, total });
+  await shot(page, 'web-unread-badge.png');
+
+  // 未登录访客：没有头像菜单，自然也不该有任何未读角标（上一个账号的历史数字不能留着）
+  const { page: guest } = await newPage();
+  await guest.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  await guest.waitForTimeout(1200);
+  const guestState = await guest.evaluate(() => ({
+    hasMenu: Boolean(document.querySelector('button[aria-haspopup="menu"]')),
+    dots: document.querySelectorAll('.badge-dot').length,
+  }));
+  check('④ 未登录访客没有头像菜单、也就没有未读角标', !guestState.hasMenu, guestState);
+
+  const noisy = httpErrors.filter((e) => !/favicon/i.test(e) && !/(^|\s)(401|403|404)\s/.test(e));
+  check('④ 未读角标流程无非预期 4xx/5xx', noisy.length === 0, noisy.slice(0, 4));
+  check('④ 未读角标流程无 console / pageerror',
+    consoleErrors.filter((e) => !/favicon|status of (401|403|404)/i.test(e)).length === 0, consoleErrors.slice(0, 4));
+}
+
 // ---------------- 收尾：自清理 ----------------
 await browser.close();
 if (!process.env.KEEP_FIXTURE) {
