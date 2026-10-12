@@ -592,6 +592,50 @@ node scripts\lib\check-e2e-shots-reverse.mjs
 **要归档文档配图时**：显式指定落点，例如
 `$env:SHOTS='frontend/docs/screenshots'; powershell ... scripts\e2e\run-ui-checks.ps1`。
 
+### 4.10e 云端同步暂存副本新鲜度自检（#343；改了要上云的文档 / 做过云端同步后必做）
+
+上云（腾讯文档 / 飞书 / 资料库）上传的**不是源文件本身**，而是 `.workbuddy/sync-staging/` 下的副本。
+于是有一条**不会报错的失效链**：`源文件改了 → 忘了重新导出副本 → 上传的还是旧副本 → 云端显示「导入成功」`。
+**「导入成功」只说明传输没问题，不说明内容是最新的** —— 2026-10-12 复核实测抓到 **4 份落后**
+（README 源 421,472B / 云端副本 416,126B；PLAN、SELFTEST、项目简报同理）。
+
+```powershell
+# ① 先设两个环境变量（暂存目录 + 工作区根目录；6 份源文件在工作区根，不在仓库里）
+$env:DUODUO_SYNC_STAGING = 'C:\Users\16947\WorkBuddy\2026-09-18-17-36-12\.workbuddy\sync-staging'
+$env:DUODUO_WORKSPACE    = 'C:\Users\16947\WorkBuddy\2026-09-18-17-36-12'
+
+# ② 从源文件重建全部副本（导出后脚本会**立刻自验**，不通过即 exit 1）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\sync-staging.ps1 -Action export
+#    预期：exit 0，输出「已导出 11 份副本」+「实际比对份数：11 / 映射 11」+ 11 行 [OK]
+
+# ③ 只验不发（上传前跑这一步）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\sync-staging.ps1 -Action verify
+#    预期：exit 0；任一副本 != 源文件则 exit 1 并点名该份（**[STALE] 源 X B / 副本 Y B**）
+
+# ④ 不需要暂存目录的那一半（CI 用这个）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\sync-staging.ps1 -Action manifest
+#    预期：exit 0，输出「仓库侧映射 5 条全部存在且与约定一致」
+```
+
+| action | 做什么 | 判据 |
+|---|---|---|
+| `export` | 从**源文件**重建全部副本（副本从此不是"手工维护的第二份真相"） | 导出后**立刻自验** |
+| `verify` | 逐份比 **SHA256**，副本 != 源文件即判失败（**不是 WARN、不降级**） | **自报比对数**；为 0 直接判违规 |
+| `manifest` | 只校验映射表自身没腐烂（条数 > 0、仓库侧源文件都存在、约定的 5 份仓库文档一份不漏） | CI 里跑（不需要暂存目录） |
+
+★ **`exit 3` = 本机不适用，不是失败**：没给 `-StagingDir`（或目录不存在）时脚本打 `[N/A]` 并 exit **3**
+—— 刻意**不返回 0**，因为「没跑」不能长得像「跑过且通过」。
+
+★ **`check-all.ps1 [0/5]` 里的第三态**：配了 `DUODUO_SYNC_STAGING` 就真跑并记 `[PASS]/[FAIL]`；
+没配则记 **`[N/A]`** 并在汇总末尾单独计数（"另有 N 项在本机不适用 —— 它们没有被执行，不要当成通过"）。
+两条分支都实测过（`[N/A]` 那次 exit 0、配好之后 `[PASS]` exit 0）。
+
+★ **比对器的假红源：HTML 数字实体**。源文件里可能残留 `&#x7684;` 这类实体（历史上被转义过一次），
+文档站与飞书渲染成 `的`、回读拿到的也是**字符**；不解码就会把「源有实体、云端有字符」判成缺失
+（实测 `项目简报` 28 处、最长连续未覆盖 21 字符，全部越过阈值）→ 两个比对器
+（`feishu_verify_content.py` / `tdoc_verify_content.py`）现在**两侧都先解码数字实体**再归一化，
+且**只解数字实体**（`&#x…;` / `&#…;`），不动 `&amp;` 这类命名实体（源里可能真就这么写）。
+
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
 
 ```powershell
@@ -773,7 +817,9 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 - [ ] `frontend: npm run build` → 退出码 0
 - [ ] `scripts\check-all.ps1` 的 `[0/5]` 静态守卫**全部**退出码 0（**不写死个数**，按实际：
       断言写法与 BOM / 网关路由覆盖 250 条 / Mapper SQL 实体 / 运维手册一致 /
-      双端功能对照 / 依赖安全 / 文档裸反引号与未转义竖线 / 图表主题接入点 / e2e 截图输出）
+      双端功能对照 / 依赖安全 / 文档裸反引号与未转义竖线 / 图表主题接入点 / e2e 截图输出 /
+      云端暂存映射表）。★ 清单里允许出现 **`[N/A]`**（本机不适用的项，如未配 `DUODUO_SYNC_STAGING`），
+      但**不允许把 `[N/A]` 写成 `[PASS]`** —— 汇总会单独把 N/A 数出来。
 - [ ] `mvn -o test` → BUILD SUCCESS（**715 项 / 69 个测试类**，2026-10-12 实测）
 - [ ] `scripts\run-all-smoke.ps1` → **共 31 套 / 通过 31 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
 - [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）
@@ -807,10 +853,11 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 | 6 | 超出容量模型的**极端压测梯度** | 单机环境跑不到生产量级；且压太久会污染环境数据 | `python scripts/perf/bench.py --check` 9 接口梯度 + A12 压测记录 + 容量模型对照 |
 | 7 | 三站点在**真实域名 + HTTPS** 下的行为（Cookie 作用域、跨站、证书） | 目前全是 `*.localhost` 明文，规则与真实域名不同 | `header-layout` 88 项覆盖多宽度与多角色；真实域名待部署时验（B-18 部署位置未定） |
 | 8 | **多实例水平扩展**下的限流 / 秒杀 / 选主 | 本环境所有服务单实例；跨副本一致性测不出来 | 秒杀走 Redis 预扣（单点原子）、限流键不可伪造（网关先剥后写）、补偿调度有分布式选主 —— 逻辑上按多副本设计，但**未做多副本实测** |
-| 9 | 主流云文档（飞书 / 腾讯文档 / 资料库）的**导入保真度** | 是外部平台行为，只能事后比对 | 逐行指纹比对（`feishu_verify_content.py` / `tdoc_verify_content.py`）+ 两条吞行守卫（`check-md-bare-tick.ps1`）。★ 资料库上游 `TEMPORARY_ERROR` 期间**无法验证**，已如实记账 |
+| 9 | 主流云文档（飞书 / 腾讯文档 / 资料库）的**导入保真度** | 是外部平台行为，只能事后比对 | 逐行指纹比对（`feishu_verify_content.py` / `tdoc_verify_content.py`）+ 两条吞行守卫（`check-md-bare-tick.ps1`）。★ 比对器必须**先归一化"假红源"**（链接语法降级、HTML 数字实体），否则"内容在、却判缺失"。★ **"传的是副本"这一层**由 §4.10e 的新鲜度守卫守（源改了没重导副本，云端会一直显示"导入成功"） |
 | 10 | 备份演练的**生产盘位** | `db-backup.ps1` 的 `$DefaultBackupRoot='D:\duoduo-backup'` 是**占位默认值**，目录故意未建；演练走 `DUODUO_BACKUP_ROOT` 临时根 | 演练判据（产物 SHA256 + 逐表行数 + 拒绝降级报成功）已验证；**盘位待用户拍板**（S4） |
 | 11 | AI 导购的**回答质量**（好不好、够不够准） | 能测契约、护栏、约束是否生效，测不了语义质量 | R57 的 6 条护栏断言（约束硬过滤/超时降级/输出合规/价格一致性）+ 澄清反问；质量评估需人工抽样 |
 | 12 | e2e 对**真实数据状态**的依赖 | 断言打的是真库真数据，历史脏数据会让它假红 | §6 的数据体检（`example.com` 夹具评价 = 0、FROZEN = 0）+ 每套 e2e 现场建/跑完自毁夹具 + **冒烟与 e2e 必须串行** |
+| 13 | 云端上传的**平台授权态**（腾讯文档连接器 `not_connected`） | 授权在宿主侧、由用户完成；脚本能探测到状态但**不能自己修** | 凭据 provider 探测（`GET http://127.0.0.1:4690/mcp/internal/tencent-docs/tokens`）= `personal.not_connected` ⇒ 判定为**授权问题而非内容问题**，如实上报并给用户明确指示；**飞书 / 资料库走各自独立通道，互不影响**（本轮飞书 11/11 指纹 clean、资料库 11 份全部 `KS_IMPORT_OK`，腾讯文档待授权后补传） |
 
 **已经闭合、从本清单移出的项（留档，避免重复怀疑）**：
 
@@ -820,3 +867,7 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
   在并发下失效**（`selectCount` 是快照读、不加锁 → 两名 ADMIN 同时降对方会降成 0 个），
   以及 `admin-smoke.ps1` 里那条**名不副实的断言**（actor==target 实际测的是"不能给自己降权"，
   只比状态码 ⇒ 两条规则混为一谈的假绿）。
+- 「资料库上传」 —— 上游 `get-upload-credential` 长期返回 `TEMPORARY_ERROR`（用体积 19 KB 同样失败、
+  12s/20s 多次重试无效、直连同一接口同样报错 ⇒ 判定服务端故障，与本机配置无关）。
+  **2026-10-13 上游恢复**：11 份全部 `KS_IMPORT_OK`（COS 直传 + `import-local-file-async`）。
+

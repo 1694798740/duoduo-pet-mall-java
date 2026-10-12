@@ -115,6 +115,15 @@ jobs:
       - name: 图表主题接入点契约自检（真 import chartTheme.ts，验 7 种主题取值）
         run: node scripts/lib/check-chart-theme-contract.mjs
 
+      # ★ 上云（腾讯文档 / 飞书 / 资料库）上传的不是源文件，而是 .workbuddy/sync-staging 下的副本；
+      #   「源文件改了但没重新导出副本」不会有任何报错 —— 导入照样成功，只是内容停在旧版本
+      #   （2026-10-12 复核实测 4 份落后）。完整的新鲜度校验要读开发者本机的暂存目录，
+      #   CI 里没有那份目录，所以这里只跑不依赖它的那一半：**映射表自身不许腐烂**
+      #   （仓库侧登记的源文件必须真实存在、且约定的 5 份仓库文档一份都不能漏）。
+      - name: 云端同步暂存副本映射表自检（映射表不得腐烂 + 仓库侧源文件必须存在）
+        shell: pwsh
+        run: ./scripts/lib/sync-staging.ps1 -Action manifest
+
       - name: 前端 tsc --noEmit + vite build
         working-directory: frontend
         run: |

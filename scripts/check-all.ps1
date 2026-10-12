@@ -14,6 +14,9 @@
     本脚本只做「串联与汇总」，不重复实现任何检查：
       [0/5] 静态守卫        冒烟脚本静态自检 + 网关路由覆盖自检 + Mapper SQL 实体自检
                             + 运维手册一致性自检 + 双端功能对照表自检 + 依赖安全自检（无需 Docker / 编译）
+                            + 文档飞书吞行吞字自检 + 图表主题接入点 + e2e 截图输出
+                            + 云端暂存副本新鲜度（★ 只在配了 DUODUO_SYNC_STAGING 的机器上适用，
+                              否则显式记 [N/A] 并在此处说明，不冒充通过）
       [1/5] 前端构建        `npm run build`（= tsc 类型检查 + vite 打包）
       [2/5] 后端单元测试     `mvn test`（最耗时，可 -SkipBackendTests）
       [3/5] 接口冒烟         `run-all-smoke.ps1`（脚本自发现）
@@ -70,6 +73,15 @@ function Record($name, $ok, $detail) {
     if (-not $ok) { $script:anyFail = $true }
 }
 
+# ★ 第三态：这一步在本机**不适用**（前置产物不在这台机器上）。
+#   为什么不直接判 PASS：那会把「没跑」写成「跑过且通过」；
+#   为什么不判 FAIL：本机的取舍不该拦住宿主的全量自检。
+#   做法＝显式打 [N/A] + 写清原因，并在汇总里单独计数（**不静默**）。
+function RecordNa($name, $why) {
+    Write-Host ("  [N/A]  {0}  {1}" -f $name, $why) -ForegroundColor Yellow
+    $script:results += @{ name = $name; ok = $null; detail = $why }
+}
+
 Write-Host '======================================================================'
 Write-Host '多多宠物商店 · 一键全量自检（S2）'
 Write-Host "开始时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -81,7 +93,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出 / 云端暂存新鲜度）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -123,6 +135,23 @@ Record '图表主题接入点契约' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 # **同时**断言脚本侧与 .gitignore 侧 —— 只改脚本不改 .gitignore，等于把污染换个地方。
 & node (Join-Path $repo 'scripts\lib\check-e2e-shots.mjs') 2>&1 | Select-Object -Last 3 | Write-Host
 Record 'e2e 截图输出契约' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# 云端同步暂存副本新鲜度（#343）—— 上云的不是源文件，而是 sync-staging 下的副本。
+# 「源文件改了但没重新导出副本」不会有任何报错：导入照样成功，只是内容停在旧版本
+# （2026-10-12 复核实测 4 份落后）。本步逐份比 SHA256，副本 != 源文件即判失败。
+# ★ 暂存目录在开发者本机、CI 与干净检出都没有 —— 所以「不适用」是一种**必须报出来的状态**：
+#   配了 DUODUO_SYNC_STAGING 就真跑；没配就记 [N/A] 并写明原因，绝不写成 PASS。
+$stagingDir = $env:DUODUO_SYNC_STAGING
+$wsDir = $env:DUODUO_WORKSPACE
+if ($stagingDir -and (Test-Path -LiteralPath $stagingDir)) {
+    $slog = Join-Path ([System.IO.Path]::GetTempPath()) 'duoduo-sync-staging.log'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\sync-staging.ps1') `
+        -Action verify -StagingDir $stagingDir -WorkspaceDir $wsDir *> $slog
+    Get-Content $slog | Select-Object -Last 4 | Write-Host
+    Record '云端暂存副本新鲜度' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+}
+else {
+    RecordNa '云端暂存副本新鲜度' '未设置 DUODUO_SYNC_STAGING（本机没有云端暂存目录）—— 本步不适用，未执行'
+}
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"
@@ -211,9 +240,16 @@ $sw.Stop()
 Write-Host '`n======================================================================'
 Write-Host ('汇总（总耗时 ' + [int]$sw.Elapsed.TotalMinutes + ' 分 ' + $sw.Elapsed.Seconds + ' 秒）')
 Write-Host '======================================================================'
+$naCount = 0
 foreach ($r in $results) {
-    $tag = if ($r.ok) { 'PASS' } else { 'FAIL' }
+    # 三态：PASS / FAIL / N/A（N/A 是"本机不适用、没跑"，既不算通过也不算失败，但要**数出来**）
+    if ($null -eq $r.ok) { $tag = 'N/A '; $naCount++ }
+    elseif ($r.ok) { $tag = 'PASS' }
+    else { $tag = 'FAIL' }
     Write-Host ("  [{0}] {1}   {2}" -f $tag, $r.name, $r.detail)
+}
+if ($naCount -gt 0) {
+    Write-Host ("`n  （另有 {0} 项在本机不适用，已标 N/A —— 它们没有被执行，不要当成通过）" -f $naCount) -ForegroundColor Yellow
 }
 if ($anyFail) {
     Write-Host "`n结论：存在失败项 —— 请先看上面各段的明细（日志在 logs\\smoke\\ 与本窗口输出）" -ForegroundColor Red
