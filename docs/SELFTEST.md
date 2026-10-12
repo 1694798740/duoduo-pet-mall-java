@@ -430,6 +430,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 | 用 `docker exec` 的**退出码**判断"容器里有没有这个变量" | **不要用**。改用「输出是否含 `No such container`」判断 | 实测：容器不存在时 `docker exec` 打 stderr 但 `$LASTEXITCODE` **仍为 0** —— 退出码这道防线是空的 |
 
 
+### 4.10a 文档「行首裸反引号」自检（改 README / docs/*.md 后必做）
+
+```powershell
+# 仓库内全部 .md 的列表续行不得以裸反引号开头（纯静态，不需要 Docker）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-md-bare-tick.ps1
+#    预期：exit 0，输出「没有『列表续行以裸反引号开头』的写法」
+#    判据：行首（允许空格缩进）连续 >= 2 个反引号 且 该行是列表项续行
+#
+#  ★ 为什么不能用「整行反引号总数为奇数」当判据：
+#    那一行 = 两个反引号 + 空格 + 两个反引号 + 表达式 + 两个反引号 + 空格 + 两个反引号，
+#    一共 10 个反引号，是**偶数**、自我配对后可全消，
+#    但它在**导入飞书时确实会整行吞掉**（2026-10-12 实测丢过一行）。
+#  ★ 为什么不能用「续行以行内代码开头即违规」：全仓命中 85 处，全是正常写法
+#    （列表项后的说明行用行内代码引用标识符）—— 那种守卫会变成噪音，最后没人看。
+
+# 反向验证（证明守卫真的在判；注入一行违规 -> 必须 exit 1 并点名该行）
+#   期望：[FAIL] 发现 1 处 … + README.md:<行号>: 那个以反引号开头的续行
+```
+
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
 
 ```powershell
@@ -608,7 +627,9 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 
 - [ ] `node scripts/check-miniprogram.js` → 0 错 0 警
 - [ ] `frontend: npm run build` → 退出码 0
-- [ ] `scripts\check-all.ps1` 的 `[0/5]` 两个静态守卫 → 退出码 0（断言写法与 BOM、**网关路由覆盖 250 条**）
+- [ ] `scripts\check-all.ps1` 的 `[0/5]` 静态守卫**全部**退出码 0（**不写死个数**，按实际：
+      断言写法与 BOM / 网关路由覆盖 250 条 / Mapper SQL 实体 / 运维手册一致 /
+      双端功能对照 / 依赖安全 / 文档裸反引号）
 - [ ] `mvn -o test` → BUILD SUCCESS（**685 项 / 66 个测试类**，2026-10-11 实测）
 - [ ] `scripts\run-all-smoke.ps1` → **共 31 套 / 通过 31 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
 - [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）

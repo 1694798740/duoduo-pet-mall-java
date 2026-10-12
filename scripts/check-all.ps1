@@ -81,7 +81,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档裸反引号）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -103,6 +103,10 @@ Record '双端功能对照表自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 # 刻意不用 OWASP dependency-check / npm audit（都要联网，挂了等于没挂）。
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-dependency-security.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '第三方依赖安全自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# 文档「行首裸反引号」续行（2026-10-12 实测）—— 这类写法在 GitHub / 腾讯文档渲染都正常，
+# 只有**导入飞书**时会整行吞掉；没有门禁的话，"内容丢失"只能靠人工逐行比对发现。
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-md-bare-tick.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
+Record '文档裸反引号自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"

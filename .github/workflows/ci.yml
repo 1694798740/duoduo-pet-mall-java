@@ -78,6 +78,13 @@ jobs:
         shell: pwsh
         run: ./scripts/lib/check-dependency-security.ps1
 
+      # ★ 文档「行首裸反引号」续行（2026-10-12 实测）—— 纯静态（只读仓库内全部 .md）。
+      #   这类写法在 GitHub 与腾讯文档渲染都正常，**只有导入飞书时会整行吞掉**；
+      #   没有门禁的话，"云端内容少了一句"只能靠人工逐行指纹比对才能发现（已丢过一次）。
+      - name: 文档裸反引号自检（列表续行不得以裸反引号开头）
+        shell: pwsh
+        run: ./scripts/lib/check-md-bare-tick.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
