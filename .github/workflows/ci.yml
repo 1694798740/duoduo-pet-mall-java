@@ -61,6 +61,23 @@ jobs:
         shell: pwsh
         run: ./scripts/lib/check-ops-doc.ps1
 
+      # ★ 双端功能对照表（docs/S6-DUAL-CLIENT.md）：
+      #   小程序 30 页 / 网页商城 31 组件，"某端漏做一个页面"没有任何编译期征兆。
+      #   这条同时守三件事：文档引用的页面真实存在 / tabBar 双向一致 /
+      #   缺口清单仍成立（一旦被补齐会报红提醒改文档）。
+      - name: 双端功能对照表自检（页面存在 + tabBar 双向一致 + 缺口清单自证）
+        shell: pwsh
+        run: ./scripts/lib/check-dual-client.ps1
+
+      # ★ 第三方依赖安全扫描（S13）—— 纯离线，不联网。
+      #   刻意不用 OWASP dependency-check（首次要下数 GB 的 NVD 库）或 `npm audit`
+      #   （要打 registry advisory 接口）：CI 环境不保证外网可达，
+      #   一个"跑不起来就跳过"的扫描等于没有扫描（铁律 21）。
+      #   这里做三层确定性检查：已知漏洞版本底线 + 版本锁定 + 供应链卫生。
+      - name: 第三方依赖安全自检（漏洞版本底线 + 版本锁定 + 供应链卫生）
+        shell: pwsh
+        run: ./scripts/lib/check-dependency-security.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

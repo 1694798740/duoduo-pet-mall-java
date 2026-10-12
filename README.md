@@ -807,6 +807,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-all.ps1
 > `ops-switch.ps1 -Check` 对前三层逐项断言并做**反向**校验（compose 标了 `# OPS-SWITCH` 的必须登记；
 > `.env` 里每项必须真被 compose 引用过），且**自证解析器有效**（标记数为 0 ⇒ 报红，而不是"没有开关"）。
 
+### 双端功能对照与依赖安全（S6 / S13，2026-10-12 落地）
+
+> 这两项的共同点：**缺陷没有任何编译期征兆** —— "小程序少做一个页面"、"某个依赖版本有 CVE"
+> 都不会让构建失败，只能靠文档 + 静态断言守。两个守卫都是**纯离线**的，已接进
+> `check-all.ps1` 的 `[0/5]` 段与 CI。
+
+```powershell
+# S6 · 双端功能对照表：小程序 30 页 / 网页商城 31 组件 / 34 条路由逐项对齐
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dual-client.ps1
+#   → 文档见 docs/S6-DUAL-CLIENT.md，退出码 0
+
+# S13 · 第三方依赖安全扫描：漏洞版本底线 + 版本锁定 + 供应链卫生
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dependency-security.ps1
+#   → 退出码 0
+```
+
+> ★ **S6 回答的问题**：同一个功能，小程序和网页各自做到哪一步。差异分四类 ——
+> **A 平台能力**（微信登录 / `wx.requestPayment` / 调起系统实名 只有小程序）、
+> **B 页面形态**（小程序 `pay` 是独立收银台页，网页在 `/checkout` 内联完成）、
+> **C 入口位置**（「分类」小程序是独立页，网页是首页区块 + `/search?categoryId=`）、
+> **D 真实缺口**（4 条：D1 网页端无个人主页 = C2C 断链；D2 小程序无宠物档案页（**有意不做**）；
+> D3 小程序无独立搜索结果页；D4 秒杀记录网页端缺）。守卫守三件事：文档引用的页面必须真实存在、
+> **tabBar 与 `app.json` 双向一致**、缺口清单**自证仍成立**（缺口被补齐时会主动报红提醒改文档）。
+
+> ★ **S13 为什么不用 OWASP dependency-check / `npm audit`**：两者都**必须联网**
+> （前者首次要下数 GB 的 NVD 数据库，后者要打 registry 的 advisory 接口），
+> 而 CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到一个"平时绿、需要时连不上"的摆设。
+> **`FAILED`（没跑成）是一等状态** —— 跑不起来就跳过的扫描等于没扫描。改为三层确定性判据：
+> ① 本地漏洞版本底线表（**10 条**，每条注明 CVE 与官方修至版本）；② 版本锁定（禁 `*`/`latest`，必须留 lock 文件）；
+> ③ 供应链卫生（非白名单 registry / `postinstall` 钩子 / `http://` 明文仓库）。
+> 两个守卫都对每条断言做过**反向验证**（故意改坏必报红、还原必回绿），各 **8/8 全绿**。
+
 > ★ **恢复演练的两条成立判据**（刻意**不比整表 `CHECKSUM TABLE`**）：① 产物文件 **SHA256** 与 manifest 一致；
 > ② **逐表行数**与 manifest 的 `rowCounts` 快照一致。跨时刻比校验和不成立 —— 拿"恢复库 vs 产物"比是**恒等式**；
 > 拿"恢复库 vs dump 前源表"比时心跳表 `t_sched_leader`（每 2 分钟自改）**必然不等**，会让备份完全正确却每次演练都假红

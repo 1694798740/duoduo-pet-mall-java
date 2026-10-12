@@ -413,6 +413,71 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 | 恢复库 vs dump 前源表做整表校验和比对 | **不要做** | 心跳表 `t_sched_leader`（每 2 分钟自改）必然不等 → 备份完全正确却每次演练都假红（实测 2 处） |
 
 
+### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
+
+```powershell
+# docs/S6-DUAL-CLIENT.md 与两端源码的一致性守卫（纯静态，不需要 Docker）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dual-client.ps1
+#    预期：exit 0，输出
+#      「文档引用的页面全部存在，tabBar 双向一致，缺口清单仍成立。」
+#    三条判据：
+#      ① 文档里引用的每个 miniprogram/pages/<x>/<x> 与 pages/<X>.tsx 必须真实存在；
+#      ② 文档标为 tab 的小程序页集合 == miniprogram/app.json 的 tabBar.list（双向）；
+#      ③ §3 缺口清单仍成立（D1 网页端无个人主页 / D2 小程序无宠物档案页）。
+#    ★ 缺口一旦被补齐，守卫会报红提醒把该 D 项从「缺口」改为「已完成」——
+#      这是**设计如此**，不是误报。
+
+# 反向验证（证明守卫真的在判，跑完自毁沙箱）
+powershell -NoProfile -ExecutionPolicy Bypass -File .workbuddy\tmp-e25\dual-reverse-check.ps1
+#    预期：SUMMARY: 8 cases, 0 failed
+```
+
+**这一节守的三件事，以及为什么非守不可**：
+
+| 判据 | 静默失效会长什么样 |
+|---|---|
+| 页面路径存在性 | 文档里写着一个早已改名的目录，没人发现；新人照文档找页面找不到 |
+| tabBar 双向一致 | tabBar 第 6 项会被微信框架**直接拒绝启动**（上限 5 项）；文档与代码不一致 → 改错地方 |
+| 缺口清单自证 | 缺口被补齐后文档仍写着「缺失」，误导后续排期 |
+
+**踩过的坑（写守卫时实测）**：
+
+| 坑 | 现象 | 正确写法 |
+|---|---|---|
+| `& grep` | PowerShell 下报 `CommandNotFoundException`，`$ErrorActionPreference='Stop'` 时直接炸整个脚本 | 用 `Select-String`（内建，任何宿主都有） |
+| `Get-ChildItem -Path <裸目录> -Recurse -Include '*.tsx'` | PS 5.1 下**可能静默返回空** → 命中数恒为 0，断言"永远成立" | 改用 `-File -Recurse` + 手工按 `.Extension` 过滤 |
+| 读重定向日志 | `bytes[1] -eq 0` 判 UTF-16LE，在**文件带 BOM** 时恒假（`bytes[0..1] = ff fe`）→ 中文全乱、文案匹配恒不命中 | 先判 `ff fe` BOM 头 |
+| 反向验证的夹具 | 只建一个空 `UserProfile.tsx` **不会**触发断言（守卫 grep 的是**内容**） | 夹具要写含关键字的真实代码 |
+
+
+### 4.11 第三方依赖安全扫描（S13；升级依赖后必做）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dependency-security.ps1
+#    预期：exit 0，输出
+#      「无低于安全下限的依赖，声明可复现，供应链卫生无异常。」
+```
+
+**为什么不用 OWASP dependency-check / `npm audit`**：
+两者都**必须联网**（前者首次要下数 GB 的 NVD 数据库，后者要打 registry 的 advisory 接口）。
+CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到一个"平时绿、需要时连不上"的摆设。
+**铁律 21：`FAILED`（没跑成）是一等状态** —— 一个"跑不起来就跳过"的扫描等于没扫描。
+
+**三层判据**：
+
+| 层 | 判什么 | 违规示例 |
+|---|---|---|
+| ① 已知漏洞版本底线 | 本地规则表（10 条：npm 6 / maven 4）里的依赖，版本不得低于安全下限；**每条注明 CVE 与修至版本** | `vite` 降到 `4.0.0`（< 5.4.11） |
+| ② 版本锁定 | 依赖声明不得是 `*` / `latest` / 空串（工作区内 `@duoduo/*` 用 `*` 是 npm workspaces 惯例，豁免）；`frontend/package-lock.json` 必须存在 | `react: "latest"`；删掉 lock 文件 |
+| ③ 供应链卫生 | 不得配非白名单 registry；不得有 `preinstall`/`postinstall`/`install` 钩子（npm 供应链投毒最常见落点）；Maven settings 不得有 `http://` 明文仓库 | `.npmrc` 指向第三方源；`postinstall: curl … \| sh` |
+
+**规则表维护**：升级依赖后若某条不再适用，连同注释一起删除；新依赖受 CVE 影响则新增一行。
+**不要**为了"让扫描过"而调低下限 —— 下限一律填官方修复版本。
+
+**反向验证**：`SUMMARY: 8 cases, 0 failed`（含基线绿 / npm 降版红 / maven 降版红 /
+`latest` 红 / 删 lock 红 / 加 postinstall 红 / 非白名单源红 / 依赖全删→判据静默失效红）。
+
+
 ---
 
 ## 5. 手工业务验收（按角色走一遍）
