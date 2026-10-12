@@ -1,0 +1,68 @@
+# ============================================================
+# Git 属性：统一行尾与二进制识别（S15，2026-10-12 引入）
+# 目的：仓库内文本一律以 LF 存储与检出，消除跨平台行尾漂移；
+#       二进制禁止任何转换；Windows 批处理脚本保留 CRLF。
+# 说明：本文件仅规范「存储行尾」，不改变文件内容语义。
+# ============================================================
+
+# 默认：按内容自动识别文本，检出与存储统一 LF
+* text=auto eol=lf
+
+# ---- 二进制：禁止行尾/编码转换 ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.bmp   binary
+*.pdf   binary
+*.jar   binary
+*.zip   binary
+*.gz    binary
+*.7z    binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.eot   binary
+*.mp4   binary
+*.mp3   binary
+*.xlsx  binary
+*.docx  binary
+*.db    binary
+
+# ---- 显式声明为文本（防止内容嗅探误判为二进制）----
+*.md         text eol=lf
+*.java       text eol=lf
+*.kt         text eol=lf
+*.ts         text eol=lf
+*.tsx        text eol=lf
+*.js         text eol=lf
+*.mjs        text eol=lf
+*.cjs        text eol=lf
+*.json       text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.xml        text eol=lf
+*.jmx        text eol=lf
+*.sql        text eol=lf
+*.sh         text eol=lf
+*.py         text eol=lf
+*.ps1        text eol=lf
+*.psm1       text eol=lf
+*.css        text eol=lf
+*.scss       text eol=lf
+*.less       text eol=lf
+*.html       text eol=lf
+*.svg        text eol=lf
+*.wxml       text eol=lf
+*.wxss       text eol=lf
+*.conf       text eol=lf
+*.properties text eol=lf
+*.env        text eol=lf
+*.example    text eol=lf
+
+# ---- Windows 批处理脚本必须 CRLF（cmd.exe 对 LF 敏感）----
+*.bat text eol=crlf
+*.cmd text eol=crlf
