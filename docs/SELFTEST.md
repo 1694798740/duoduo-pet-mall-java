@@ -324,6 +324,16 @@ powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包
 
 > ★ **e2e 假红的第一大原因是数据脏，不是代码**：两套页面同时报错时先查库里有没有残留夹具
 > （见 §6 第 23 条：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';` 应为 0）。
+>
+> ★★ **e2e 假红的第二大原因是「与冒烟并行跑」**（2026-10-12 实测，11 条 FAIL）：
+> `scripts/mq-smoke.ps1` 是唯一会 `docker restart` 业务容器的冒烟脚本（重启 `duoduo-app-product` /
+> `duoduo-app-trade` 让它们重连 RocketMQ broker）。若此刻 e2e 正在打这些服务，网关会返 **503**，
+> 于是「无 5xx / 无非预期 4xx」类断言**集体假红**。
+>
+> **识别特征**：**多个不同服务同时 5xx**（`/api/home` + `/api/categories` + `merchant.localhost:8091/api/seller/*`），
+> 且 `docker ps` 里某容器显示 `Up About a minute`（其余是 `Up N hours`）。
+> **处置**：`docker inspect --format '{{.State.StartedAt}}' <容器>` 对一下时间戳；确认是重启窗口就**串行重跑**，
+> 不要当产品缺陷去改代码。**纪律：`run-all-smoke.ps1` 与 `run-ui-checks.ps1` 必须串行。**
 
 其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
 `home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
@@ -385,19 +395,24 @@ done
 # ① 运维手册一致性守卫（纯静态，不需要 Docker）：文档引用的每个 scripts 路径必须存在；
 #    docs/OPS.md 的开关表与 scripts\ops-switch.ps1 的清单**双向一致**
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-ops-doc.ps1
-#    预期：exit 0，输出「清单 15 项；文档表 15 项」+ 两向一致
+#    预期：exit 0，输出「清单 15 项；文档表 15 项」+ 两向一致（15 条 OK）
 
 # ② 运行期开关四层校验（清单 → compose 透传 → 服务 yml → 容器实际）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1 -Check
-#    预期：exit 0。★ 标记数为 0 会报红 —— 那是解析失效，不是"没有开关"
+#    预期：exit 0，输出「静态校验：通过 35 条，失败 0 条」
+#    ★ 35 = 33（15 项 × 2 条 + 自证 3 条）+ 2（container_name 自证，2026-10-12 新增）
+#    ★ 标记数为 0 / container_name 解析到 0 个 都会报红 —— 那是解析失效，不是"没有开关"
 
 # ③ 一屏全栈状态（需要 Docker）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-status.ps1
 #    预期：合计「OK 26 ／ 需留意 1 ／ 失败 0」，exit 0（需留意项 = 备份根未配置时的 WARN）
+#    ★ 冷启动后第一次跑可能出现「网关 → 商品域（列表）不可达：操作超时」——
+#      先手动 curl 预热两次再跑（详见铁律 12）。实测 2026-10-12：冷机首跑 1 次 FAIL，
+#      预热后复跑即 OK 26/1/0
 
 # ④ 备份恢复演练（需要 Docker + 至少一份含 rowCounts 的备份）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
-#    预期：产物哈希 6/6 一致；六库逐表一致（58 张表 / 约 19,242 行）、差异 0；exit 0
+#    预期：产物哈希 6/6 一致；六库逐表一致（58 张表 / 19,242 行）、差异 0；exit 0
 #    结尾必须是「演练结论：全绿 —— 这份备份可以恢复，且内容与备份那一刻逐表一致。」
 ```
 
@@ -411,6 +426,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 | 比对了 **0 张表** | **判失败** | 「空结果」与「链路没接通」长得一样，这是本项目反复栽的一类 |
 | manifest 声明了 sha256 却一份都没验成 | **判失败（判据层静默失效）** | 实测踩中：`ConvertFrom-Json` 得到的是 `PSCustomObject`，对它调 `.ContainsKey()` 抛 `MethodNotFound` 且被 `Continue` 吃掉 → 哈希这一层**静默没验**，只留一行 WARN |
 | 恢复库 vs dump 前源表做整表校验和比对 | **不要做** | 心跳表 `t_sched_leader`（每 2 分钟自改）必然不等 → 备份完全正确却每次演练都假红（实测 2 处） |
+| 第 ④ 层「容器里真生效」的**容器名** | **从 compose 读 `container_name`，不猜名**；解析不到 ⇒ 判失败 | 原实现用公式猜 `duoduo-app-<x>`，只对 `duoduo-xxx-app` 成立（`duoduo-mq-broker` / `duoduo-es` 全猜错）。猜错时 `Get-ContainerEnv` 返回 `$null` → 退回「`.env`（容器未读到，可能未重建）」，**若值恰等于默认值则人眼无法分辨**（2026-10-12 修） |
+| 用 `docker exec` 的**退出码**判断"容器里有没有这个变量" | **不要用**。改用「输出是否含 `No such container`」判断 | 实测：容器不存在时 `docker exec` 打 stderr 但 `$LASTEXITCODE` **仍为 0** —— 退出码这道防线是空的 |
 
 
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）

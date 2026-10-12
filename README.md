@@ -806,6 +806,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-all.ps1
 > 所以判据做成**四层逐层核到实物**：清单登记 → compose 真透传 → 服务 yml 真读 → 容器里真生效；
 > `ops-switch.ps1 -Check` 对前三层逐项断言并做**反向**校验（compose 标了 `# OPS-SWITCH` 的必须登记；
 > `.env` 里每项必须真被 compose 引用过），且**自证解析器有效**（标记数为 0 ⇒ 报红，而不是"没有开关"）。
+>
+> **★ 第 ④ 层踩过的坑（2026-10-12 修）**：它原先靠**猜容器名**——`"duoduo-app-" + (service 去掉
+> `^duoduo-` 与 `-app$`)。这个公式**只对 `duoduo-xxx-app` 成立**：`duoduo-es`、`rocketmq-broker`
+> 全猜错。猜错**不报错**，只静默退回「`.env`（容器未读到，可能未重建）」——若值又恰好等于默认值，
+> 人眼分不出「没读到」与「真的没覆盖」。已改为**读 compose 声明的真实 `container_name`**（17/17
+> 全部解析成功），并加两条自证断言：解析到 0 个 ⇒ 直接判失败；清单涉及的服务缺谁点名谁。
+> 顺带实测出一条反直觉结论：**`docker exec` 的退出码不可信** —— 容器不存在时它会打 stderr，
+> 但 `$LASTEXITCODE` **仍是 0**，所以判据必须看输出内容而非退出码。
 
 ### 双端功能对照与依赖安全（S6 / S13，2026-10-12 落地）
 

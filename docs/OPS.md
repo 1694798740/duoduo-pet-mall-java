@@ -86,6 +86,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-status.ps1
 
 `scripts/ops-switch.ps1 -Check` 对 ①②③ 逐项断言，并做**反向**校验（compose 里标了标记的每一项都必须登记；`.env` 里每一项都必须被 compose 引用过，否则改了不生效）。它还会**自证解析器本身有效**（标记数为 0 ⇒ 报红，而不是"没有开关"）。可进 CI，不依赖 Docker。
 
+#### ④ 层的已知陷阱：容器名必须**读**出来，不能**猜**出来
+
+第 ④ 层要知道「哪个容器承载这个开关」。早期实现是用公式猜：`"duoduo-app-" + (service 去掉 ^duoduo- 与 -app$)`。
+这个公式**只对 `duoduo-xxx-app` 这一种命名成立**——对 `duoduo-mq-broker`、`duoduo-es` 都猜错（得到 `duoduo-app-mq-broker`、`duoduo-app-es`，均不存在）。
+
+猜错不会报错，只会**静默降级**：`Get-ContainerEnv` 返回 `$null`，输出退回「`.env`（容器未读到，可能未重建）」。若那一项的值又恰好等于默认值，人眼完全分不出「没读到」与「真的没覆盖」——**最坏的结果是让人反复重建容器也找不到原因**。
+
+现已改为**读 compose 里声明的真实 `container_name`**，并新增两条自证断言：
+
+* `compose 里能解析出 container_name` —— 解析到 0 个直接判失败（而不是降级）；
+* `开关清单涉及的每个服务都能解析到 container_name` —— 缺哪个就点名哪个，并说明「第 ④ 层对它是盲区」。
+
+> 附带一个反直觉的实测结论：**`docker exec` 的退出码不可信**。容器不存在时它会把
+> `Error response from daemon: No such container: xxx` 打到 stderr，但 `$LASTEXITCODE` **仍是 0**。
+> 所以不能用退出码判断"查到了没"，必须检查输出内容里有没有 `No such container` 这类字样。
+
 ### 2.2 怎么改一个开关
 
 ```powershell
@@ -187,6 +203,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
  演练结论：全绿 —— 这份备份可以恢复，且内容与备份那一刻逐表一致。
  演练结论：失败 N 处 —— 这份备份不可信，请先查清再依赖它。
 ```
+
+**一次真实的通过（2026-10-12 实测，全栈 17 容器在跑）**：
+
+```
+[1/6] 定位备份目录并读 manifest.json      → 行数快照 58 张表（这就是本次要逐张核对的判据）
+[2/6] 产物自证：SHA256 与备份当时一致      → 产物哈希校验通过 6/6 份
+[3/6] 建临时库 zz_restore_<库名>           → 六库全部先 DROP 再 CREATE（保证从零开始）
+[4/6] 逐库导入 dump                        → 六库全部导入成功
+[5/6] 逐表比对行数（恢复库 vs rowCounts）
+      duoduo_fulfilment  12 表逐张一致（合计   520 行）
+      duoduo_marketing    8 表逐张一致（合计    20 行）
+      duoduo_product     11 表逐张一致（合计   278 行）
+      duoduo_social       8 表逐张一致（合计 2,599 行）
+      duoduo_trade       16 表逐张一致（合计 7,533 行）
+      duoduo_user        12 表逐张一致（合计 8,292 行）
+      比对了 58 张表 / 19,242 行；差异 0 处。
+[6/6] 汇总与清理                           → 临时库已全部清理（回读 information_schema 自证）
+```
+
+对应的一次备份（同一轮，`db-backup.ps1`）耗时 1 分 59 秒、产物合计 3.86 MB，抽验 7 张表三方比对 **0 失败**。六库表数分布：user 12 / product 11 / trade 16 / fulfilment 12 / social 8 / marketing 8 = **58**。
 
 ### 3.5 真正出事时的恢复（人工，逐步照做）
 

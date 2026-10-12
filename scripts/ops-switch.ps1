@@ -149,12 +149,21 @@ function Read-DotEnv([string]$path) {
     return (Write-Output -NoEnumerate $map)
 }
 
-# 从 compose 里解析「带 # OPS-SWITCH 标记的透传行」
-# 返回 @{ Rows = 列表; MarkCount = 标记行数; PassthroughNames = 所有 ${NAME} 形式出现过的名字 }
+# 从 compose 里解析「带 # OPS-SWITCH 标记的透传行」+「各服务的真实 container_name」
+# 返回 @{ Rows; MarkCount; PassthroughNames; ContainerByService }
+#
+# ★ 为什么要解析 container_name（2026-10-12 修）：
+#   第④层「容器里真生效」原先用**猜名**——"duoduo-app-" + (service 去掉 '^duoduo-' 与 '-app$')。
+#   实测它只对 `duoduo-xxx-app` 这一种命名成立：`duoduo-mq-broker` / `duoduo-es` 都猜错
+#   （→ duoduo-app-mq-broker / duoduo-app-es，均不存在）。猜错的后果不是报错而是**静默降级**：
+#   Get-ContainerEnv 返回 $null，输出退回「.env（容器未读到，可能未重建）」；若那项的值又恰好
+#   等于默认值，人眼根本分不出「没读到」与「真的没覆盖」。今天没出假绿纯属巧合（清单内 10 项
+#   的服务恰好全叫 duoduo-*-app）。改为**读 compose 声明的 container_name**，这才是一等事实。
 function Read-ComposeSwitches([string]$path) {
     $lines = @(Get-Content -Path $path -Encoding UTF8)
     $rows = New-Object System.Collections.ArrayList
     $names = New-Object System.Collections.Generic.HashSet[string]
+    $containers = @{}
     $markCount = 0
     $curService = ''
     $pending = ''
@@ -168,6 +177,11 @@ function Read-ComposeSwitches([string]$path) {
         }
 
         if ($line -match '^  ([A-Za-z0-9][A-Za-z0-9_-]*):\s*$') { $curService = $Matches[1]; $pending = ''; continue }
+        # container_name: xxx —— 服务级事实，记进映射
+        if ($curService -ne '' -and $line -match '^\s{4}container_name:\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*$') {
+            $containers[$curService] = $Matches[1]
+            continue
+        }
         if ($line -match '^\s*#\s*OPS-SWITCH\b') { $markCount++; $pending = $curService; continue }
 
         # NAME: ${NAME:-默认值}   —— 反引用保证「左边名字」与「花括号里的名字」是同一个
@@ -188,15 +202,22 @@ function Read-ComposeSwitches([string]$path) {
         if ($line -match '^\s*\S') { $pending = '' }
     }
 
-    return @{ Rows = $rows; MarkCount = $markCount; PassthroughNames = $names }
+    return @{ Rows = $rows; MarkCount = $markCount; PassthroughNames = $names; ContainerByService = $containers }
 }
 
+# 查容器内环境变量。
+# ★ 注意 docker exec 的退出码**不可信**：容器不存在时它打印
+#   `Error response from daemon: No such container: xxx` 到 stderr，但 **$LASTEXITCODE 仍是 0**
+#   （2026-10-12 实测）。所以不能靠退出码判"查到了没"——下面两道防线才是真的：
+#     ① 非空且含 'No such container' / 'Error response' 的一律判**查不到**（不是"值就是这个"）；
+#     ② 真正的自证在调用侧：猜名/命名一旦对不上，会进 Add-Ck 的失败分支（见「容器名可解析」）。
 function Get-ContainerEnv([string]$container, [string]$name) {
+    if (-not $container) { return $null }
     $out = & docker exec $container printenv $name 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
     if ($null -eq $out) { return $null }
     $s = ($out | Out-String).Trim()
     if ($s -eq '') { return $null }
+    if ($s -match 'No such container' -or $s -match '^Error response from daemon') { return $null }
     return $s
 }
 
@@ -231,6 +252,17 @@ Add-Ck ($compose.MarkCount -eq $compose.Rows.Count) '标记数与解析出的透
 
 $composeByName = @{}
 foreach ($r in $compose.Rows) { $composeByName[$r.Name] = $r }
+
+# ★ 自证（2026-10-12 新增）：第④层「容器里真生效」依赖 container_name 能解析出来。
+#   解析不出来的话，$container 为 $null → Get-ContainerEnv 恒 $null → 输出退回「.env（容器未
+#   读到，可能未重建）」。**这不会报错**，只会让人误以为"容器还没重建"而反复重建。
+#   所以「解析到 0 个 container_name」必须直接判失败，而不是降级。
+Add-Ck ($compose.ContainerByService.Count -gt 0) 'compose 里能解析出 container_name' `
+    '一个都没解析到 —— 第④层「容器里真生效」将整体失效（不是"没有容器"）'
+$svcInList = @($SwitchList | ForEach-Object { $_.Service } | Sort-Object -Unique)
+$svcNoName = @($svcInList | Where-Object { -not $compose.ContainerByService.ContainsKey($_) })
+Add-Ck ($svcNoName.Count -eq 0) '开关清单涉及的每个服务都能解析到 container_name' `
+    ("这些服务在 compose 里找不到 container_name：{0}（第④层对它们是盲区）" -f ($svcNoName -join ', '))
 
 # 正向：清单每一项 → compose 真透传 + 默认值一致 + 服务 yml 真读
 foreach ($s in $SwitchList) {
@@ -294,7 +326,8 @@ if (-not $Check) {
         else { $effective = $s.Default }
 
         if ($running -and $row) {
-            $container = "duoduo-app-$($row.Service -replace '^duoduo-','' -replace '-app$','')"
+            # ★ 用 compose 声明的真实 container_name，不再猜名（见 Read-ComposeSwitches 顶部注释）
+            $container = $compose.ContainerByService[$row.Service]
             $live = Get-ContainerEnv $container $n
             if ($null -ne $live) { $effective = $live; $src = '容器实际生效' }
             elseif ($src -eq '.env') { $src = '.env（容器未读到，可能未重建）' }
