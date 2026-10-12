@@ -654,6 +654,24 @@ $manifest = @{
     container   = $MysqlContainer
     databases   = $Databases
     totalTables = $totalTables
+    # ★ 每张表的**精确行数快照**（键："库名.表名"，值是 dump 前回表 COUNT(*) 的结果）。
+    #   为什么必须落进 manifest：这是"恢复演练"唯一可用的**强判据**。
+    #   没有它，恢复演练只能拿"恢复库 vs 当前源库"比 —— 而源库是活的（心跳表每分钟都在变），
+    #   于是要么天天假红、要么把判据放宽到"差不多就行"，两种都会让演练失去意义。
+    #   有了它，演练可以断言「恢复出来的每一张表、每一行，都与备份那一刻完全一致」。
+    #   配套：scripts/ops-restore.ps1（恢复演练）会读这个字段，缺它就拒绝出结论。
+    rowCounts   = $before
+    # ★ 每份 dump 的 SHA256。恢复演练用它回答一个**独立**的问题：
+    #   「我这次拿来恢复的产物，与当初备份出来的**是同一个文件**吗」
+    #   —— 抓文件被误改、被截断、被别的进程写坏（这类损坏用"文件存在且非空"看不出来）。
+    # ★★ 这里**刻意不记录整表校验和**（一度加过，实测踩坑后移除）：
+    #   恢复演练的参照物只能来自**同一份 dump**，而恢复库正是从那份 dump 来的 ——
+    #   拿两者比校验和是个**恒等式**（同一份数据的两次读取），证明不了任何事；
+    #   若改用"dump 前的源表校验和"作参照，心跳表（t_sched_leader 每 2 分钟自改）
+    #   必然不等，于是**备份完全正确却每次演练都红**（实测 2 处假红）——
+    #   这正是本文件 [2/7] 注释里那条"校验和不能跨时刻比"的同一个坑。
+    #   「行数相同但内容被改」这个风险的正确防线是 [5/7] 的抽验：
+    #   从产物切片恢复 + 与 before/after 做三方比对（那边有独立的时间点，判据成立）。
     dumps       = @()
     samples     = @()
     status      = 'PENDING'
@@ -665,6 +683,8 @@ foreach ($db in $Databases) {
     $manifest.dumps += @{
         db = $db; file = $fi.Name; bytes = $fi.Length
         lines = $lines.Count; tables = @($declared[$db]).Count
+        # 只读一遍文件算哈希（与上面的行数读取共用同一次读入的内容概念）
+        sha256 = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash
     }
 }
 if ($script:samples) {

@@ -54,6 +54,13 @@ jobs:
         shell: pwsh
         run: ./scripts/lib/check-mapper-sql-entities.ps1
 
+      # ★ 同样是纯静态（只读 docs/OPS.md + scripts/ops-switch.ps1）：
+      #   "文档落后"是一整类问题，且大多没有门禁 —— 运维手册里写一个早已删除的脚本、
+      #   或开关表与权威清单不一致（运维据此去改一个**不生效**的变量），都不会有人发现。
+      - name: 运维手册一致性自检（脚本路径存在 + 开关表与清单双向一致）
+        shell: pwsh
+        run: ./scripts/lib/check-ops-doc.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

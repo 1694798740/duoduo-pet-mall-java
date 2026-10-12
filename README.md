@@ -774,6 +774,46 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.p
 > 加 `--check` 即变门禁（文档落后于源码时退出码 1）—— 端点清单不再靠手工维护。
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
+### 运维与回滚（E25，2026-10-12 落地）
+
+> 完整手册见 **`docs/OPS.md`**（三站点部署 / 入口开关 / 备份恢复演练 / 数据清理与回滚）。
+> 这里只列**入口**。四个脚本都用**退出码**表达结果（`0` = 通过）。
+
+```powershell
+# 一屏看全栈：容器 / 网关→后端 / 三站点 8088·8090·8091 / MySQL 六库 / Redis / 开关四层 / 备份根
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-status.ps1
+#   → 实测输出「OK 26 ／ 需留意 1 ／ 失败 0」，退出码 0。站点探针**只看状态码且经网关**，不直连服务端口。
+
+# 看有哪些运行期开关、现在是什么值；-Check 只做静态校验（可进 CI，不依赖 Docker）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1 -Check
+# 改一个开关：写 .env 并打印需重建的容器（改环境变量只需重建容器，不必重新打镜像）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1 -Set DUODUO_API_METRICS_ENABLED=false
+docker compose up -d --force-recreate --no-deps duoduo-gateway-app
+
+# 恢复演练：把一份备份**真的恢复一次**，验完自动删临时库
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
+#   → 实测：产物哈希 6/6 一致 + 六库 58 张表 / 19,242 行 / 差异 0，退出码 0
+
+# 交付前全部门禁（含 docs/OPS.md 一致性守卫）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-all.ps1
+```
+
+> ★ **为什么给"开关"单独写脚本，而不写一篇开关大全**：实测到过 **4 处「写了但不生效」**
+> —— 代码里有字段、yml 里有 `${...}`，但 compose 没透传；于是 `.env` 里改了、重启了、行为没变、
+> **不报错也不告警**（`entryScopeEnabled` 与 `adminIpWhitelistEnabled` 甚至**连 yml 占位符都没有**，
+> `DUODUO_SEARCH_ENABLED` 在 compose 里是硬编码 `'true'`，`.env` 覆盖不了）。
+> 所以判据做成**四层逐层核到实物**：清单登记 → compose 真透传 → 服务 yml 真读 → 容器里真生效；
+> `ops-switch.ps1 -Check` 对前三层逐项断言并做**反向**校验（compose 标了 `# OPS-SWITCH` 的必须登记；
+> `.env` 里每项必须真被 compose 引用过），且**自证解析器有效**（标记数为 0 ⇒ 报红，而不是"没有开关"）。
+
+> ★ **恢复演练的两条成立判据**（刻意**不比整表 `CHECKSUM TABLE`**）：① 产物文件 **SHA256** 与 manifest 一致；
+> ② **逐表行数**与 manifest 的 `rowCounts` 快照一致。跨时刻比校验和不成立 —— 拿"恢复库 vs 产物"比是**恒等式**；
+> 拿"恢复库 vs dump 前源表"比时心跳表 `t_sched_leader`（每 2 分钟自改）**必然不等**，会让备份完全正确却每次演练都假红
+> （实测踩中 2 处）。"行数相同但内容被改"由 `db-backup.ps1` 的抽验负责（那里有独立时间点，做三方比对）。
+> 演练还会**拒绝出结论**而不是降级报成功：manifest 缺 `rowCounts` / `status != OK` / **比对了 0 张表** ⇒ 判失败。
+
+
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 62 项：用户域 + 商品域（含 E27 的闲置/无品牌商品夹具守卫）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车

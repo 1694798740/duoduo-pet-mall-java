@@ -12,7 +12,8 @@
       —— 于是「23 套」这种文案会比实际少一套还照样报全绿（T-1 同型坑）。
 
     本脚本只做「串联与汇总」，不重复实现任何检查：
-      [0/5] 静态守卫        冒烟脚本静态自检 + 网关路由覆盖自检（无需 Docker / 编译）
+      [0/5] 静态守卫        冒烟脚本静态自检 + 网关路由覆盖自检 + Mapper SQL 实体自检
+                            + 运维手册一致性自检（无需 Docker / 编译）
       [1/5] 前端构建        `npm run build`（= tsc 类型检查 + vite 打包）
       [2/5] 后端单元测试     `mvn test`（最耗时，可 -SkipBackendTests）
       [3/5] 接口冒烟         `run-all-smoke.ps1`（脚本自发现）
@@ -80,7 +81,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -89,6 +90,10 @@ Record '网关路由覆盖自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 # 只在 MyBatis-Plus 解析 SQL 时以 500 暴露（E24 实测踩中）。纯静态，放这里最便宜。
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-mapper-sql-entities.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record 'Mapper SQL 实体自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# 运维手册一致性（docs/OPS.md 引用的每个 scripts 路径必须真实存在 + 开关表与
+# ops-switch.ps1 清单双向一致）—— "文档落后"是一整类、且大多没有门禁，这条给运维手册装上。
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-ops-doc.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
+Record '运维手册一致性自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"

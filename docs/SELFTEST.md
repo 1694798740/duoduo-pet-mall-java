@@ -377,6 +377,42 @@ done
 
 **预期**：8 个模块 md5 **全部一致**。
 
+### 4.9 运维脚本自检（E25；改开关 / 动备份相关代码后必做）
+
+四条命令，**全部看退出码**（`0` = 通过）。它们在 `scripts\check-all.ps1` 的 [0/5] 段里也会自动跑。
+
+```powershell
+# ① 运维手册一致性守卫（纯静态，不需要 Docker）：文档引用的每个 scripts 路径必须存在；
+#    docs/OPS.md 的开关表与 scripts\ops-switch.ps1 的清单**双向一致**
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-ops-doc.ps1
+#    预期：exit 0，输出「清单 15 项；文档表 15 项」+ 两向一致
+
+# ② 运行期开关四层校验（清单 → compose 透传 → 服务 yml → 容器实际）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1 -Check
+#    预期：exit 0。★ 标记数为 0 会报红 —— 那是解析失效，不是"没有开关"
+
+# ③ 一屏全栈状态（需要 Docker）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-status.ps1
+#    预期：合计「OK 26 ／ 需留意 1 ／ 失败 0」，exit 0（需留意项 = 备份根未配置时的 WARN）
+
+# ④ 备份恢复演练（需要 Docker + 至少一份含 rowCounts 的备份）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
+#    预期：产物哈希 6/6 一致；六库逐表一致（58 张表 / 约 19,242 行）、差异 0；exit 0
+#    结尾必须是「演练结论：全绿 —— 这份备份可以恢复，且内容与备份那一刻逐表一致。」
+```
+
+**判据自证纪律（这几条是踩过坑加的，改脚本时别去掉）**：
+
+| 情形 | 正确处置 | 为什么 |
+|---|---|---|
+| Docker 引擎取不到 / MySQL 容器没跑 | **报「这是环境问题，不是备份问题」并退出** | 否则后面每一步都失败，结论会显示「产物不全 / 导入失败」，看着像**备份损坏**（实测踩中：Docker Desktop 中途退出） |
+| manifest 缺 `rowCounts` | **拒绝出结论** | 那是恢复演练的唯一强判据；降级成「命令没报错 = 成功」等于装作验过 |
+| manifest `status != OK` | **拒绝用它做演练** | 一份自己都认为失败的备份，不该被用来「证明恢复没问题」 |
+| 比对了 **0 张表** | **判失败** | 「空结果」与「链路没接通」长得一样，这是本项目反复栽的一类 |
+| manifest 声明了 sha256 却一份都没验成 | **判失败（判据层静默失效）** | 实测踩中：`ConvertFrom-Json` 得到的是 `PSCustomObject`，对它调 `.ContainsKey()` 抛 `MethodNotFound` 且被 `Continue` 吃掉 → 哈希这一层**静默没验**，只留一行 WARN |
+| 恢复库 vs dump 前源表做整表校验和比对 | **不要做** | 心跳表 `t_sched_leader`（每 2 分钟自改）必然不等 → 备份完全正确却每次演练都假红（实测 2 处） |
+
+
 ---
 
 ## 5. 手工业务验收（按角色走一遍）

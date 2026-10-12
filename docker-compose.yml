@@ -139,6 +139,7 @@ services:
       # 本地/CI 开 mock 通道跑冒烟（生产必须去掉或置 false）。
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
+      # OPS-SWITCH 默认 true —— mock 通道仅供本地/CI；生产接真实微信必须显式置 false
       DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
       # E17 · 权限版本的感知副本写通道（角色变更时广播给网关）
       REDIS_HOST: redis
@@ -180,7 +181,10 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
       # A10 · ES 检索：默认开启 ES 优先 + 失败降级 MySQL（ES 未启动时自动回落，
       # 搜索能力不因 ES 缺席而受损）。本地 IDE 单跑想关掉：DUODUO_SEARCH_ENABLED=false。
-      DUODUO_SEARCH_ENABLED: 'true'
+      # ★ E25 修正：此前写死 'true'（引号包住的字面量），于是「在 .env 里改成 false」
+      #   同样**静默无效** —— 与网关那三个开关是同一类缺陷。改成 ${...:-true} 形式。
+      # OPS-SWITCH 默认 true —— 关掉即搜索直接走 MySQL（ES 未起时不报错、只是少一层）
+      DUODUO_SEARCH_ENABLED: ${DUODUO_SEARCH_ENABLED:-true}
       DUODUO_ES_URL: 'http://duoduo-es:9200'
       DUODUO_SEARCH_SWEEP_MS: '15000'
     ports:
@@ -213,9 +217,11 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
       # A11 · 削峰队列：默认 sync（与 A11 之前行为一致，CI/本地零 MQ 依赖）。
       # 生产切 queue：DUODUO_TRADE_ORDER_MODE=queue + 起 mq profile（rocketmq 两容器）。
+      # OPS-SWITCH 模式开关：sync / queue —— 切 queue 必须先起 mq profile，否则下单无处投递
       DUODUO_TRADE_ORDER_MODE: ${DUODUO_TRADE_ORDER_MODE:-sync}
       ROCKETMQ_NAMESRV: ${ROCKETMQ_NAMESRV:-rocketmq-namesrv:9876}
       # Sentinel 限流：下单入口 QPS 上限（同步与队列端点共用），运维可调
+      # OPS-SWITCH 阈值：下单入口 QPS 上限（调小即限流更早介入）
       DUODUO_TRADE_PLACE_QPS: ${DUODUO_TRADE_PLACE_QPS:-100}
       # A14 · 秒杀 Redis（原子预扣挡量；Redis 不可用时 SeckillService 自动降级纯 DB 路径）
       REDIS_HOST: redis
@@ -319,14 +325,22 @@ services:
       NACOS_PASSWORD: nacos
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # OPS-SWITCH 模型名：换模型只改这一行（改完重建 ai 容器）
       DUODUO_AI_MODEL: ${DUODUO_AI_MODEL:-qwen-plus}
+      # OPS-SWITCH 默认 true —— mock 只用于本地/CI；生产必须注入 DASHSCOPE_API_KEY 并置 false
       DUODUO_AI_MOCK_ENABLED: ${DUODUO_AI_MOCK_ENABLED:-true}
+      # 对话超时（秒）。超时按 DEGRADED(503) 处理，不挂死请求线程
+      # OPS-SWITCH 阈值：单次对话超时秒数（调小=更快失败，调大=更易拿到长回复）
+      DUODUO_AI_TIMEOUT_SECONDS: ${DUODUO_AI_TIMEOUT_SECONDS:-15}
       # 限流阈值是**运维要按流量调的**量，与相邻变量保持一致走环境变量覆盖，
       # 不写死 —— 否则改阈值必须动 compose 文件，容器编排与调参耦合在一起。
+      # OPS-SWITCH 阈值：单用户每分钟 AI 调用上限
       DUODUO_AI_RATE_LIMIT: ${DUODUO_AI_RATE_LIMIT:-20}
       # 全站总配额（第五十七轮）：单键限流防不住换 IP 刷，这一层保证总有上界。
+      # OPS-SWITCH 阈值：全站每分钟 AI 调用上限
       DUODUO_AI_GLOBAL_RATE_LIMIT: ${DUODUO_AI_GLOBAL_RATE_LIMIT:-300}
       # 商品召回跨域调用的读超时（第五十七轮）：与 LLM 超时分开，避免商品域慢拖垮 AI。
+      # OPS-SWITCH 阈值：商品召回读超时（毫秒）——调小即更早降级，调大即更易拿到结果
       DUODUO_AI_RECALL_READ_TIMEOUT_MS: ${DUODUO_AI_RECALL_READ_TIMEOUT_MS:-1500}
     ports:
       - '8086:8086'
@@ -461,8 +475,29 @@ services:
       # 但一起起来才能让「改完角色下一个请求即生效」这条链路在容器里可验证。
       REDIS_HOST: redis
       REDIS_PORT: '6379'
+      # ---- 认证链路上的开关（排障 / 回滚用，每个都必须是 ${NAME:-默认} 形式）----
+      #
+      # ★ 为什么这一段值得单独写：E25 逐条核实时发现，上面这些开关**代码里都有字段、
+      #   yml 里也都有 `${...}`**，但**只有 permVersion 这一条真的能被 compose 透传**。
+      #   其余三条的表现是「在 `.env` 里改了、重启了、行为没变」——
+      #   而它不会报错、不会告警，只会在某次排障时把人耗掉半小时。
+      #   `scripts/ops-switch.ps1 -Check` 会把这件事变成一条断言（逐开关核到本文件里
+      #   确实写了 `${NAME:-…}`），否则「有开关」永远只是一句说法。
       # 一键退回旧行为（等令牌自然过期）的开关；排障用，平时不要动
+      # OPS-SWITCH 默认 true —— 关掉 = 角色变更要等令牌自然过期（≤15 分钟）才生效
       DUODUO_PERM_VERSION_ENABLED: ${DUODUO_PERM_VERSION_ENABLED:-true}
+      # E8 · 入口收窄（按入口裁剪 /api/admin/** 与 /api/seller/**）总开关
+      # OPS-SWITCH 默认 true —— 关掉 = 三个入口不再互相隔离（排障用，等于放开跨端访问）
+      DUODUO_ENTRY_SCOPE_ENABLED: ${DUODUO_ENTRY_SCOPE_ENABLED:-true}
+      # E24 · 租户接口调用计数（健康度面板第四维的数据源）。关掉 = 那一维恒 0 且无报错
+      # OPS-SWITCH 默认 true —— 关掉只会让面板那一维恒 0，不会报错（典型静默失效）
+      DUODUO_API_METRICS_ENABLED: ${DUODUO_API_METRICS_ENABLED:-true}
+      # E21 · 后台 IP 白名单。默认关；打开且名单为空 = 拒绝全部后台访问（失败关闭）
+      # OPS-SWITCH 默认 false —— 打开前必须先把名单配全，否则**所有人**进不了后台
+      DUODUO_ADMIN_IP_WHITELIST_ENABLED: ${DUODUO_ADMIN_IP_WHITELIST_ENABLED:-false}
+      # 逗号分隔的来源清单：精确地址 / CIDR / 前缀通配，如 "203.0.113.7,10.0.0.0/8"
+      # OPS-SWITCH 名单（不是布尔开关）：仅在上一条打开时生效
+      DUODUO_ADMIN_IP_WHITELIST: ${DUODUO_ADMIN_IP_WHITELIST:-}
     ports:
       - '8080:8080'
     depends_on:
