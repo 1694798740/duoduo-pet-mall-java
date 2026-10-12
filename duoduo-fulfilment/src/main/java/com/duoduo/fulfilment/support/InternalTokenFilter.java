@@ -18,7 +18,8 @@ import java.util.List;
  *
  * <p>本服务此前**没有**内部接口（只调别人，不被别人调），A2 起有了第一个：
  * 物流轨迹摄入 {@code /api/logistics/internal/**}；A4 起多了信用分回写刷新的
- * {@code /api/reviews/internal/**}。因此这个过滤器是新增的，
+ * {@code /api/reviews/internal/**}；E24 起多了售后聚合 {@code /api/aftersales/internal/**}
+ * （供交易域的租户健康度面板跨域读）。因此这个过滤器是新增的，
  * 口径与 user / product / trade 三份保持一致 —— 同一个安全规则在全项目只有一种实现方式。
  *
  * <p>被保护的前缀<b>显式列举</b>，不做后缀匹配：
@@ -42,7 +43,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     /** 需要内部凭据的路径前缀（显式列举，见类注释） */
     private static final List<String> INTERNAL_PREFIXES = List.of(
             "/api/logistics/internal/",
-            "/api/reviews/internal/");
+            "/api/reviews/internal/",
+            "/api/aftersales/internal/");
 
     private final InternalCallAuth internalCallAuth;
     private final ObjectMapper objectMapper;

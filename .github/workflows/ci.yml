@@ -47,6 +47,13 @@ jobs:
         shell: pwsh
         run: ./scripts/lib/check-gateway-routes.ps1
 
+      # ★ 同样是纯静态（只读 mapper/*.java）：MyBatis 只在注解 SQL **以 <script> 开头**时
+      #   才走 XML 解析并解码 &gt; / &lt;；没有 <script> 的注解里写实体会原样进 SQL，
+      #   编译期、启动期全无征兆，只在 MyBatis-Plus 解析时以 500 暴露（E24 实测踩中 3 处）。
+      - name: Mapper SQL 实体自检（无 <script> 的注解 SQL 不得含 XML 实体）
+        shell: pwsh
+        run: ./scripts/lib/check-mapper-sql-entities.ps1
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

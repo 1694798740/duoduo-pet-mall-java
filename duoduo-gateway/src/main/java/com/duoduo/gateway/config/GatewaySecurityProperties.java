@@ -186,6 +186,27 @@ public class GatewaySecurityProperties {
      */
     private List<String> adminIpWhitelist = List.of();
 
+    // ---------------- E24 · 租户接口指标（健康度面板的第四维） ----------------
+
+    /**
+     * 是否记录「租户接口调用计数」。**默认开启**。
+     *
+     * <h2>为什么这里与 {@link #adminIpWhitelistEnabled} 的默认值相反</h2>
+     * IP 白名单的失效方向必须指向"拒绝"，所以它默认关（配错会挡住所有人）。
+     * 本开关的失效方向是另一回事：
+     * <ul>
+     *   <li>打开 = 每个带租户身份的请求多一次 {@code HINCRBY}（**不影响响应**，见过滤器注释）；</li>
+     *   <li>关掉 = 租户健康度面板的接口错误率**恒为 0**，且没有任何报错。</li>
+     * </ul>
+     * 也就是说，默认关的后果本身就是一次静默失效。而它会拖垮网关的可能性不存在：
+     * 计数器写入是**旁路**（不参与响应链、失败只记日志），且只对
+     * {@code X-Tenant-Id} 非空的请求生效（买家/运营/匿名流量一次都不计）。
+     *
+     * <p>保留开关是为了排障与回滚：Redis 抖动时想临时关掉它，改一行配置重启即可，
+     * 不必改代码重新发版。
+     */
+    private boolean apiMetricsEnabled = true;
+
     /** 路径族 → 允许访问该族路径的入口列表。
      *
      * <p><b>刻意用"只列专属族"的方式，而不是给每个入口列白名单</b>：
@@ -291,5 +312,13 @@ public class GatewaySecurityProperties {
 
     public void setAdminIpWhitelist(List<String> adminIpWhitelist) {
         this.adminIpWhitelist = adminIpWhitelist;
+    }
+
+    public boolean isApiMetricsEnabled() {
+        return apiMetricsEnabled;
+    }
+
+    public void setApiMetricsEnabled(boolean apiMetricsEnabled) {
+        this.apiMetricsEnabled = apiMetricsEnabled;
     }
 }

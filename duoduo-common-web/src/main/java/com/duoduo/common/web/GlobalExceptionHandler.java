@@ -18,6 +18,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.List;
 
@@ -69,6 +70,30 @@ public class GlobalExceptionHandler {
         log.warn("请求体/参数不合法 requestId={} msg={}", RequestIdHolder.get(), ex.getMessage());
         return ResponseEntity.status(ErrorCode.BAD_REQUEST.httpStatus())
                 .body(ApiResponse.fail(ErrorCode.BAD_REQUEST.name(), ErrorCode.BAD_REQUEST.defaultMessage()));
+    }
+
+    /**
+     * 查询参数 / 路径变量的**类型转换失败** → 400，而不是 500。
+     *
+     * <p>与 {@link #handleUnsupportedMediaType}（415）、{@link #handleMethodNotSupported}（405）是同一类
+     * 「框架异常漏配」：{@code MethodArgumentTypeMismatchException} 此前不在任何 {@code @ExceptionHandler}
+     * 的覆盖范围内，只能被 {@code Exception} 兜底接住 → 500。
+     *
+     * <p>后果不只是"码不漂亮"：同一个端点，参数**超范围**返回 400（业务规则校验），
+     * 参数**写错类型**（{@code ?days=abc}、{@code /api/orders/xyz}）却返回 500 ——
+     * 两者都是"调用方写错了"，调用方却无法据码判断该不该重试；
+     * 而 5xx 告警会被这类噪声淹没，真正的服务故障反而看不见。
+     *
+     * <p>detail 只带**参数名与期望类型**，不带原始值、不带堆栈：
+     * 参数名与类型本身就是接口契约的一部分（OpenAPI 里写着），原始值则可能含敏感信息。
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String expect = ex.getRequiredType() == null ? "?" : ex.getRequiredType().getSimpleName();
+        String detail = ex.getName() + " 需要 " + expect + " 类型";
+        log.warn("参数类型不匹配 requestId={} {}", RequestIdHolder.get(), detail);
+        return ResponseEntity.status(ErrorCode.BAD_REQUEST.httpStatus())
+                .body(ApiResponse.fail(ErrorCode.BAD_REQUEST.name(), detail));
     }
 
     /**

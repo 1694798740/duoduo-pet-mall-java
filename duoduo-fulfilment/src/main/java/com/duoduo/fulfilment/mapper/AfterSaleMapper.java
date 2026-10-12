@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 售后单数据访问。
@@ -156,4 +157,50 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
     /** 本域已知的卖家标识（售后表里出现过的 seller_id，去重）—— 与评价表那份互补 */
     @Select("SELECT DISTINCT seller_id FROM t_after_sale WHERE seller_id IS NOT NULL")
     List<Long> distinctSellerIds();
+
+    // ---------------- E24 · 租户健康度（按卖家 × 时间窗聚合） ----------------
+
+    /**
+     * 窗口内每个卖家的售后立案数 / 已退款数 / 未结案数 / 败诉数 / 已退金额。
+     *
+     * <h2>为什么用 {@code created_at} 做窗口，而不是"当前状态"</h2>
+     * 健康度面板回答的是「这段时间里这家店出了多少售后」，是**发生量**而非**存量**。
+     * 按当前状态过滤会把去年立案、今天才结案的售后算进今天，
+     * 于是任何一天的售后率都随结案速度漂移 —— 而面板要的恰是"这段时间发生了什么"。
+     * 与 E22 账单「本期发生额按事件时间过滤」是同一条口径，服务层注释里有完整理由。
+     *
+     * <h2>为什么把五个量一次查回</h2>
+     * 全平台租户数不多，但"每个租户发一条 SQL"是 N+1；而分成五条按维度聚合的查询
+     * 又会各自扫一遍表、还可能落在不同的时间点（用户正在立案）。一次 GROUP BY 回来，
+     * 五列来自**同一个快照**。
+     *
+     * <h2>口径逐条（改口径时对照）</h2>
+     * <ul>
+     *   <li>{@code total} —— 窗口内立案总数（分母之一，见面板的售后率定义）；</li>
+     *   <li>{@code refunded} —— 终态为已退款；</li>
+     *   <li>{@code openCnt} —— <b>非终态</b>（待卖家处理 / 已拒绝未上诉 / 仲裁中 / 待寄回 / 已寄回）。
+     *       {@code CLOSED}（运营裁定驳回）也是终态，不算未结案 ——
+     *       把它算进去会让"处理得干净"的店看起来有积压；</li>
+     *   <li>{@code adverse} —— 运营裁定<b>支持退款</b>（{@code arbitrate_result='APPROVE_REFUND'}）。
+     *       与信用分那条口径一致：卖家主动同意退款不算污点（否则等于教卖家拖着别同意）；</li>
+     *   <li>{@code refundAmount} —— 已退金额合计（分）。未结案的行 {@code refund_amount} 为 null，用 COALESCE 兜住。</li>
+     * </ul>
+     *
+     * <p>别名用驼峰：返回的是 {@code Map<String,Object>}，列名即 key；
+     * 本项目已经因为"列名大小写"栽过一次（见 {@code AdminOpsService#str}），
+     * 这里用显式别名 + 读取侧统一容错（{@code TenantHealthService}）。
+     */
+    @Select("SELECT seller_id AS sellerId, "
+            + "COUNT(*) AS total, "
+            + "SUM(CASE WHEN status = 'REFUNDED' THEN 1 ELSE 0 END) AS refunded, "
+            + "SUM(CASE WHEN status NOT IN ('REFUNDED','CLOSED') THEN 1 ELSE 0 END) AS openCnt, "
+            + "SUM(CASE WHEN arbitrate_result = 'APPROVE_REFUND' THEN 1 ELSE 0 END) AS adverse, "
+            + "COALESCE(SUM(COALESCE(refund_amount, 0)), 0) AS refundAmount "
+            + "FROM t_after_sale "
+            // ★ 同上：本 SQL 无 <script>，必须写字面量 >= / <；
+            //   写成 XML 实体会原样进库，MP 的 JSqlParser 直接解析失败（编译期毫无征兆）。
+            + "WHERE created_at >= #{from} AND created_at < #{to} "
+            + "GROUP BY seller_id")
+    List<Map<String, Object>> tenantStats(@Param("from") LocalDateTime from,
+                                          @Param("to") LocalDateTime to);
 }

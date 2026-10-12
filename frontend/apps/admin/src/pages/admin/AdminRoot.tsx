@@ -18,6 +18,7 @@ import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 import { AdminLoginPage } from './AdminLogin';
 import { AdminDashboardPage } from './Dashboard';
+import { AdminTenantHealthPage } from './TenantHealth';
 import { AdminAuditsPage } from './Audits';
 import { AdminOperationAuditsPage } from './OperationAudits';
 import { AdminProductAuditsPage } from './ProductAudits';
@@ -90,6 +91,7 @@ export const AdminRoot: React.FC = () => (
     <Route path="/login" element={<AdminLoginPage />} />
     <Route element={<AdminShell />}>
       <Route path="/admin" element={<AdminDashboardPage />} />
+      <Route path="/admin/tenant-health" element={<AdminTenantHealthPage />} />
       <Route path="/admin/merchants" element={<AdminMerchantsPage />} />
       <Route path="/admin/merchant-staff" element={<AdminMerchantStaffPage />} />
       <Route path="/admin/audits" element={<AdminAuditsPage />} />

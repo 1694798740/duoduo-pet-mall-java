@@ -767,7 +767,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.p
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**252 个端点**与 `docs/agent/04` 逐条核对）；
-> `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**（当前 **389 个端点**），
+> `docs/agent/04-接口契约全集.md` 的端点表由 `scripts/extract-api-contract.py` **从源码机械生成**，
+> **端点总数由脚本写在文档末尾**（`合计 N 个端点`）—— 这里刻意**不再抄一份**：
+> 抄来的数字必然落后，而「这里写 389、脚本算 336」这种不一致**没有任何检查能发现**
+> （契约文档自身有 `--check` 门禁，但门禁只覆盖它管的那一份文档）。
 > 加 `--check` 即变门禁（文档落后于源码时退出码 1）—— 端点清单不再靠手工维护。
 > GitHub Actions 见 `.github/workflows/ci.yml`（编译 + 冒烟子集）。
 
@@ -800,6 +803,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\search-smoke.ps1    
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\mq-smoke.ps1           # 47 项：削峰队列（入队 PENDING→PLACED/入队幂等/业务失败 FAILED/**死信可查可重放**/30 并发 429 限流/自管 MQ 起停与模式复原）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seckill-smoke.ps1      # 51 项：限时秒杀（匿名边界/运营准入/下单幂等 replay/限购/售罄/DB 不负数/取消回补/运营编辑·删除与守卫/套件自我清理）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\upload-smoke.ps1      # 8 项：图片上传（白名单只放 GET/匿名上传 401/上传→回读 roundtrip/扩展名白名单）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\proxy-ops-smoke.ps1     # 121 项：E23 代运营最小版（工单一次性消费 CAS / 自营与第三方分道 / 授权可用性先于吻合性 / 两域各自工单表 / 权限点 tenant:proxy-ops）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recon-smoke.ps1         # S3 每日对账（13 条判据：钱 8 / 库存 5；**同日重跑=覆盖**；`FAILED`（没跑成）与 `CLEAN` 分得开；选主调度）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tenant-health-smoke.ps1 # 90 项：E24 租户健康度（四维横跨三存储 / 网关逐日租户计数**真实链路** / 售后跨域内部接口 / 判级造异常真变红再复原 / 比例分母 0 给 null / 排序·截断 / 权限三层）
 python scripts/r58-restock-idempotent-smoke.py     # 10 项：退货入库幂等（同 refNo 三次只加一次 / 换 refNo 正常加 / 缺 refNo 400）
 python scripts/r58-compensate-smoke.py             # 22 项：平台垫付与卖家追偿（闭环 / 重复 409 / 未放款拒 / 垫付**不回补库存** / 收回核销二次 409 / 非运营 401）
 python scripts/r58-listing-edit-delete-smoke.py    # 33 项：闲置编辑与删除（编辑回待审 / 驳回件恢复在售 / 软删三处不可见 / 非本人 403 / **匿名 401（对照组证明白名单确实放行两段）** / 已售不可删）
@@ -1122,6 +1128,35 @@ duoduo-pet-mall-java/
   `删除` 一起写的、并未核对控制器；`SellerProductController` 里没有 `@DeleteMapping`，
   `SellerProductService` 也没有删除方法。**登记遗留项时同样要核到端点上，不能凭印象写。**
 
+**E24 租户健康度口径（一个面板横跨三个存储，四维各自要有独立证据）**
+
+- **四维与来源**：订单量 / 成交额 → 交易库 `t_order`（`created_at` 的 UTC 自然日窗口）；
+  售后率 → 履约库 `t_after_sale`（走**服务间内部接口** `/api/aftersales/internal/tenant-stats`，不经网关）；
+  结算异常 → 交易库 `t_settlement` / `t_seller_debt` / `t_order` 三类**存量**异常（不带窗口，挂账是存量）；
+  接口错误率 → Redis `duoduo:api:stat:{yyyy-MM-dd}`（网关对**带店铺身份的请求**逐日计数）。
+- **为什么合成一个请求**：拆成四个接口会出现「四个数字来自四个时刻」，以及
+  「其中一格加载失败但页面看起来完好」—— 后者是这一整类面板的通病。
+- **★ 三态纪律**：比例字段分母为 0 时给 `null`（前端渲染「—」）而**不是** `0.00%`。
+  「这段时间一单没成交」与「成交 100 单、零售后」是两个相反结论，写成同一个 `0.00%` 会把前者伪装成健康。
+  同理档位有第四态 `NO_DATA`：窗口内既无成交也无接口调用 —— **没有可判断的数据**，不等于正常。
+- **★ 样本门槛（有意的"不给档位"）**：结算异常 > 0，一笔就判 `RISK`（资金事实错位没有"轻微"一说）；
+  但售后率要「≥ 20% **且** 成交 ≥ 5 单」、5xx 率要「≥ 1% **且** 调用 ≥ 10 次」才谈得上风险 / 关注。
+  4 单里出 4 笔售后（100%）不会被标红 —— 绝对量太小，任何比例都没有统计意义；
+  而「1 次失败就变红」的面板会在几天内被运维彻底无视，那比漏报更糟。
+  所以面板**同时展示原始计数**，规则与门槛由 `/limits` 下发、页面如实渲染（前端不抄阈值）。
+- **4xx 不参与判级**：401/404/400 大多是**预期的**（令牌过期、看别人的单、参数写错），
+  5xx 才是无歧义的平台故障。4xx 仍照常展示 —— 它是排查商家端集成问题的线索。
+- **降级方向是刻意的**：售后 / Redis 两路取不到 → **硬失败 503**（它们是判据，缺了面板就会说谎）；
+  店铺名取不到 → 显式降级（响应 `nameResolved=false`，只影响展示）。**两处都不静默。**
+- **★ 跨模块硬约束**：`TenantHealthJudgement.MAX_DAYS(30) ≤ TenantApiMetrics.KEEP_DAYS(40)`。
+  否则超期那几天的 Redis 键已过期，`HGETALL` 的空 Map 与「那天没调用」**完全一样**，
+  错误率会安静地变小。编译器管不到（两个常量在不同模块），只能靠单测守。
+- **网关计数只认「带店铺身份的请求」**：`TenantApiMetricsFilter` 的 order 是 `-90`，
+  必须**晚于** `JwtAuthGlobalFilter`（`-100`）—— 晚于它才读得到网关改写后的可信 `tid`，
+  早于它读到的是调用方自己编的头（那就是一个新的越权面）。买家 / 运营 / 匿名请求一次都不计。
+- **展示排序**：档位（风险优先）→ 下单数降序 → 租户 id 升序。第三键不是装饰：
+  没有它，同档位同单数的两家店在两次请求间可能换序，被 `limit` 截断的永远是随机一批。
+
 购物车条目的失效原因码（机器可读，前端只管展示文案）：
 `SKU_NOT_FOUND` / `OFF_SHELF` / `OUT_OF_STOCK` / `STOCK_NOT_ENOUGH`。
 **失效条目不计入结算金额** —— 否则结算页金额与订单金额会对不上。
@@ -1138,6 +1173,8 @@ duoduo-pet-mall-java/
 | GET | `/api/admin/settlements/debts` | 卖家欠款列表（可按 `status=OUTSTANDING/SETTLED/WRITTEN_OFF` 过滤） | 运营 |
 | POST | `/api/admin/settlements/debts/{id}/settle` · `/write-off` | 欠款收回 / 核销（CAS 条件更新，二次调用 409） | 运营 |
 | GET | `/api/admin/settlements/abnormal` | 异常挂账：已付款却缺托管单的订单（`LEFT JOIN` 排查） | 运营 |
+| GET | `/api/admin/tenant-health?days=&limit=` | **E24 · 租户健康度面板**：一次请求返回**四维**（订单量/成交额、售后率、结算异常、接口错误率）—— 这四路分别来自**交易库、履约库、Redis**三个存储，拆成四个接口会得到「四个数字来自四个时刻」。窗口 `days` 默认 30 / 上限 30，行数 `limit` 默认 50 / 上限 200，非法值 **400**（不静默回落）。比例字段是 `String` 且**分母为 0 时给 `null`**（前端渲染「—」，不写 `0.00%`）；每行带 `level` 四态 `RISK`/`WATCH`/`NO_DATA`/`OK`（`NO_DATA` = 无样本，**必须与 `OK` 分开**）。`nameResolved=false` 表示店铺名这一路显式降级（只影响展示，四维判据仍有效） | 运营 |
+| GET | `/api/admin/tenant-health/limits` | **E24 · 运行时口径**：窗口上限 / 默认值 / 行数上限 / 三类结算异常来源 / 判级阈值与**样本门槛** / 档位清单 / 接口计数保留天数。前端**不抄一份阈值**，判级规则从它渲染 —— 抄一份意味着政策调整后页面仍在按旧数解释数据 | 运营 |
 | POST | `/api/admin/settlements/backfill?dryRun=` | **历史订单托管单回补**（A1 / I-14）：按订单状态推断资金状态（`PAID`/`SHIPPED`→`CUSTODY`、`COMPLETED`→`RELEASED`、`REFUNDED`→`REFUNDED`），金额取 `pay_amount`、佣金按当前 `PLATFORM_FEE_BPS` 重算并回传口径说明；`?dryRun=true` **只出计划、一行都不写库**；不带参数即执行；幂等靠 `uk_settle_order`（重复执行不产生重复单）；**不触碰已有托管单的订单**，也不给 `PENDING_PAYMENT`/`CLOSED` 补账（钱从未收过） | 运营 |
 | GET/POST/PUT/DELETE | `/api/admin/categories`、`/{id}`、`/{id}/status` | 类目增改删 + 启停用；**后台列表含停用项**（可重新启用），公开接口仍只暴露 ACTIVE | 运营 |
 | GET/POST/PUT/DELETE | `/api/admin/brands`、`/{id}`、`/{id}/status` | 品牌同上 | 运营 |

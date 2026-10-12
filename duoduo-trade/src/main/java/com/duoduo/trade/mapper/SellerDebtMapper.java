@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 卖家欠款数据访问（第五十八轮 · B-01）。
@@ -57,4 +58,21 @@ public interface SellerDebtMapper extends BaseMapper<SellerDebtEntity> {
     @Select("SELECT COALESCE(SUM(amount), 0) FROM t_seller_debt "
             + "WHERE seller_id = #{sellerId} AND status = 'OUTSTANDING'")
     Long sumOutstanding(@Param("sellerId") Long sellerId);
+
+    /**
+     * E24 · 全部租户的未收回欠款（按卖家分组），供租户健康度面板一次取回。
+     *
+     * <p><b>不带时间窗</b>，这是刻意的：欠款是**存量**而不是发生量 ——
+     * 三个月前垫付、至今没收回的那笔债今天仍然挂在平台账上，
+     * 用窗口把它滤掉会让面板显示"这家店很干净"，而平台实际还垫着钱。
+     * （"这笔债是什么时候形成的"由 {@code t_seller_debt.created_at} 回答，
+     * 需要时去看欠款列表，不需要塞进健康度的四个维度里。）
+     *
+     * <p>同理，<b>只看 {@code OUTSTANDING}</b>：{@code SETTLED}（已收回）与
+     * {@code WRITTEN_OFF}（已核销走坏账）都是已经处置完的历史，不再构成当前风险。
+     */
+    @Select("SELECT seller_id AS sellerId, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(amount), 0) AS amount "
+            + "FROM t_seller_debt WHERE status = 'OUTSTANDING' GROUP BY seller_id")
+    List<Map<String, Object>> outstandingBySeller();
 }

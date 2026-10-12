@@ -125,6 +125,8 @@ import type {
   AuditSampleReport,
   AuditSampleReviewRequest,
   AuditSampleView,
+  TenantHealthLimits,
+  TenantHealthPanel,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -597,6 +599,20 @@ export const adminApi = {
   reportCharts: () => api.get<AdminCharts>('/api/admin/reports/charts'),
   settlementSummary: () => api.get<AdminSettlementSummary>('/api/admin/settlements/summary'),
   settlementAbnormal: () => api.get<AbnormalSettlement[]>('/api/admin/settlements/abnormal'),
+
+  // ---- E24 · 租户健康度面板（落在 duoduo-trade） ----
+  //
+  // 一次请求拿四维（订单/成交、售后率、结算异常、接口错误率）——
+  // 那四路分别来自交易库、履约库、Redis，前端分四次拉再自己拼，
+  // 会出现"四个数字来自四个时刻"以及"其中一格失败但页面看起来完好"。
+  //
+  // days / limit 的默认值与上限一律来自 tenantHealthLimits()，
+  // **不在这里写死**：阈值是政策，抄一份意味着政策调整后前端静默按旧数解释。
+  tenantHealth: (query?: { days?: number; limit?: number }) =>
+    api.get<TenantHealthPanel>('/api/admin/tenant-health', { query }),
+
+  /** 运行时口径（窗口上限、判级阈值、档位清单）—— 页面用它渲染"为什么是风险" */
+  tenantHealthLimits: () => api.get<TenantHealthLimits>('/api/admin/tenant-health/limits'),
 
   // ---- 订单干预（落在 duoduo-trade；仅待付款订单可强关） ----
   orders: (query?: { status?: string; orderNo?: string; page?: number; pageSize?: number }) =>

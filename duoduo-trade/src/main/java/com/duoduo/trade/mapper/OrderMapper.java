@@ -140,4 +140,62 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
             + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') AND s.id IS NULL "
             + "ORDER BY o.id ASC")
     List<Map<String, Object>> findOrdersNeedingSettlementBackfill();
+
+    // ---------------- E24 · 租户健康度（按卖家 × 时间窗聚合） ----------------
+    //
+    // 与上面那批图表聚合同一姿势：只回聚合结果，绝不把明细捞回内存再数。
+    // 区别是分组键从"全平台 / 指定卖家集合"换成"seller_id 自身" ——
+    // 面板要的就是一行一个租户。
+
+    /**
+     * 窗口内每个卖家的订单量 / 已付款单数 / 成交额（分）。
+     *
+     * <h2>窗口取 {@code created_at}（下单时刻），不是 {@code paid_at}</h2>
+     * 与 S3 对账、E22 账单、{@code dailyTrend} 一样，全站"某一笔业务算在哪一天"
+     * 一律按**业务发生（创建）时刻**的 UTC 自然日。用 {@code paid_at} 会让
+     * 「未付款的单」既不在任何窗口里、又真实存在 —— 于是订单量永远对不上订单列表。
+     *
+     * <h2>★ 「已付款」的口径含 {@code REFUNDED}，这是刻意与 {@code dailyTrend} 对齐</h2>
+     * 售后率的分母是「本店这段时间成交了多少单」。退款单**当初确实付过款**
+     * （钱进过托管、也进过当天的成交额），把它从分母里剔除会让一次退款
+     * 同时抬高分子、压低分母，售后率被双重放大。
+     * 这与 {@code dailyTrend} 里 gmv 包含 {@code REFUNDED} 是同一个口径，
+     * 两个页面看到的分母因此不会互相打架。
+     * （注意 {@code sumPaidAmount()} 用的是 PAID/SHIPPED/COMPLETED —— 那是"钱仍在平台托管"
+     * 的另一个语义，服务于资金汇总，不是这里的"成交单数"。）
+     *
+     * <p>{@code seller_id} 为 0 的行是**平台自营**，不是"没有归属" ——
+     * 服务层刻意保留它（自营也是一个租户，面板上要能看到它的接口错误率与售后率）。
+     */
+    @Select("SELECT seller_id AS sellerId, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(CASE WHEN status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "THEN 1 ELSE 0 END), 0) AS paidCnt, "
+            + "COALESCE(SUM(CASE WHEN status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "THEN pay_amount ELSE 0 END), 0) AS gmv "
+            // ★ 这里必须写**字面量** >= / <，不能写 XML 实体 &gt;= / &lt;：
+            //   实体只在字符串以 <script> 开头时才会被 MyBatis 的 XML 解析器解码；
+            //   本 SQL 没有 <script>，实体原样进库 ⇒ MP 的 JSqlParser 解析时
+            //   把 &gt 当标识符、第一个 = 当运算符，报 "unexpected token: =" 并以 500 收场。
+            //   反面参照：同文件的 dailyTrend 在 <script> 内，那里写实体才是对的。
+            + "FROM t_order WHERE created_at >= #{from} AND created_at < #{to} "
+            + "GROUP BY seller_id")
+    List<Map<String, Object>> tenantHealthOrders(@Param("from") java.time.LocalDateTime from,
+                                                 @Param("to") java.time.LocalDateTime to);
+
+    /**
+     * E24 · 每个租户「已付款却缺托管单」的订单数与金额（**不带时间窗**）。
+     *
+     * <p>判定条件与 {@link #findOrdersWithoutSettlement()} 逐字一致
+     * （{@code PAID/SHIPPED/COMPLETED} + {@code LEFT JOIN … IS NULL}），
+     * 只是把 LIMIT 100 的列表换成按卖家分组 —— 面板要的是"这家店有几笔挂账"，
+     * 而不是"全平台前 100 笔里有没有它"。列表仍然由 {@code /api/admin/settlements/abnormal} 提供。
+     *
+     * <p>不带时间窗：挂账是**存量**，一笔三个月前的挂账今天仍然会让这单放不了款。
+     */
+    @Select("SELECT o.seller_id AS sellerId, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(o.pay_amount), 0) AS amount "
+            + "FROM t_order o LEFT JOIN t_settlement s ON s.order_id = o.id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED') AND s.id IS NULL "
+            + "GROUP BY o.seller_id")
+    List<Map<String, Object>> missingSettlementBySeller();
 }

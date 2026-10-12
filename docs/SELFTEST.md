@@ -216,6 +216,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 31 | **钱与库存每日自动对账（S3）** | `recon-smoke.ps1` | 53 |
 | 32 | 三端入口收窄（Node 冒烟，**不进上面的一键运行器**） | `e8-entry-scope-smoke.mjs` | 以退出码为准 |
 | 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
+| 34 | **租户健康度面板（E24）** | `tenant-health-smoke.ps1` | 90 |
 
 > 项数会随迭代增长，**以脚本自己打印的「通过 N 项」为准**，本表只用来定位该跑哪一套。
 > **最近一次实测（2026-10-11，原始日志 `logs/s3-final-smoke.txt`，EXIT=0，耗时 15 分 26 秒）**：
@@ -244,7 +245,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | **22 套**（首页 / **商品详情页** / 地址簿 / 商家端 / **商家端看板** / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注** / 审核 SLA / 商品审核 / 资质有效期 / 商家店员 / 审核台）。单套调试：`-Only <名字>` |
 | ⚠️ e2e 假红的头号原因是**数据脏** | — | e2e 断言「商品图零裂图」。若历史冒烟**中途被中断**，会残留一条带 `https://example.com/…` 占位图的夹具评价；它挂在种子商品上 → **首页与详情页同时报裂图**，看起来像代码回归。判据：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';`（应为 0）。`review-smoke.ps1` 已加**开机清扫**自动处理 |
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 42 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
-| 接口契约 | `python scripts/extract-api-contract.py --check` | 389 个端点 |
+| 接口契约 | `python scripts/extract-api-contract.py --check` | 端点总数由脚本写在契约文档末尾（`合计 N 个端点`）——**这里不抄数字**（抄来的必然落后，且没有检查能发现） |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
 | 后端单测 | `mvn -o test` | **685 项 / 66 个测试类**（11 个模块；2026-10-11 实测 0 失败） |
 
@@ -291,7 +292,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1 -O
 python scripts/extract-api-contract.py --check
 ```
 
-**预期**：`PASS`，**389 个端点**与源码一致（2026-10-11 实测）。改了端点/字段必须重跑，它会拦住「文档与代码分家」。
+**预期**：`PASS`，且**端点总数与源码一致**（总数由脚本写在契约文档末尾的 `合计 N 个端点`；本文档刻意不复述那个数字 —— 契约文档自身有 `--check` 门禁，而手抄在别处的数字没有任何检查会去核对它）。改了端点/字段必须重跑，它会拦住「文档与代码分家」。
 
 ### 4.5 小程序「无浏览器」自动化
 

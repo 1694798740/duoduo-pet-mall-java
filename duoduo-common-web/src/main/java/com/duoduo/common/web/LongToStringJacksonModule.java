@@ -122,7 +122,21 @@ public class LongToStringJacksonModule extends SimpleModule {
             // （其余同名项都是方法参数，与序列化无关）。
             "value",
             // —— 时间戳（epoch 毫秒，前端要 new Date(ts) 参与运算）——
-            "timestamp", "createdAtMs", "updatedAtMs", "expireAtMs"
+            "timestamp", "createdAtMs", "updatedAtMs", "expireAtMs",
+            // E24（2026-10-12）租户健康度面板：**每个字段都是前端要排序 / 比大小 / 相除的量**，
+            // 一个都不能漏。漏了不会报错，只会以字符串下发 ——
+            // `debtOutstandingAmount` 变成 `"12900"` 时前端 `+` 会退化成拼接、
+            // `>=` 退化成字典序（"9" > "100"），而页面上数字看着"差不多是对的"。
+            // ★ 特别注意 `debtOutstandingAmount` / `staleCustodyAmount`：
+            //   白名单是**按字段名精确匹配**的，`amount` 命中不了 `xxxAmount` ——
+            //   这正是铁律里那条「语义是金额但名字没进白名单 → 静默变字符串」的典型场景。
+            "paidCount",
+            "afterSaleCount", "afterSaleRefundedCount", "afterSaleOpenCount", "afterSaleAdverseCount",
+            "debtOutstandingCount", "debtOutstandingAmount",
+            "staleCustodyCount", "staleCustodyAmount",
+            "missingSettlementCount", "settlementAbnormalCount",
+            "apiTotal", "apiServerError", "apiClientError",
+            "tenantCount", "riskyTenants", "watchTenants"
     ));
 
     public LongToStringJacksonModule() {

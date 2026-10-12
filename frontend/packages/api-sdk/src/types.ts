@@ -1862,6 +1862,115 @@ export interface AuditSlaMetrics {
   tightened: boolean;
 }
 
+/**
+ * E24 · 租户健康度面板 · 单个租户行（平台后台）。
+ *
+ * ★ 四维横跨三个存储（交易库订单/结算、履约库售后、Redis 接口计数），
+ *   由服务端一次聚合返回 —— 前端分四次拉再自己拼，必然出现
+ *   「四个数字来自四个时刻」以及「其中一格失败了但页面看起来完好」。
+ *
+ * ★ 比例字段是 `string` 且**允许 null**：null 表示分母为 0（无样本），
+ *   页面渲染成「—」而不是 `0.00%`。「这段时间一单没成交」与
+ *   「成交 100 单、零售后」是两个完全不同的结论，写成同一个 0.00% 会把前者伪装成健康。
+ *
+ * ★ `level` 里 `NO_DATA`（无样本）必须与 `OK`（健康）分开渲染。
+ */
+export interface TenantHealthRow {
+  /** 租户标识＝店铺主体 userId；`'0'` 表示平台自营（雪花 id，一律按字符串流转） */
+  tenantId: string;
+  /** 店铺主体昵称；`nameResolved=false` 时全为 null */
+  tenantName: string | null;
+  orderCount: number;
+  paidCount: number;
+  gmv: number;
+  afterSaleCount: number;
+  afterSaleRefundedCount: number;
+  afterSaleOpenCount: number;
+  afterSaleAdverseCount: number;
+  /** 售后率＝售后立案 ÷ 成交单数；成交 0 单时为 null */
+  afterSaleRate: string | null;
+  debtOutstandingCount: number;
+  debtOutstandingAmount: number;
+  staleCustodyCount: number;
+  staleCustodyAmount: number;
+  missingSettlementCount: number;
+  /** 合计＝欠款 + 超期托管 + 缺托管单 */
+  settlementAbnormalCount: number;
+  apiTotal: number;
+  apiServerError: number;
+  /** 4xx **不参与判级**（客户端写错参数不是店铺不健康） */
+  apiClientError: number;
+  /** 接口错误率（只看 5xx）；无调用时为 null */
+  apiErrorRate: string | null;
+  /** `RISK` / `WATCH` / `NO_DATA` / `OK` */
+  level: string;
+}
+
+/**
+ * 平台汇总（面板顶部那排数）。
+ * 比例按**合计**重算，不是各行百分比取平均 —— 取平均会让 1 单的小店与 1 万单的大店同权。
+ */
+export interface TenantHealthPlatform {
+  tenantCount: number;
+  orderCount: number;
+  gmv: number;
+  afterSaleCount: number;
+  afterSaleRate: string | null;
+  settlementAbnormalCount: number;
+  apiTotal: number;
+  apiErrorRate: string | null;
+  riskyTenants: number;
+  watchTenants: number;
+}
+
+export interface TenantHealthPanel {
+  tenants: TenantHealthRow[];
+  platform: TenantHealthPlatform;
+  /** 实际生效的窗口天数（**回显服务端算的**，不是客户端传的） */
+  days: number;
+  from: string;
+  to: string;
+  limit: number;
+  totalTenants: number;
+  /** 是否因 limit 被截断 —— 没有它，「还有 N 家未展示」与「平台只有这几家」长得完全一样 */
+  truncated: boolean;
+  /** 店铺名是否取到；false = 用户域降级（只影响展示，四维判据仍然有效） */
+  nameResolved: boolean;
+  generatedAt: string;
+}
+
+/**
+ * E24 · 阈值与窗口上限（运行时从服务端取，**前端绝不抄一份**）。
+ *
+ * 抄一份的后果：政策调整（关注线、风险线、窗口上限）后前端仍按旧数解释数据，
+ * 页面不报错、也不空，只是结论悄悄变错。
+ */
+export interface TenantHealthLimits {
+  maxDays: number;
+  defaultDays: number;
+  maxLimit: number;
+  defaultLimit: number;
+  /** 超期仍托管判为异常的天数阈值 */
+  staleCustodyDays: number;
+  /** 接口计数在 Redis 的存活天数；必须 ≥ maxDays（否则超期那几天会静默变成「没调用」） */
+  metricKeepDays: number;
+  afterSaleWatchPercent: number;
+  apiErrorRiskPercent: number;
+  apiErrorWatchPercent: number;
+  /**
+   * 判「关注」所需的最小成交单数门槛。
+   * 没有它，页面无法解释「4 单里出 4 笔售后（100%）为什么没变关注」——
+   * 样本太小，任何比例都没有统计意义，规则刻意不给档位。
+   */
+  afterSaleMinBase: number;
+  /** 判 5xx 率所需的最小调用数门槛（同理，1 次失败不该把一家店标成风险） */
+  apiMinBase: number;
+  /** 判级档位声明清单（含 NO_DATA） */
+  levels: string[];
+  /** 结算异常的三个来源 key：debtOutstanding / staleCustody / missingSettlement */
+  settlementAbnormalSources: string[];
+}
+
 /** 入驻材料清单（6 类，提交时必须齐全） */export const MERCHANT_MATERIAL_TYPES = [
   { type: 'BUSINESS_LICENSE', label: '营业执照' },
   { type: 'LEGAL_ID_FRONT', label: '法人身份证人像面' },

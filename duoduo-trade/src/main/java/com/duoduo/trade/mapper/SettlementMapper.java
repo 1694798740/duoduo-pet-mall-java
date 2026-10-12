@@ -226,4 +226,35 @@ public interface SettlementMapper extends BaseMapper<SettlementEntity> {
             + "COALESCE(SUM(platform_fee), 0) AS fee_sum "
             + "FROM t_settlement GROUP BY status")
     List<Map<String, Object>> aggregateAll();
+
+    /**
+     * E24 · 每个租户「超期仍托管」的笔数与金额（按卖家分组）。
+     *
+     * <h2>为什么「托管很久」本身就是异常</h2>
+     * 正常链路里 {@code CUSTODY} 只存在于「买家已付款、尚未确认收货」这段：
+     * 买家确认收货 → 放款；发货后自动确认收货的定时任务也会兜住（见 {@code OrderService}）。
+     * 也就是说，**一笔托管单正常不可能长期停在 {@code CUSTODY}**。
+     * 停住意味着补偿调度没跑、或放款时抛异常被吞掉了 —— 买家早已确认收货、
+     * 卖家却拿不到钱，而系统里没有任何地方报错。这正是健康度面板要抓的东西。
+     *
+     * <h2>为什么阈值取 30 天而不是 7 天</h2>
+     * 这个数字是**判据的一部分**，写死在这里（而不是让调用方随便传）会让"为什么是 30"
+     * 变成一个可以回答的问题：7 天是售后期冻结的口径（E22 的 T+7），
+     * 而冻结发生在放款**之后** —— 拿它当托管期的阈值，会把"买家刚付款一周还没收货"
+     * 这种完全正常的单判成异常。30 天给了「自动确认收货 + 售后 + 退款」整条链路
+     * 足够宽的余量：真超过 30 天还在托管，不可能是流程还在走。
+     *
+     * <p>阈值由调用方以 {@code before} 传入（{@code now - 30 天}），
+     * 而不是在 SQL 里写 {@code NOW() - INTERVAL 30 DAY}：容器时区 / 会话时区
+     * 一旦不一致，SQL 里的 {@code NOW()} 与 Java 侧的 {@code LocalDateTime.now(UTC)}
+     * 会差 8 小时，而这种差异在判据上表现为"边界那几笔时有时无"。
+     * 全站时间只有一个来源：Java 侧的 UTC。
+     */
+    @Select("SELECT seller_id AS sellerId, COUNT(*) AS cnt, "
+            + "COALESCE(SUM(amount), 0) AS amount "
+            + "FROM t_settlement "
+            // ★ 同上：无 <script> 的注解 SQL 里必须写字面量 <，写 &lt; 会原样进库并让 JSqlParser 解析失败。
+            + "WHERE status = 'CUSTODY' AND created_at < #{before} "
+            + "GROUP BY seller_id")
+    List<Map<String, Object>> staleCustodyBySeller(@Param("before") LocalDateTime before);
 }

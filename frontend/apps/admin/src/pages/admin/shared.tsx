@@ -25,6 +25,9 @@ export { isAdminRole, isOperator } from '@duoduo/shared/lib/roles';
  */
 const TABS = [
   { to: '/admin', label: '运营概览', end: true },
+  // E24：租户健康度紧挨着运营概览 —— 两者都是"看数据"，且它是运营每天开台先扫一眼的
+  // 那一屏（谁家出问题了）。放在这一批"管别人 / 管数据"的工单页之前，符合注意力顺序。
+  { to: '/admin/tenant-health', label: '租户健康度', end: false },
   { to: '/admin/audits', label: '内容审核', end: false },
   { to: '/admin/product-audits', label: '商品审核', end: false },
   // E28：抽查是「已经在卖了、我回头看」的复核，与上面两个「等着放行」的队列语义不同，

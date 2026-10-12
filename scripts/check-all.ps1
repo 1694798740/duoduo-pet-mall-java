@@ -80,11 +80,15 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '网关路由覆盖自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# Mapper 注解 SQL 里「无 <script> 却写 XML 实体」——编译期/启动期都无征兆，
+# 只在 MyBatis-Plus 解析 SQL 时以 500 暴露（E24 实测踩中）。纯静态，放这里最便宜。
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-mapper-sql-entities.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
+Record 'Mapper SQL 实体自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"

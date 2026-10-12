@@ -111,7 +111,12 @@ spring:
             #   控制器在镜像里、直连端口也活着，只是网关没放行）。
             #   裸路径与通配一并写：将来若加集合型端点（无尾斜杠），漏写只会再静默 404 一次
             #   —— /api/admin/audit-logs 当初就是这么栽的。
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**,/api/admin/recon,/api/admin/recon/**
+            # /api/admin/tenant-health/** = 租户健康度面板（E24）：订单量 / 售后率 / 结算异常 /
+            #   接口错误率，四个维度的数据分别在交易库、履约库与 Redis，主聚合落在 trade。
+            #   仍必须显式列出（这是本文件第 6 次记同一个坑）。★ 两段都写：
+            #   面板本体是**集合端点**（GET /api/admin/tenant-health，无尾斜杠），
+            #   /limits 才带尾斜杠 —— 只写 /** 会让面板本体静默 404。
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**,/api/admin/recon,/api/admin/recon/**,/api/admin/tenant-health,/api/admin/tenant-health/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:
@@ -166,6 +171,10 @@ duoduo:
     refresh-token-ttl: 7d
     # E17 · 权限版本校验开关。默认开；置 false 即退回「等令牌自然过期」的旧行为（排障/回滚用）
     perm-version-enabled: ${DUODUO_PERM_VERSION_ENABLED:true}
+    # E24 · 租户接口指标开关（健康度面板的「接口错误率」数据源）。默认开。
+    # 关掉不会报错，只会让面板上那一维恒为 0 —— 一次静默失效，因此默认必须是开。
+    # 只对带头 X-Tenant-Id（= 带店铺身份的令牌）的请求计数，且为旁路写入，不影响响应。
+    api-metrics-enabled: ${DUODUO_API_METRICS_ENABLED:true}
 
 management:
   endpoints:

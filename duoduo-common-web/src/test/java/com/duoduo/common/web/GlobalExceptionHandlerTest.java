@@ -46,4 +46,29 @@ class GlobalExceptionHandlerTest {
         assertThat(res.getBody()).isNotNull();
         assertThat(res.getBody().code()).isEqualTo(ErrorCode.METHOD_NOT_ALLOWED.name());
     }
+
+    /** 只用来造一个 {@code MethodParameter}（{@code MethodArgumentTypeMismatchException} 的必填参数）。 */
+    @SuppressWarnings("unused")
+    private static void dummyEndpoint(Integer days) {
+    }
+
+    @Test
+    void 参数类型不匹配回400而不是500() throws Exception {
+        java.lang.reflect.Method method = GlobalExceptionHandlerTest.class
+                .getDeclaredMethod("dummyEndpoint", Integer.class);
+        org.springframework.core.MethodParameter param =
+                new org.springframework.core.MethodParameter(method, 0);
+
+        ResponseEntity<ApiResponse<Void>> res = handler.handleTypeMismatch(
+                new org.springframework.web.method.annotation.MethodArgumentTypeMismatchException(
+                        "abc", Integer.class, "days", param, null));
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(res.getBody()).isNotNull();
+        assertThat(res.getBody().code()).isEqualTo(ErrorCode.BAD_REQUEST.name());
+        // detail 要指得出是哪个参数（否则调用方拿到 400 也不知道改什么）
+        assertThat(res.getBody().message()).contains("days").contains("Integer");
+        // ★ 但**不得回显原始值**：它可能含敏感信息，而参数名+期望类型已足够定位
+        assertThat(res.getBody().message()).doesNotContain("abc");
+    }
 }
