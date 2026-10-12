@@ -155,10 +155,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1
 
 | 脚本 | 干什么 | 判据 |
 |---|---|---|
-| `scripts/db-backup.ps1` | 六库 `mysqldump` → 产物自证 → 从产物切片抽验 → 滚动保留 → 失败告警 | ① **声明过的每一张表**都得在产物里找到（declared-vs-present）；② 抽验用「从产物切表恢复进临时库 vs 源表」做**三方比对** |
-| `scripts/ops-restore.ps1` | 把一份备份**真的恢复一次**（恢复进 `zz_restore_*` 临时库，验完自动删） | ① 产物文件 **SHA256** 与 manifest 一致；② **逐表行数**与 manifest 的 `rowCounts` 快照逐张一致 |
+| `scripts/db-backup.ps1` | 六库 `mysqldump` + **两个用户上传文件卷** → 产物自证 → 从产物切片抽验 → 滚动保留 → 失败告警 | ① **声明过的每一张表**都得在产物里找到（declared-vs-present）；② 抽验用「从产物切表恢复进临时库 vs 源表」做**三方比对**；③ 文件卷：**容器内 sha256 vs 宿主机 sha256** 逐文件一致 + 清单指纹 |
+| `scripts/ops-restore.ps1` | 把一份备份**真的恢复一次**（恢复进 `zz_restore_*` 临时库，验完自动删；文件卷恢复到容器内临时目录） | ① 产物文件 **SHA256** 与 manifest 一致；② **逐表行数**与 manifest 的 `rowCounts` 快照逐张一致；③ `manifest.volumes` 的每个卷逐文件 sha256 + 清单指纹一致 |
 
 两者共用同一个 `rowCounts` 快照：**备份侧写下它、恢复侧核对它**。`scripts/db-backup-register.ps1` 负责把备份注册成每天 03:00 的计划任务（刻意排在 03:30 对账选主之前），并在注册后**立刻试跑一次并回读结果**。
+
+> **为什么文件卷也算数据**：只备六库，恢复出来是「订单在、图没了」；`merchant-materials`（E12 入驻资质材料）丢了更是不可补（商家要重传、平台要重审）。所以备份范围 = 六库 **+** `fulfilment-uploads`（商品/评价图片）+ `merchant-materials`（私有卷）。
 
 ### 3.2 跑一次备份
 
@@ -169,9 +171,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -Backu
 
 # 产物：<BackupRoot>\runs\<yyyy-MM-dd_HHmmss>\
 #         duoduo_user.sql … duoduo_marketing.sql   六库 dump
-#         manifest.json                            指纹（含 rowCounts 行数快照 + 每份 dump 的 sha256）
+#         uploads\<卷名>\…                          两个上传卷的文件（逐文件 sha256 记进 manifest）
+#         manifest.json                            指纹（rowCounts 行数快照 + 每份 dump 的 sha256 + volumes 清单）
 #         backup.log / _ALERT.txt(仅失败时)
 # 退出码 0 = 全绿；1 = 有失败项。加 -AlertWebhook <url> 可推飞书/钉钉。
+# ★ 任何未捕获异常也会由顶层 trap 落一条告警 + `_ALERT.txt` 后以 1 退出 ——
+#   备份失败**必须留下产物**，否则夜间无人值守跑失败等于没有备份。
 ```
 
 注册成每天自动备份：
@@ -191,9 +196,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 判据自证纪律（这几条都是踩过坑加的，别去掉）：
 
 - manifest 里**没有 `rowCounts`** ⇒ **拒绝出结论**，而不是降级成「恢复命令没报错 = 成功」；
+- manifest 里**没有 `volumes` 段** ⇒ **拒绝出结论**：那是"只备了库、没备文件"，不许把「没备」当成「验过了」；
+- **一个上传卷都没验成** ⇒ **判失败**（同上：没有证据不算通过）；
 - `status != OK` 的备份 ⇒ **拒绝用它做演练**（一份自己都认为失败的备份不该被用来证明恢复没问题）；
 - **比对了 0 张表** ⇒ **判失败**（「空结果」与「链路没接通」长得一样）；
-- **刻意不比整表 `CHECKSUM TABLE`** —— 跨时刻比不成立：拿"恢复库 vs 产物"比是**恒等式**；拿"恢复库 vs dump 前源表"比时，心跳表 `t_sched_leader`（每 2 分钟自改）**必然不等**，会让每次演练都假红。正确做法在 db-backup 的抽验里（那里有独立时间点，做三方比对，判据成立）。
+- **刻意不比整表 `CHECKSUM TABLE`** —— 跨时刻比不成立：拿"恢复库 vs 产物"比是**恒等式**；拿"恢复库 vs dump 前源表"比时，心跳表 `t_sched_leader`（**实测约每 15 秒自改**一次 `expire_at/updated_at`）**必然不等**，会让每次演练都假红。正确做法在 db-backup 的抽验里（那里有独立时间点，做三方比对，判据成立）。
+- **临时目录操作必须用 `docker exec -u 0`**（恢复演练的 `[5b/6]`）：`docker cp` 落进容器里的文件**属主是 root**，而 `docker exec` 默认以业务用户跑 ⇒ 业务用户**删不掉**，`rm -rf` 只在 stderr 里报 `Permission denied`，而输出被丢了 ⇒「删失败」和「删成功」无从分辨。**别去掉那句回读自证** —— 就是它把这件事揪出来的；**成功也要打一条 `[OK] … 容器内临时目录已清`**（静默的成功与"这段根本没跑"长得一模一样）。
+- **`db-backup` 的抽验必须「恢复一张立刻比一张」**：所有抽样表都恢复进**同一个** `duoduo_backup_verify` 库，而每段 dump 都以 `DROP TABLE IF EXISTS` 开头 ⇒ **跨库同名的表互相覆盖**（本项目 `t_sched_leader` 5 库各一张、`t_audit_sample` / `t_audit_sample_rate` / `t_proxy_work_order` 各 2 库）⇒ 先恢复的那张变成「拿别人的数据跟自己比」，**假红与假绿都真实出现过**。抽验主逻辑已抽成 `Invoke-SampleCompare`，恢复成功即调用；**不要把它改回批量比对**。
 
 ### 3.4 一次演练通过长什么样
 
@@ -204,7 +213,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
  演练结论：失败 N 处 —— 这份备份不可信，请先查清再依赖它。
 ```
 
-**一次真实的通过（2026-10-12 实测，全栈 17 容器在跑）**：
+**一次真实的通过（2026-10-13 实测，全栈 17 容器在跑）**：
 
 ```
 [1/6] 定位备份目录并读 manifest.json      → 行数快照 58 张表（这就是本次要逐张核对的判据）
@@ -212,17 +221,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 [3/6] 建临时库 zz_restore_<库名>           → 六库全部先 DROP 再 CREATE（保证从零开始）
 [4/6] 逐库导入 dump                        → 六库全部导入成功
 [5/6] 逐表比对行数（恢复库 vs rowCounts）
-      duoduo_fulfilment  12 表逐张一致（合计   520 行）
-      duoduo_marketing    8 表逐张一致（合计    20 行）
-      duoduo_product     11 表逐张一致（合计   278 行）
-      duoduo_social       8 表逐张一致（合计 2,599 行）
-      duoduo_trade       16 表逐张一致（合计 7,533 行）
-      duoduo_user        12 表逐张一致（合计 8,292 行）
-      比对了 58 张表 / 19,242 行；差异 0 处。
+      duoduo_fulfilment  12 表逐张一致（合计   582 行）
+      duoduo_marketing    3 表逐张一致（合计    24 行）
+      duoduo_product     11 表逐张一致（合计   298 行）
+      duoduo_social       4 表逐张一致（合计 2,925 行）
+      duoduo_trade       16 表逐张一致（合计 8,424 行）
+      duoduo_user        12 表逐张一致（合计 9,578 行）
+      比对了 58 张表 / 21,831 行；差异 0 处。
+[5b/6] 上传文件卷：恢复到容器内**临时目录**并逐文件核对 sha256
+      fulfilment-uploads  27 个文件逐文件 sha256 一致，清单指纹 757b80894195（恢复到 /data/uploads）
+      merchant-materials 102 个文件逐文件 sha256 一致，清单指纹 09730e5c623b（恢复到 /data/merchant-materials）
+      上传文件卷：2 个卷 / 129 个文件逐文件 sha256 一致。
 [6/6] 汇总与清理                           → 临时库已全部清理（回读 information_schema 自证）
+ 演练结论：全绿 —— 这份备份可以恢复，且库内容与备份那一刻逐表一致、上传文件逐文件一致。
 ```
 
-对应的一次备份（同一轮，`db-backup.ps1`）耗时 1 分 59 秒、产物合计 3.86 MB，抽验 7 张表三方比对 **0 失败**。六库表数分布：user 12 / product 11 / trade 16 / fulfilment 12 / social 8 / marketing 8 = **58**。
+对应的一次备份（同一轮，`db-backup.ps1`）**1 分 53 秒**、产物 **6 份 dump + 2 个卷 / 129 个文件 / 合计约 4.4 MB**，抽验 9 张表三方比对 **0 失败**。
+六库表数分布（**以实测为准**，会随建表增量变化）：user 12 / product 11 / trade 16 / fulfilment 12 / social 4 / marketing 3 = **58**。
 
 ### 3.5 真正出事时的恢复（人工，逐步照做）
 
@@ -235,7 +250,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
    docker exec -i duoduo-mysql sh -c "mysql -uroot -pduoduo_root --default-character-set=utf8mb4 <db> < /tmp/<db>.sql"
    ```
 5. **回读确认**：对每个库跑一次逐表 `COUNT(*)`，与 manifest 的 `rowCounts` 比。
-6. **恢复服务**：重新起三站点与网关，跑 `scripts\ops-status.ps1` 与 `scripts\check-all.ps1`。
+6. **恢复上传文件卷**（别把这一步漏了 —— 只恢复数据库会得到「订单在、图没了」）：
+   ```powershell
+   # 卷的真实名字带 compose 项目前缀，先按后缀反查（拼名字会得到一个空目录然后报成功）
+   docker volume ls --format '{{.Name}}' | Select-String 'fulfilment-uploads$'
+   docker volume ls --format '{{.Name}}' | Select-String 'merchant-materials$'
+   # 用一次性的 alpine 容器把文件灌回卷里（<卷名> 用上面查到的全名，<run目录> 是这份备份）
+   docker run --rm -v <卷名>:/dst -v "<run目录>\uploads\<卷名>:/src" alpine sh -c "cp -a /src/. /dst/"
+   # 灌完逐文件核 sha256 与 manifest.volumes[].listing 比（恢复演练 [5b/6] 就是干这个的）
+   ```
+7. **恢复服务**：重新起三站点与网关，跑 `scripts\ops-status.ps1` 与 `scripts\check-all.ps1`。
 
 > 备份/恢复的**离线兜底**（不含 Docker 的纯文件级搬运）见 `scripts/backup-offline.sh`。
 

@@ -19,6 +19,15 @@
         正确做法：**从备份产物里切出该表 → 恢复进临时库 → 与源表比对
         行数 + `CHECKSUM TABLE`**。一边是源库、一边是产物，两侧都必须一致。
 
+      · 铁律 22（续）—— **心跳表不能用 CHECKSUM 判**，否则"备份正确却天天报红"。
+        实测（2026-10-13）：`t_sched_leader` 的选主续租**约每 15 秒**自改一次，
+        而备份窗口有 30 秒上下 ⇒ 窗口内必然发生 ≥2 次改写 ⇒ 产物 / before / after
+        三者**注定**互不相同。所以声明一个**持续改写表**名单，名单内的表改判
+        **行数 + 主键集合**（主键列现查 information_schema），日志打 **[PASS~]** 点名，
+        绝不静默当成普通 PASS。名单解析出 0 张时判红（防名单静默失效）。
+        同族问题：append-only 表在窗口内被插入时，`before` 行数也不该拿去卡产物 ——
+        此时行数只按「源库 ↔ 产物」两来源判，并同样点名（[PASS*]）。
+
       · 铁律 3 —— 临时库现场建、跑完自毁；**建不起或删不掉都显式报红**并自证。
 
       · 铁律 26 —— 备份根目录是**待你拍板的占位默认值**，不是"已确定的方案"。
@@ -27,9 +36,17 @@
       · 铁律 11/8 —— 临时文件位置用 `[System.IO.Path]::GetTempPath()`，不吃
         `$env:TEMP`；本文件必须带 UTF-8 BOM，否则 PS 5.1 按 ANSI 解码、中文全乱码。
 
+      · 铁律 2（续）—— **用户上传的文件卷不是"附件"，是数据的一部分**。
+        六库备好、文件卷没备，恢复出来的系统是「订单在、图没了」；E12 资质材料更是
+        丢了不可补（商家要重新上传、平台要重新审）。所以 [4b/7] 一并备 `fulfilment-uploads`
+        与 `merchant-materials` 两个卷，并同样要求**两个来源**：容器内算一遍 sha256、
+        复制到宿主机后再算一遍，逐文件一致才算数。卷的真实名字带 compose 项目前缀 ⇒
+        **按后缀反查**而不是拼字符串（拼错的表现是"复制出一个空目录然后宣布成功"）。
+
     产物布局（每次备份一个 run 目录）：
       <BackupRoot>\runs\<yyyy-MM-dd_HHmmss>\          ← 秒级命名：同一分钟内连跑两次不会互相覆盖
           duoduo_user.sql … duoduo_marketing.sql     六库的 dump
+          uploads\<卷名>\…                           两个上传卷的文件（逐文件 sha256 记进 manifest）
           manifest.json                              本次备份的指纹与抽验结果
           backup.log                                 全过程日志（stdout 同步落这里）
           _ALERT.txt                                 仅在失败时出现
@@ -107,11 +124,63 @@ $script:beforeSum = @{}
 $VerifyDb = 'duoduo_backup_verify'
 $RepoDbNames = @('duoduo_user','duoduo_product','duoduo_trade','duoduo_fulfilment','duoduo_social','duoduo_marketing')
 
+# --------------------------------------------------------------------------
+# ★★ 声明：**持续被改写的表**（选主 / 心跳 / 计数器类）
+#
+#   为什么必须有这份名单：抽验的主判据是「产物的 CHECKSUM 必须 == before 或 after」。
+#   这条判据对**静态表**成立，对**心跳表**不成立 ——
+#   实测（2026-10-13）：`t_sched_leader` 的选主续租**约每 15 秒**改一次
+#   expire_at/updated_at（6 秒探针里就观察到一次跳变），而备份窗口从"取 before"
+#   到"取 after"有 30 秒上下 ⇒ 窗口内**必然**发生 ≥2 次改写 ⇒
+#   产物 / before / after 三者**注定**互不相同 ⇒ **备份完全正确却每次都报红**。
+#   这是最坏的一种报错：狼来了。报到最后没人看，真正的坏备份反而被淹没。
+#
+#   做法：名单里的表改用**在心跳下依然稳定的判据** ——
+#        行数 + **主键集合**（主键列从 information_schema 现查，绝不写死列名）。
+#   并且**必须点名**（日志打 [PASS~] 并写明"校验和对它不成立"），不许静默降级 ——
+#   白名单本质上是一次「判据放宽」，放宽必须看得见（铁律：兜底/降级不许静默）。
+#
+#   ★ 判据方向：**宁假红勿假绿**。
+#     漏登记一张 → 多报一次红（看得见、能改）；名单里的表若一张都不存在
+#     → 由下面的 declared-vs-actual 守卫当场判红，防止名单静默失效。
+#
+#   这里按**表名**声明、运行时解析成 (库, 表) 对，因为同一个逻辑表按域各存一份
+#   （`t_sched_leader` 目前分布在 5 个库里各一张）。
+# --------------------------------------------------------------------------
+$ChurningTableNames = @('t_sched_leader')
+$script:churnSet = @{}     # "db.table" -> $true
+
 $script:logFile = $null
 $script:runDir = $null
 $script:results = @()
 $script:samples = $null
 $script:anyFail = $false
+
+# --------------------------------------------------------------------------
+# ★★ 顶层 trap：**未捕获的异常也必须喊人**。
+#
+#   为什么必须加：本脚本的产物流水都是"跑到 [7/7] 才写"（manifest / 汇总 /
+#   `_ALERT.txt`）。而 `Invoke-Sql` 在 mysql 失败时是 `throw` —— 一旦某处没包
+#   try/catch，异常会**直接掀掉整个脚本**：日志停在中途，manifest、汇总、
+#   `_ALERT.txt` **一份都不产出**，退出码 1 也传不到调用方（可能被当成"跑起来了"）。
+#   实测踩过一次：一条 SQL 的引号写错，整套备份只留下半截日志。
+#   ⇒ 「备份失败」这件事**必须留下产物**，否则夜间无人值守跑失败等于没有备份。
+# --------------------------------------------------------------------------
+trap {
+    $msg = $_.Exception.Message
+    $pos = '' + $_.InvocationInfo.PositionMessage
+    Write-Host ''
+    Write-Host ("  [!!] 脚本被未捕获的异常中断：{0}" -f $msg) -ForegroundColor Red
+    Write-Host ("       {0}" -f ($pos -replace "`r?`n", ' ')) -ForegroundColor Red
+    if ($script:logFile) {
+        [System.IO.File]::AppendAllText($script:logFile,
+            ("[{0}]   [FAIL] 未捕获异常中断：{1}`r`n[{0}]          {2}`r`n" -f (Get-Date -Format 'HH:mm:ss'), $msg, ($pos -replace "`r?`n", ' ')),
+            (New-Object System.Text.UTF8Encoding $false))
+    }
+    $script:anyFail = $true
+    try { Send-Alert ("脚本被未捕获的异常中断：" + $msg) } catch { }
+    exit 1
+}
 
 function Log {
     param([string]$Msg, [string]$Color = 'Gray')
@@ -158,6 +227,26 @@ function Invoke-SqlScalar {
     $r = Invoke-Sql -Sql $Sql
     if ($r.Count -eq 0) { return '' }
     return [string]$r[0]
+}
+
+function Get-TextFingerprint {
+    # 取一段文本的 SHA256 前 12 位十六进制。
+    # 用途：给"主键集合"这类判据在日志里留一个**可核对的口子** ——
+    # 只打印行数会被"行数对了、键不对"骗过去；打印指纹则能事后回查。
+    #
+    # ★★ `[AllowEmptyString()]` 不能省：空表（0 行）时待指纹化的文本就是空串，
+    #   而 Mandatory 的 `[string]` 参数**默认拒绝空串** —— 少了这个特性，
+    #   一遇到空表就抛「无法将参数绑定到参数 Text，因为该参数为空字符串」，
+    #   而且是在判据算完、日志还没打的那一刻炸 ⇒ 整轮备份没了结论。
+    #   实测踩中（反向验证时把持续改写表清空，正好造出空串这个边界）。
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))
+        return ([BitConverter]::ToString($bytes) -replace '-', '').ToLower().Substring(0, 12)
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -336,6 +425,28 @@ foreach ($db in $Databases) {
 Log ("  合计 {0} 张表（声明口径）" -f $totalTables)
 Record '源库快照' ($totalTables -gt 0) "$totalTables 张表" 
 
+# ---------- 持续改写表（心跳/选主）名单：解析 + 自证 ----------
+#   名单按**表名**声明 ⇒ 在这里解析成"哪个库真有这张表"的 (库, 表) 对。
+#   解析出 0 张就判红：表改名/换库之后，名单会**静默失效**，
+#   后果是那几张表又退回"注定报红"的 CHECKSUM 判据 —— 必须有人当场喊出来。
+$churnPairs = @()
+foreach ($db in $Databases) {
+    foreach ($t in @($declared[$db])) {
+        if ($ChurningTableNames -contains $t) {
+            $churnPairs += , @{ db = $db; table = $t }
+            $script:churnSet["$db.$t"] = $true
+        }
+    }
+}
+if ($churnPairs.Count -eq 0) {
+    Log ("  [!!] 声明为『持续改写表』的（{0}）在任何库里都没找到 —— 名单已失效，拒绝让它静默退化" -f ($ChurningTableNames -join ', ')) 'Red'
+    Record '持续改写表名单自证' $false ("0 张（声明：$($ChurningTableNames -join ', ')）")
+} else {
+    Log ("  持续改写表 {0} 张：{1}" -f $churnPairs.Count, (($churnPairs | ForEach-Object { $_.db + '.' + $_.table }) -join ', ')) 'Yellow'
+    Log '    判据＝行数 + 主键集合（不用 CHECKSUM —— 见文件头「持续被改写的表」段）' 'Yellow'
+    Record '持续改写表名单自证' $true ("$($churnPairs.Count) 张（声明：$($ChurningTableNames -join ', ')）")
+}
+
 # ---------- [2/7] 定抽样 + 取源侧 before 校验和 ----------
 Write-Host ''
 Write-Host '[2/7] 定抽样（随机 K 张 + 每个库最后一张边界表）+ 取源侧 before 校验和'
@@ -495,6 +606,254 @@ foreach ($db in $Databases) {
 }
 Record '产物自证（declared-vs-present）' ($artifactBad -eq 0) "六库产物完整"
 
+# ---------- [4b/7] 用户上传文件卷（图片 / 资质材料）----------
+Write-Host ''
+Write-Host '[4b/7] 上传文件卷：逐文件 sha256 清单 + 把字节复制进 run 目录'
+Log '  为什么必须与六库一起备：这两份卷里放的是**用户产生、不可重建**的数据'
+Log '  （商品/评价图片、E12 入驻资质材料）。只备数据库等于「订单在、图没了」；'
+Log '  资质材料更是丢了不可补（商家要重新上传、平台要重新审）。'
+Log '  ★ 判据同样要求**两个来源**：容器内算一遍 sha256，复制到宿主机后再算一遍，逐文件必须一致。'
+
+# 卷的**真实名字**带 compose 项目前缀（<项目>_<卷名>），所以按后缀反查而不是拼字符串 ——
+# 拼错的表现不是报错，而是「复制出一个空目录然后宣布成功」。
+$UploadVolumes = @(
+    @{ name = 'fulfilment-uploads'; container = 'duoduo-app-fulfilment'; inner = '/data/uploads'; label = '商品 / 评价图片上传目录' }
+    @{ name = 'merchant-materials'; container = 'duoduo-app-user'; inner = '/data/merchant-materials'; label = 'E12 入驻资质材料（私有卷，读取走鉴权端点）' }
+)
+$volManifest = @()
+$volFail = 0
+$volFiles = 0
+$volBytes = 0
+foreach ($v in $UploadVolumes) {
+    Log ("  — {0}（{1}）" -f $v.name, $v.label)
+
+    # ① 反查真实卷名。解析到 0 个 ⇒ 显式失败（不许当成"空卷"放过）
+    $realVol = (& docker volume ls --format '{{.Name}}' 2>$null |
+        Where-Object { $_ -match ('(^|_)' + [regex]::Escape($v.name) + '$') } | Select-Object -First 1)
+    if (-not $realVol) {
+        Log ("    [FAIL] 反查不到卷「{0}」—— 卷不存在或还没建" -f $v.name) 'Red'
+        $volFail++
+        continue
+    }
+
+    # ② 容器在跑、且卷真的挂在预期路径（挂到别处 = 备份了别的东西）
+    $running = ("$(& docker inspect --format '{{.State.Running}}' $v.container 2>$null)").Trim()
+    if ($running -ne 'true') {
+        Log ("    [FAIL] 容器 {0} 没在跑，拿不到卷内容" -f $v.container) 'Red'
+        $volFail++
+        continue
+    }
+    $dirOk = ("$(& docker exec $v.container sh -c ('test -d ' + $v.inner + ' && echo YES || echo NO') 2>$null)").Trim()
+    if ($dirOk -ne 'YES') {
+        Log ("    [FAIL] 容器内 {0} 不存在 —— 卷没挂在预期位置" -f $v.inner) 'Red'
+        $volFail++
+        continue
+    }
+
+    # ③ 容器内逐文件 sha256（xargs -r：0 个文件时不要退化成"从 stdin 读"而挂住）
+    $rawInner = @(& docker exec $v.container sh -c `
+        ('cd ' + $v.inner + ' && find . -type f -print0 2>/dev/null | xargs -0 -r sha256sum 2>/dev/null | LC_ALL=C sort -k2') 2>$null)
+    $innerList = @()
+    foreach ($l in $rawInner) {
+        if (-not $l) { continue }
+        $t = $l -split '\s+', 2
+        if ($t.Count -eq 2) { $innerList += @{ h = $t[0].Trim(); p = $t[1].Trim() } }
+    }
+
+    # ④ 把字节复制出来（docker cp 不经过 PowerShell 管道，字节不会被重新编码）
+    $destRoot = Join-Path $script:runDir 'uploads'
+    New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
+    $dest = Join-Path $destRoot $v.name
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    & docker cp ($v.container + ':' + $v.inner + '/.') $dest 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Log ("    [FAIL] docker cp 失败（exit={0}）" -f $LASTEXITCODE) 'Red'
+        $volFail++
+        continue
+    }
+
+    # ⑤ 宿主机侧重新算一遍 → 与容器内逐文件比对（这才是"复制没截断"的证据）
+    $hostList = @()
+    $bytesHere = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $dest -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        $rel = './' + ($f.FullName.Substring($dest.Length).TrimStart('\', '/') -replace '\\', '/')
+        $hostList += @{ h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower(); p = $rel }
+        $bytesHere += $f.Length
+    }
+    $a = @($innerList | Sort-Object { $_.p })
+    $b = @($hostList | Sort-Object { $_.p })
+    $bad = 0
+    if ($a.Count -ne $b.Count) { $bad++ }
+    for ($i = 0; $i -lt [Math]::Min($a.Count, $b.Count); $i++) {
+        if ($a[$i].p -ne $b[$i].p -or $a[$i].h -ne $b[$i].h) { $bad++ }
+    }
+    if ($bad -gt 0) {
+        Log ("    [FAIL] 复制出来的字节与容器内不一致（容器 {0} 个文件 / 宿主机 {1} 个文件，差异 {2} 处）" -f $a.Count, $b.Count, $bad) 'Red'
+        $volFail++
+        continue
+    }
+
+    # ⑥ 清单指纹：把逐文件 "hash  相对路径" 排序拼起来再取 SHA256
+    $listing = (($b | ForEach-Object { $_.h + '  ' + $_.p }) -join "`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $listingHash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($listing))) -replace '-', '').ToLower()
+    $sha.Dispose()
+
+    # ★ 逐文件清单落进 manifest：恢复演练靠它回答「放进来的每一个文件、与备份那一刻是不是同一份字节」。
+    #   体积说明：本项目的开发卷只有几百个文件，直接存清单最直观；若将来文件数上万，
+    #   应改为只存 listingSha256 + 分片清单（判据不变）。
+    $volManifest += @{
+        name = $v.name; volume = [string]$realVol; container = $v.container; inner = $v.inner; label = $v.label
+        files = $b.Count; bytes = $bytesHere; listingSha256 = $listingHash
+        copiedTo = ('uploads/' + $v.name)
+        listing = @($b | ForEach-Object { @{ p = $_.p; h = $_.h } })
+    }
+    $volFiles += $b.Count
+    $volBytes += $bytesHere
+
+    if ($b.Count -eq 0) {
+        Log ("    [注意] 该卷当前是**空目录**（0 个文件）—— 不算失败，但要说出来：空卷的『备份成功』没有信息量（清单指纹 {0}）" -f $listingHash.Substring(0, 12)) 'Yellow'
+    } else {
+        Log ("    [OK] {0} 个文件 / {1:N2} MB，容器内与宿主机逐文件 sha256 一致（清单指纹 {2}）" -f $b.Count, ($bytesHere / 1MB), $listingHash.Substring(0, 12)) 'Green'
+    }
+}
+Record '上传文件卷备份' ($volFail -eq 0) ("{0} 个卷 / {1} 个文件 / {2:N2} MB" -f $volManifest.Count, $volFiles, ($volBytes / 1MB))
+
+# ---------------------------------------------------------------------------
+# 单张抽样表的比对（**恢复一张就立刻比一张**）
+#
+# ★★ 为什么必须「立刻比」而不能「全部恢复完再一起比」：
+#   所有抽样表都恢复进**同一个** `duoduo_backup_verify` 库，而 dump 的每一段都以
+#   `DROP TABLE IF EXISTS ...` 开头 ⇒ **同名的表互相覆盖**，库里只剩最后恢复的那一张。
+#   本项目有 4 个**跨库同名**的表：`t_sched_leader`（5 个库各一张）、
+#   `t_audit_sample` / `t_audit_sample_rate` / `t_proxy_work_order`（各 2 个库）。
+#   同一轮只要抽到其中两个，先恢复的那张就变成「拿别人的数据跟自己比」——
+#   实测**假红**（dump 里 product 的 leader 有 2 行，判据却报产物只有 1 行 ——
+#   读到的其实是随后恢复的 marketing 那一张）与**假绿**（两张内容恰好相同、
+#   校验和一样 ⇒「比过了、其实比的是另一张」）都真实发生过。
+#   改成"恢复一张立刻比一张"之后，库里任一时刻只可能有刚恢复的那一张，冲突消失。
+# ---------------------------------------------------------------------------
+function Invoke-SampleCompare {
+    param([Parameter(Mandatory)][hashtable]$S)
+    $s = $S
+    $beforeSum = $script:beforeSum
+    $rowsBefore = $before      # "库.表" -> dump 前行数（改名，避免与函数内行数变量混淆）
+    # ★ 单张表的判据代码炸了，不该让整轮备份"没有结论"。
+    #   按"这张表没验成"记为**失败并点名**（响亮，不是静默降级），
+    #   而不是把异常往上抛、掀掉整个脚本。
+    #   实测踩中：空字符串绑到 Mandatory 的 `[string]` 参数上会抛异常。
+    try {
+    $srcFrag = '`{0}`.`{1}`' -f $s.db, $s.table
+    $dstFrag = '`{0}`.`{1}`' -f $VerifyDb, $s.table
+
+    $cs = Invoke-Sql -Sql ('CHECKSUM TABLE ' + $srcFrag + ', ' + $dstFrag)
+    $afterSum = ''; $dstSum = ''
+    foreach ($l in $cs) {
+        $kv = $l -split "`t"
+        if ($kv.Count -ge 2) {
+            if ($kv[0] -eq ($s.db + '.' + $s.table)) { $afterSum = $kv[1] }
+            elseif ($kv[0] -eq ($VerifyDb + '.' + $s.table)) { $dstSum = $kv[1] }
+        }
+    }
+    $cntSql = 'SELECT (SELECT COUNT(*) FROM {0}) AS a, (SELECT COUNT(*) FROM {1}) AS b' -f $srcFrag, $dstFrag
+    $cnt = Invoke-Sql -Sql $cntSql
+    $srcCnt = ''; $dstCnt = ''
+    if ($cnt.Count -gt 0) {
+        $kv = ([string]$cnt[0]) -split "`t"
+        if ($kv.Count -ge 2) { $srcCnt = $kv[0]; $dstCnt = $kv[1] }
+    }
+
+    $bSum = ''
+    if ($beforeSum.ContainsKey($s.db + '.' + $s.table)) { $bSum = $beforeSum[$s.db + '.' + $s.table] }
+    $bRows = -1
+    if ($rowsBefore.ContainsKey($s.db + '.' + $s.table)) { $bRows = $rowsBefore[$s.db + '.' + $s.table] }
+
+    # 行数：主判据是**源库 ↔ 产物**（两个不同来源）。
+    #   before 行数只是第三参照 —— 它只在"这张表在备份窗口内没被写过"时
+    #   才该吻合。若 before 已经不等于**此刻**的源库，说明窗口内发生过
+    #   插入/删除（典型的 append-only 审计表），此时拿 before 去卡产物，
+    #   会让"备份期间刚好来了一条"变成假红 —— 与心跳表同一族的狼来了。
+    $windowChanged = ($bRows -ge 0) -and ($srcCnt -ne '') -and ($bRows -ne [int64]$srcCnt)
+    $rowsOk = ($srcCnt -ne '') -and ($srcCnt -eq $dstCnt) -and `
+        (($bRows -lt 0) -or $windowChanged -or ($bRows -eq [int64]$dstCnt))
+
+    if ($script:churnSet.ContainsKey($s.db + '.' + $s.table)) {
+        # ================= 持续改写表：稳定投影判据 =================
+        #   CHECKSUM 对它**不成立**（实测每 ~15 秒自改一次，见文件头）。
+        #   改判：行数 + **主键集合**（主键列现查 information_schema，
+        #   不写死列名；换主键也不用改这里）。
+        $pkCols = ''
+        # ★★ 外层用**单引号**字符串：里面的 `''` 才是"一个单引号"。
+        #   这里曾经写成双引号 + `''{0}''` —— 双引号里 `''` 不是转义，
+        #   结果 SQL 里出现**两个**单引号 ⇒ 语法错 ⇒ Invoke-Sql 抛异常
+        #   ⇒ 整个备份脚本当场中止（连汇总和告警都没了）。实测踩过。
+        try {
+            $pkCols = Invoke-SqlScalar -Sql ('SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR '','') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=''{0}'' AND TABLE_NAME=''{1}'' AND CONSTRAINT_NAME=''PRIMARY''' -f $s.db, $s.table)
+        } catch {
+            Log ("  [FAIL] {0}.{1}：查主键的 SQL 失败 —— {2}" -f $s.db, $s.table, $_.Exception.Message) 'Red'
+        }
+        if (-not $pkCols) {
+            Log ("  [FAIL] {0}.{1}：声明为持续改写表，但查不到主键 —— 稳定投影做不了，拒绝静默退回 CHECKSUM" -f $s.db, $s.table) 'Red'
+            $s.ok = $false
+            $s.note = 'churning 表查不到主键'
+            return
+        }
+        $pkExpr = ((@($pkCols -split ',') | ForEach-Object { '`' + $_.Trim() + '`' }) -join ', ')
+        # 拼串而不用 -f：两次套用格式串容易把 `{0}` 留在半个字符串里，
+        # 那种 bug 的症状是 SQL 报语法错、看着像"库有问题"。
+        $selFrag = 'SELECT CONCAT_WS(''#'', ' + $pkExpr + ') FROM '
+        try {
+            $srcKeys = Invoke-Sql -Sql ($selFrag + '`' + $s.db + '`.`' + $s.table + '` ORDER BY ' + $pkExpr)
+            $dstKeys = Invoke-Sql -Sql ($selFrag + '`' + $VerifyDb + '`.`' + $s.table + '` ORDER BY ' + $pkExpr)
+        } catch {
+            Log ("  [FAIL] {0}.{1}：稳定投影 SQL 失败 —— {2}" -f $s.db, $s.table, $_.Exception.Message) 'Red'
+            $s.ok = $false
+            $s.note = 'churning 投影 SQL 失败'
+            return
+        }
+        $sk = (@($srcKeys) | Where-Object { $_ -ne '' }) -join "`n"
+        $dk = (@($dstKeys) | Where-Object { $_ -ne '' }) -join "`n"
+        # 空表（0 行）允许两边都为 ''；非空则要求逐行完全一致。
+        $keyOk = ($sk -eq $dk) -and (($sk -ne '') -or ($srcCnt -eq '0'))
+        $ok = $rowsOk -and $keyOk
+        $kfp = Get-TextFingerprint -Text $dk
+        if ($ok) {
+            Log ("  [PASS~] {0}.{1}：**持续改写表**（校验和对它不成立）；改判 行数 源{2}=产物{3} + 主键集合一致（主键 {4} / {5} 行 / 指纹 {6}）" -f `
+                $s.db, $s.table, $srcCnt, $dstCnt, $pkExpr, (@($dstKeys) | Where-Object { $_ -ne '' }).Count, $kfp) 'Yellow'
+        } else {
+            Log ("  [FAIL] {0}.{1}：持续改写表，**稳定投影也不一致** —— 行数 源{2}/产物{3}/before{4}；主键集合 源指纹 {5} / 产物指纹 {6}（主键 {7}）" -f `
+                $s.db, $s.table, $srcCnt, $dstCnt, $bRows, (Get-TextFingerprint -Text $sk), $kfp, $pkExpr) 'Red'
+        }
+        $s.ok = $ok
+        $s.note = "churning(rows+pkset) rows=$bRows/$srcCnt/$dstCnt pk=$pkExpr srcKeyfp=$(Get-TextFingerprint -Text $sk) dstKeyfp=$kfp"
+        return
+    }
+
+    $sumOk = ($dstSum -ne '') -and (($dstSum -eq $bSum) -or ($dstSum -eq $afterSum))
+    $ok = $rowsOk -and $sumOk
+
+    if ($ok) {
+        if ($dstSum -eq $bSum) {
+            Log ("  [PASS] {0}.{1}：行数源{2}=产物{3}（before {4}），校验和 {5} 与 before 一致" -f $s.db, $s.table, $srcCnt, $dstCnt, $bRows, $dstSum) 'Green'
+        } else {
+            # 源表在备份窗口内被写过：产物与 after 一致即可，但**必须点名**，
+            # 不能悄悄放过 —— 否则"到底比的是哪个快照"就没人知道了。
+            Log ("  [PASS*] {0}.{1}：源表在备份窗口内被改写（before 和={2} / after 和={3}，before 行={4}/现在={5}）；产物与 after 一致，行数 {6}" -f `
+                $s.db, $s.table, $bSum, $afterSum, $bRows, $srcCnt, $dstCnt) 'Yellow'
+        }
+    } else {
+        Log ("  [FAIL] {0}.{1}：产物(行{2}/和{3}) 与源库两侧都不一致 —— before(行{4}/和{5}) / after(行{6}/和{7})" -f `
+            $s.db, $s.table, $dstCnt, $dstSum, $bRows, $bSum, $srcCnt, $afterSum) 'Red'
+    }
+    $s.ok = $ok
+    $s.note = "before=$bSum after=$afterSum product=$dstSum rows=$bRows/$srcCnt/$dstCnt"
+    } catch {
+        Log ("  [FAIL] {0}.{1}：判据代码抛异常 —— {2}" -f $s.db, $s.table, $_.Exception.Message) 'Red'
+        $s.ok = $false
+        $s.note = '判据抛异常：' + $_.Exception.Message
+    }
+}
+
 # ---------- [5/7] 抽验：从产物恢复 → 三方比对 ----------
 Write-Host ''
 Write-Host '[5/7] 抽验：从**产物**切出并恢复进临时库 → 与源表比对行数 + CHECKSUM（before / after 三方）'
@@ -545,57 +904,13 @@ if ($picked.Count -eq 0) {
                     Log ("  [FAIL] {0}.{1}：恢复到临时库失败（exit={2}）{3}" -f $s.db, $s.table, $rrc, $tail) 'Red'
                     $samples += @{ db = $s.db; table = $s.table; ok = $false; note = "恢复失败 exit=$rrc" }
                 } else {
-                    $samples += @{ db = $s.db; table = $s.table; ok = $null; note = '待比对' }
+                    # ★★ 恢复一张就**立刻比对一张**（原因见 Invoke-SampleCompare 的注释）
+                    $rec = @{ db = $s.db; table = $s.table; ok = $null; note = '待比对' }
+                    Invoke-SampleCompare -S $rec
+                    $samples += $rec
                 }
             }
 
-            # ---- 三方比对：产物 vs before（dump 前）/ vs after（此刻的源库）----
-            #   行数、校验和都取自**两个不同来源**（源库 / 临时库里的产物副本）。
-            foreach ($s in @($samples | Where-Object { $_.ok -eq $null })) {
-                $srcFrag = '`{0}`.`{1}`' -f $s.db, $s.table
-                $dstFrag = '`{0}`.`{1}`' -f $VerifyDb, $s.table
-
-                $cs = Invoke-Sql -Sql ('CHECKSUM TABLE ' + $srcFrag + ', ' + $dstFrag)
-                $afterSum = ''; $dstSum = ''
-                foreach ($l in $cs) {
-                    $kv = $l -split "`t"
-                    if ($kv.Count -ge 2) {
-                        if ($kv[0] -eq ($s.db + '.' + $s.table)) { $afterSum = $kv[1] }
-                        elseif ($kv[0] -eq ($VerifyDb + '.' + $s.table)) { $dstSum = $kv[1] }
-                    }
-                }
-                $cntSql = 'SELECT (SELECT COUNT(*) FROM {0}) AS a, (SELECT COUNT(*) FROM {1}) AS b' -f $srcFrag, $dstFrag
-                $cnt = Invoke-Sql -Sql $cntSql
-                $srcCnt = ''; $dstCnt = ''
-                if ($cnt.Count -gt 0) {
-                    $kv = ([string]$cnt[0]) -split "`t"
-                    if ($kv.Count -ge 2) { $srcCnt = $kv[0]; $dstCnt = $kv[1] }
-                }
-
-                $bSum = ''
-                if ($beforeSum.ContainsKey($s.db + '.' + $s.table)) { $bSum = $beforeSum[$s.db + '.' + $s.table] }
-                $bRows = -1
-                if ($before.ContainsKey($s.db + '.' + $s.table)) { $bRows = $before[$s.db + '.' + $s.table] }
-
-                $rowsOk = ($srcCnt -ne '') -and ($srcCnt -eq $dstCnt) -and ($bRows -lt 0 -or $bRows -eq [int64]$dstCnt)
-                $sumOk = ($dstSum -ne '') -and (($dstSum -eq $bSum) -or ($dstSum -eq $afterSum))
-                $ok = $rowsOk -and $sumOk
-
-                if ($ok) {
-                    if ($dstSum -eq $bSum) {
-                        Log ("  [PASS] {0}.{1}：行数源{2}=产物{3}（before {4}），校验和 {5} 与 before 一致" -f $s.db, $s.table, $srcCnt, $dstCnt, $bRows, $dstSum) 'Green'
-                    } else {
-                        # 源表在备份窗口内被写过：产物与 after 一致即可，但**必须点名**，
-                        # 不能悄悄放过 —— 否则"到底比的是哪个快照"就没人知道了。
-                        Log ("  [PASS*] {0}.{1}：源表在备份窗口内被改写（before={2} / after={3}）；产物与 after 一致，行数 {4}" -f $s.db, $s.table, $bSum, $afterSum, $dstCnt) 'Yellow'
-                    }
-                } else {
-                    Log ("  [FAIL] {0}.{1}：产物(行{2}/和{3}) 与源库两侧都不一致 —— before(行{4}/和{5}) / after(行{6}/和{7})" -f `
-                        $s.db, $s.table, $dstCnt, $dstSum, $bRows, $bSum, $srcCnt, $afterSum) 'Red'
-                }
-                $s.ok = $ok
-                $s.note = "before=$bSum after=$afterSum product=$dstSum rows=$bRows/$srcCnt/$dstCnt"
-            }
         } finally {
             # 现场建的要跑完自毁 —— 删不掉必须显式报红并自证（铁律 3）
             try {
@@ -674,6 +989,9 @@ $manifest = @{
     #   从产物切片恢复 + 与 before/after 做三方比对（那边有独立的时间点，判据成立）。
     dumps       = @()
     samples     = @()
+    # ★ 上传文件卷的备份清单（[4b/7] 产出）。恢复演练（ops-restore.ps1）会读它并逐文件核 sha256；
+    #   缺这一段 ⇒ 演练**拒绝出结论**（只备了库、没备文件，等于"订单在、图没了"而无人知道）。
+    volumes     = @()
     status      = 'PENDING'
 }
 foreach ($db in $Databases) {
@@ -692,9 +1010,10 @@ if ($script:samples) {
         $manifest.samples += @{ db = $s.db; table = $s.table; ok = $s.ok; note = $s.note }
     }
 }
+$manifest.volumes = $volManifest
 $manifest.status = $(if ($script:anyFail) { 'FAILED' } else { 'OK' })
 $manifestPath = Join-Path $script:runDir 'manifest.json'
-[System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $false))
+[System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
 
 $sw.Stop()
 Write-Host ''
@@ -722,7 +1041,7 @@ if ($script:anyFail) {
     exit 1
 }
 Write-Host ''
-Write-Host '结论：六库备份完整、抽验双源一致 ✅' -ForegroundColor Green
+Write-Host '结论：六库备份完整、抽验双源一致；上传文件卷逐文件 sha256 双源一致 ✅' -ForegroundColor Green
 Write-Host ("      恢复示例：docker exec -i duoduo-mysql mysql -uroot -p*** -e 'CREATE DATABASE duoduo_user'") -ForegroundColor DarkGray
 Write-Host ("                docker exec -i duoduo-mysql mysql -uroot -p*** -D duoduo_user < <run目录>\duoduo_user.sql") -ForegroundColor DarkGray
 exit 0

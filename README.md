@@ -744,16 +744,16 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
 > CI 子集（本地 / GitHub Actions 同一入口，**17 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1`。
 
-### 数据库备份（S4，2026-10-12 落地）
+### 数据库备份（S4，2026-10-12 落地；**2026-10-13 起含上传文件卷**）
 
 > 全项目**唯一**有「不可逆数据损失」风险的一项：此前所有验证与修复（含 E26 全量删号）
 > 都建立在"库坏了能从备份恢复"之上，而那个前提**只靠人工临时 dump 维持**。
 
 ```powershell
-# 跑一次：六库 mysqldump → 产物自证 → 从产物切表恢复进临时库做三方比对 → 滚动保留 → 失败告警
+# 跑一次：六库 mysqldump + 两个上传文件卷 → 产物自证 → 从产物切表恢复进临时库做三方比对 → 滚动保留 → 失败告警
 #   -BackupRoot 必须给一个真实存在的目录（脚本顶部 $DefaultBackupRoot 只是占位默认值，不是已定方案）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -BackupRoot 'E:\duoduo-backup'
-#   → runs\<yyyy-MM-dd_HHmmss>\：6 个 .sql + manifest.json + backup.log；退出码 0 = 全绿
+#   → runs\<yyyy-MM-dd_HHmmss>\：6 个 .sql + uploads\<卷名>\… + manifest.json + backup.log；退出码 0 = 全绿
 #   → 退出码 1 = 有失败项，落 _ALERT.txt；配 -AlertWebhook 可推飞书/钉钉
 # 注册成每天 03:00 的计划任务（排在 03:30 对账选主之前；注册后自动试跑一次并回读结果）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.ps1 -BackupRoot 'E:\duoduo-backup'
@@ -763,8 +763,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.p
 > （含 dump 的 preamble，否则最后一张表会带上 `SET TIME_ZONE=@OLD_TIME_ZONE` 而恢复报 `ERROR 1231`）→
 > 恢复进临时库 → 与源表比对**行数 + `CHECKSUM TABLE`**。抽样 = 随机 K 张 **+ 每个库的最后一张表**
 > （切片边界必须占位，不能靠运气）；校验和做**三方比对**（产物 vs dump 前 vs 恢复时），
-> 因为 `t_sched_leader` 这类心跳表每 2 分钟就被改写 —— 只跟"当下源库"比会导致备份正确却天天报红。
-> 实测：六库 **58 张表 / 3.85 MB / 1 分 40 秒**，抽验 9 张失败 0。
+> 因为 `t_sched_leader` 这类心跳表**实测约每 15 秒就自改一次** —— 只跟"当下源库"比会导致备份正确却天天报红。
+> ★ 光有"三方比对"还不够：`t_sched_leader` 的改写间隔比备份窗口短 ⇒ 三方**注定**互不相同。
+> 所以维护一份**持续改写表**名单（`$ChurningTableNames`），名单内的表改判 **行数 + 主键集合**并于日志打
+> `[PASS~]` 点名（名单解析出 0 张即判红，防名单静默失效）；append-only 表在窗口内被插入时，
+> 行数只按「源库↔产物」两来源判并打 `[PASS*]`。**原则：宁假红勿假绿。**
+> **文件卷**：`fulfilment-uploads`（商品/评价图片）+ `merchant-materials`（E12 资质材料，丢了不可补）
+> 一并备份，判据同形 —— **容器内 sha256 vs 宿主机 sha256 逐文件一致 + 清单指纹**；
+> 卷名带 compose 项目前缀 ⇒ **按后缀反查**而不是拼字符串；恢复演练只把字节灌回容器内**临时目录**，绝不写回原卷。
+> 实测（2026-10-13）：六库 **58 张表 / 6 份 dump + 2 个卷 129 个文件 / 1 分 53 秒**，抽验 9 张失败 0。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**252 个端点**与 `docs/agent/04` 逐条核对）；
@@ -848,11 +855,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dependency
 > ③ 供应链卫生（非白名单 registry / `postinstall` 钩子 / `http://` 明文仓库）。
 > 两个守卫都对每条断言做过**反向验证**（故意改坏必报红、还原必回绿），各 **8/8 全绿**。
 
-> ★ **恢复演练的两条成立判据**（刻意**不比整表 `CHECKSUM TABLE`**）：① 产物文件 **SHA256** 与 manifest 一致；
-> ② **逐表行数**与 manifest 的 `rowCounts` 快照一致。跨时刻比校验和不成立 —— 拿"恢复库 vs 产物"比是**恒等式**；
-> 拿"恢复库 vs dump 前源表"比时心跳表 `t_sched_leader`（每 2 分钟自改）**必然不等**，会让备份完全正确却每次演练都假红
+> ★ **恢复演练的判据**（刻意**不比整表 `CHECKSUM TABLE`**）：① 产物文件 **SHA256** 与 manifest 一致；
+> ② **逐表行数**与 manifest 的 `rowCounts` 快照一致；③ `manifest.volumes` 的每个上传卷**逐文件 sha256 + 清单指纹**一致。
+> 跨时刻比校验和不成立 —— 拿"恢复库 vs 产物"比是**恒等式**；
+> 拿"恢复库 vs dump 前源表"比时心跳表 `t_sched_leader`（**实测约每 15 秒自改**）**必然不等**，会让备份完全正确却每次演练都假红
 > （实测踩中 2 处）。"行数相同但内容被改"由 `db-backup.ps1` 的抽验负责（那里有独立时间点，做三方比对）。
-> 演练还会**拒绝出结论**而不是降级报成功：manifest 缺 `rowCounts` / `status != OK` / **比对了 0 张表** ⇒ 判失败。
+> 演练还会**拒绝出结论**而不是降级报成功：manifest 缺 `rowCounts` / 缺 `volumes` / `status != OK` /
+> **比对了 0 张表** / **一个上传卷都没验成** ⇒ 判失败。
 
 ### e2e 截图输出契约（S8，2026-10-12 落地）
 
@@ -1967,6 +1976,67 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-13（S4 延伸：上传文件卷纳入备份与恢复演练 → **顺带修掉 3 个判据层缺陷 + 反查又抓到 1 个**）
+
+> 编号说明：本轮**不是** 附录 A 的 **S9**（S9 = 图片改对象存储，仍是长期项、未做）；
+> 这是 **S4 数据库自动备份**的延伸 —— 把「用户上传的文件」也纳入同一条备份/恢复链。
+
+**一、备份范围从「六库」扩到「六库 + 两个上传文件卷」**
+`fulfilment-uploads`（商品/评价图片）与 `merchant-materials`（E12 入驻资质材料，私有卷）都是
+**用户产生、不可重建**的数据。只备库 ⇒ 恢复出来是「订单在、图没了」；资质材料更是丢了不可补。
+现在：`db-backup.ps1 [4b/7]` 逐文件 `sha256sum` 清单 + 复制字节进 run 目录 + `manifest.volumes` 落库
+（判据 = **容器内 sha256 vs 宿主机 sha256 逐文件一致**，外加**清单指纹**）；
+`ops-restore.ps1 [5b/6]` 把副本回灌到容器内**临时目录**并逐文件核对后删掉、**回读自证**。
+★ 卷的真实名带 compose 项目前缀 ⇒ **按后缀反查**而不是拼名字（拼错表现为「复制出一个空目录然后宣布成功」）；
+★ 演练**不写回原卷**；★ 空卷不算失败但**必须说出来**；★ manifest 缺 `volumes` 段 / 一个卷都没验成 ⇒ **判红**。
+
+**★ 二、顺带修掉 3 个判据层缺陷（都是"实测才现形"的那一类）**
+1. **心跳表用 `CHECKSUM` 判注定报红**：实测 `t_sched_leader` 的选主续租**约每 15 秒**自改一次
+   （6 秒探针里就观察到跳变），而备份窗口有 30 秒 ⇒ 产物 / before / after **三者注定互不相同**
+   ⇒ 备份正确却每次都红（"狼来了"）。改为维护**持续改写表**名单，名单内改判 **行数 + 主键集合**
+   （主键**现查** `information_schema`），日志打 `[PASS~]` 点名；名单解析出 0 张 ⇒ 判红。
+   同族：append-only 表在窗口内被插入时，`before` 行数**不**卡产物（改打 `[PASS*]`）。**宁假红勿假绿。**
+2. **`rm -rf` 静默失败**：`docker cp` 落进容器的文件属主是 **root**，而 `docker exec` 默认以业务用户跑
+   ⇒ 删不掉，且 `rm` 只在 stderr 说话、stderr 被 `Out-Null` 丢掉 ⇒「删失败」与「删成功」无从分辨。
+   实测踩中：演练每轮都在容器 `/tmp` 留一份 root 属主的副本，**是回读自证那句 `ls -d` 把它揪出来的**。
+   修法：该段统一加 `-u 0`。
+3. **空串绑到 `[Parameter(Mandatory)][string]` 会抛异常**：反向验证把持续改写表清空后，指纹函数收到
+   空串直接抛「无法将参数绑定到参数 Text」，且恰好炸在"判据算完、日志还没打"那一刻 ⇒ 整轮备份没了结论。
+   修法 `[AllowEmptyString()]`；并补 **顶层 `trap`**（未捕获异常也要落告警 + `_ALERT.txt` 再 exit 1 ——
+   备份失败**必须留下产物**）+ **单条样本判据 try/catch**（一张表炸了不该掀掉整轮）。
+
+**★ 四、反查时又抓到 1 个（既有缺陷，不是本轮引入）：抽验的「同名表」在同一个临时库里互相覆盖**
+抽验把所有抽样表都恢复进**同一个** `duoduo_backup_verify` 库，而每段 dump 都以 `DROP TABLE IF EXISTS` 开头
+⇒ **跨库同名的表互相覆盖**，库里只剩最后恢复的那一张。本项目有 4 个跨库同名的表：
+`t_sched_leader`（5 个库各一张）、`t_audit_sample` / `t_audit_sample_rate` / `t_proxy_work_order`（各 2 个库）。
+于是同一轮只要抽到其中两个，先恢复的那张就变成「拿别人的数据跟自己比」：
+- **假红**（实测）：抽到 `duoduo_product.t_sched_leader`（dump 里 2 行）与 `duoduo_marketing.t_sched_leader`
+  （1 行），后者恢复在后 ⇒ 判 product 时读到的其实是 marketing 那张，报
+  `行数 源2/产物1；主键集合 源指纹 c93c5710cddb / 产物指纹 92dca19ad1fb` —— 备份完全正确却报红。
+- **假绿**（同一机制的另一面）：另一轮同时抽到 `duoduo_product.t_audit_sample_rate` 与
+  `duoduo_user.t_audit_sample_rate`，两张表内容**恰好相同**（各 1 行 / 校验和都是 `2851413293`）
+  ⇒ 即使读错了表也照样 PASS。这种「结论恰好对」比假红更危险 —— 没人会去查它。
+修法：**改成「恢复一张立刻比一张」**（抽验主逻辑抽成 `Invoke-SampleCompare`，恢复成功即调用），
+库里任一时刻只可能有刚恢复的那一张，冲突自然消失。
+
+**五、给这些判据装上"防悄悄删掉"的静态守卫**
+`scripts/lib/check-ops-doc.ps1` 新增 `[3/3]`：逐条断言 `db-backup` / `ops-restore` 里承诺过的
+**11 条判据**都还在（trap / 名单非空 / 主键现查 / 名单自证 / 允许空串 / 样本 try-catch /
+manifest 写 volumes / 缺 volumes 段判红 / 一个卷都没验成判红 / `-u 0` / **抽验「恢复一张立刻比一张」**），
+**一条都没扫到 ⇒ 判违规**。
+少一半判据的症状正好是「看起来还在跑、结论全绿」。新增 `-BackupScript` / `-RestoreScript` **专供反向验证**。
+
+**验证**：备份 `[4b/7]` **2 个卷 / 129 个文件 / 2.12 MB** 双源 sha256 一致、抽验 9 张失败 0、**exit 0**；
+恢复演练 产物哈希 6/6、**58 张表 / 21,831 行 / 差异 0**、上传卷 2 个 / 129 文件一致、容器临时目录已清、**exit 0**；
+**反向验证三处**：清空持续改写表 → 4 条 `[FAIL] ... 稳定投影也不一致`（点名到表 + 期望/实得指纹）、
+故意 `throw` → trap 落 `_ALERT.txt` + exit 1、把 5 条判据改坏 → `6/11 条在位` + 5 条
+`[FAIL] ... 判据不见了`（含新增那条） + exit 1，还原后 `11/11` 且 exit 0。
+**同名表修复的验证（刻意把抽样数调到 40，不等运气）**：本轮 **42 张 / 失败 0 / exit 0**，且**必然**抽到
+4 个库各自的 `t_sched_leader` —— 四条各自独立通过、指纹互不相同
+（product 2 行 `c93c5710cddb` / trade 1 行 `fb4f492bd2e9` / user 2 行 `3a21593c6ced` / marketing 1 行 `92dca19ad1fb`）；
+同一轮里 product 与 user 的 `t_audit_sample_rate` 也各按自己的数据比过（合计 2 分 13 秒）。
+按修复前的逻辑，这一轮里必然有 3 条是错的 —— 修复后全部独立成立。
 
 ### 2026-10-13（S8 后台账号管理全链路覆盖 → **挖出两个真缺陷**；云端同步装上「暂存副本新鲜度」守卫）
 

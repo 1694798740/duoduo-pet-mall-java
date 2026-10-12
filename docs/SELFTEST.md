@@ -415,9 +415,13 @@ done
 
 ```powershell
 # ① 运维手册一致性守卫（纯静态，不需要 Docker）：文档引用的每个 scripts 路径必须存在；
-#    docs/OPS.md 的开关表与 scripts\ops-switch.ps1 的清单**双向一致**
+#    docs/OPS.md 的开关表与 scripts\ops-switch.ps1 的清单**双向一致**；
+#    且 scripts\db-backup.ps1 / ops-restore.ps1 里**承诺过的判据都还在**（见下方 [3/3]）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-ops-doc.ps1
 #    预期：exit 0，输出「清单 15 项；文档表 15 项」+ 两向一致（15 条 OK）
+#          + 「备份/恢复判据 11/11 条在位」
+#    ★ [3/3] 那 11 条是**防判据被悄悄删掉**：少一半判据的症状正好是"看起来还在跑、结论全绿"
+#      反向验证：`-BackupScript <改坏的副本>` 把 5 条改坏 ⇒ 「6/11 条在位」+ 5 条 FAIL + exit 1
 
 # ② 运行期开关四层校验（清单 → compose 透传 → 服务 yml → 容器实际）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-switch.ps1 -Check
@@ -432,11 +436,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-status.ps1
 #      先手动 curl 预热两次再跑（详见铁律 12）。实测 2026-10-12：冷机首跑 1 次 FAIL，
 #      预热后复跑即 OK 26/1/0
 
-# ④ 备份恢复演练（需要 Docker + 至少一份含 rowCounts 的备份）
+# ④ 备份恢复演练（需要 Docker + 至少一份含 rowCounts 与 volumes 的备份）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
-#    预期：产物哈希 6/6 一致；六库逐表一致（58 张表 / 19,242 行）、差异 0；exit 0
-#    结尾必须是「演练结论：全绿 —— 这份备份可以恢复，且内容与备份那一刻逐表一致。」
+#    预期：产物哈希 6/6 一致；六库逐表一致（58 张表 / 约 2 万行，**以实测为准**）、差异 0；
+#          上传文件卷 2 个 / 129 个文件逐文件 sha256 一致（清单指纹与备份侧同一个：
+#          `fulfilment-uploads` 757b80894195 / `merchant-materials` 09730e5c623b）；
+#          两个卷各打一条「容器内临时目录已清（回读 ls -d = 无此目录）」；exit 0
+#    结尾必须是「演练结论：全绿 —— 这份备份可以恢复，且库内容与备份那一刻逐表一致、上传文件逐文件一致。」
 ```
+
+> **2026-10-13 起备份范围 = 六库 + 两个上传文件卷**（`fulfilment-uploads` 商品/评价图片、
+> `merchant-materials` E12 入驻资质材料）。判据同形：**两个来源**（容器内 `sha256sum` vs 宿主机 `Get-FileHash`）
+> + **逐文件清单指纹**；卷的真实名带 compose 项目前缀 ⇒ **按后缀反查**而不是拼字符串
+> （拼错的表现是「复制出一个空目录然后宣布成功」）。
 
 **判据自证纪律（这几条是踩过坑加的，改脚本时别去掉）**：
 
@@ -450,6 +462,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 | 恢复库 vs dump 前源表做整表校验和比对 | **不要做** | 心跳表 `t_sched_leader`（每 2 分钟自改）必然不等 → 备份完全正确却每次演练都假红（实测 2 处） |
 | 第 ④ 层「容器里真生效」的**容器名** | **从 compose 读 `container_name`，不猜名**；解析不到 ⇒ 判失败 | 原实现用公式猜 `duoduo-app-<x>`，只对 `duoduo-xxx-app` 成立（`duoduo-mq-broker` / `duoduo-es` 全猜错）。猜错时 `Get-ContainerEnv` 返回 `$null` → 退回「`.env`（容器未读到，可能未重建）」，**若值恰等于默认值则人眼无法分辨**（2026-10-12 修） |
 | 用 `docker exec` 的**退出码**判断"容器里有没有这个变量" | **不要用**。改用「输出是否含 `No such container`」判断 | 实测：容器不存在时 `docker exec` 打 stderr 但 `$LASTEXITCODE` **仍为 0** —— 退出码这道防线是空的 |
+| 心跳表 `t_sched_leader` 用 `CHECKSUM` 判 | **不要做**，改用「声明持续改写表 + 行数/主键集合」，日志打 `[PASS~]` | **实测约每 15 秒自改一次** `expire_at/updated_at`，而备份窗口有 30 秒 ⇒ 产物/before/after **注定**互不相同。原三方比对会**每次报红**（狼来了），报到最后真正的坏备份被淹没。名单解析出 0 张 ⇒ 判红（防名单静默失效）。**宁假红勿假绿** |
+| append-only 表在备份窗口内被插入时，拿 `before` 行数卡产物 | **不要卡**，只按「源库 ↔ 产物」两来源判，并打 `[PASS*]` 点名 | 否则"备份期间刚好来了一条"会变成假红 —— 与心跳表同一族的狼来了 |
+| `docker cp` 落进容器的文件用业务用户 `rm -rf` | **不行**：那批文件属主是 **root**，`docker exec` 默认以业务用户跑 ⇒ 删不掉，且 `rm` 只在 stderr 报 `Permission denied`、输出被 `Out-Null` 吞掉 ⇒「删失败」与「删成功」无从分辨 | 实测踩中：演练每轮都在容器 `/tmp` 留一份 root 属主的副本，是**回读自证**把它揪出来的（那句 `ls -d` 千万别删）。修法：该段 `docker exec` 统一加 `-u 0`（临时目录是我们自己建的、只放我们自己的副本）。★ 清理成功也要打一条 `[OK] … 容器内临时目录已清` —— **静默的成功与"这段根本没跑"长得一模一样** |
+| 空字符串传给 `[Parameter(Mandatory)][string]` 参数 | **加 `[AllowEmptyString()]`** | 实测踩中：反向验证把持续改写表清空后，指纹函数收到空串直接抛「无法将参数绑定到参数 Text」——而且是在判据算完、日志还没打那一刻炸 ⇒ 整轮备份没了结论 |
+| manifest 缺 `volumes` 段 / **一个上传卷都没验成** | **判失败，不许降级成警告** | 只备了库、没备文件 = 恢复出来「订单在、图没了」；把「没备」当成「验过了」是最坏的一种绿 |
+| 抽验「全部恢复完再一起比」（所有抽样表恢复进同一个临时库） | **不行**，必须**恢复一张立刻比一张** | dump 每段都以 `DROP TABLE IF EXISTS` 开头 ⇒ **跨库同名的表互相覆盖**（本项目 `t_sched_leader` 5 库各一张、`t_audit_sample` / `t_audit_sample_rate` / `t_proxy_work_order` 各 2 库）⇒ 先恢复的那张「拿别人的数据跟自己比」：实测**假红**（`duoduo_product.t_sched_leader` 报 `行数 源2/产物1`，读到的其实是 marketing 那张）与**假绿**（两张 `t_audit_sample_rate` 内容恰好相同、校验和都是 `2851413293`，读错表也照样 PASS）都出现过。修法：抽验主逻辑抽成 `Invoke-SampleCompare`，恢复成功即比对 |
 
 
 ### 4.10a 文档「飞书吞行/吞字」自检（改 README / docs/*.md 后必做）

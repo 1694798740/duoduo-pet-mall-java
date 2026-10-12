@@ -13,6 +13,11 @@
 #   ops-restore = 把那份产物**恢复出来**，证明它真能用（本脚本）。
 #   两者共用同一个 rowCounts 快照作为判据 —— 备份侧写下它、恢复侧核对它。
 #
+# ★ 上传文件卷（[5b/6]）：六库之外，用户上传的两个卷（`fulfilment-uploads` 商品/评价图片、
+#   `merchant-materials` E12 资质材料）也在备份里。本脚本把它们**恢复进容器内的临时目录**
+#   （绝不写回原卷 —— 演练的第一纪律是不伤现有数据），再逐文件比 sha256 + 比清单指纹。
+#   缺 `manifest.volumes` ⇒ **拒绝出结论**：只备了库没备文件，等于"订单在、图没了"却无人知道。
+#
 # 用法：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ops-restore.ps1
 #       用**最近一份**备份做演练（恢复进 zz_restore_* 临时库，验完自动删）
@@ -317,6 +322,91 @@ foreach ($db in $dbList) {
 foreach ($d in $diffs) { Say ("         · " + $d) 'Yellow' }
 
 # ---------------------------------------------------------------------------
+# [5b/6] 上传文件卷：把备份里的字节放回去并逐文件核对
+# ---------------------------------------------------------------------------
+Step '[5b/6] 上传文件卷：恢复到容器内**临时目录**（不碰生产数据）并逐文件核对 sha256'
+
+# 为什么放到临时目录而不是恢复回原卷：演练的第一纪律是**不许伤到现有数据** ——
+# 与"数据库恢复进临时库、绝不写业务库"是同一个道理。
+# ★ 判据与库侧同形：manifest 缺 volumes 段 ⇒ **拒绝出结论**（只备了库没备文件，
+#   等于"订单在、图没了"而无人知道），不许降级成警告。
+$volChecked = 0
+$volCheckedFiles = 0
+$mv = @($mf.volumes)
+if ($mv.Count -eq 0) {
+    Bad 'manifest 里没有 volumes 段 —— 这份备份只备了数据库。拒绝把「没备」当成「验过了」'
+} else {
+    foreach ($v in $mv) {
+        $src = Join-Path $BackupDir ('uploads\' + $v.name)
+        if (-not (Test-Path -LiteralPath $src)) { Bad ("备份里没有 {0} 的目录：{1}" -f $v.name, $src); continue }
+        $exp = @($v.listing | Sort-Object { $_.p })
+        if (-not $v.listingSha256) { Bad ("{0}：manifest 缺 listingSha256 —— 没有判据，不算通过" -f $v.name); continue }
+
+        $tmpParent = '/tmp/duoduo-volcheck'
+        $scanRoot = $tmpParent + '/' + $v.name
+        # ★★ 这一段的 docker exec 必须带 `-u 0`。
+        #   为什么：`docker cp` 往容器里落盘的文件**属主是 root**，而 `docker exec` 默认
+        #   以容器里的业务用户（这里是 `duoduo`）执行 —— 于是业务用户**删不掉**这些文件，
+        #   `rm -rf` 只在输出里报 `Permission denied`，而我们把输出丢进了 `Out-Null`，
+        #   所以"删失败"在脚本看来和"删成功"一模一样。实测踩中：演练每轮都在容器的
+        #   /tmp 里留一份 root 属主的副本，直到下面那句**回读自证**把它揪出来。
+        #   临时目录是我们自己建的、只放我们自己的副本，用 root 操作它不碰任何别的东西。
+        & docker exec -u 0 $v.container sh -c ('rm -rf ' + $tmpParent + ' && mkdir -p ' + $tmpParent) 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { Bad ("{0}：容器内临时目录建不起（容器 {1} 在跑吗）" -f $v.name, $v.container); continue }
+
+        & docker cp $src ($v.container + ':' + $tmpParent + '/') 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { Bad ("{0}：docker cp 回灌失败（exit={1}）" -f $v.name, $LASTEXITCODE); continue }
+
+        $raw = @(& docker exec -u 0 $v.container sh -c `
+            ('cd ' + $scanRoot + ' && find . -type f -print0 2>/dev/null | xargs -0 -r sha256sum 2>/dev/null | LC_ALL=C sort -k2') 2>$null)
+        $got = @()
+        foreach ($l in $raw) {
+            if (-not $l) { continue }
+            $t = $l -split '\s+', 2
+            if ($t.Count -eq 2) { $got += @{ h = $t[0].Trim(); p = $t[1].Trim() } }
+        }
+        $gotSorted = @($got | Sort-Object { $_.p })
+
+        # 两条判据（逐文件 + 清单指纹）—— 只比其一都不够：
+        #   逐文件 catches「某个文件被换掉」；指纹 catches「清单被截断/少了几行」（含空卷这一边界情况）。
+        $bad = 0
+        if ($exp.Count -ne $gotSorted.Count) { $bad++ }
+        for ($i = 0; $i -lt [Math]::Min($exp.Count, $gotSorted.Count); $i++) {
+            if ($exp[$i].p -ne $gotSorted[$i].p -or $exp[$i].h -ne $gotSorted[$i].h) {
+                if ($bad -lt 3) { Say ("         · {0}：期望 {1}={2}… 实得 {3}={4}…" -f $v.name, $exp[$i].p, ([string]$exp[$i].h).Substring(0, 8), $gotSorted[$i].p, ([string]$gotSorted[$i].h).Substring(0, 8)) 'Yellow' }
+                $bad++
+            }
+        }
+        $listing = (($gotSorted | ForEach-Object { $_.h + '  ' + $_.p }) -join "`n")
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $gotHash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($listing))) -replace '-', '').ToLower()
+        $sha.Dispose()
+        if ($gotHash -ne $v.listingSha256) { $bad++ }
+
+        if ($bad -eq 0) {
+            $volChecked++
+            $volCheckedFiles += $exp.Count
+            Ok ("{0}：{1} 个文件逐文件 sha256 一致，清单指纹 {2}（恢复到 {3}）" -f $v.name, $exp.Count, $gotHash.Substring(0, 12), $v.inner)
+        } else {
+            Bad ("{0}：逐文件/指纹比对不一致（差异 {1} 处）" -f $v.name, $bad)
+        }
+
+        # 清理临时目录并回读自证（"删掉了"与"以为删掉了"要能分辨）
+        # ★ 这里的回读是**真判据**：`rm -rf` 因为属主问题失败时只在 stderr 里说话，
+        #   而 stderr 被 `2>$null` 丢掉了 —— 只有"再去看一眼"能分辨。别把它删了。
+        & docker exec -u 0 $v.container sh -c ('rm -rf ' + $tmpParent) 2>$null | Out-Null
+        $left = ("$(& docker exec -u 0 $v.container sh -c ('ls -d ' + $tmpParent + ' 2>/dev/null') 2>$null)").Trim()
+        if ($left) {
+            Bad ("{0}：容器内临时目录未清干净（{1}）" -f $v.name, $left)
+        } else {
+            # ★ 成功也必须**说出来**：静默的成功与"这段根本没跑"长得一模一样，
+            #   而那正是这个项目反复栽的一类（「空结果」与「链路没接通」无从分辨）。
+            Ok ("{0}：容器内临时目录已清（回读 ls -d = 无此目录）" -f $v.name)
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # [6/6] 汇总 + 清理
 # ---------------------------------------------------------------------------
 Step '[6/6] 汇总与清理'
@@ -327,6 +417,17 @@ if ($checkedTables -eq 0) {
 } else {
     Say ("  比对了 {0} 张表 / {1:N0} 行；差异 {2} 处。" -f $checkedTables, $checkedRows, $diffs.Count) `
         $(if ($diffs.Count -eq 0) { 'Green' } else { 'Red' })
+}
+
+if ($volChecked -eq 0) {
+    # 同理：「一个卷都没验成」与「验了、结果全对」长得一样 —— 前者必须报红
+    Bad '一个上传文件卷都没验成 —— 演练没有产生文件侧的证据，不算通过'
+} else {
+    Say ("  上传文件卷：{0} 个卷 / {1} 个文件逐文件 sha256 一致。" -f $volChecked, $volCheckedFiles) `
+        $(if ($volCheckedFiles -eq 0) { 'Yellow' } else { 'Green' })
+    if ($volCheckedFiles -eq 0) {
+        Say '    （本次两个卷都是空目录 —— 判据本身跑过了：逐文件清单与清单指纹都是"两边都为空"）' 'Yellow'
+    }
 }
 
 if ($Keep) {
@@ -350,7 +451,7 @@ if ($Keep) {
 Say ''
 Say '====================================================================' $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
 if ($script:fail -eq 0) {
-    Say ' 演练结论：全绿 —— 这份备份**可以**恢复，且内容与备份那一刻逐表一致。' 'Green'
+    Say ' 演练结论：全绿 —— 这份备份**可以**恢复，且库内容与备份那一刻逐表一致、上传文件逐文件一致。' 'Green'
 } else {
     Say (" 演练结论：失败 {0} 处 —— 这份备份**不可信**，请先查清再依赖它。" -f $script:fail) 'Red'
 }
