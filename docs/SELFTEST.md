@@ -190,7 +190,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 5 | 担保交易 / 资金托管 / 放款 / 退款 / 自动收货（含 E22 佣金与 T+7） | `settlement-smoke.ps1` | 149 |
 | 6 | 沙箱支付渠道 / 预下单 / 回调验签 | `pay-channel-smoke.ps1` | 62 |
 | 7 | 卖家中心（入驻 / 归属隔离 / 发货 / 对账） | `seller-smoke.ps1` | 107 |
-| 8 | 平台管理后台（权限 / 报表 / 审核 / 强关） | `admin-smoke.ps1` | 73 |
+| 8 | 平台管理后台（权限 / 报表 / 审核 / 强关 / 运营账号） | `admin-smoke.ps1` | 75 |
 | 9 | 后台 2FA + IP 白名单（E21） | `admin-2fa-smoke.ps1` | 56 |
 | 10 | 评价与晒单 | `review-smoke.ps1` | 62 |
 | 11 | 历史订单托管单回补 | `backfill-smoke.ps1` | 92 |
@@ -247,7 +247,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 50 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 端点总数由脚本写在契约文档末尾（`合计 N 个端点`）——**这里不抄数字**（抄来的必然落后，且没有检查能发现） |
 | 性能压测 | `python scripts/perf/bench.py --check` | 9 个核心接口 × 并发梯度 |
-| 后端单测 | `mvn -o test` | **685 项 / 66 个测试类**（11 个模块；2026-10-11 实测 0 失败） |
+| 后端单测 | `mvn -o test` | **715 项 / 69 个测试类**（11 个模块；2026-10-12 实测 0 失败） |
 
 ---
 
@@ -271,7 +271,7 @@ cd frontend; npm run build               # 预期：tsc 与 vite 均无报错，
 & 'C:\Program Files\Java\latest\jdk-21\jdk21\bin\java.exe' "-Dclassworlds.conf=$M\bin\m2.conf" ... -B test
 ```
 
-**预期**：`BUILD SUCCESS`，**685 项测试 0 失败**（66 个测试类；2026-10-11 实测）。
+**预期**：`BUILD SUCCESS`，**715 项测试 0 失败**（69 个测试类；2026-10-12 实测）。
 
 ### 4.3 接口冒烟
 
@@ -341,7 +341,7 @@ powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包
 > 不要当产品缺陷去改代码。**纪律：`run-all-smoke.ps1` 与 `run-ui-checks.ps1` 必须串行。**
 
 其中 9 套是**自包含**的（不需要外部夹具，可单独跑）：
-`home`（9）、`product-detail`（20）、`admin-entry`（32）、`header-layout`（80）、`seller-dashboard`（31）、
+`home`（9）、`product-detail`（20）、`admin-entry`（74）、`header-layout`（80）、`seller-dashboard`（31）、
 `admin-charts`（36）、`my-listings`（47）、`seckill`（45）、`address`（64）；
 其余 7 套的前提各自写在脚本头注释里（优惠券那套由一键运行器自动建/拆夹具）。
 
@@ -356,7 +356,7 @@ cd .. && node scripts/e2e/product-detail-ui-check.mjs
 主图点击放大（弹层 / Esc / 关闭按钮）、缩略图切换、「包装规格」行、
 **评分真实数据驱动**（页面评分区与评价域聚合接口逐字一致，种子假数据无法回归）、裂图与 console 健康。
 
-**后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，32 项）单独跑：
+**后台入口套件**（`scripts/e2e/admin-entry-ui-check.mjs`，**74 项**）单独跑：
 
 ```powershell
 cd frontend && node node_modules/vite/bin/vite.js --port 5173 --strictPort --host localhost   # 另开终端
@@ -366,6 +366,23 @@ cd .. && node scripts/e2e/admin-entry-ui-check.mjs
 它自己建运营与买家夹具（随机手机号 + 提权走库），不需要任何前置数据。
 关键断言是 S3b：**只带 `dd_rt` 的全新浏览器上下文**（模拟关掉浏览器再打开）——
 用来证明「入口关掉页面后还能再回来」。
+
+**S5 段（2026-10-12 新增，账号管理「改角色」）**：现场建**两个 ADMIN + 一个普通用户**夹具，
+覆盖四件事（明细见 §8 末尾"已经闭合的项"）：
+
+1. **UI 反向**：OPERATOR 能看列表，但行内没有「改角色」按钮、显示「仅 ADMIN」，页顶有说明；
+2. **UI 正向**：ADMIN 点「改角色」改成功，且页面展示的是**服务端 notice 原文**
+   （含「下一个请求即生效」与「无需重新登录」）——回表核对 role、并核对审计行
+   `actor|USER_ROLE_CHANGE|USER -> SELLER|target`；
+3. **接口层**：OPERATOR 403（文案点明仅限超管）/ OPERATOR + 非法角色**仍是 403**
+   （先判权后校验参数）/ ADMIN + 非法角色 422 / 不存在用户 404 / 幂等 200 且**不新增审计** /
+   自己降权 422 且文案是「不能给自己降权」；
+4. **并发不变式**：两名 ADMIN **同时**降对方 → 恰好一条成功、库里 `role='ADMIN'` 仍 ≥ 1、
+   失败方带回「至少保留一名超级管理员」。
+   ★ 这一条是为了钉住一个**实测缺陷**：原先用 `selectCount` 统计 ADMIN（普通 SELECT，
+   在 InnoDB REPEATABLE READ 下是一致性快照读、不加锁）→ 两条都读到 2 → 都放行 →
+   **平台一个管理员都不剩**。修法是改成 `SELECT id … FOR UPDATE` 加锁读。
+   反向证据：修复前该段 4 条红（`status=200/200`、`ADMIN=0`），修复后 74/0。
 
 ### 4.7 性能压测
 
@@ -756,8 +773,8 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 - [ ] `frontend: npm run build` → 退出码 0
 - [ ] `scripts\check-all.ps1` 的 `[0/5]` 静态守卫**全部**退出码 0（**不写死个数**，按实际：
       断言写法与 BOM / 网关路由覆盖 250 条 / Mapper SQL 实体 / 运维手册一致 /
-      双端功能对照 / 依赖安全 / 文档裸反引号）
-- [ ] `mvn -o test` → BUILD SUCCESS（**685 项 / 66 个测试类**，2026-10-11 实测）
+      双端功能对照 / 依赖安全 / 文档裸反引号与未转义竖线 / 图表主题接入点 / e2e 截图输出）
+- [ ] `mvn -o test` → BUILD SUCCESS（**715 项 / 69 个测试类**，2026-10-12 实测）
 - [ ] `scripts\run-all-smoke.ps1` → **共 31 套 / 通过 31 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
 - [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
@@ -771,3 +788,35 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 > 加了一套测试、或某套多项断言，数字都会变，**但只要没失败就不该判红**；
 > 反过来，**数字对得上也不代表通过** —— 必须看退出码。
 > （写死数字当门禁，会在加测试后变成一句假话；`check-all.ps1` 的套件数就是从目录实算的。）
+
+---
+
+## 8. 已知未覆盖清单（自动化测不到的部分）
+
+> 这一节**不是待办列表**，而是「哪里看不到绿灯、因此必须由人（或另一次专门演练）来确认」。
+> 有了它，交付时才不会把「没测」误当成「测过了」。每一项都注明**现在的替代手段**，
+> 以便判断风险是否可接受。**清单本身也要维护**：某项被自动化覆盖后，从这里移到 §3/§4。
+
+| # | 未覆盖的部分 | 为什么自动化测不到 | 现在的替代手段 |
+|---|---|---|---|
+| 1 | 微信小程序**真机表现**（导航栏、胶囊、真机字体渲染） | 小程序只能跑在微信运行时里，CI 里没有 | `check-miniprogram.js` 8 条静态规则 + `mp-harness` 72 项行为断言 + **用户在开发者工具/真机点一遍**（B-20） |
+| 2 | 微信**真实渠道**支付回调、订阅消息下发 | 需真实商户号与线上回调地址；沙箱环境拿不到 | `pay-channel-smoke.ps1` 62 项（扫码/验签/回调幂等，用沙箱渠道）+ 真实链路留待上线前用商户号验 |
+| 3 | 平台后台 2FA 的**真实认证器 App** 交互 | 断言能验 TOTP 算法与状态机，验不了"用户拿手机扫一次" | `admin-2fa-smoke.ps1` 56 项（含 RFC 6238 官方测试向量对拍） |
+| 4 | ES 检索链路的**宿主机侧**可达性 | **设计如此**：`docker port duoduo-es` 为空（compose 只给 `profiles:[search]` 且不映射端口），宿主机 `127.0.0.1:9200` 必然不通 | 容器内 `_cluster/health` = green；`search-smoke` 按设计**显式跳过并在汇总里点名**（不许静默略过） |
+| 5 | 深色主题的**视觉可读性**（对比度是否够看） | 能断言"像素变了""没引 prefers-color-scheme"，断言不了"好不好看" | `check-chart-theme-contract.mjs` 13 项 + `admin-charts` e2e 的 canvas 像素指纹 + **用户肉眼确认**（S10 是否做全站深色仍未拍板） |
+| 6 | 超出容量模型的**极端压测梯度** | 单机环境跑不到生产量级；且压太久会污染环境数据 | `python scripts/perf/bench.py --check` 9 接口梯度 + A12 压测记录 + 容量模型对照 |
+| 7 | 三站点在**真实域名 + HTTPS** 下的行为（Cookie 作用域、跨站、证书） | 目前全是 `*.localhost` 明文，规则与真实域名不同 | `header-layout` 88 项覆盖多宽度与多角色；真实域名待部署时验（B-18 部署位置未定） |
+| 8 | **多实例水平扩展**下的限流 / 秒杀 / 选主 | 本环境所有服务单实例；跨副本一致性测不出来 | 秒杀走 Redis 预扣（单点原子）、限流键不可伪造（网关先剥后写）、补偿调度有分布式选主 —— 逻辑上按多副本设计，但**未做多副本实测** |
+| 9 | 主流云文档（飞书 / 腾讯文档 / 资料库）的**导入保真度** | 是外部平台行为，只能事后比对 | 逐行指纹比对（`feishu_verify_content.py` / `tdoc_verify_content.py`）+ 两条吞行守卫（`check-md-bare-tick.ps1`）。★ 资料库上游 `TEMPORARY_ERROR` 期间**无法验证**，已如实记账 |
+| 10 | 备份演练的**生产盘位** | `db-backup.ps1` 的 `$DefaultBackupRoot='D:\duoduo-backup'` 是**占位默认值**，目录故意未建；演练走 `DUODUO_BACKUP_ROOT` 临时根 | 演练判据（产物 SHA256 + 逐表行数 + 拒绝降级报成功）已验证；**盘位待用户拍板**（S4） |
+| 11 | AI 导购的**回答质量**（好不好、够不够准） | 能测契约、护栏、约束是否生效，测不了语义质量 | R57 的 6 条护栏断言（约束硬过滤/超时降级/输出合规/价格一致性）+ 澄清反问；质量评估需人工抽样 |
+| 12 | e2e 对**真实数据状态**的依赖 | 断言打的是真库真数据，历史脏数据会让它假红 | §6 的数据体检（`example.com` 夹具评价 = 0、FROZEN = 0）+ 每套 e2e 现场建/跑完自毁夹具 + **冒烟与 e2e 必须串行** |
+
+**已经闭合、从本清单移出的项（留档，避免重复怀疑）**：
+
+- 「后台改角色仅 ADMIN」的**浏览器级**覆盖 —— 此前库内没有 ADMIN 账号，UI 断言无从构造；
+  2026-10-12 起由 `admin-entry-ui-check.mjs` 的 **S5** 现场建 ADMIN 夹具补齐（UI 正/反向 + 接口层
+  + 审计回表 + 并发不变式，74 项）。顺带揪出两个真问题：**服务端「最后一个 ADMIN 不可降级」
+  在并发下失效**（`selectCount` 是快照读、不加锁 → 两名 ADMIN 同时降对方会降成 0 个），
+  以及 `admin-smoke.ps1` 里那条**名不副实的断言**（actor==target 实际测的是"不能给自己降权"，
+  只比状态码 ⇒ 两条规则混为一谈的假绿）。

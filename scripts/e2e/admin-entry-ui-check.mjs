@@ -95,6 +95,23 @@ async function call(method, p, body, jar) {
 
 const randPhone = () => '138' + String(Math.floor(1e7 + Math.random() * 8e7));
 
+/** 建一个**指定角色**的账号：注册 → 提权重试走库 → 重新登录（角色是令牌里的快照）。
+ *  返回 id，便于后续回表核对与收尾自毁。 */
+async function newAccount(role, nickname) {
+  const jar = new Map();
+  const phone = randPhone();
+  const reg = await call('POST', '/api/auth/register', { phone, password: PWD, nickname }, jar);
+  let actual = '';
+  for (let i = 0; i < 5; i++) {
+    await mysql('duoduo_user', `UPDATE t_user SET role='${role}' WHERE phone='${phone}';`);
+    actual = (await mysql('duoduo_user', `SELECT role FROM t_user WHERE phone='${phone}';`)).trim();
+    if (actual === role) break;
+  }
+  const login = await call('POST', '/api/auth/login', { phone, password: PWD }, jar);
+  const id = (await mysql('duoduo_user', `SELECT id FROM t_user WHERE phone='${phone}';`)).trim();
+  return { jar, phone, nickname, role: actual, id, regStatus: reg.status, loginRole: login.data?.role };
+}
+
 /** 建一个 OPERATOR 账号：随机手机号 + 提权走库（既有账号一个都不动） */
 async function newOperator(nickname) {
   const jar = new Map();
@@ -382,6 +399,196 @@ console.log('\n> 平台管理后台独立入口');
     (await page.locator('text=平台管理后台 · 登录').count()) > 0);
   check('登录页不出现"去商城登录"', (await page.locator('text=去商城登录').count()) === 0);
   await ctx.close();
+}
+
+// ================= S5 运营账号页：改角色只有 ADMIN 能做 =================
+/*
+ * 这一段的由来（原来这里是个**假绿**）：`/admin/operators` 的「改角色」控件此前
+ * 「库内没有 ADMIN 账号，浏览器断言无从构造」——于是它只被 admin-smoke 在**接口层**覆盖，
+ * 而那条接口断言是这么写的：
+ *
+ *     $adminCount = SELECT COUNT(*) WHERE role='ADMIN'
+ *     $r = POST /api/admin/users/<管理员自己>/role {role:'OPERATOR'}   ← actor == target！
+ *     if ($adminCount -eq 1) { 期望 422「最后一个 ADMIN 不可降级」 } else { 期望 200 }
+ *
+ * 问题是 actor == target 时**先命中「不能给自己降权」**（同样是 422，但完全是另一条规则），
+ * 而两条断言都只比状态码 ⇒ **无论哪条规则生效都是绿的**。
+ * 更糟的是 else 分支（期望 200）永远不可能成立 —— 自己降自己必是 422。
+ * 也就是说「最后一个 ADMIN 不可降级」这条规则**从来没有被真正测过**。
+ *
+ * 本段补上：① 现场建 ADMIN 夹具（浏览器真的点一遍）；② 断言**服务端下发的文案**
+ * 而不是只看状态码；③ 用**并发**把「最后一个 ADMIN」那条分支真正走到（见 S5e）。
+ */
+step('S5 · 账号管理页「改角色」：仅 ADMIN 可改（UI 正/反向 + 接口层 + 审计 + 并发不变式）');
+
+const adminA = await newAccount('ADMIN', '账号管理-管理员甲');
+const adminB = await newAccount('ADMIN', '账号管理-管理员乙');
+const targetU = await newAccount('USER', '账号管理-目标用户');
+check('夹具：管理员甲为 ADMIN（建不起则后面全 403，排查方向整个跑偏）', adminA.role === 'ADMIN', adminA.role);
+check('夹具：管理员乙为 ADMIN', adminB.role === 'ADMIN', adminB.role);
+check('夹具：目标用户为 USER', targetU.role === 'USER', targetU.role);
+check('夹具：三个账号都拿到了 id（回表核对的前提）',
+  Boolean(adminA.id && adminB.id && targetU.id), `${adminA.id}/${adminB.id}/${targetU.id}`);
+
+/** 在**后台独立站点**登录（与商城会话完全隔离，走自有登录页） */
+async function loginAdminSite(page, phone) {
+  await page.goto(`${ADMIN_UI}/admin.html`, { waitUntil: 'networkidle' });
+  await page.getByPlaceholder('请输入平台账号手机号').fill(phone);
+  await page.getByPlaceholder('请输入密码').fill(PWD);
+  await page.getByRole('button', { name: /^登录$/ }).click();
+  await page.waitForURL((u) => u.pathname === '/admin', { timeout: 15000 });
+  await page.waitForTimeout(600);
+}
+
+/** 从导航标签进「运营账号」页，按昵称检索出目标行 */
+async function openOperatorsRow(page, nickname) {
+  await page.getByRole('link', { name: '运营账号', exact: true }).click();
+  await page.waitForURL((u) => u.pathname === '/admin/operators', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  await page.getByPlaceholder('手机号 / 昵称').fill(nickname);
+  await page.getByRole('button', { name: '查询' }).click();
+  await page.waitForTimeout(700);
+  return page.locator('table.table tbody tr').filter({ hasText: nickname });
+}
+
+// —— S5a UI 反向：OPERATOR 能看列表，但改不动（前端隐藏 + 后端 403 双层）
+step('S5a · OPERATOR 看得到账号列表，但没有「改角色」入口');
+{
+  const ctx = await newContext();
+  const page = await ctx.newPage();
+  const { consoleErrors } = watch(page);
+  await loginAdminSite(page, op.phone);
+  const row = await openOperatorsRow(page, targetU.nickname);
+
+  check('运营能看到目标用户那一行（列表权限 OPERATOR 有）', (await row.count()) === 1, await row.count());
+  check('★ 该行**没有**「改角色」按钮（前端按 isAdminRole 隐藏）',
+    (await row.getByRole('button', { name: '改角色' }).count()) === 0);
+  check('★ 该行取而代之显示「仅 ADMIN」（不是空白，用户知道为什么点不了）',
+    (await row.getByText('仅 ADMIN').count()) === 1);
+  const body = await page.locator('body').innerText();
+  check('★ 页面顶部也有说明「变更角色仅限超级管理员（ADMIN）」',
+    body.includes('变更角色仅限超级管理员'), body.slice(0, 120));
+  check('S5a 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
+  await ctx.close();
+}
+
+// —— S5b UI 正向：ADMIN 真的点一遍，改角色成功
+step('S5b · ADMIN 在页面上把 USER 改成 SELLER：成功 + 文案原文 + 回表核对');
+let uiChangeNotice = '';
+{
+  const ctx = await newContext();
+  const page = await ctx.newPage();
+  const { consoleErrors } = watch(page);
+  await loginAdminSite(page, adminA.phone);
+  const row = await openOperatorsRow(page, targetU.nickname);
+
+  check('★ ADMIN 看到的该行**有**「改角色」按钮', (await row.getByRole('button', { name: '改角色' }).count()) === 1);
+  check('ADMIN 看到的该行不再有「仅 ADMIN」字样', (await row.getByText('仅 ADMIN').count()) === 0);
+
+  await row.getByRole('button', { name: '改角色' }).click();
+  await page.waitForTimeout(300);
+  check('点开弹窗（标题「变更用户角色」）', (await page.locator('text=变更用户角色').count()) > 0);
+
+  await page.locator('.modal select.input').first().selectOption('SELLER');
+  await page.getByRole('button', { name: '确认变更' }).click();
+  await page.waitForTimeout(1200);
+
+  check('★ 页面出现「角色已更新」成功提示', (await page.locator('.toast-host .toast').first().textContent() ?? '').includes('角色已更新'),
+    await page.locator('.toast-host').innerText().catch(() => '(无 toast)'));
+
+  // ★ 服务端下发的 notice 必须**原样展示**（它是运营判断「这次变更生效到哪一步」的唯一线索）：
+  //   E17 起成功文案含「下一个请求即生效（无需重新登录）」，绝不能本地拼成「重新登录后生效」。
+  const alerts = await page.locator('.alert-success').allInnerTexts();
+  uiChangeNotice = alerts.join(' | ');
+  check('★ 展示的是服务端 notice 原文：含「下一个请求即生效」', uiChangeNotice.includes('下一个请求即生效'), uiChangeNotice);
+  check('★ 且明确「无需重新登录」（不能反过来只说「重新登录」）',
+    uiChangeNotice.includes('无需重新登录'), uiChangeNotice);
+
+  await page.screenshot({ path: path.join(SHOTS, 'admin-operators-role-changed.png') });
+  check('S5b 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
+  await ctx.close();
+}
+// 回表读（铁律 22：计数/终态必须回表，不看响应体自证）
+check('★ 回表核对：目标用户 role 已落库为 SELLER',
+  (await mysql('duoduo_user', `SELECT role FROM t_user WHERE id=${targetU.id};`)).trim() === 'SELLER',
+  await mysql('duoduo_user', `SELECT role FROM t_user WHERE id=${targetU.id};`));
+{
+  const audit = (await mysql('duoduo_user',
+    `SELECT CONCAT(actor_id,'|',action,'|',detail,'|',target_id) FROM t_audit_log WHERE target_id=${targetU.id} ORDER BY id DESC LIMIT 1;`)).trim();
+  check('★ 审计留痕：actor=管理员甲 / 动作 USER_ROLE_CHANGE / 变更 USER -> SELLER',
+    audit === `${adminA.id}|USER_ROLE_CHANGE|USER -> SELLER|${targetU.id}`, audit);
+}
+
+// —— S5c 接口层：状态码 + 服务端文案（只看状态码会把两条规则混为一谈）
+step('S5c · 接口层：两层权限门 + 参数校验 + 幂等 + 「不能给自己降权」');
+{
+  const r = await call('POST', `/api/admin/users/${targetU.id}/role`, { role: 'OPERATOR' }, op.jar);
+  check('★ OPERATOR 直接调改角色接口 → 403（前端隐藏只是少撞一次墙，硬边界在后端）', r.status === 403, r.status);
+  check('★ 403 文案点明「仅限超级管理员」（不是笼统的「无权限」）',
+    String(r.json?.message ?? '').includes('仅限超级管理员'), r.json?.message);
+
+  // ★ 授权可用性优先于参数吻合性：没权限的人传非法角色，应得 403 而不是 422 ——
+  //   否则接口变成"参数校验器"，会向无权限者泄露「哪些角色名是合法的」。
+  const r2 = await call('POST', `/api/admin/users/${targetU.id}/role`, { role: 'VIP' }, op.jar);
+  check('★ OPERATOR + 非法角色 → 仍是 403（先判权、后校验参数）', r2.status === 403, r2.status);
+
+  const r3 = await call('POST', `/api/admin/users/${targetU.id}/role`, { role: 'VIP' }, adminA.jar);
+  check('ADMIN + 非法角色 → 422（角色白名单来自 RolePermissionMatrix）', r3.status === 422, r3.status);
+
+  const r4 = await call('POST', '/api/admin/users/1000000000000000001/role', { role: 'OPERATOR' }, adminA.jar);
+  check('ADMIN + 不存在的用户 → 404', r4.status === 404, r4.status);
+
+  const before = (await mysql('duoduo_user', `SELECT COUNT(*) FROM t_audit_log WHERE target_id=${targetU.id};`)).trim();
+  const r5 = await call('POST', `/api/admin/users/${targetU.id}/role`, { role: 'SELLER' }, adminA.jar);
+  const after = (await mysql('duoduo_user', `SELECT COUNT(*) FROM t_audit_log WHERE target_id=${targetU.id};`)).trim();
+  check('幂等：目标已是该角色 → 200', r5.status === 200, r5.status);
+  check('★ 幂等文案是「未做变更」而不是「角色已更新」',
+    String(r5.json?.data?.notice ?? '').includes('未做变更'), r5.json?.data?.notice);
+  check('★ 幂等调用**不产生**新审计事件（重复确认同一状态不构成事件）', before === after, `${before} -> ${after}`);
+
+  const self = await call('POST', `/api/admin/users/${adminA.id}/role`, { role: 'USER' }, adminA.jar);
+  check('ADMIN 给自己降权 → 422', self.status === 422, self.status);
+  check('★ 且文案是「不能给自己降权」——**不是**「最后一个 ADMIN 不可降级」（两条规则必须分得开）',
+    String(self.json?.message ?? '').includes('不能给自己降权'), self.json?.message);
+}
+
+// —— S5d 并发：把「最后一个 ADMIN 不可降级」那条分支真正走到
+step('S5d · 并发降级最后两名 ADMIN：平台必须还剩至少一名管理员');
+{
+  const aCountBefore = (await mysql('duoduo_user', "SELECT COUNT(*) FROM t_user WHERE role='ADMIN';")).trim();
+  check('并发前库里恰有 2 名 ADMIN（甲、乙）', aCountBefore === '2', aCountBefore);
+
+  // 甲降乙、乙降甲**同时**发出（两条都是合法请求：actor≠target、目标是 ADMIN、新角色是 USER）
+  const [r1, r2] = await Promise.all([
+    call('POST', `/api/admin/users/${adminB.id}/role`, { role: 'USER' }, adminA.jar),
+    call('POST', `/api/admin/users/${adminA.id}/role`, { role: 'USER' }, adminB.jar),
+  ]);
+  const ok = [r1, r2].filter((r) => r.status === 200);
+  const loser = [r1, r2].find((r) => r.status !== 200);
+  const aCountAfter = (await mysql('duoduo_user', "SELECT COUNT(*) FROM t_user WHERE role='ADMIN';")).trim();
+
+  check('★ 并发降级**不能两条都成功**（都成功 ⇒ 平台一个管理员都不剩）', ok.length <= 1,
+    `status=${r1.status}/${r2.status}`);
+  check('★ 恰好一条成功、一条被拒（不是两条都被拒）', ok.length === 1, `status=${r1.status}/${r2.status}`);
+  check('★ 回表读：库里仍至少有 1 名 ADMIN（不看响应体，直接数库）',
+    Number(aCountAfter) >= 1, `ADMIN=${aCountAfter}`);
+  check('★ 被拒那条走的是「最后一个 ADMIN 不可降级」分支（并把服务端文案带回来了）',
+    loser?.status === 422 && String(loser?.json?.message ?? '').includes('至少保留一名超级管理员'),
+    `status=${loser?.status} msg=${loser?.json?.message}`);
+}
+
+// —— S5e 夹具自毁（建得起就必须删得掉；删不掉显式报红）
+step('S5e · 夹具收尾：三个账号与它们产生的审计行一并删除');
+{
+  const phones = [adminA.phone, adminB.phone, targetU.phone];
+  const ids = [adminA.id, adminB.id, targetU.id];
+  await mysql('duoduo_user', `DELETE FROM t_refresh_token WHERE user_id IN (${ids.join(',')});`);
+  await mysql('duoduo_user', `DELETE FROM t_audit_log WHERE target_id IN (${ids.join(',')}) OR actor_id IN (${ids.join(',')});`);
+  await mysql('duoduo_user', `DELETE FROM t_user WHERE id IN (${ids.join(',')});`);
+  const left = (await mysql('duoduo_user', `SELECT COUNT(*) FROM t_user WHERE phone IN ('${phones.join("','")}');`)).trim();
+  check('★ 夹具账号已自毁（删不掉会让每次跑 e2e 都往库里堆账号）', left === '0', `剩余 ${left} 个`);
+  const auditLeft = (await mysql('duoduo_user', `SELECT COUNT(*) FROM t_audit_log WHERE actor_id IN (${ids.join(',')});`)).trim();
+  check('★ 夹具产生的审计行也已清掉', auditLeft === '0', `剩余 ${auditLeft} 行`);
 }
 
 await browser.close();

@@ -181,12 +181,20 @@ public class AdminUserService {
             throw BizException.businessRule("不能给自己降权，请由其他管理员操作");
         }
 
-        // 最后一个 ADMIN 不可降级：先数后改，count 在同一事务里随行锁串行化，
-        // 并发降级最后两名 ADMIN 时后到者会看到 count 已减一而收到 422
+        // 最后一个 ADMIN 不可降级：**必须用加锁读**，不能用 selectCount。
+        //
+        // ★ 这里曾经是一条「看起来对、并发下完全失效」的保护（2026-10-12 实测修掉）：
+        //   `selectCount` 发的是普通 SELECT，在 InnoDB REPEATABLE READ 下是**一致性快照读** ——
+        //   读的是本事务开始时刻的版本，既不加锁、也看不见别人刚提交的改动。
+        //   于是甲、乙两名管理员同时降对方时，两个事务各自读到 2 → 都放行 →
+        //   **平台一个管理员都不剩**（e2e 实测：两条都 200、库里 role='ADMIN' 变 0）。
+        //   注释里原本写的"count 在同一事务里随行锁串行化 / 后到者会看到 count 已减一"
+        //   在快照读下**从来就不成立**。
+        //   改成 `SELECT id … FOR UPDATE` 后，后到者会阻塞到先到者提交，再重新扫描 →
+        //   只剩 1 名 ADMIN → 得到 422。语义与注释终于一致。
         if ("ADMIN".equals(oldRole) && !"ADMIN".equals(newRole)) {
-            Long adminCount = userMapper.selectCount(
-                    Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getRole, "ADMIN"));
-            if (adminCount == null || adminCount <= 1) {
+            List<Long> adminIds = userMapper.selectAdminIdsForUpdate();
+            if (adminIds == null || adminIds.size() <= 1) {
                 throw BizException.businessRule(
                         "平台至少保留一名超级管理员，无法降级最后一个 ADMIN");
             }

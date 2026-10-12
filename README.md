@@ -885,7 +885,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1   
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 149 项：担保交易 + 资金托管 + 退款 + E22 佣金/T+7/钱包/账单（双端同源 + 库内复算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\seller-smoke.ps1       # 101 项：卖家中心（准入/归属隔离/发货/售后/结算）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 72 项：平台管理后台（权限边界/审核/强关/对账/运营账号）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\admin-smoke.ps1        # 75 项：平台管理后台（权限边界/审核/强关/对账/运营账号，含改角色两条 422 规则的文案区分）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\review-smoke.ps1       # 61 项：履约域评价（内部接口/资格/匿名/追评/聚合/**R73 回写链复原**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\audit-sla-smoke.ps1    # 62 项：审核 SLA 事后抽查（自动放行留 audit_at / 命中风险转人工 / sweep 幂等 / 判违规真下架 / 判合规不下架 / 复核不可重入 / 指标自洽 / 入驻判违规直接停业 + 联动下架 / 夹具自毁 / **E16 权限点：直连服务端口做双向断言（USER·SELLER→403、OPERATOR→200、未登录→401、商家端门槛）**）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\perm-version-smoke.ps1 # 34 项：权限即时生效（改角色→旧令牌**下一个请求**即 401 / 刷新一次就换到新角色且**无需重新登录** / 收权后 403 与 401 分得清 / **无 pv 的老令牌不被拦下**（对照令牌只差一个 pv）/ 副本自愈 / 幂等不推进版本 / 收尾复原 ADMIN 计数）
@@ -940,7 +940,7 @@ node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 32 项（后台独立站点 / 摘要可见 / 默认不下架 / 驳回不误删 / **非运营在后台登录页被拒 + 接口 403 纵深** / 夹具自建与收尾降权）
 node scripts/e2e/notice-chat-follow-ui-check.mjs       # 通知 / 私信 / 关注 50 项（分类 chip **逐个真筛**、私信发送与非互关限一条、关注/粉丝名单、互关后恢复可发、**顶栏全站未读角标**；自清理）
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 65 项（后台独立站点；新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 / **后台编辑落库** / **有未关闭订单的活动删除被拒且行仍在** / **无订单活动可删** / **订单全关闭后可删且不留残留** / 夹具收尾降权）
-node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 39 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
+node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 + 账号管理 74 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏 / **S5 改角色仅 ADMIN：UI 正反向 + 接口层 + 审计回表 + 并发不变式**）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 88 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达 + **下拉可用 Esc/点外部关闭**）
 node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
 node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 36 项（后台独立站点；**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + **dark 主题像素指纹与 light 不同** + 普通用户 403 + 夹具收尾降权）
@@ -1293,7 +1293,7 @@ duoduo-pet-mall-java/
 | POST | `/api/admin/orders/{orderNo}/proxy-ship` | **E23 · 代发货**：`{workOrderNo, reason, logisticsCompany, logisticsNo}`；**持本店有效工单**才能替第三方发货；自营订单 **422**、他人订单 **403** | `tenant:proxy-ops` |
 | POST | `/api/admin/orders/{orderNo}/proxy-aftersale` | **E23 · 代处理售后**：`{workOrderNo, reason}`；转调 `refundInternal`（与内部凭据入口同一段状态机） | `tenant:proxy-ops` |
 | GET | `/api/admin/users?role=&keyword=` | **运营账号列表**（A7）：分页 + 角色过滤 + 关键字（手机号/昵称模糊匹配）；**脱敏视图**——不下发实名姓名 / 身份证 / 完整手机号 | 运营/ADMIN |
-| POST | `/api/admin/users/{id}/role` | **变更用户角色**（A7，**仅 ADMIN**）：角色白名单（USER/SELLER/OPERATOR/ADMIN）；自己降权 **422**、最后一个 ADMIN 不可降 **422**、同角色幂等 200 不留审计；每次变更写 `t_audit_log`；目标用户**重新登录后**新角色生效（notice 提示） | ADMIN |
+| POST | `/api/admin/users/{id}/role` | **变更用户角色**（A7，**仅 ADMIN**）：角色白名单（USER/SELLER/OPERATOR/ADMIN）；**先判权后校验参数**（无权者传非法角色也是 403，不泄露白名单）；自己降权 **422**、最后一个 ADMIN 不可降 **422**（==**并发**下才可能触发，见下）、同角色幂等 200 不留审计；每次变更写 `t_audit_log`；生效语义见 notice —— E17 起为「**下一个请求即生效（无需重新登录）**」，仅 Redis 不可用退回吊销令牌时才说「重新登录后生效」 | ADMIN |
 | GET | `/api/admin/audit-sla/samples?status=&page=&pageSize=` | **E28 事后抽查队列**（商品域）：`status` 取 `PENDING`（默认，待复核）/ `PASSED` / `REJECTED`，不传=全部；**待复核按建单时间升序**（先来先做，24h 响应时长的守门就是它），已复核按复核时间倒序；视图冗余带出 `spuTitle` 与 `sellerId`，队列里一眼看出"该看哪件" | 运营 |
 | POST | `/api/admin/audit-sla/samples/{id}/review` | **复核一条抽查任务**：`{action:'PASS'\|'REJECT', note}`。**PASS 只记结论、不动任何业务数据**（抽中 ≠ 下架）；**REJECT 是真处置** —— 商品驳回（`REJECTED`）+ 强制下架（`OFF_SHELF`）+ 来源记 `SAMPLE`，再上报商家违规计数（跨域，失败不回滚止血动作），最后落结论；`note` 判违规**必填**；**已复核再判 → 422**（否则误判率可被反复点通过刷平） | 运营 |
 | GET | `/api/admin/audit-sla/metrics` | **SLA 自证指标**（窗口 30 天）：当前抽样比例 / 是否已自动收紧 / 已复核数 / 抽中违规数 / 抽中违规率 / 平均复核时长 / 误判率 / 待复核数。**读指标会顺带评估一次自动收紧**（连续 3 天抽中违规率 **> 10%** 才翻倍，恰好 10% 不算；封顶 40%） | 运营 |

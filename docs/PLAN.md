@@ -204,6 +204,46 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-12（七）· S8 后台账号管理全链路覆盖（**顺带挖出两个真缺陷**）
+
+**背景**：`admin-entry-ui-check.mjs` 原来只验后台入口与登录（32 项），改角色这条链路**只有单测与冒烟各半覆盖**，
+页面上「谁能看到按钮、点了会发生什么」一直没有端到端断言；且 SELFTEST 缺一份「自动化测不到的部分」的显式清单。
+
+**做了什么**
+- e2e `scripts/e2e/admin-entry-ui-check.mjs` 新增 **S5 段（32 → 74 项）**，四件事各自成组：
+  ① **UI 正反向**：`OPERATOR` 看到行内「仅 ADMIN」、无「改角色」按钮、页顶有权限提示；`ADMIN` 点「改角色」→ 选新角色 → 确认 → 断言 toast 与 `.alert-success` 文案，并截图；
+  ② **接口层**：`OPERATOR` → 403（理由含「仅限超级管理员」）／`OPERATOR` 冒充（带 VIP 头）→ 仍 403／`ADMIN` 传非法角色 → 422／不存在用户 → 404／幂等重复提交 → 200 且 notice 含「未做变更」且审计条数不变／自降权 → 422 且文案含「不能给自己降权」；
+  ③ **回表**：`t_user.role` 真改成 `SELLER`，且 `t_audit_log` 落一行 `USER_ROLE_CHANGE`（`USER -> SELLER`，actor 为操作者）；
+  ④ **并发不变式**：两名 ADMIN 用 `Promise.all` 同时降对方 → **恰好 1 条 200、1 条 422**，且回表 `ADMIN >= 1`。
+- 夹具按 E 组纪律现场建（`newAccount()` 注册 → 提权 → 重新登录）并跑完自毁（`DELETE t_refresh_token / t_audit_log / t_user` + 断言残留 0）。
+
+**★ 实测抓到的两个真缺陷（都不是测试写错）**
+1. **服务端「最后一个 ADMIN 不可降级」在并发下完全失效 ⇒ 平台可以一个管理员都不剩**。
+   首跑 S5d 是红的：`status=200/200`、回表 `role='ADMIN'` 计数 **0**。根因＝`AdminUserService` 用
+   `selectCount` 统计 ADMIN，而 **InnoDB REPEATABLE READ 下 `selectCount` 是快照读、不加锁**，
+   两个事务各读到 `count=2` → 都判定"还有别人"→ 都放行。
+   **修法**：`UserMapper` 新增 `selectAdminIdsForUpdate()`（`SELECT id FROM t_user WHERE role = 'ADMIN' FOR UPDATE`）
+   —— 加锁读能读到别人刚提交的版本，且后到者会阻塞、重扫时只剩 1 人 → 422。
+   ★ 不用 `SELECT COUNT(*) … FOR UPDATE`：它的加锁行为依赖执行计划（走覆盖索引可能不加行锁），**只取 id 行数即 `size()`**。
+2. **`admin-smoke.ps1` 里一条「名不副实的假绿断言」**。原断言用 `actor == target` 去调「降级最后一个 ADMIN」，
+   期望 422、否则期望 200 —— 但 `actor == target` **先命中「不能给自己降权」**（同样 422），
+   于是**两条规则混为一谈、无论哪条生效都绿**，且 `else`（期望 200）分支**永远不可达**。
+   ★ 更本质的是：**「最后一个 ADMIN 不可降级」只能在并发下被走到** —— 能过权限门的 actor 必是 ADMIN，
+   若库里只剩 1 名 ADMIN，target 只能是 actor 自己。故该规则的正确覆盖点就在 S5d。
+   已改写为断言服务端理由文案（`$r.body.message` 含「不能给自己降权」）+ 回表未被改动。
+
+**顺带修掉的一处口径矛盾**
+- `frontend/apps/admin/src/pages/admin/Operators.tsx` 的确认弹窗原写「被改用户**重新登录后**新角色才生效」，
+  与 E17 实际口径（**旧令牌下一个请求即失效、客户端刷新一次就换到新角色、无需重新登录**）相反。
+  用户是在界面上据此决定"要不要让 TA 重登"，**文案必须与 notice 同源** → 已改齐。
+
+**数字变化（均实测）**：e2e `admin-entry` 32 → **74**（S5 段修复前 4 条红、修复后 74/0）；
+`admin-smoke.ps1` 72 → **75**；`AdminUserServiceRoleChangeTest` **11/11**；全量 `mvn test` **715 项 / 69 类 / 0 失败**；
+后台镜像已重建、拆包核验新文案与新 Mapper 在 `BOOT-INF/classes/` 内。
+
+**未覆盖清单**：`docs/SELFTEST.md` 新增 §8「已知未覆盖清单（自动化测不到的部分）」12 项，逐项写「为什么测不到 + 现在的替代手段」，
+末尾记录本轮**已闭合、从清单移出**的两项（S5 段、并发不变式）。★ 该清单的用途是**防止把"没测"当成"测过了"**。
+
 ### 2026-10-12（六）· e2e 截图落点收口（跑回归不再弄脏工作区）+ 第 9 个静态守卫
 
 **问题（实测）**

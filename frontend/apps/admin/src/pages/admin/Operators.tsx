@@ -231,7 +231,8 @@ export const AdminOperatorsPage: React.FC = () => {
               </select>
             </Field>
             <Alert kind="info">
-              角色变更记录审计日志；被改用户<b>重新登录后</b>新角色才生效。
+              角色变更会记录审计日志；被改用户手上的旧令牌在<b>下一个请求即失效</b>，
+              客户端刷新一次就换到新角色（<b>无需重新登录</b>）。
               平台至少保留一名管理员，最后一个 ADMIN 不可降级。
             </Alert>
           </>

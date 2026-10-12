@@ -12,7 +12,13 @@
 #   6. 运营账号管理（A7）：普通用户 403 / 运营可查脱敏列表但改角色 403 / ADMIN 提权 200 +
 #      「下一个请求即生效（无需重新登录）」提示（E17 口径）/ 旧令牌**下一个请求即 401** /
 #      审计日志落库 /
-#      同角色幂等不留痕 / 自己降自己 422 / 最后一个 ADMIN 不可降 422 / keyword + role 检索。
+#      同角色幂等不留痕 / 自己降自己 422（断言文案，别与"最后一个 ADMIN"混为一谈）/
+#      keyword + role 检索。
+#      ★ 注：「最后一个 ADMIN 不可降级」**不在本脚本覆盖范围内** —— 它的触发条件是
+#        「actor≠target 且库里只剩 1 名 ADMIN」，而能通过权限门的 actor 必然是 ADMIN，
+#        若库里只剩 1 名 ADMIN，那个 target 就只能是 actor 自己，会先命中「不能给自己降权」。
+#        也就是说这条规则**只能在并发下走到**（两名 ADMIN 同时降对方，加锁读让后到者看到 1）。
+#        覆盖它的是浏览器 e2e：admin-entry-ui-check.mjs 的 S5d（含并发不变式与回表读）。
 #
 # 设计原则（沿用前几套脚本的教训）：
 #   1. 夹具从接口动态取或自建自毁，不硬编码价格/库存，不碰种子数据；
@@ -302,6 +308,15 @@ $r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'VIP' }
 Check "A7 非法角色名返回 422" ($r.status -eq 422) $r.status
 $r = Call 'Post' "$Gateway/api/admin/users/$uidAd/role" $sessAd @{ role = 'USER' }
 Check "A7 管理员给自己降权返回 422" ($r.status -eq 422) $r.status
+# ★ 光看状态码不够：这里必须是「不能给自己降权」，**不是**「最后一个 ADMIN 不可降级」。
+#   两条规则都回 422，只比状态码的话，哪条生效都是绿的（下面"最后一个 ADMIN"处有详细说明）。
+#   断言取 `$r.body.message`（解析后的对象）：错误体里的中文是 \uXXXX 转义的，
+#   直接对原始报文做 -match 会**恒假**（铁律 10），而 Call 返回的本来也只有 status/body 两个字段。
+Check "A7 且拒绝理由是『不能给自己降权』（两条 422 规则必须分得开）" `
+    ("$($r.body.message)" -match '不能给自己降权') "$($r.body.message)"
+Check "A7 被拒的自降权请求没有改动数据（库里仍是 ADMIN）" `
+    ((Sql 'duoduo_user' "SELECT role FROM t_user WHERE phone = '$phoneAd';") -eq 'ADMIN') `
+    (Sql 'duoduo_user' "SELECT role FROM t_user WHERE phone = '$phoneAd';")
 
 # —— ADMIN 提权 + 验收②（E17 起：下一个请求即生效，无需重登） ——
 $r = Call 'Post' "$Gateway/api/admin/users/$uidU/role" $sessAd @{ role = 'OPERATOR' }
@@ -337,15 +352,24 @@ $after = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_audit_log WHERE target_id = $
 Check "A7 同角色重复变更幂等（200）" ($r.status -eq 200) $r.status
 Check "A7 幂等调用不产生新审计事件" ("$before" -eq "$after") "$before -> $after"
 
-# —— 最后一个 ADMIN 不可降级（动态口径：若平台恰有一名 ADMIN 则 422，否则放行并复原） ——
-$adminCount = Sql 'duoduo_user' "SELECT COUNT(*) FROM t_user WHERE role = 'ADMIN';"
-$r = Call 'Post' "$Gateway/api/admin/users/$uidAd/role" $sessAd @{ role = 'OPERATOR' }
-if ("$adminCount" -eq '1') {
-    Check "A7 最后一个 ADMIN 不可降级返回 422" ($r.status -eq 422) $r.status
-} else {
-    Check "A7 平台存在多名 ADMIN，降级放行（动态口径 200）" ($r.status -eq 200) $r.status
-    Sql 'duoduo_user' "UPDATE t_user SET role = 'ADMIN' WHERE phone = '$phoneAd';" | Out-Null
-}
+# —— 「最后一个 ADMIN 不可降级」：**本脚本不再声称覆盖它** ——
+#
+# ★ 这里原本是一条「动态口径」用例，声称在测这条规则：
+#     $adminCount = COUNT(*) WHERE role='ADMIN'
+#     POST /api/admin/users/<管理员自己>/role {role:'OPERATOR'}
+#     if (count -eq 1) 期望 422 否则期望 200
+#   两个问题（2026-10-12 实测确认）：
+#     · actor == target ⇒ **先命中「不能给自己降权」**（同样是 422，但完全是另一条规则）；
+#       两条断言都只比状态码 ⇒ 哪条规则生效都是绿的 —— 一条货真价实的假绿。
+#     · else 分支（期望 200）**永远不可能成立**：自己降自己必是 422。
+#   而这条规则的触发条件是「actor≠target 且库里只剩 1 名 ADMIN」——
+#   能过权限门的 actor 必然是 ADMIN，若库里只剩 1 名 ADMIN，那个 target 就只能是 actor 自己
+#   ⇒ **它只能在并发下被走到**（两名 ADMIN 同时降对方，加锁读让后到者看到 1）。
+#   所以覆盖它的地方是浏览器 e2e：scripts/e2e/admin-entry-ui-check.mjs 的 S5d
+#   （并发两条请求 + 回表数 ADMIN + 断言失败方带回的服务端文案）。
+#   本脚本保留一条与它相邻、但确实能测到的性质：**被拒的请求不得改动任何角色**。
+$roleAfterSelfDemote = Sql 'duoduo_user' "SELECT role FROM t_user WHERE phone = '$phoneAd';"
+Check "A7 上面几条被拒的改角色请求都没改动角色（仍是 ADMIN）" ("$roleAfterSelfDemote" -eq 'ADMIN') $roleAfterSelfDemote
 
 # ---------- 9. 清理与复原 ----------
 Write-Host ""

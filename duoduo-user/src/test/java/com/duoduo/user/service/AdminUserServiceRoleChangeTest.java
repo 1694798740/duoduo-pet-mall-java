@@ -16,6 +16,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -184,23 +186,51 @@ class AdminUserServiceRoleChangeTest {
     }
 
     @Test
+    void 降级ADMIN时必须用加锁读统计_否则并发下会一个管理员都不剩() {
+        // ★ 这条用例守的是一次**实测缺陷**（2026-10-12）：原先用 selectCount 统计 ADMIN，
+        //   而它是普通 SELECT —— InnoDB REPEATABLE READ 下为一致性快照读，不加锁也看不见
+        //   别人刚提交的改动。甲、乙同时降对方 → 两个事务各读到 2 → 都放行 → 库里 0 个 ADMIN。
+        //   e2e 已复现（两条 200、ADMIN=0）；这里从单测侧钉住"必须走加锁读"，
+        //   因为"换成 selectCount"是一行看不出问题的改动，而它只在并发下出错。
+        afterBump("ADMIN", "USER");
+        when(userMapper.selectAdminIdsForUpdate()).thenReturn(List.of(ADMIN_ID, TARGET_ID));
+        when(permVersionPublisher.publish(TARGET_ID, 5L)).thenReturn(true);
+
+        service.changeRole(TARGET_ID, "USER");
+
+        verify(userMapper).selectAdminIdsForUpdate();
+        verify(userMapper, never()).selectCount(any());
+    }
+
+    @Test
     void 降级ADMIN时先数管理员_最后一个不让降() {
         when(userMapper.selectById(TARGET_ID)).thenReturn(target("ADMIN"));
-        when(userMapper.selectCount(any())).thenReturn(1L);
+        when(userMapper.selectAdminIdsForUpdate()).thenReturn(List.of(TARGET_ID));
 
         assertThatThrownBy(() -> service.changeRole(TARGET_ID, "USER"))
-                .isInstanceOf(BizException.class);
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("至少保留一名超级管理员");
         verify(refreshTokenMapper, never()).revokeAllByUser(any());
         verify(permVersionPublisher, never()).publish(any(), any());
     }
 
     @Test
+    void 有多名ADMIN时降级放行_证明上一条不是无条件拒绝() {
+        // 正对照：只有"恰好 1 名"才拦。缺了它，"永远返回 422"的实现也能让上一条通过
+        afterBump("ADMIN", "USER");
+        when(userMapper.selectAdminIdsForUpdate()).thenReturn(List.of(ADMIN_ID, TARGET_ID));
+        when(permVersionPublisher.publish(TARGET_ID, 5L)).thenReturn(true);
+
+        assertThat(service.changeRole(TARGET_ID, "USER").user().role()).isEqualTo("USER");
+    }
+
+    @Test
     void 不能给自己降权() {
         when(userMapper.selectById(ADMIN_ID)).thenReturn(target("ADMIN"));
-        when(userMapper.selectCount(any())).thenReturn(2L);
 
         assertThatThrownBy(() -> service.changeRole(ADMIN_ID, "USER"))
-                .isInstanceOf(BizException.class);
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不能给自己降权");
         verify(refreshTokenMapper, never()).revokeAllByUser(any());
     }
 
