@@ -31,6 +31,8 @@
  */
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import { mysql } from '../lib/docker-exec.mjs';
 
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
@@ -38,12 +40,13 @@ const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 /** 平台管理后台**独立站点**（举报处理台在这里） */
 const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
-const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const here = path.dirname(fileURLToPath(import.meta.url)); // 脚本自身目录（下面 SHOTS / PW_CORE 都按它解析，不写死绝对路径）
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+  `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
 
 const PWD = 'duoduo12345';
 
@@ -195,7 +198,7 @@ async function loginAdmin(page, phone) {
 
 async function shot(page, name) {
   await page.screenshot({ path: path.join(SHOTS, name), fullPage: true });
-  console.log(`  [截图] frontend/docs/screenshots/${name}`);
+  console.log(`  [截图] ${SHOTS}/${name}`);
 }
 
 step('运营登录并打开举报处理台（后台独立站点）');
@@ -334,7 +337,7 @@ check('U17 ★ 非运营账号登录后台 → 被明确拒绝并说明原因（
 check('U18 ★ 被拒后仍停在登录页，**不进入**后台工作台（不留半登录状态）',
   p2.url().includes('/login') && !deniedText.includes('举报处理'), p2.url());
 await p2.screenshot({ path: path.join(SHOTS, 'report_4_denied.png'), fullPage: true });
-console.log('  [截图] frontend/docs/screenshots/report_4_denied.png');
+console.log('  [截图] ${SHOTS}/report_4_denied.png');
 
 // ② 接口层纵深：拿到**有效会话**、绕过入口直接打后台接口 → 必须 403
 const buyerJar = new Map();

@@ -22,6 +22,8 @@
  */
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import { randomUUID } from 'node:crypto';
 import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
 import { internalHeaders } from '../lib/internal-token.mjs';
@@ -31,12 +33,13 @@ const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 // 现在统一走网关的卖家正规入口，所以不再需要 TRADE_BASE。
 
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
-const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const here = path.dirname(fileURLToPath(import.meta.url)); // 脚本自身目录（下面 SHOTS / PW_CORE 都按它解析，不写死绝对路径）
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+  `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
 // 内部凭据：R58 起是 HMAC 签名（dd1.caller.ts.nonce.sig），发明文旧令牌只会 403。
 const PWD = 'duoduo12345';
 const SKU = 2001;
@@ -191,7 +194,7 @@ page.on('response', (r) => {
 
 const shot = async (name) => {
   await page.screenshot({ path: path.join(SHOTS, name), fullPage: true });
-  console.log(`  [截图] frontend/docs/screenshots/${name}`);
+  console.log(`  [截图] ${SHOTS}/${name}`);
 };
 const textNow = () => page.locator('body').innerText();
 

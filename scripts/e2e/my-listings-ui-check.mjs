@@ -18,6 +18,7 @@
  */
 
 import path from 'node:path';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mysql } from '../lib/docker-exec.mjs';
@@ -25,7 +26,7 @@ import { mysql } from '../lib/docker-exec.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
-const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const PW_CORE =
   process.env.PW_CORE ??
   `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;

@@ -33,6 +33,7 @@
  */
 
 import path from 'node:path';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mysql } from '../lib/docker-exec.mjs';
@@ -43,7 +44,7 @@ const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
 const ADMIN_UI = process.env.ADMIN_UI_BASE ?? 'http://admin.localhost:8090';
 /** 商家端**独立站点**（E6）：Cookie 按主机名隔离，浏览器必须走 merchant.localhost */
 const MERCHANT_UI = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
-const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const PW_CORE =
   process.env.PW_CORE ??
   `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;

@@ -97,12 +97,23 @@ jobs:
       - name: 后端编译（mvn package，10 模块）
         run: mvn -B -ntp -DskipTests package
 
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      # ★ 两条 Node 侧静态守卫，刻意放在 `npm ci` **之前**（它们只读源码，不需要装依赖）。
+      #   为什么 CI 的 Node 从 20 提到 22：图表主题守卫要**真 import 一个 .ts 模块**
+      #   （Node 22 起默认 strip types，Node 20 会 ERR_UNKNOWN_FILE_EXTENSION）。
+      #   与其让它在 CI 上「跑不起来就跳过」（等于没有检查，铁律 21），不如把 CI 与开发机对齐 ——
+      #   本机就是 Node 22，这样"本地绿、CI 红"这一类差异也顺带消失了。
+      - name: e2e 截图输出契约自检（截图落点必须走 shotsDir + 默认目录必须被 gitignore）
+        run: node scripts/lib/check-e2e-shots.mjs
+
+      - name: 图表主题接入点契约自检（真 import chartTheme.ts，验 7 种主题取值）
+        run: node scripts/lib/check-chart-theme-contract.mjs
 
       - name: 前端 tsc --noEmit + vite build
         working-directory: frontend
@@ -149,10 +160,10 @@ jobs:
       #       target duoduo-web-app: failed to solve: ... "/apps/mall/dist": not found
       #   这是「本机能跑、CI 必炸」的典型：本机 dist 是构建过一次就一直躺在那儿，
       #   而 CI 每次都是干净检出。三个站点加入 compose 时漏了这一步，于是从那天起全红。
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -247,10 +258,10 @@ jobs:
       #       target duoduo-web-app: failed to solve: ... "/apps/mall/dist": not found
       #   这是「本机能跑、CI 必炸」的典型：本机 dist 是构建过一次就一直躺在那儿，
       #   而 CI 每次都是干净检出。三个站点加入 compose 时漏了这一步，于是从那天起全红。
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

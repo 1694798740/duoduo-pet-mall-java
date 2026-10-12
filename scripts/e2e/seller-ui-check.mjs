@@ -25,6 +25,8 @@
  */
 
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import { createSellerFixture } from '../lib/e2e-seller-fixture.mjs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -38,12 +40,13 @@ const UI = process.env.UI_BASE ?? 'http://localhost:5173';
  * `*.localhost` 只有浏览器能解析（Node 不行），而本套件的访问全部经 Playwright → 可安全使用主机名。
  */
 const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
-const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const here = path.dirname(fileURLToPath(import.meta.url)); // 脚本自身目录（下面 SHOTS / PW_CORE 都按它解析，不写死绝对路径）
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+  `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
 
 const PWD = 'duoduo12345';
 
@@ -209,7 +212,7 @@ page.on('response', (r) => {
 
 const shot = async (name) => {
   await page.screenshot({ path: path.join(SHOTS, name), fullPage: true });
-  console.log(`  [截图] frontend/docs/screenshots/${name}`);
+  console.log(`  [截图] ${SHOTS}/${name}`);
 };
 const textNow = () => page.locator('body').innerText();
 
@@ -340,7 +343,7 @@ await p2.waitForTimeout(900);
 const t2 = await p2.locator('body').innerText();
 check('非卖家访问商家端看到入驻/无权限提示，而不是空白页', t2.includes('卖家') || t2.includes('403'), t2.slice(0, 120));
 await p2.screenshot({ path: path.join(SHOTS, 'sel_not_seller.png'), fullPage: true });
-console.log('  [截图] frontend/docs/screenshots/sel_not_seller.png');
+console.log('  [截图] ${SHOTS}/sel_not_seller.png');
 
 step('收尾');
 if (httpErrors.length) {

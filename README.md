@@ -854,6 +854,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-dependency
 > （实测踩中 2 处）。"行数相同但内容被改"由 `db-backup.ps1` 的抽验负责（那里有独立时间点，做三方比对）。
 > 演练还会**拒绝出结论**而不是降级报成功：manifest 缺 `rowCounts` / `status != OK` / **比对了 0 张表** ⇒ 判失败。
 
+### e2e 截图输出契约（S8，2026-10-12 落地）
+
+> 22 套 e2e 里有 **20 套会落盘截图**，过去全部写到**受版本控制**的 `frontend/docs/screenshots/`
+> （其中 9 套还写死 `D:/智能体项目/duoduo-pet-mall-java/…` 绝对路径）。后果不是"多几个文件"，
+> 而是**每跑一次回归，工作区就多出上百个 modified / untracked 的 PNG**（内容随真实数据与时间戳变化）——
+> `git status` 里再也分不清「我改了代码」和「我刚跑过回归」。
+> 现在默认落点收口到 `scripts/lib/e2e-shots.mjs` 的 `shotsDir()`（默认 `scripts/e2e/.shots/`，已 gitignore）；
+> 真要更新文档配图时显式 `SHOTS=frontend/docs/screenshots`。
+
+```powershell
+node scripts\lib\check-e2e-shots.mjs
+#   → 退出码 0；输出「被检查的 e2e 套件数：22（其中会落盘截图的：20）」+ 五项判据
+#   启动前先扫到 0 份套件 ⇒ 直接判违规（「什么都没扫到」≠「扫了、结果干净」）
+```
+
+> ★ **这条守卫的关键在判据 ⑤**：只改脚本、不改 `.gitignore`，等于**把污染换个地方** ——
+> 新增一套 e2e 的人照抄 `const SHOTS = shotsDir();`，是**抄不出** `.gitignore` 那一行的。
+> 所以守卫必须**同时**断言「脚本侧都走收口」与「`.gitignore` 真的忽略了那个目录」。
+> 另有判据 ② 的**空转自证**：一旦所有 `screenshot(` 调用被重构掉，判据 ② 会变成永真 ——
+> 这类「检查还在、却不再检查任何东西」的哨兵会自己报出来。
+> 六种注入各 exit 1 且精确点名、还原后复跑 exit 0（**9/9**，沙箱现场建/跑完自毁）。
+
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 62 项：用户域 + 商品域（含 E27 的闲置/无品牌商品夹具守卫）
@@ -899,6 +921,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps
 # 打**容器入口**（真应用，而不是开发态）：给了 -UiBase 就不再启 dev server
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps1 -UiBase http://localhost:8088
 # Playwright + Chromium 已装进 scripts/e2e/node_modules（仓库自包含，不依赖用户级 workspace）
+# ★ 截图默认落到 scripts/e2e/.shots/（已 gitignore）——跑回归**不再弄脏工作区**。
+#   真要更新 frontend/docs/screenshots/ 里的文档配图时才显式指定：
+#     $env:SHOTS='frontend/docs/screenshots'   （然后重跑对应套件）
+#   落点由 scripts/lib/e2e-shots.mjs 收口，契约由 scripts/lib/check-e2e-shots.mjs 守（见上）
 # 三端分离后，涉及后台 / 商家页面的套件通过站点常量定位，可单独覆盖：
 #   ADMIN_UI_BASE=http://admin.localhost:8090   MERCHANT_UI_BASE=http://merchant.localhost:8091
 
@@ -912,12 +938,12 @@ node scripts/e2e/aftersale-ui-check.mjs              # 售后三端 44 项（买
 node scripts/e2e/logistics-ui-check.mjs              # 物流轨迹 44 项（买家/卖家同轨 + 空态 + 越权 + 终态仍在；卖家页走**商家独立站点**）
 node scripts/e2e/address-ui-check.mjs                # 收货地址簿 64 项（含结算页两种模式与「改地址簿不改历史订单」）
 node scripts/e2e/share-report-ui-check.mjs           # 举报处理台 32 项（后台独立站点 / 摘要可见 / 默认不下架 / 驳回不误删 / **非运营在后台登录页被拒 + 接口 403 纵深** / 夹具自建与收尾降权）
-node scripts/e2e/notice-chat-follow-ui-check.mjs       # 通知 / 私信 / 关注 42 项（分类 chip **逐个真筛**、私信发送与非互关限一条、关注/粉丝名单、互关后恢复可发；自清理）
+node scripts/e2e/notice-chat-follow-ui-check.mjs       # 通知 / 私信 / 关注 50 项（分类 chip **逐个真筛**、私信发送与非互关限一条、关注/粉丝名单、互关后恢复可发、**顶栏全站未读角标**；自清理）
 node scripts/e2e/seckill-ui-check.mjs                # 秒杀 65 项（后台独立站点；新建活动 / **下架后仍列得出来并能重新上架** / 前台不可见 / 抢购→下单→库存递减 / 限购拦截 / 幂等重放 / 取消回补 / **后台编辑落库** / **有未关闭订单的活动删除被拒且行仍在** / **无订单活动可删** / **订单全关闭后可删且不留残留** / 夹具收尾降权）
 node scripts/e2e/admin-entry-ui-check.mjs            # 后台入口 39 项（未登录/普通用户看不到入口 / 运营两条入口都能进运营概览 / **刷新·新开标签页·只带 dd_rt 重开浏览器后入口仍在** / next 回跳不被破坏）
 node scripts/e2e/header-layout-ui-check.mjs          # 顶栏布局 88 项（4 个角色 × 6 档宽度：**导航一个标签都不许被截断** + 昵称不许折行 + 个人事务入口收进下拉但仍可达 + **下拉可用 Esc/点外部关闭**）
 node scripts/e2e/seller-dashboard-ui-check.mjs        # 商家端概览 31 项（**五张真图表：canvas 非零 / 摘要与接口一致 / 悬停 500ms 内出数据 / 不许再用原生 title** / 权限边界）
-node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 32 项（后台独立站点；**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + 普通用户 403 + 夹具收尾降权）
+node scripts/e2e/admin-charts-ui-check.mjs            # 平台后台图表 36 项（后台独立站点；**折线/饼/柱状/分布四类图都在** + 悬停即时 + 数据与接口一致 + **dark 主题像素指纹与 light 不同** + 普通用户 403 + 夹具收尾降权）
 node scripts/e2e/share-circle-ui-check.mjs            # 分享圈 21 项（**发布→信息流→详情评论→点赞 toggle→我的分享编辑/删除** + 话题聚合路由 + 未登录入口可发现性 + 无报错）
 node scripts/e2e/my-listings-ui-check.mjs             # 我的闲置 47 项（发布→审核中→过审→在售→下架→重新上架→编辑回审核中→软删；未实名 403；公开页匿名可用）
 node scripts/e2e/product-detail-ui-check.mjs          # 商品详情页 20 项（主图可放大切图 / 包装规格 / 同类推荐 / 两端标签一致 / 无非预期接口错误）

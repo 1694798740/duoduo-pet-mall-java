@@ -204,6 +204,51 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-12（六）· e2e 截图落点收口（跑回归不再弄脏工作区）+ 第 9 个静态守卫
+
+**问题（实测）**
+- 22 套 e2e 里 **20 套会落盘截图**，全部写到 **受版本控制**的 `frontend/docs/screenshots/`；
+  其中 **9 套写死了 `D:/智能体项目/duoduo-pet-mall-java/...` 绝对路径**（换机器 / 换检出目录即失效）。
+- 后果不是"多几个文件"，而是**每跑一次回归工作区就多出上百个 modified / untracked 的 PNG**：
+  PNG 内容随真实数据与时间戳变化（`follow_page.png` 一次只差 5 字节、`notice_list.png` 差 707 字节），
+  于是 `git status` 里再也分不清「我改了代码」和「我刚跑过回归」。
+- 另有一个**跨机器不可移植**的同类问题：8 套脚本的 `PW_CORE` 与 `coupon` 的临时文件路径也写死盘符。
+
+**改法**
+- 新增 `scripts/lib/e2e-shots.mjs` —— 截图落点的**唯一出口** `shotsDir()`：
+  默认 `<仓库>/scripts/e2e/.shots/`（**已 gitignore**），`SHOTS=` 环境变量可覆盖（归档配图时才用），
+  **目录不存在自动创建**（此前 8 套脚本没自己 mkdir，全靠仓库里那个目录恰好存在）。
+- 20 套脚本一律改为 `const SHOTS = shotsDir();`；顺带把 8 套的 `PW_CORE` 改为
+  按脚本自身目录解析（`path.join(here, 'node_modules/playwright-core/index.mjs')`）、
+  `coupon` 的临时文件改按 `REPO_ROOT` 解析 —— 至此 `scripts/e2e/*.mjs` 里**写死盘符 0 处**。
+- `.gitignore` 增加 `scripts/e2e/.shots/`。
+- 新增静态守卫 `scripts/lib/check-e2e-shots.mjs`（**第 9 个**），已接 `check-all.ps1` 的 `[0/5]` 段与 CI。
+
+**★ 守卫的关键判据是 ⑤（脚本侧与 `.gitignore` 侧必须成对）**
+- 「默认落到被 ignore 的目录」这个结论依赖两件事同时成立：① 每套都真的走 `shotsDir()`；
+  ② `.gitignore` 真的忽略了那个目录。**只改 ① 不改 ②，等于把污染换个地方** ——
+  新增一套 e2e 的人照抄 `const SHOTS = shotsDir();`，是**抄不出** `.gitignore` 那一行的。
+- 另有判据 ② 的**空转自证**：一旦所有 `screenshot(` 调用被重构掉，判据 ② 就退化成永真 ——
+  「检查还在、却不再检查任何东西」的哨兵必须自己报出来（分母必须 > 0）。
+- 反向验证 **9/9**（沙箱现场建 / 跑完自毁）：删收口模块 → ①；某套退回硬编码受控目录 → ②③ 点名文件与行号；
+  加绝对盘符路径 → ④；`.gitignore` 去掉默认落点 → ⑤；清掉全部 `screenshot(` → ② 空转；清空套件目录 → 「什么都没扫到 ≠ 通过」。
+- ⚠️ 反向验证脚本必须用**异步** `spawn`：本机 Node 的同步派生态（`spawnSync` / `execFileSync`）
+  一律 `EBUSY errno -4082`（`status=null` 且**无任何输出**，看起来像"守卫没跑"）—— 首版就栽在这里。
+
+**验证**
+- 改造后实跑一套 e2e（`notice-chat-follow`，走容器入口 8088）→ **50 项全过 / 0 失败**；
+  跑完 `git status --porcelain frontend/docs/screenshots/` **为空**（这正是本项要的证据）；
+  截图落在 `scripts/e2e/.shots/`（5 张）且被 `git check-ignore` 命中。
+- 22 套脚本 `node --check` 全通过（ok=22 bad=0）。
+
+**顺带修掉一个 CI 隐患：图表主题守卫在 CI 上"跑不起来"**
+- `check-chart-theme-contract.mjs` 要**真 import 一个 `.ts` 模块**（靠 Node 22 起默认的 strip types）。
+  此前它只接在 `check-all.ps1`（本地 Node 22）里，**CI 的 `node-version` 是 20** ——
+  一旦哪天加进 CI，它会 `ERR_UNKNOWN_FILE_EXTENSION`；若再顺手 catch 掉，就变成"跑不起来就跳过"
+  （等于没有检查，铁律 21）。
+- 处置：**CI 的 Node 20 → 22**（与开发机对齐，顺带消除"本地绿、CI 红"这一类差异），
+  并把**两个 `.mjs` 守卫都加进 CI**（放在 `npm ci` 之前 —— 它们只读源码，不需要装依赖）。
+
 ### 2026-10-12（五）· S7 网页端全站未读角标（对齐小程序口径）
 
 **做了什么**

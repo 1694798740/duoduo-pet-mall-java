@@ -16,6 +16,7 @@
  */
 
 import path from 'node:path';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mysql } from '../lib/docker-exec.mjs';
@@ -30,7 +31,7 @@ const PW_CORE =
 const CHROME = process.env.CHROME_PATH ?? undefined;
 const PWD = 'duoduo12345';
 const OPERATOR_PHONE = '13684295254';
-const SHOTS = process.env.SHOTS ?? 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 fs.mkdirSync(SHOTS, { recursive: true });
 
 let pass = 0;

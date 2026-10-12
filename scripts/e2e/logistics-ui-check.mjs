@@ -48,6 +48,8 @@
  */
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { shotsDir } from '../lib/e2e-shots.mjs';
 import { createSellerFixture } from '../lib/e2e-seller-fixture.mjs';
 import { randomUUID } from 'node:crypto';
 import { mysql as mysqlExec } from '../lib/docker-exec.mjs';
@@ -62,12 +64,13 @@ const INTERNAL_TOKEN_HEADER = () => ({ 'X-Internal-Token': newInternalToken('POS
 const UI = process.env.UI_BASE ?? 'http://localhost:5173';
 /** 第三方商家**独立站点**（卖家订单详情页在这里）。E6b：商家已从商城站点摘除。 */
 const MERCHANT = process.env.MERCHANT_UI_BASE ?? 'http://merchant.localhost:8091';
-const SHOTS = 'D:/智能体项目/duoduo-pet-mall-java/frontend/docs/screenshots';
+const here = path.dirname(fileURLToPath(import.meta.url)); // 脚本自身目录（下面 SHOTS / PW_CORE 都按它解析，不写死绝对路径）
+const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const CHROME =
   process.env.CHROME_PATH ?? null; // 不指定则交给 playwright 解析自己安装的那份浏览器
 const PW_CORE =
   process.env.PW_CORE ??
-  'file:///D:/智能体项目/duoduo-pet-mall-java/scripts/e2e/node_modules/playwright-core/index.mjs';
+  `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
 
 const PWD = 'duoduo12345';
 
@@ -298,7 +301,7 @@ async function openCtx() {
 
 const shot = async (p, name) => {
   await p.screenshot({ path: path.join(SHOTS, name), fullPage: true });
-  console.log(`  [截图] frontend/docs/screenshots/${name}`);
+  console.log(`  [截图] ${SHOTS}/${name}`);
 };
 const bodyText = (p) => p.locator('body').innerText();
 const rows = (p) => p.locator('[data-testid="logistics-track-row"]');

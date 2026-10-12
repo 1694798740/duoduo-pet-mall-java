@@ -81,7 +81,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -116,6 +116,13 @@ Record '文档飞书吞行/吞字自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCO
 # 尤其「接入点是死代码」这一条，没有门禁就静默腐烂。纯静态 + 真 import 该模块，放这里最便宜。
 & node (Join-Path $repo 'scripts\lib\check-chart-theme-contract.mjs') 2>&1 | Select-Object -Last 3 | Write-Host
 Record '图表主题接入点契约' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# e2e 截图输出契约（S8 收尾项）—— 22 套 e2e 里有 20 套会落盘截图。曾全部写到**受版本控制**的
+# frontend/docs/screenshots（9 套还写死 D:/… 绝对路径），于是每跑一次回归工作区就多出上百个
+# modified / untracked PNG，"我改了代码"和"我刚跑过回归"再也分不清。
+# 现在默认落点收口到 shotsDir()（scripts/e2e/.shots，gitignore）。★ 这条判据的关键是
+# **同时**断言脚本侧与 .gitignore 侧 —— 只改脚本不改 .gitignore，等于把污染换个地方。
+& node (Join-Path $repo 'scripts\lib\check-e2e-shots.mjs') 2>&1 | Select-Object -Last 3 | Write-Host
+Record 'e2e 截图输出契约' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 # ---------- 前置：容器健康 ----------
 Write-Host "`n[0/5] 前置检查：容器状态"

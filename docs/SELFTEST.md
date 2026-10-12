@@ -322,6 +322,11 @@ powershell ... -File scripts\e2e\run-ui-checks.ps1 -Only home     # 只跑自包
 
 **预期**：**22 套全 PASS**（2026-10-11 实测 972 项断言，退出码 0）。判定同样看退出码。
 
+> ★ **跑 e2e 不再弄脏工作区（S8 起）**：20 套会落盘截图的套件默认写到
+> `scripts/e2e/.shots/`（已 gitignore），**不再写进受版本控制的 `frontend/docs/screenshots/`**。
+> 验证方式：跑完任意一套后 `git status --porcelain frontend/docs/screenshots/` 应为空。
+> 要真的更新文档配图时才显式 `$env:SHOTS='frontend/docs/screenshots'`。细则见 §4.10d。
+
 > ★ **e2e 假红的第一大原因是数据脏，不是代码**：两套页面同时报错时先查库里有没有残留夹具
 > （见 §6 第 23 条：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';` 应为 0）。
 >
@@ -523,6 +528,52 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e\run-ui-checks.ps
 2. **刷新点三处**：打开头像菜单 / `visibilitychange` 回前台 / **60 秒兜底轮询**（与小程序同频）。请求**单飞**（并发复用同一个 in-flight Promise）。
 3. **失败不清零** —— 网络抖一下就把未读抹掉，比数字停在旧值更让人困惑。未登录则清角标。
 4. ★ **轮询的启停由消费方驱动**：`AppProvider` 在 `AuthProvider` **外层**（见 `main.tsx` 嵌套顺序），拿不到 `useAuth` —— 所以 Provider 只提供状态与实现，由商城端 `Layout.tsx` 按 `loggedIn` 决定启停（后台/商家端不需要买家未读角标）。
+
+### 4.10d e2e 截图输出契约自检（S8；新增 e2e 套件 / 改截图落点后必做）
+
+```powershell
+# 纯静态（只读 scripts/e2e/*-ui-check.mjs + scripts/lib/e2e-shots.mjs + .gitignore），不需要 Docker
+node scripts\lib\check-e2e-shots.mjs
+#    预期：exit 0，输出
+#      「被检查的 e2e 套件数：22（其中会落盘截图的：20）」
+#      「[OK]   五项全通过 —— 跑回归不会再把仓库弄脏」
+```
+
+**守的是什么**：22 套 e2e 里有 20 套会落盘截图，过去全部写到**受版本控制**的
+`frontend/docs/screenshots/`（其中 9 套还写死 `D:/…` 绝对路径）。于是**每跑一次回归，工作区就多出
+上百个 modified / untracked 的 PNG**，且内容随真实数据与时间戳变化 —— `git status` 里再也分不清
+「我改了代码」和「我刚跑过回归」。现在默认落点收口到 `scripts/lib/e2e-shots.mjs` 的 `shotsDir()`
+（默认 `scripts/e2e/.shots/`，已 gitignore）。
+
+| 判据 | 静默失效会长什么样 |
+|---|---|
+| ① 收口模块存在且导出 `shotsDir()` | 模块被删/改名 → 所有套件 import 失败，但如果没人跑 e2e 就无人发现 |
+| ② **凡会落盘截图的套件**都恰好一次 `const SHOTS = shotsDir();` | 新写一套 e2e 时照抄旧脚本的硬编码路径 → 再次污染工作区（这正是本项要防的回归） |
+| ② 分母（会落盘截图的套件数）必须 > 0 | `screenshot(` 被重构掉后，判据 ② 变成永真 —— **检查还在、却不再检查任何东西** |
+| ③ 不出现 `frontend/docs/screenshots` 字面量 | 连注释里当「示例」写一次都会被抄走 |
+| ④ 不出现写死盘符的绝对路径 | 换机器/换检出目录即失效，且失效方式是**静默写到别处** |
+| ⑤ `.gitignore` 真的忽略了 `scripts/e2e/.shots/` | ★ **最容易被漏掉的一条**：只改脚本不改 `.gitignore`，等于把污染换个地方 —— 抄 `shotsDir()` 是抄不出 `.gitignore` 的 |
+
+**反向验证**（证明守卫真在判；沙箱现场建 / 跑完自毁）：
+
+```powershell
+node .workbuddy\tmp-344-reverse.mjs
+#    预期：SUMMARY: 9 cases, 0 failed
+#    注入① 删掉 e2e-shots.mjs                -> exit 1（① 缺少收口模块）
+#    注入② 某套退回硬编码受控目录            -> exit 1（②③ 点名该文件与行号）
+#    注入③ 加一行 D:\… 绝对路径              -> exit 1（④）
+#    注入④ .gitignore 去掉 scripts/e2e/.shots/ -> exit 1（⑤）
+#    注入⑤ 清掉全部 screenshot( 调用          -> exit 1（② 在空转）
+#    注入⑥ 清空套件目录                      -> exit 1（「什么都没扫到」≠ 通过）
+#    另含：基线 exit 0、还原后复跑 exit 0、沙箱自毁确认
+```
+
+> ⚠️ 反向验证脚本必须用**异步** `spawn`：本机 Node 的同步派生态（`spawnSync` / `execFileSync`）
+> 一律 `EBUSY errno -4082`，表现为 `status=null` 且无任何输出 —— 看起来像「守卫没跑」，
+> 排查方向会整个跑偏（改用仓库自带的 `scripts/lib/docker-exec.mjs` 的 `run()`）。
+
+**要归档文档配图时**：显式指定落点，例如
+`$env:SHOTS='frontend/docs/screenshots'; powershell ... scripts\e2e\run-ui-checks.ps1`。
 
 ### 4.10 双端功能对照表自检（S6；动前端页面 / 改 tabBar 后必做）
 

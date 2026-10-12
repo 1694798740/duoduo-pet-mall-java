@@ -46,3 +46,9 @@ scripts/tmp_*
 
 # 本地密钥（GitHub PAT 等）：只落本机，绝不入库
 .secrets/
+
+# e2e 截图默认输出（S8）：跑一次回归会产出上百张 PNG，且内容随数据/时间戳变化 ——
+# 默认落到这里，避免把工作区弄脏（分不清「改了代码」还是「刚跑过回归」）。
+# 真的要更新 frontend/docs/screenshots/ 里的文档配图时，显式指定 SHOTS=<路径>。
+# 见 scripts/lib/e2e-shots.mjs
+scripts/e2e/.shots/
