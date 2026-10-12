@@ -554,10 +554,10 @@ node scripts\lib\check-e2e-shots.mjs
 | ④ 不出现写死盘符的绝对路径 | 换机器/换检出目录即失效，且失效方式是**静默写到别处** |
 | ⑤ `.gitignore` 真的忽略了 `scripts/e2e/.shots/` | ★ **最容易被漏掉的一条**：只改脚本不改 `.gitignore`，等于把污染换个地方 —— 抄 `shotsDir()` 是抄不出 `.gitignore` 的 |
 
-**反向验证**（证明守卫真在判；沙箱现场建 / 跑完自毁）：
+**反向验证**（证明守卫真在判；沙箱现场建 / 跑完自毁；**脚本已入库，可随时重跑**）：
 
 ```powershell
-node .workbuddy\tmp-344-reverse.mjs
+node scripts\lib\check-e2e-shots-reverse.mjs
 #    预期：SUMMARY: 9 cases, 0 failed
 #    注入① 删掉 e2e-shots.mjs                -> exit 1（① 缺少收口模块）
 #    注入② 某套退回硬编码受控目录            -> exit 1（②③ 点名该文件与行号）
