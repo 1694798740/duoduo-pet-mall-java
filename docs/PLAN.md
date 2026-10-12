@@ -202,6 +202,51 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-12（S4 数据库自动备份 · 从「只有人工 dump」变成一条可自证的命令）
+
+**一句话**：`scripts/db-backup.ps1` 一次跑完 ① 回表读源库快照 → ② mysqldump 六库 →
+③ 产物自证 → ④ **从产物切表恢复进临时库、与源表比对行数 + `CHECKSUM TABLE`** →
+⑤ 滚动保留最近 N 份 → ⑥ 失败即告警。实测六库 **58 张表 / 3.85 MB / 1 分 40 秒**，
+退出码 0；抽验 9 张（随机 3 + 每个库的最后一张）**失败 0**。
+
+**为什么这件事必须做**：全项目**唯一**有「不可逆数据损失」风险的一项。此前所有验证与修复
+（含 E26 全量删号）都建立在"库坏了能从备份恢复"之上，而那个前提**只靠人工临时 dump 维持** ——
+人工动作没有门禁、不会自证、失败时也不会喊人。台账里那句"备份盘位已自行拍板为 `D:\duoduo-backup`"
+是凭印象写的：该目录不存在、脚本也不存在。
+
+**★ 三个「看起来对、其实错」的坑（都是本轮实测抓出来的）**：
+
+1. **PowerShell 函数返回单元素数组会被静默展开**。`Invoke-Sql` 返回 `@('duoduo_user')`，
+   调用方拿到的是**字符串**，于是 `$r[0]` 变成了**取第一个字符** —— `duoduo_user` → `d`、
+   `8.0.36` → `8`。全程**不报错**，症状是"六个库都说不存在"。
+   写法：`return ,$res`（前置逗号 = 不要再展开一层）。
+2. **切片必须带上 dump 的 preamble**。被抽中的表若正好是 dump 里的**最后一张**，
+   它的切片会一路走到文件末尾、把收尾块 `/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;` 也包进来，
+   而 `@OLD_TIME_ZONE` 只在 preamble 里赋过值 → 恢复当场报
+   `ERROR 1231: Variable 'time_zone' can't be set to the value of 'NULL'`。
+   前两张表抽中时**看不出问题**（切片到下一张表标记就截断了）—— 典型的"抽样能过不代表链路对"。
+   ⇒ 所以现在**每个库的最后一张表永远强制入选抽验**（边界用例不能靠运气覆盖）。
+3. **不能只跟"恢复那一刻的源库"比**。`duoduo_marketing.t_sched_leader` 是选主心跳表
+   （`expire_at = updated_at + 2min`，每 2 分钟被改写），校验和**每次都不同** ——
+   备份完全正确却天天报红，典型"狼来了"。⇒ 改成**三方比对**：抽样在 dump **之前**定、
+   并同时取一次源侧校验和，产物只要与 **before 或 after** 之一一致即通过；
+   两边都不一致才判 FAIL，且三个值全部打出来。
+
+**其它已固化的纪律**：`-Databases` 里任一个库在 `information_schema` 查不到 → **硬失败**
+（防"库改名后静默少备一个"）；每张表都要能在产物里找到 + 数据段标记齐全（declared-vs-present）；
+临时校验库现场建、跑完自毁，**建不起或删不掉都报红并回读自证**；容器内暂存目录 `/tmp/dbbak`
+开工与收工各清一次并回读；滚动删除只认 `yyyy-MM-dd_HHmmss` 命名的目录，别的一概不碰；
+失败时落 `_ALERT.txt` 并可 POST 到 `-AlertWebhook`（告警本身失败不覆盖真原因）。
+
+**怎么验（照做即可）**：
+- 正常：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -BackupRoot <某个真实存在的目录>` → 退出码 0，`runs\<时间戳>\backup.log` 末段全 PASS。
+- 滚动：连跑 2 次加 `-KeepRuns 2` → `runs\` 下只剩 2 个目录。
+- 失败路径：`-BackupRoot Z:\nope` → 退出码 **1**，并打印"改哪一行"的处置。
+- 注册每日任务：`scripts\db-backup-register.ps1 -BackupRoot <盘>`（**需你指定盘**，见遗留项 B-1）。
+
+**遗留**：备份**根目录**仍是待老板拍板的占位默认值（`$DefaultBackupRoot`，脚本顶部一行可改）；
+`-AlertWebhook` 未配置（当前只落盘 + 打印）。
+
 ### 2026-10-11（S3 钱与库存每日自动对账 + 提醒）
 
 **一句话**：每天凌晨系统自己把「交易库里的钱和库存」重算一遍，
@@ -3762,6 +3807,18 @@ docker exec duoduo-mysql sh -c 'mysql --default-character-set=utf8mb4 -uroot -pd
 
 # 手动触发一轮补偿调度（超时关单 / 释放冻结 / 自动确认收货 / 入库补偿 / 支付单过期）
 curl.exe -X POST http://127.0.0.1:8083/api/orders/internal/sweep -H "X-Internal-Token: duoduo-local-dev-internal-token"
+
+# ============ S4 数据库自动备份（六库 dump + 抽验 + 滚动保留 + 失败告警）============
+# 跑一次（备份根目录必须给一个**真实存在**的目录；脚本顶部的 $DefaultBackupRoot 只是占位默认值）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -BackupRoot 'E:\duoduo-backup'
+#   → runs\<yyyy-MM-dd_HHmmss>\ 下有 6 个 .sql + manifest.json + backup.log；退出码 0 = 全绿
+#   → 退出码 1 = 有失败项，已落 _ALERT.txt（配 -AlertWebhook 可推飞书/钉钉）
+# 只备某个库 / 调抽验张数 / 调保留份数
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -BackupRoot 'E:\duoduo-backup' -Databases duoduo_trade -VerifySamples 5 -KeepRuns 14
+# 注册成每天 03:00 的计划任务（刻意排在 03:30 对账选主之前；注册后会自动试跑一次并回读结果）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.ps1 -BackupRoot 'E:\duoduo-backup'
+# 单表恢复示例（拿产物里的某张表，恢复进指定库）
+docker exec -i duoduo-mysql mysql -uroot -pduoduo_root -D duoduo_trade < runs\<时间戳>\duoduo_trade.sql
 ```
 
 > 服务端口：网关 **8080**、用户 **8081**、商品 **8082**、交易 **8083**、履约 **8084**、营销 **8085**。

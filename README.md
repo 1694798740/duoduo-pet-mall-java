@@ -742,6 +742,28 @@ docker compose build duoduo-trade-app && docker compose up -d duoduo-trade-app
 > 一键全量回归：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-smoke.ps1`（逐套落盘 `logs/smoke/*.log`）。
 > 其中 `search-smoke` **需要 ES**；ES 未运行时脚本会**显式跳过并在汇总里声明**，不会静默略过（见 `docs/agent/08` T-53）。
 > CI 子集（本地 / GitHub Actions 同一入口，**17 套**）：`scripts/ci-run.ps1 -Scripts smoke.ps1,trade-smoke.ps1,order-smoke.ps1,address-smoke.ps1,id-precision-smoke.ps1,seller-smoke.ps1,aftersale-smoke.ps1,logistics-smoke.ps1,credit-smoke.ps1,ai-smoke.ps1,review-smoke.ps1,audit-sla-smoke.ps1,perm-version-smoke.ps1,audit-log-smoke.ps1,privilege-matrix-smoke.ps1,tenant-isolation-smoke.ps1,admin-2fa-smoke.ps1`。
+
+### 数据库备份（S4，2026-10-12 落地）
+
+> 全项目**唯一**有「不可逆数据损失」风险的一项：此前所有验证与修复（含 E26 全量删号）
+> 都建立在"库坏了能从备份恢复"之上，而那个前提**只靠人工临时 dump 维持**。
+
+```powershell
+# 跑一次：六库 mysqldump → 产物自证 → 从产物切表恢复进临时库做三方比对 → 滚动保留 → 失败告警
+#   -BackupRoot 必须给一个真实存在的目录（脚本顶部 $DefaultBackupRoot 只是占位默认值，不是已定方案）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup.ps1 -BackupRoot 'E:\duoduo-backup'
+#   → runs\<yyyy-MM-dd_HHmmss>\：6 个 .sql + manifest.json + backup.log；退出码 0 = 全绿
+#   → 退出码 1 = 有失败项，落 _ALERT.txt；配 -AlertWebhook 可推飞书/钉钉
+# 注册成每天 03:00 的计划任务（排在 03:30 对账选主之前；注册后自动试跑一次并回读结果）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-backup-register.ps1 -BackupRoot 'E:\duoduo-backup'
+```
+
+> **抽验怎么做的（这是它区别于"导完就报成功"的地方）**：从**产物**里切出该表的整段
+> （含 dump 的 preamble，否则最后一张表会带上 `SET TIME_ZONE=@OLD_TIME_ZONE` 而恢复报 `ERROR 1231`）→
+> 恢复进临时库 → 与源表比对**行数 + `CHECKSUM TABLE`**。抽样 = 随机 K 张 **+ 每个库的最后一张表**
+> （切片边界必须占位，不能靠运气）；校验和做**三方比对**（产物 vs dump 前 vs 恢复时），
+> 因为 `t_sched_leader` 这类心跳表每 2 分钟就被改写 —— 只跟"当下源库"比会导致备份正确却天天报红。
+> 实测：六库 **58 张表 / 3.85 MB / 1 分 40 秒**，抽验 9 张失败 0。
 > **PR 上跑子集（反馈快），push 到 main 跑全量**（`ci.yml` 的 `smoke-full` 作业直接调 `run-all-smoke.ps1`）——
 > 两者缺一不可：只有子集会漏（E10→E27 的教训），只有全量会慢到没人愿意等。
 > **API 契约**：`scripts/export-openapi.ps1` 导出各服务 OpenAPI 至 `docs/openapi/`（含 `endpoints.md` 摘要，**252 个端点**与 `docs/agent/04` 逐条核对）；
@@ -1773,6 +1795,37 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-12（S4 数据库自动备份：从「只有人工 dump」到一条能自证的命令）
+
+**新增两个脚本**（都在 `scripts/` 下）：
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/db-backup.ps1` | 六库 `mysqldump` → 产物自证 → **从产物切表恢复进临时库做三方比对** → 滚动保留 → 失败即告警 |
+| `scripts/db-backup-register.ps1` | 把上面那个注册成每日计划任务；**注册完立刻试跑一次并回读结果**（注册成功 ≠ 跑得成） |
+
+**实测（2026-10-12，Docker 17 容器全 healthy，MySQL 8.0.36）**：六库 **58 张表**、
+6 个 dump 合计 **3.85 MB**、耗时 **1 分 40 秒**、退出码 **0**；抽验 9 张（随机 3 + 每个库的最后一张）
+**失败 0 张**；滚动保留（`-KeepRuns 2` 连跑 2 次）后 `runs\` 下恰好剩 2 个目录；
+`-BackupRoot Z:\nope` 退出码 **1** 并打印「改哪一行」的处置。
+
+**★ 本轮抓到并修掉的三个静默缺陷**（详见 `docs/PLAN.md` §6）：
+
+1. **PowerShell 函数返回单元素数组会被静默展开** → 调用方拿到的是字符串，
+   `$r[0]` 实际取到**第一个字符**（`duoduo_user` → `d`）。不报错，症状是"六个库都说不存在"。
+   写法：`return ,$res`。
+2. **从 dump 里切表必须带上 preamble**：若抽中的是 dump 里的**最后一张**表，
+   切片会带上收尾块 `SET TIME_ZONE=@OLD_TIME_ZONE`，而该变量只在 preamble 里赋过值 →
+   `ERROR 1231`。所以现在**每个库的最后一张表永远强制入选抽验**（边界用例不靠运气覆盖）。
+3. **不能只跟"恢复那一刻的源库"比**：`t_sched_leader` 是选主心跳表（每 2 分钟改写），
+   校验和每次都不同 → 备份正确却天天报红。改成**三方比对**（产物 vs before vs after），
+   产物与任一侧一致即通过，两侧都不一致才 FAIL 并打出三个值。
+
+**为什么必须有**：这是全项目**唯一**有「不可逆数据损失」风险的一项；此前所有验证与修复
+（含 E26 全量删号）都建立在"库坏了能从备份恢复"之上，而那个前提**只靠人工临时 dump 维持**。
+
+**待你拍板**：备份**根目录**（脚本顶部 `$DefaultBackupRoot` 是占位默认值，**不是已定方案**）。
 
 ### 2026-10-11（文档排版修复之二：表格行的**列数**不一致 —— 3 行）
 
