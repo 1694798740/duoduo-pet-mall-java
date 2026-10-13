@@ -1,1 +1,2 @@
 com.duoduo.common.web.WebAutoConfiguration
+com.duoduo.common.web.storage.ObjectStorageAutoConfiguration

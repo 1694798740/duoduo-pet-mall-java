@@ -3,13 +3,10 @@ package com.duoduo.fulfilment.controller;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.common.web.storage.ObjectStorage;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -17,8 +14,8 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -47,7 +44,11 @@ import org.springframework.web.multipart.MultipartFile;
  *       读走无 /api 前缀的 /uploads/**，写走受保护的 /api/uploads，白名单只放 /uploads/**。</li>
  * </ul>
  *
- * <p>存储是本地盘（对象存储接入前的过渡态）：容器里挂卷即可持久，丢了也只丢图不丢单。
+ * <p><b>存储介质（S9）</b>：落盘位置改由 {@link ObjectStorage} 决定 ——
+ * 默认是本地盘（行为与改造前逐字节一致），配置 {@code duoduo.storage.type=cos} 后
+ * 落到腾讯云 COS。<b>本类的对外契约一个字都没变</b>：
+ * 上传仍返回 {@code <base>/uploads/<uuid>.<ext>}，读取仍是同一个路径 ——
+ * 存量图片 URL 一条都不会失效。这是接对象存储时最重要的一条约束。
  */
 @RestController
 public class UploadController {
@@ -69,15 +70,15 @@ public class UploadController {
     private static final Set<String> IMAGE_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif");
 
-    private final Path storageDir;
+    private final ObjectStorage storage;
     private final int maxSizeMb;
     private final String publicBaseUrl;
 
     public UploadController(
-            @Value("${duoduo.uploads.dir:./data/uploads}") String dir,
+            @Qualifier("publicObjectStorage") ObjectStorage storage,
             @Value("${duoduo.uploads.max-size-mb:5}") int maxSizeMb,
             @Value("${duoduo.uploads.public-base-url:}") String publicBaseUrl) {
-        this.storageDir = Paths.get(dir).toAbsolutePath().normalize();
+        this.storage = storage;
         this.maxSizeMb = maxSizeMb;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.trim();
     }
@@ -110,34 +111,35 @@ public class UploadController {
         }
 
         String stored = UUID.randomUUID() + "." + ext;
-        Files.createDirectories(storageDir);
-        Path target = storageDir.resolve(stored).normalize();
-        // 双保险：resolve + normalize 后必须还在存储目录里（未来有人改文件名生成逻辑时兜底）
-        if (!target.startsWith(storageDir)) {
-            throw BizException.validation("非法的存储路径");
-        }
-        try (var in = file.getInputStream()) {
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+        // ★ 逻辑 key 带 uploads/ 前缀 —— 这一层让本地盘与对象存储**共用同一个对外 URL**
+        //   （<base>/uploads/<uuid>.<ext>）。本地实现会把前缀剥掉落到 /data/uploads/<uuid>，
+        //   存量文件因此原地可用；COS 实现则原样作为桶内对象 key。
+        try {
+            storage.put(ObjectStorage.PREFIX_PUBLIC + stored, file.getBytes(), contentType);
         } catch (IOException e) {
-            // 落盘失败（典型：卷属主不对 / 磁盘满）不该以 500 蒙面，给出可行动的提示并留 ERROR 现场由运维看容器日志
-            log.error("图片落盘失败 dir={} stored={}", storageDir, stored, e);
+            // 读上传流失败（客户端中断等）不该以 500 蒙面，给可行动的提示并留 ERROR 现场
+            log.error("读取上传流失败 stored={}", stored, e);
+            throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
+        } catch (BizException e) {
+            // 存储层（含 COS）的失败已带可读原因，这里只补一句用户可行动的话，原样抛出
+            log.error("图片写入存储失败 backend={} stored={}", storage.backend(), stored, e);
             throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
         }
 
         String url = baseUrl(request) + "/uploads/" + stored;
         // 不记原文件名：它是不可信输入，进日志只会污染检索
-        log.info("用户 {} 上传图片 {}（{} 字节）", userId, stored, file.getSize());
+        log.info("用户 {} 上传图片 {}（{} 字节，后端 {}）", userId, stored, file.getSize(), storage.backend());
         return ApiResponse.ok(Map.of("url", url));
     }
 
-    /** 公开读：图片标签直出。文件名不是服务端生成的格式一律 404，不探测文件系统。 */
+    /** 公开读：图片标签直出。文件名不是服务端生成的格式一律 404，不探测底层存储。 */
     @GetMapping("/uploads/{filename}")
-    public ResponseEntity<FileSystemResource> serve(@PathVariable String filename) {
+    public ResponseEntity<byte[]> serve(@PathVariable String filename) {
         if (filename == null || !SERVABLE.matcher(filename).matches()) {
             return ResponseEntity.notFound().build();
         }
-        Path target = storageDir.resolve(filename).normalize();
-        if (!target.startsWith(storageDir) || !Files.isRegularFile(target)) {
+        byte[] content = storage.get(ObjectStorage.PREFIX_PUBLIC + filename);
+        if (content == null) {
             return ResponseEntity.notFound().build();
         }
         String ext = extOf(filename);
@@ -145,7 +147,7 @@ public class UploadController {
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic())
-                .body(new FileSystemResource(target));
+                .body(content);
     }
 
     /** 取小写扩展名（不含点）；无扩展名返回 null */

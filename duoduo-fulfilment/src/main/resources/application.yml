@@ -74,6 +74,23 @@ duoduo:
     public-base-url: ${UPLOADS_PUBLIC_BASE_URL:}
     # 单图大小上限（MB）。0 表示不限制（仍受 spring.servlet.multipart 硬顶约束）
     max-size-mb: ${UPLOADS_MAX_MB:5}
+  storage:
+    # S9 · 存储介质。local（默认，本地盘）| cos（腾讯云对象存储）。
+    # ★ 默认必须是 local：新存储层一旦有问题，改回这一行重启即可回退；
+    #   同时本地盘是 CI / 开发环境（没有桶、没有密钥）唯一可用的后端。
+    # type=cos 但下面 5 个键没配全时，服务**回落 local 并打 WARN（点名缺哪个）**，不会启动失败。
+    type: ${STORAGE_TYPE:local}
+    cos:
+      # 子用户密钥（★ 不要用主账号密钥）。只授「两个桶的对象级
+      # PutObject/GetObject/HeadObject/DeleteObject」，不授列举桶、不授桶级 cos:*。
+      secret-id: ${COS_SECRET_ID:}
+      secret-key: ${COS_SECRET_KEY:}
+      region: ${COS_REGION:}
+      # 公开读桶（商品图 / 评价晒图 / 售后举证图），本服务只用这一个
+      bucket-public: ${COS_BUCKET_PUBLIC:}
+      # 私有桶（入驻资质材料）由用户域使用；本服务不读它，但配置项保持齐全，
+      # 避免"两个服务各配一半、切环境时漏一个"这类问题。
+      bucket-private: ${COS_BUCKET_PRIVATE:}
   review:
     # 评价内容最大长度（与 DDL 的 VARCHAR(1000) 对齐）
     max-content-length: ${REVIEW_MAX_CONTENT:1000}

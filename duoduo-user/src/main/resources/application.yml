@@ -84,6 +84,24 @@ duoduo:
     # 「新注册用户库内分数 == 信用分接口给出的基础分」。
     # 改这里必须同步改履约域的 duoduo.credit.base，否则新用户会立刻出现分数分裂。
     credit-default: ${USER_CREDIT_DEFAULT:60}
+  materials:
+    # E12 · 入驻资质材料的本地落盘目录（仅在 storage.type=local 时使用）。
+    # 容器里通过独立卷挂载持久化，见 docker-compose.yml。★ 该卷不挂任何公开 nginx 路径。
+    dir: ${MATERIALS_DIR:/data/merchant-materials}
+  storage:
+    # S9 · 存储介质。local（默认，本地盘）| cos（腾讯云对象存储）。
+    # ★ 默认必须是 local：新存储层一旦有问题，改回这一行重启即可回退。
+    # ★ 本服务的资质材料必须走**私有桶**（bucket-private），绝不允许改指向公开桶 ——
+    #   营业执照 + 法人身份证 + 银行账户一旦变成匿名可读的对象，就是一次数据事故。
+    type: ${STORAGE_TYPE:local}
+    cos:
+      secret-id: ${COS_SECRET_ID:}
+      secret-key: ${COS_SECRET_KEY:}
+      region: ${COS_REGION:}
+      # 公开桶由履约域使用；本服务不写它，配置项同样保持齐全。
+      bucket-public: ${COS_BUCKET_PUBLIC:}
+      # ★ 私有桶：入驻资质材料
+      bucket-private: ${COS_BUCKET_PRIVATE:}
   wechat:
     # A13 · 小程序登录凭据。appid/secret 从微信公众平台获取，只经环境变量注入，
     # 绝不写入代码库；两者缺一时微信登录返回 503 DEGRADED（如实降级）。

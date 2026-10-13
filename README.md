@@ -1981,6 +1981,57 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-13（S9：图片与资质材料接入**对象存储**（腾讯云 COS）—— 新增一层介质无关的 `ObjectStorage`，默认仍是本地盘）
+
+**做了什么**：把「图片/材料落在哪」从写死在两个类里的本地盘，改成可切换的抽象层。
+新增 `com.duoduo.common.web.storage` 包：`ObjectStorage` 接口 + 两个实现
+（`LocalFsObjectStorage` 本地盘 / `CosObjectStorage` 腾讯云 COS）+ 自动装配，
+`UploadController` 与 `MerchantMaterialStorage` 改走接口。
+
+**★ 三条不能丢的约束（改造时守住了）**：
+
+1. **对外 URL 形态一字未改**：上传仍返回 `<base>/uploads/<uuid>.<ext>` —— 改了这个等于历史图片全部 404；
+2. **私有语义绝不让位**：资质材料走**独立私有桶**，读取仍只经 `MerchantOnboardingService.readMaterial` 的授权判断，
+   换介质**没有多出任何一条绕过鉴权的读法**（有实测：私有桶对象匿名访问被拒）；
+3. **默认值必须是 `local`**：新存储层一旦有问题，改一行配置重启即可回退；
+   `type=cos` 但密钥/桶名没配全时**回落 local 并打 WARN（点名缺哪个）**，不启动失败、也不静默。
+
+**为什么自己写签名而不用 SDK**：本项目的 Maven 用**项目内本地仓库**（`maven/settings.xml` 的
+`<localRepository>.../.m2repo</localRepository>`）且构建走 `-o`（离线），实测该仓库里
+`com.qcloud:cos_api`、`io.minio:minio`、`software.amazon.awssdk:s3` **一个都没有**。
+而 COS 签名 v5 是公开算法：两次 HMAC-SHA1 + 一次 SHA1，JDK 自带即可（约 60 行），
+与项目已有的自研签名（`InternalWeb/InternalCallAuth`）风格一致。
+
+**★ 踩到并修掉的坑（值得记住）**：第一次打真接口返回 `403 SignatureDoesNotMatch`。
+把官方文档的示例逐字喂进来后发现 —— `HttpString` 与 `SignKey` 两段**都对**，
+错在最后一步：`StringToSign` 不是裸的 `SHA1(HttpString)`，而是
+
+```
+StringToSign = "sha1" + "\n" + KeyTime + "\n" + SHA1(HttpString) + "\n"
+```
+
+**漏了固定前缀 `sha1`、中间段 `KeyTime`、以及结尾换行** —— 服务端只会回一句"签名无效"，
+不会告诉你差在哪。另：`HttpString` 里的路径必须是**未编码**形式（官方示例：线上发
+`/exampleobject(%E8%85%BE%E8%AE%91)`，签名里写 `/exampleobject(腾讯云)`）。
+
+**测试与守卫**：
+
+- `CosSignerTest`（7 项）：含**官方文档示例向量**（文档把示例签名尾部打码，故按前 36 位十六进制断言），
+  以及"KeyTime 变了签名必须变"（防止回退成漏 KeyTime 的写法）；
+- `LocalFsObjectStorageTest`（8 项）：前缀剥离、租户目录、缺失返回 `null`、错前缀报错、路径穿越、`delete` 幂等；
+- `CosObjectStorageLiveTest`（5 项，`COS_LIVE_TEST=true` 门控，**默认跳过**）：打真实 COS 验证
+  **公开桶匿名 GET 必须 200**、**私有桶匿名 GET 必须被拒**、**持密钥列桶必须被拒**（最小权限反向验证）、
+  密钥写错必须明确报错；夹具现场建、跑完自毁并断言无残留；
+- `scripts/lib/check-storage-guard.ps1`：四层静态守卫（接口不得被 `java.nio.file` 污染、
+  调用方不得直接落盘、配置默认值必须是 `local`、★ **正对照**：本地实现里必须能扫到 `java.nio.file`）。
+
+**实测**：全项目单测 **735 项 / 0 失败**（715 + 新增 20）；打真实 COS 联调 **5/5 全过**；
+静态守卫 `exit 0`，反向验证（把默认值改成 `cos`）**恰好那一条红并点名**。
+
+**配置**：`STORAGE_TYPE`（默认 `local`）、`COS_SECRET_ID` / `COS_SECRET_KEY` / `COS_REGION` /
+`COS_BUCKET_PUBLIC` / `COS_BUCKET_PRIVATE`、`UPLOADS_PUBLIC_BASE_URL`。
+密钥只经 `.env`（已 gitignore）注入，**绝不进前端构建产物**。
+
 ### 2026-10-13（S5：把「涉及钱」的口径固化成**算术**断言 —— 越权矩阵 82 → **115 项**；并修掉一处「自愈误删本轮夹具」）
 
 **一、为什么单开一节**

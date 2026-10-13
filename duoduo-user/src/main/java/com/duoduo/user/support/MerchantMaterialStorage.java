@@ -1,14 +1,13 @@
 package com.duoduo.user.support;
 
-import com.duoduo.common.exception.BizException;
 import com.duoduo.common.enums.ErrorCode;
-import org.springframework.beans.factory.annotation.Value;
+import com.duoduo.common.exception.BizException;
+import com.duoduo.common.web.storage.LocalFsObjectStorage;
+import com.duoduo.common.web.storage.ObjectStorage;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -24,12 +23,19 @@ import java.util.regex.Pattern;
  * 存储位置不挂任何公开 nginx 路径（compose 里独立卷，与 fulfilment 的公开盘分开）。
  *
  * <h2>按租户分目录</h2>
- * {@code {dir}/{merchantId}/{storedName}} —— 一家店一个目录，将来做
- * 「租户数据导出 / 注销即焚」（P3）时按目录整删即可，不必全盘扫描文件名。
+ * 逻辑 key 是 {@code materials/{merchantId}/{storedName}} —— 一家店一个目录，
+ * 将来做「租户数据导出 / 注销即焚」（P3）时按目录整删即可，不必全盘扫描文件名。
  *
  * <h2>路径安全</h2>
  * 读接口只接受服务端自己生成的文件名（UUID + 白名单扩展），正则一层就把
  * 路径穿越（{@code ../}）拒掉 —— 与公开通道 UploadController 的 SERVABLE 同款口径。
+ * 存储层（{@link LocalFsObjectStorage}）另有「normalize 后必须仍在根目录内」的第二道。
+ *
+ * <h2>介质（S9）</h2>
+ * 落盘位置改由 {@link ObjectStorage} 决定：默认本地盘（行为与改造前逐字节一致），
+ * 配 {@code duoduo.storage.type=cos} 后落到**私有桶**。
+ * ★ 本类拿到的是 {@code privateObjectStorage} 这个 Bean ——
+ * <b>私有语义靠"用哪个桶"保证</b>，所以这里绝不允许退回公开桶。
  */
 @Component
 public class MerchantMaterialStorage {
@@ -49,10 +55,21 @@ public class MerchantMaterialStorage {
     /** 单文件上限：与网关 multipart 总上限（12MB）对齐并留余量 */
     private static final long MAX_BYTES = 6L * 1024 * 1024;
 
-    private final Path root;
+    private final ObjectStorage storage;
 
-    public MerchantMaterialStorage(@Value("${duoduo.materials.dir:/data/merchant-materials}") String dir) {
-        this.root = Paths.get(dir).toAbsolutePath().normalize();
+    @Autowired
+    public MerchantMaterialStorage(@Qualifier("privateObjectStorage") ObjectStorage storage) {
+        this.storage = storage;
+    }
+
+    /**
+     * 兼容构造：直接指定本地根目录。
+     *
+     * <p>保留它有两个实际用途：① 单测不必起 Spring 容器；② 任何"没有自动装配"的裸调用场景仍可用。
+     * 它内部走本地实现，**与 {@code duoduo.storage.type=local} 完全等价**。
+     */
+    public MerchantMaterialStorage(String dir) {
+        this(new LocalFsObjectStorage(dir, ObjectStorage.PREFIX_PRIVATE));
     }
 
     /** 该扩展名是否可接收（供控制器把校验错误转成可读提示） */
@@ -87,10 +104,10 @@ public class MerchantMaterialStorage {
         String ext = originalName.substring(originalName.lastIndexOf('.') + 1).toLowerCase();
         String storedName = UUID.randomUUID() + "." + ext;
         try {
-            Path dir = root.resolve(String.valueOf(merchantId));
-            Files.createDirectories(dir);
-            Files.write(dir.resolve(storedName), content);
-        } catch (IOException ex) {
+            storage.put(ObjectStorage.PREFIX_PRIVATE + merchantId + "/" + storedName, content, contentType);
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception ex) {
             throw new BizException(ErrorCode.INTERNAL, "材料保存失败", ex);
         }
         return new Stored(storedName, originalName,
@@ -98,34 +115,43 @@ public class MerchantMaterialStorage {
     }
 
     /**
-     * 读取一份材料。**调用方必须先做授权判断**（店主本人 / 运营），本方法只管文件系统。
+     * 读取一份材料。**调用方必须先做授权判断**（店主本人 / 运营），本方法只管存储。
      *
-     * @throws BizException 文件名形状非法（路径穿越企图）或文件不存在
+     * @throws BizException 文件名形状非法（路径穿越企图）或材料不存在
      */
     public ReadResult read(long merchantId, String storedName) {
         if (storedName == null || !SERVABLE.matcher(storedName).matches()) {
             throw BizException.notFound("材料");
         }
-        Path file = root.resolve(String.valueOf(merchantId)).resolve(storedName).normalize();
-        // 双保险：normalize 后仍必须在租户目录内（防御未来有人改动 storedName 规则）
-        if (!file.startsWith(root.resolve(String.valueOf(merchantId)))) {
-            throw BizException.notFound("材料");
-        }
-        if (!Files.isRegularFile(file)) {
-            throw BizException.notFound("材料");
-        }
+        // ★ 租户隔离靠 key 里的 merchantId 段实现：A 店的 storedName 拼到 B 店的 key 上，
+        //   取到的就是"不存在"，不可能顺着文件名落到 A 店目录 —— 与改造前同一口径。
+        byte[] content;
         try {
-            return new ReadResult(file, CONTENT_TYPES.get(
-                    storedName.substring(storedName.lastIndexOf('.') + 1).toLowerCase()));
+            content = storage.get(ObjectStorage.PREFIX_PRIVATE + merchantId + "/" + storedName);
+        } catch (BizException e) {
+            throw e;
         } catch (Exception ex) {
             throw new BizException(ErrorCode.INTERNAL, "材料读取失败", ex);
         }
+        if (content == null) {
+            throw BizException.notFound("材料");
+        }
+        return new ReadResult(content,
+                CONTENT_TYPES.get(storedName.substring(storedName.lastIndexOf('.') + 1).toLowerCase()));
     }
 
     /** 存储结果：storedName 落库用，readPath 是给前端的鉴权读取路径 */
     public record Stored(String storedName, String originalName, String readPath, String contentType) {
     }
 
-    public record ReadResult(Path file, String contentType) {
+    /**
+     * 读取结果：**直接给字节**而不是文件路径。
+     *
+     * <p>S9 之前这里是 {@code Path file} —— 那等于把"本地盘"暴露在契约里：
+     * 换成对象存储后调用方拿不到 Path，接口就得跟着改；改成字节之后，
+     * 存储介质怎么变、调用方都不用动。材料上限 6MB，整体读进内存是可接受的
+     * （与改造前 {@code Files.readAllBytes} 同量级）。
+     */
+    public record ReadResult(byte[] content, String contentType) {
     }
 }
