@@ -726,6 +726,57 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 `latest` 红 / 删 lock 红 / 加 postinstall 红 / 非白名单源红 / 依赖全删→判据静默失效红）。
 
 
+### 4.12 对象存储抽象层自检（S9；改上传链路 / 动 `duoduo-common-web/.../storage` 后必做）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lib\check-storage-guard.ps1
+#    预期：exit 0，输出
+#      「[storage-guard] 通过：4 层判据全绿，扫描 3 个调用方文件」
+```
+
+**它防的是什么**：S9 之后「图片/材料落在哪」从写死在两个类里的本地盘，变成了可切换的
+`ObjectStorage`。这类改造最典型的退化是**有人绕过抽象层直接碰本地盘**
+（新写一段 `Files.copy(in, uploadsDir.resolve(...))`、或把 `java.nio.file.Path` 塞回接口签名里）。
+它**不会自己报错** —— 表现是"配置改成了 COS，但某些新功能依然落在容器卷里"，
+两处都"看起来正常"。**不进 CI ＝ 迟早静默腐烂。**
+
+| 层 | 判什么 |
+|---|---|
+| ① | `ObjectStorage` 接口不得出现 `java.nio.file / Files / Path`（抽象没被污染） |
+| ② | 三个调用方（`UploadController` / `MerchantMaterialReadController` / `MerchantMaterialStorage`）不得出现 `Files.copy\|write\|readAllBytes\|createDirectories\|FileSystemResource` |
+| ③ | 配置一致性：`duoduo.storage.type` 的**默认值必须是 `local`**；compose 必须透传 `UPLOADS_PUBLIC_BASE_URL` 与 4 个 `COS_*` |
+| ④ | ★ **正对照**：`LocalFsObjectStorage` 里**必须**能扫到 `java.nio.file` —— 否则前几层的"干净"只是因为**没读到文件** |
+
+**两个实测踩到的坑（都已写进脚本注释）**：
+
+- **上溯目录层数写错**：脚本在 `scripts\lib\` 下，要 `Split-Path -Parent` **三次**才是仓库根；
+  写成两次得到 `scripts\`，所有 `Test-Path` 全落空。
+  ★ **正是"扫描数为 0 判违规"这一条当场把它揪出来的** —— 若没有这条，脚本会输出一片"全部通过"。
+- **必须先剥注释再匹配**：这些类的注释里**故意**写着"为什么不能用 `java.nio.file.Path`"、
+  "与改造前 `Files.readAllBytes` 同量级"这类反向说明 —— 全文匹配会把"解释为什么不用"判成"用了"。
+
+**反向验证**：把 `duoduo.storage.type` 的默认值改成 `cos` ⇒ 应**恰好在第 ③ 层报红并点名**
+（实测输出：`[FAIL] duoduo.storage.type 默认 = 'cos' —— 默认必须是 local…`），还原后复绿。
+
+**配套工具（S9 收尾）**：
+
+```powershell
+# 存量图片/材料迁移到对象存储：幂等 / 可停可续 / 逐文件双源 sha256 核对
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-uploads-to-cos.ps1            # 干跑（只读桶，不写任何对象）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-uploads-to-cos.ps1 -Apply     # 真跑
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-uploads-to-cos.ps1 -VerifyOnly # 只核对（桶内 vs 卷内）
+#    ★ 判据是「卷里那份的 sha256」与「桶里**回读**那份的 sha256」相等 ——
+#      不是"上传接口返回 200 就算成功"（内容被截断在只看返回码的写法里完全看不出来）。
+#    ★ 三种模式由 **-Apply 一个开关**决定写不写桶；干跑时一个字节都不写。
+#      （2026-10-13 实测踩过：第一版把条件写成 `-not $VerifyOnly`，默认干跑把 132 个对象写进了真实桶。）
+
+# 通用 COS 客户端（运维脚本复用；纯 .NET 实现签名 v5，无需装 COSCMD）
+. scripts\lib\cos-tool.ps1
+$cfg = Get-CosConfig -Role public          # 或 -Role private
+Invoke-CosHead -Cfg $cfg -Key 'uploads/<uuid>.png'
+```
+
+
 ---
 
 ## 5. 手工业务验收（按角色走一遍）
@@ -841,11 +892,13 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
 - [ ] `node scripts/check-miniprogram.js` → 0 错 0 警
 - [ ] `frontend: npm run build` → 退出码 0
 - [ ] `scripts\check-all.ps1` 的 `[0/5]` 静态守卫**全部**退出码 0（**不写死个数**，按实际：
-      断言写法与 BOM / 网关路由覆盖 250 条 / Mapper SQL 实体 / 运维手册一致 /
-      双端功能对照 / 依赖安全 / 文档裸反引号与未转义竖线 / 图表主题接入点 / e2e 截图输出 /
-      云端暂存映射表）。★ 清单里允许出现 **`[N/A]`**（本机不适用的项，如未配 `DUODUO_SYNC_STAGING`），
+      断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 /
+      依赖安全 / **对象存储抽象层（S9）** / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出 /
+      云端暂存副本新鲜度）。★ 清单里允许出现 **`[N/A]`**（本机不适用的项，如未配 `DUODUO_SYNC_STAGING`），
       但**不允许把 `[N/A]` 写成 `[PASS]`** —— 汇总会单独把 N/A 数出来。
-- [ ] `mvn -o test` → BUILD SUCCESS（**715 项 / 69 个测试类**，2026-10-12 实测）
+- [ ] `mvn -o test` → BUILD SUCCESS（**735 项 / 72 个测试类**，2026-10-13 实测；
+      715 = S9 之前的基线，+20 = 新增 CosSignerTest 7 / LocalFsObjectStorageTest 8 / CosObjectStorageLiveTest 5，
+      其中 Live 那 5 项在常规跑里按设计**跳过**，只有设了 `COS_LIVE_TEST=true` 才执行）
 - [ ] `scripts\run-all-smoke.ps1` → **共 32 套 / 通过 32 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
 - [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
