@@ -118,10 +118,22 @@ function Send-CosRequest {
         $req.Content = $bc
     }
     $resp = $client.SendAsync($req).Result
+    # ★ Content-Type / Content-Length / ETag 在 .NET 里属于 **Content 头**，不在 Response.Headers 里 ——
+    #   第一版只返回了 $resp.Headers，于是诊断"控制台为什么预览不出来"时读不到 Content-Type
+    #   （拿到的是空串，看起来像"对象没有类型"）。两者都要返回。
+    $ct = ''; $cl = ''; $etag = ''
+    try { if ($resp.Content.Headers.ContentType) { $ct = $resp.Content.Headers.ContentType.ToString() } } catch {}
+    try { if ($resp.Content.Headers.ContentLength) { $cl = [string]$resp.Content.Headers.ContentLength } } catch {}
+    try { $etag = ($resp.Headers.ETag | ForEach-Object { $_.Tag }) -join '' } catch {}
+    if (-not $etag) { try { $etag = ($resp.Content.Headers.ETag | ForEach-Object { $_.Tag }) -join '' } catch {} }
+
     return [pscustomobject]@{
-        Status = [int]$resp.StatusCode
-        Body   = $resp.Content.ReadAsByteArrayAsync().Result
-        Header = $resp.Headers
+        Status        = [int]$resp.StatusCode
+        Body          = $resp.Content.ReadAsByteArrayAsync().Result
+        Header        = $resp.Headers
+        ContentType   = $ct
+        ContentLength = $cl
+        ETag          = $etag
     }
 }
 
