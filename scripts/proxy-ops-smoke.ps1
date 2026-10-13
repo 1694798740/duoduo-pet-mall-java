@@ -302,6 +302,34 @@ $r = Call 'Post' "$Product/api/seller/products/$spuS/status" $null @{ action = '
 }
 Check "★ 服务端层（直连商品端口，伪造运营头）改第三方商品 → 403" ($r.status -eq 403) $r.status
 
+# 3.6 ★ A-1 / PLAN B-23 收窄：运营不能直接**编辑**第三方商品
+#      E23 当时**刻意只拦上下架**（理由：不借一次收窄顺手改变更多行为），
+#      留下的口子就是这里 —— 运营可以绕过代运营工单直接改第三方商品的内容，
+#      而"改了什么"既没有工单、也没有改前值留档。
+$r = Call 'Put' "$Gateway/api/seller/products/$spuS" $sessOp @{ title = '运营越权改的标题' }
+Check "★ 运营直接编辑第三方商品 → 403（A-1 已收窄该口子）" ($r.status -eq 403) $r.status
+# ★ 断言"没落库"：只在入口抛异常、而写库已经发生，是最难查的一类（接口报错、数据却变了）。
+#   这里用 COUNT 而不是"把原标题取出来再比"，是为了不在 SQL 里插值 —— 商品标题来自种子数据，
+#   一旦标题里出现单引号，插值写法会把整个脚本掀掉（连汇总都打不出来）。
+$hit = Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id=$spuS AND title='运营越权改的标题';"
+Check "★ 被拒后库里查不到那个被改的标题（证明没有先写后抛）" ("$hit" -eq '0') $hit
+
+# 3.7 正对照：自营商品运营可以直接编辑（收窄不该把平台自己的货也拦住）
+#     刻意改 subtitle 而不是 title：subtitle 可以再置空复原，不必把原标题读出来插回 SQL。
+$r = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = 'A1正对照标记' }
+Check "正对照：运营直接编辑自营商品 → 200（自营不受限）" ($r.status -eq 200) $r.status
+$null = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = '' }
+Check "（复原）自营夹具副标题已置空" `
+    ((Sql 'duoduo_product' "SELECT IFNULL(subtitle,'') FROM t_spu WHERE id=$spuSelf;") -eq '')
+
+# 3.8 服务端层（绕过网关直连）同样拒绝 —— 与网关层分别断言（E16 的分层纪律）
+$r = Call 'Put' "$Product/api/seller/products/$spuS" $null @{ title = '直连越权改的标题' } @{
+    'X-User-Id' = '8888'; 'X-User-Role' = 'OPERATOR'; 'X-User-Phone' = '13900000000'
+}
+Check "★ 服务端层（直连商品端口，伪造运营头）编辑第三方商品 → 403" ($r.status -eq 403) $r.status
+$hit2 = Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id=$spuS AND title='直连越权改的标题';"
+Check "★ 服务端层被拒后同样没有落库" ("$hit2" -eq '0') $hit2
+
 ## ============================================================================
 ## 4. 无工单不动作 / 平台不能自己授权
 ## ============================================================================

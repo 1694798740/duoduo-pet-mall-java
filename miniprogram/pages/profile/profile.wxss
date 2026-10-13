@@ -42,6 +42,26 @@
 .arrow { margin-left: auto; color: var(--text-3); }
 .logout-btn { margin: 40rpx 24rpx; }
 
+/* S6-D2b · 宠物档案引导条。
+   刻意不用 .menu-item 的那套边框/箭头：它不是入口，是一条说明。
+   配色压暗一档，让它在一堆可点条目里被读成"提示"而不是"功能"。 */
+.menu-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 20rpx;
+  padding: 30rpx 0;
+  border-bottom: 1rpx solid var(--line);
+}
+.mn-body { flex: 1; min-width: 0; }
+.mn-title { display: block; font-size: 26rpx; color: var(--text-2); }
+.mn-sub {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: var(--text-3);
+}
+
 /* 菜单右侧状态文字（如「微信绑定：已绑定/未绑定」） */
 .mi-state {
   margin-left: auto;

@@ -1,0 +1,47 @@
+<nav-bar title="{{categoryName ? categoryName : '搜索'}}" back="{{true}}" />
+
+<view class="sp-wrap" style="top:{{navTop}}px">
+  <!-- 搜索栏：与首页同款输入框，但这里改关键词只会重搜本页，不会污染首页 -->
+  <view class="search-bar">
+    <input
+      class="search-input"
+      placeholder="搜索宠物用品"
+      value="{{keyword}}"
+      confirm-type="search"
+      bindinput="onKeywordInput"
+      bindconfirm="onSearch"
+    />
+    <button class="btn btn-primary search-btn" size="mini" bindtap="onSearch">搜索</button>
+  </view>
+
+  <view wx:if="{{categoryName && categoryId}}" class="sp-scope">
+    当前范围：{{categoryName}}（共 {{total}} 件）
+  </view>
+  <view wx:elif="{{keyword}}" class="sp-scope">「{{keyword}}」共 {{total}} 件结果</view>
+
+  <scroll-view scroll-y class="sp-main" lower-threshold="120" bindscrolltolower="onScrollToLower" scroll-top="{{scrollTop}}">
+    <view wx:if="{{error}}" class="empty">{{error}}</view>
+
+    <view wx:if="{{!error && items.length === 0 && !loading}}" class="empty">
+      <view>没找到相关商品</view>
+      <view class="empty-hint">换个关键词试试，或回到首页看看分类</view>
+    </view>
+
+    <view wx:if="{{loading && items.length === 0}}" class="empty">搜索中…</view>
+
+    <view class="sp-grid">
+      <view wx:for="{{items}}" wx:key="id" class="cg-card" data-id="{{item.id}}" bindtap="goDetail">
+        <view class="cg-cover">
+          <image class="cg-img" src="{{item.imageSrc}}" mode="aspectFill" lazy-load />
+        </view>
+        <view class="cg-body">
+          <view class="cg-name ellipsis-2">{{item.title}}</view>
+          <view class="cg-price">{{item.priceText}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{loading && items.length > 0}}" class="empty">加载更多…</view>
+    <view wx:elif="{{!hasMore && items.length > 0}}" class="empty">— 已经到底啦 —</view>
+  </scroll-view>
+</view>

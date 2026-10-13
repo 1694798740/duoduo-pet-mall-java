@@ -30,6 +30,9 @@ Page({
     activeIndex: 0,
     activeChildren: [],
     activeChildId: '',
+    // S6-D3：当前生效分类的名字，给右栏顶部的「在…中搜索」用。
+    // 它必须与 fetchProducts 实际用的那个分类同源，否则入口文案会和结果不符。
+    activeName: '',
     items: [],
     loading: false,
     error: '',
@@ -76,7 +79,8 @@ Page({
   selectChild(e) {
     const id = e.currentTarget.dataset.id;
     const cat = this.data.categories[this.data.activeIndex];
-    this.setData({ activeChildId: id });
+    const child = (cat && cat.children || []).find((c) => String(c.id) === String(id));
+    this.setData({ activeChildId: id, activeName: (child && child.name) || (cat && cat.name) || '' });
     this.fetchProducts(id || (cat && cat.id), true);
   },
 
@@ -86,6 +90,7 @@ Page({
       activeIndex: idx,
       activeChildren: cat.children || [],
       activeChildId: '',
+      activeName: cat.name || '',
       items: [],
       page: 1,
       total: 0,
@@ -123,6 +128,22 @@ Page({
         if (seq !== this._seq) return;
         this.setData({ loading: false, error: (err && err.message) || '加载失败' });
       });
+  },
+
+  /**
+   * S6-D3 · 分类内二次搜索：跳到独立结果页，并把**当前生效的分类**带过去。
+   * 生效分类的取值顺序与 fetchProducts 完全一致（子分类优先、空则当前主分类）——
+   * 两处口径不一致的后果是"列表显示的是 A 分类、搜索却进了 B 分类"。
+   */
+  onSearchInCategory() {
+    const cat = this.data.categories[this.data.activeIndex] || {};
+    const child = (cat.children || []).find((c) => String(c.id) === String(this.data.activeChildId));
+    const target = child || cat;
+    if (!target || !target.id) return;
+    wx.navigateTo({
+      url: '/pages/search/search?categoryId=' + encodeURIComponent(String(target.id)) +
+        '&name=' + encodeURIComponent(target.name || ''),
+    });
   },
 
   /** scroll-view 触底（页面级 onReachBottom 在 scroll-view 布局下不生效） */

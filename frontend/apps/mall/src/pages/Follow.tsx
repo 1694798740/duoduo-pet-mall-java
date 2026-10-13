@@ -7,6 +7,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { followApi } from '@duoduo/api-sdk/endpoints';
 import type { FollowView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
@@ -19,6 +20,7 @@ type Tab = 'following' | 'followers';
 
 export const FollowPage: React.FC = () => {
   const { push } = useToast();
+  const nav = useNavigate();
   const [tab, setTab] = useState<Tab>('following');
   const [page, setPage] = useState(1);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -111,7 +113,16 @@ export const FollowPage: React.FC = () => {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="row" style={{ gap: 8 }}>
-                  <b>{it.nickname || `用户 ${it.userId}`}</b>
+                  {/* S6-D1：昵称可点 → 他人主页。此前这里点了没反应，C2C 链路断在最后一跳。
+                      刻意用可聚焦的 <button> 而不是 <span onClick>：键盘可达 + 屏幕阅读器能念出来。 */}
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => nav('/user/' + it.userId)}
+                    title={`查看 ${it.nickname || it.userId} 的主页`}
+                  >
+                    <b>{it.nickname || `用户 ${it.userId}`}</b>
+                  </button>
                   {it.mutual ? <span className="tag tag-success">互相关注</span> : null}
                 </div>
                 <div className="small muted">{it.followedAt?.replace('T', ' ').slice(0, 10)} 关注</div>

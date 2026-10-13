@@ -32,6 +32,7 @@ import { SeckillPage } from './pages/Seckill';
 import { HomePage } from './pages/Home';
 import { ListingDetailPage } from './pages/ListingDetail';
 import { ListingsPage } from './pages/Listings';
+import { UserProfilePage } from './pages/UserProfile';
 import { MyListingsPage } from './pages/MyListings';
 import { NotificationsPage } from './pages/Notifications';
 import { FollowPage } from './pages/Follow';
@@ -102,6 +103,9 @@ export const App: React.FC = () => (
       <Route path="/listings" element={<ListingsPage />} />
       <Route path="/product/:id" element={<ProductDetailPage />} />
       <Route path="/listing/:id" element={<ListingDetailPage />} />
+      {/* 他人主页（S6-D1 补缺）：关注/粉丝列表、闲置详情、分享圈三处入口都跳这里。
+          后端接口小程序早就在用，本路由只做前端接线。 */}
+      <Route path="/user/:id" element={<UserProfilePage />} />
       <Route path="/login" element={<LoginPage />} />
 
       {/* ---------- 我的闲置（C2C 管理，第六十六轮补齐 Web 端） ----------

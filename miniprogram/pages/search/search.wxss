@@ -1,0 +1,107 @@
+/* 搜索结果页样式。
+   商品卡片刻意沿用分类页的 .cg-* 命名与同一套尺寸口径（容器百分比 48.6%），
+   这样两处看起来是同一个组件 —— 而不是"分类页一套卡片、搜索页另一套卡片"。 */
+
+.sp-wrap {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f6f7fb;
+}
+
+.search-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 16rpx 24rpx;
+  background: #4f6ef7;
+}
+
+.search-input {
+  flex: 1;
+  height: 64rpx;
+  padding: 0 20rpx;
+  border-radius: 32rpx;
+  background: #ffffff;
+  font-size: 26rpx;
+}
+
+.search-btn {
+  width: 132rpx;
+  height: 64rpx;
+  margin-left: 16rpx;
+}
+
+.sp-scope {
+  flex: none;
+  padding: 16rpx 24rpx 4rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+}
+
+.sp-main {
+  flex: 1;
+  height: 0;
+  padding: 16rpx 24rpx 32rpx;
+  box-sizing: border-box;
+}
+
+.sp-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+/* ---- 卡片：与分类页同尺寸口径 ---- */
+.cg-card {
+  width: 48.6%;
+  margin-bottom: 20rpx;
+  border-radius: 16rpx;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.cg-cover {
+  width: 100%;
+  height: 300rpx;
+  background: #eef0f6;
+}
+
+.cg-img {
+  width: 100%;
+  height: 100%;
+}
+
+.cg-body {
+  padding: 14rpx 16rpx 18rpx;
+}
+
+.cg-name {
+  min-height: 68rpx;
+  font-size: 26rpx;
+  line-height: 34rpx;
+  color: #1f2937;
+}
+
+.cg-price {
+  margin-top: 8rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #f0483e;
+}
+
+.empty {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: #9ca3af;
+}
+
+.empty-hint {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #b6bcc7;
+}

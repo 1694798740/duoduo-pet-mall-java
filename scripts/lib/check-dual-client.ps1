@@ -51,8 +51,12 @@ Say '① 文档引用的页面路径存在性' 'Cyan'
 
 # §3 缺口清单里**尚未创建**的页面 —— 文档里出现属正常，不能判违规。
 # 一旦真被创建，③ 的自证断言会转而提醒把缺口项改为「已完成」。
-$expectedMissingMp  = @('search')          # D3：小程序独立搜索结果页
-$expectedMissingWeb = @('UserProfile')     # D1：网页端个人主页
+# ★ 2026-10-13：D3 已补（新增 pages/search/search，首页与分类页都 navigateTo 过去，
+#   刻意不占 tabBar —— tabBar 已满 5 项）。这里同步移除 'search'。
+# ★ 2026-10-13：D1 已补（新增 mall 的 pages/UserProfile.tsx + 路由 /user/:id，
+#   关注/粉丝列表、闲置详情、分享圈三处入口都接上了）。这里同步移除 'UserProfile'。
+$expectedMissingMp  = @()                 # D3 已于 2026-10-13 补齐
+$expectedMissingWeb = @()                 # D1 已于 2026-10-13 补齐
 
 # 网页端不在 pages/ 下的已知组件（Layout / App 是入口与外壳，不是页面）
 $nonPageWeb = @('App', 'Layout', 'main')
@@ -187,24 +191,51 @@ function Count-Hits([string]$pattern, [string]$root, [string[]]$exts) {
     return @($files | Select-String -Pattern $pattern -ErrorAction SilentlyContinue).Count
 }
 
-# D1：网页端不存在个人主页
+# ── 缺口状态从**文档**读，而不是写死在脚本里 ────────────────────────────────
+# ★ 2026-10-13 修掉一个设计缺陷：原实现**无条件**断言"缺口仍在"（grep 源码必须命中 0）。
+#   于是 D1/D3 一旦真被补齐，这一层就**永远不可能转绿** ——
+#   一个"修好了反而过不了"的守卫，结局只能是被整体注释掉（那就连缺口还在时的那道防线也没了）。
+#   现在改成**双向**：文档说「待补」⇒ 断言代码里没有；文档说「已完成」⇒ 断言代码里有。
+#   两个方向都在钉事实，谁对不上都报红并点名。
+function Get-GapStatus([string]$doc, [string]$code) {
+    # ★ 单引号里的 \b 与 $ 在 PowerShell 里都是字面量，原样交给 .NET 正则
+    $pat = '(?m)^### ' + [regex]::Escape($code) + '\b.*$'
+    $m = [regex]::Match($doc, $pat)
+    if (-not $m.Success) { return 'UNKNOWN' }
+    $line = $m.Value
+    if ($line -match '已完成|已补齐|已补\b|✅') { return 'DONE' }
+    if ($line -match '待补|缺失|缺口') { return 'OPEN' }
+    return 'UNKNOWN'
+}
+
+# D1：网页端个人主页
+$st1 = Get-GapStatus $doc 'D1'
 $n1 = Count-Hits 'UserProfile|user-profile' $mallSrc @('.tsx', '.ts', '.css')
 if ($n1 -lt 0) {
     Bad ("D1 无法判定：候选文件扫描失败（{0}）—— 判据层静默失效" -f $(if ($n1 -eq -1) { '源码根不存在' } else { '一个候选文件都没扫到' }))
-} elseif ($n1 -eq 0) {
-    Ok 'D1 成立：网页端确实没有个人主页（UserProfile/user-profile 命中 0）'
+} elseif ($st1 -eq 'DONE') {
+    if ($n1 -gt 0) { Ok ("D1 文档标为已完成，代码里确实有（命中 {0} 处）" -f $n1) }
+    else { Bad 'D1 文档标为「已完成」，但网页端源码里一处 UserProfile 都没有 —— 文档在说谎' }
+} elseif ($st1 -eq 'OPEN') {
+    if ($n1 -eq 0) { Ok 'D1 成立：文档标为待补，网页端确实没有个人主页（命中 0）' }
+    else { Bad "D1 已不成立：网页端出现 $n1 处 UserProfile/user-profile 引用 -> 请把 §3-D1 从缺口清单改为「已完成」" }
 } else {
-    Bad "D1 已不成立：网页端出现 $n1 处 UserProfile/user-profile 引用 -> 请把 §3-D1 从缺口清单改为「已完成」"
+    Bad ("D1 状态无法从文档判定（标题行没写 待补/已完成）：" + $(if ($st1 -eq 'UNKNOWN') { '未匹配到 ### D1 标题' } else { $st1 }))
 }
 
-# D2：小程序不存在宠物档案页
+# D2：小程序宠物档案页
+$st2 = Get-GapStatus $doc 'D2'
 $n2 = Count-Hits 'pages/pets' (Join-Path $repo 'miniprogram') @('.js', '.json', '.wxml')
 if ($n2 -lt 0) {
     Bad ("D2 无法判定：候选文件扫描失败（{0}）—— 判据层静默失效" -f $(if ($n2 -eq -1) { 'miniprogram 不存在' } else { '一个候选文件都没扫到' }))
-} elseif ($n2 -eq 0) {
-    Ok 'D2 成立：小程序确实没有宠物档案页（pages/pets 命中 0）'
+} elseif ($st2 -eq 'DONE') {
+    if ($n2 -gt 0) { Ok ("D2 文档标为已完成，代码里确实有（命中 {0} 处）" -f $n2) }
+    else { Bad 'D2 文档标为「已完成」，但小程序源码里一处 pages/pets 都没有 —— 文档在说谎' }
+} elseif ($st2 -eq 'OPEN') {
+    if ($n2 -eq 0) { Ok 'D2 成立：文档标为待补/有意不做，小程序确实没有宠物档案页（命中 0）' }
+    else { Bad "D2 已不成立：小程序出现 $n2 处 pages/pets 引用 -> 请更新 §3-D2 的状态标注" }
 } else {
-    Bad "D2 已不成立：小程序出现 $n2 处 pages/pets 引用 -> 请把 §3-D2 从缺口清单改为「已完成」"
+    Bad 'D2 状态无法从文档判定（标题行没写 待补/已完成）'
 }
 
 # ─────────────────────────────────────────────────────────────

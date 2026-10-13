@@ -59,7 +59,12 @@ export const ShareCard: React.FC<ShareCardProps> = ({ item, detailed, onLike, on
         )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <b>{item.nickname || `用户 ${item.userId}`}</b>
+        {/* S6-D1：作者名可点 → 他人主页。小程序 `share-circle.js` 早有这个入口，
+            网页端此前点头像/名字都没反应，C2C 的「看到人 → 进主页 → 看他其他内容」断在最后一跳。
+            用 <Link> 而不是 onClick+navigate：这里本来就在 react-router 里，语义更直接。 */}
+        <Link className="link-btn" to={'/user/' + item.userId} title={`查看 ${item.nickname || item.userId} 的主页`}>
+          <b>{item.nickname || `用户 ${item.userId}`}</b>
+        </Link>
         {item.edited ? <span className="small muted" style={{ marginLeft: 6 }}>已编辑</span> : null}
         <div className="small muted">{relativeTime(item.createdAt)}</div>
       </div>

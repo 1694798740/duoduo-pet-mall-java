@@ -70,6 +70,17 @@
     <text>我的分享</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 宠物档案引导（S6-D2b）：小程序 tabBar 已满 5 项，宠物档案保持网页端独有（D2 已判决"有意不做"）。
+       但**不做功能 ≠ 不提这件事**：用户在小程序里找不到"宠物档案"，会以为它不存在。
+       这里给一句说明 + 可复制的网页地址，把"没有"变成"在那边"。
+       ★ 刻意不占 menu-item 的跳转位（点了跳不过去，反而像坏了）——做成一条静态提示。 -->
+  <view wx:if="{{logged}}" class="menu-note">
+    <text class="mi-icon">🐾</text>
+    <view class="mn-body">
+      <text class="mn-title">宠物档案请在网页端管理</text>
+      <text class="mn-sub">小程序暂不提供（首页位置有限），登录同一账号即可看到</text>
+    </view>
+  </view>
   <!-- 实名认证（第五十二轮热修）：发布闲置的前置条件，此前小程序无任何实名入口 -->
   <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/realname/realname">
     <text class="mi-icon">🪪</text>

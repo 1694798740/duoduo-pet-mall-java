@@ -274,6 +274,97 @@ class SellerProductServiceTest {
                 .hasMessageContaining("不能替商家作出授权");
     }
 
+    // ---------------- A-1 / PLAN B-23 · 还上 E23 的欠账：编辑也纳入同一道门禁 ----------------
+
+    /**
+     * E23 当初**刻意只拦上下架**，把"编辑"留作单独评估（理由写在 requireProxyForThirdParty 的注释里）——
+     * 本条把这个欠账的收窄钉住：运营绕过工单直接改第三方商品，必须 403。
+     *
+     * <p>★ 判据里带「**不落库**」这一条很重要：只在入口抛异常、而写库已经发生，
+     * 是最难查的一类问题（接口报错、数据却已经变了）。所以除了断言异常，
+     * 还要断言 {@code updateById} 从未被调用。
+     */
+    @Test
+    void A1_运营不能直接编辑第三方商品_与上下架共用同一道门禁() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "第三方商品", null));
+
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("被平台改掉的标题")))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("第三方店铺")
+                // 编辑的"下一步"与上下架**不一样**：没有代运营工单入口，只有"由店主自行维护" ——
+                // 提示指错方向会让运营反复重试一个根本不存在的入口
+                .hasMessageContaining("由店主在商家端自行维护");
+        verify(spuMapper, never()).updateById(any(SpuEntity.class));
+    }
+
+    @Test
+    void A1_正对照_运营仍可编辑自营商品() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 0L, "自营商品", null, "self", "APPROVED", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        // 自营是平台自己的货 —— 收窄若把它也拦住，等于"平台连自己的商品都改不了"
+        assertThat(service.update(9001L, titleUpdate("运营改自营标题")).title())
+                .isEqualTo("运营改自营标题");
+    }
+
+    @Test
+    void A1_正对照_店主改自己的商品不受影响() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "我的商品", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.update(9001L, titleUpdate("店主改自己的")).title())
+                .isEqualTo("店主改自己的");
+    }
+
+    // ---------------- 顺带查出的真缺陷：「传 "" = 清空」在 NOT_NULL 策略下静默失效 ----------------
+
+    /**
+     * 类注释把「字段三态」写成了契约：{@code null} = 不改、{@code ""} = 清空、有值 = 替换。
+     * 但可清空的三个字段（subtitle / images / detail）走的是 {@code spuMapper.updateById(spu)}，
+     * 而 MyBatis-Plus 的更新策略是 **NOT_NULL —— 它不写 null 字段** ⇒ 清空静默失效。
+     *
+     * <p>症状最坏的地方在于**每一层都看起来正常**：接口 200、审计有记录、内存里的实体也变了、
+     * 前端刷新后旧值还在。2026-10-13 是 `proxy-ops-smoke.ps1` 里那条读库断言当场抓到的。
+     *
+     * <p>★ 为什么单测只断言"多了一条 update 调用"而不断言"库里值变了"：
+     * 单测用的是 mock mapper，**本来就不落库**。两层各管一段 ——
+     * 这里管「代码有没有真的发出那条 set(null) 语句」，冒烟管「语句到了库里有没有生效」。
+     */
+    @Test
+    void 清空副标题时必须额外发一条显式set_null的UPDATE() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        spu.setSubtitle("旧副标题");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L,
+                new SellerProductUpdateRequest(null, "", null, null, null, null, null));
+
+        // ① 常规落库 —— 在 NOT_NULL 策略下这一条**不会**带上 subtitle=null
+        verify(spuMapper).updateById(spu);
+        // ② 显式清空 —— 缺了它，用户看到的"已清空"就只是内存里的幻觉
+        verify(spuMapper).update(isNull(), any());
+    }
+
+    @Test
+    void 只改标题时不发多余的显式清空UPDATE() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L, titleUpdate("新标题"));
+
+        // 反面对照：没有清空动作时不该多发一条 UPDATE（否则每次编辑都是两次写库）
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
     @Test
     void E23_正对照_店主能拿到自己的店铺主体userId() {
         UserContext.set(seller(101L));
@@ -948,17 +1039,32 @@ class SellerProductServiceTest {
         verify(spuMapper, never()).updateById(any(SpuEntity.class));
     }
 
+    /**
+     * ★ 2026-10-13 行为收窄（A-1 / PLAN B-23）。
+     *
+     * <p>这条用例**原先叫「运营可以跨店查看与编辑」**，钉的是"运营能改别家商品"这个当时的行为。
+     * E23 立项后它变成了越权路径 —— 运营可以绕过代运营工单、直接改第三方商品的内容。
+     * 本次收窄后原断言必然失败，所以这里**显式改写**它，并把"收窄了什么、没收窄什么"拆开钉清楚：
+     * <b>读仍然放行</b>（跨店排障是运营的正当职责），<b>写不再放行</b>。
+     *
+     * <p>★ 改写一条**已有**用例而不是删掉它，是刻意的：删掉等于把"这里曾经允许过"这段历史抹掉，
+     * 下一个人再看代码只会觉得"本来就该 403"，从而失去「这是一次行为变更」的信息。
+     */
     @Test
-    void 运营可以跨店查看与编辑() {
+    void 运营可以跨店查看第三方商品_但不再能直接编辑() {
         UserContext.set(operator());
         SpuEntity spu = spu(9001L, 202L, "别家商品", null);
         when(spuMapper.selectById(9001L)).thenReturn(spu);
         when(skuMapper.selectList(any())).thenReturn(List.of());
 
-        SellerProductView view = service.update(9001L, titleUpdate("运营改标题"));
+        // ① 读：跨店排障不受本次收窄影响
+        assertThat(service.ownerDetail(9001L)).isNotNull();
 
-        assertThat(view.title()).isEqualTo("运营改标题");
-        verify(spuMapper).updateById(spu);
+        // ② 写：从「允许」改成「403 + 不落库」（改之前这条断言是 isEqualTo("运营改标题")）
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("运营改标题")))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("第三方店铺");
+        verify(spuMapper, never()).updateById(any(SpuEntity.class));
     }
 
     @Test

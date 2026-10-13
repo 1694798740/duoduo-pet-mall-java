@@ -111,17 +111,27 @@
 
 > 判据：**同一件事，一端能做完整，另一端连入口都没有** —— 排除上面 §2 的平台能力差异。
 
-### D1 · 个人主页（看别人）· **网页端缺失** · 待补
+### D1 · 个人主页（看别人）· **网页端已补齐（2026-10-13）** ✅
 
 - **小程序**：`pages/user-profile/user-profile?id=<userId>`，三处入口 ——
   `flea-detail.js:153`（闲置详情点卖家）、`follow-list.js:92`（关注/粉丝列表点人）、
   `share-circle.js:228`（分享圈点头像）。
-- **网页端**：`grep -rn "UserProfile" frontend/apps/mall/src/` **零命中**；`/follow` 列表点了人也不跳。
+- **网页端**（补齐前）：`grep -rn "UserProfile" frontend/apps/mall/src/` **零命中**；`/follow` 列表点了人也不跳。
 - **影响**：网页端 C2C 场景**断链** —— 看到别人的闲置/分享，点不进去看他是谁、还卖什么。
   这是社交链路「看到人 → 进主页 → 看他其他内容」的最后一跳缺失。
-- **补法**：新增 `pages/UserProfile.tsx` + 路由 `/user/:id`，复用小程序已在用的同一后端接口
-  （`GET /api/users/{id}/profile` + 其分享/闲置列表接口），在 `Follow.tsx` / `ListingDetail.tsx` / `ShareCircle.tsx`
-  三处补 `<Link>`。**后端无需改动**（接口已存在，小程序在用）。
+- **补齐做法**（**后端零改动**，接口小程序早就在用）：
+  - `api-sdk` 新增 `followApi.profile(userId)`（`GET /api/socials/users/{id}/profile`）与 `UserProfileView` 类型；
+  - 新增 `pages/UserProfile.tsx` + 路由 `/user/:id`；
+  - 三处入口补齐：`Follow.tsx`（昵称可点）、`ListingDetail.tsx`（「查看卖家主页」按钮）、
+    分享卡组件 `packages/shared/src/components/share.tsx`（作者名可点）。
+- **两个刻意的取舍**：
+  1. 入口做成 `<Link>` / `<button class="link-btn">` 而不是 `<span onClick>` ——
+     键盘可达、屏幕阅读器念得出"这是按钮/链接"；
+  2. 非本人主页时，关注数/粉丝数**只展示不可点**（后端 following/followers 只有"查自己"的语义），
+     并给一句说明，而不是发起一个注定 403 的请求。
+- **守卫同步**：`check-dual-client.ps1` 的 `$expectedMissingWeb` 已清空。
+
+### D2b · 小程序「宠物档案在网页端」引导文案 · **已补齐（2026-10-13）** ✅
 
 ### D2 · 宠物档案 `/pets` · **小程序缺失** · **有意不做**（非缺口）
 
@@ -132,15 +142,33 @@
   但小程序「我的」页面应加一条**跳转说明**（「宠物档案请在网页端管理」），否则用户会以为没这功能。
   → 拆成 **D2a（不做，已决）** + **D2b（待补：小程序加一句引导文案，1 处 WXML 改动）**。
 
-### D3 · 搜索结果页 · **小程序缺失** · 待补
+**D2b 已补齐（2026-10-13）**：`miniprogram/pages/profile/profile.wxml` 加了一条静态提示
+（「宠物档案请在网页端管理」+ 一句解释），样式用压暗一档的 `.menu-note`，
+刻意**不占 menu-item 的跳转位** —— 点了跳不过去，反而像坏了。
+
+### D3 · 搜索结果页 · **小程序已补齐（2026-10-13）** ✅
 
 - **网页**：`/search`，独立结果页，支持 `keyword` 与 `categoryId` 两种入参，带筛选。
-- **小程序**：搜索框在首页内联（`index.js onSearch` → `fetchProducts(true)`），
+- **小程序**（补齐前）：搜索框在首页内联（`index.js onSearch` → `fetchProducts(true)`），
   **原地刷新首页列表**，没有独立结果页；从金刚区「全部分类」进 `category` 页后，**分类内也无法二次搜索**。
 - **影响**：① 首页滚动位置与搜索结果混在一起，用户点返回会丢搜索态；② `category` 页内搜不了。
-- **补法**：新增 `pages/search/search`（可复用 `category` 页的商品列表逻辑），
-  首页 `onSearch` 与 `category` 页都 `navigateTo` 到它并带 `keyword`/`categoryId`；
-  **不动 tabBar**（用 `navigateTo`，不占 tab 位）。
+- **补齐做法**：
+  - 新增 `pages/search/search`（4 个文件），列表逻辑与 `category` 页**同构** ——
+    同一套「请求序号 + 触底分页」，避免两处分页行为不一致；
+  - 首页 `onSearch` 改为 `navigateTo` 到本页并带 `keyword`（**必须 `encodeURIComponent`**，
+    否则 `wx.navigateTo` 的查询串会把中文截断）；
+  - `category` 页右栏顶部加了一个「在『当前分类』中搜索」的入口，跳转时带 `categoryId` + `name`；
+  - **不占 tabBar**（tabBar 已满 5 项，`navigateTo` 打开）。
+- **两个刻意的取舍**：
+  1. 分类页的搜索入口放在**右栏顶部、随列表滚动**，没有做成通栏固定栏 ——
+     `cat-wrap` 是两列 flex、左右两栏都 `height:100%`，加通栏要改这层结构，
+     而 A14 刚为「卡片被顶宽 / 左栏被压缩」修过一轮，为一个入口去动那套布局收益不抵风险。
+  2. 分类页那个入口做成「看起来像输入框、点了整块跳转」的**伪搜索栏**而不是真输入框 ——
+     真输入框会带来"输入后还要再点一次搜索"的两步操作，而"换个关键词"这个诉求在结果页里做更合适。
+- **守卫同步**：`check-dual-client.ps1` 的 `$expectedMissingMp` 已移除 `'search'`，
+  并把 §3 的 D3 改为「已补齐」—— 这正是该守卫设计时约定的行为
+  （"一旦有人补齐，守卫会报红提醒把缺口清单改为已完成"）。
+- **未覆盖**：结果页的"筛选"（网页端 `/search` 有）没有做；小程序端的筛选仍走分类维度。
 
 ### D4 · 营销活动 / 秒杀报名记录 · **网页端缺失（轻）** · 待补（可选）
 

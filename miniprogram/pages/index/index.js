@@ -136,7 +136,12 @@ Page({
   },
 
   onSearch() {
-    this.fetchProducts(true);
+    // S6-D3：搜索不再"原地刷新首页列表"，而是进独立结果页。
+    // 原来的做法把「搜索结果」和「首页推荐」混在同一个滚动列表里 —— 用户点返回会丢搜索态。
+    // ★ 关键词必须 encodeURIComponent：wx.navigateTo 的 url 是查询串，中文不编码会被截断。
+    const kw = encodeURIComponent((this.data.keyword || '').trim());
+    if (!kw) return;
+    wx.navigateTo({ url: '/pages/search/search?keyword=' + kw });
   },
 
   /** @param {boolean} reset true=从第一页重来 */

@@ -21,6 +21,15 @@
     lower-threshold="120"
     bindscrolltolower="onScrollToLower"
   >
+    <!-- S6-D3：分类内二次搜索入口（原先这里完全没有搜索框）。
+         刻意放在右栏顶部而不是做成固定栏：cat-wrap 是两列 flex、左右两栏都 height:100%，
+         加一条通栏固定栏要改这层结构，而 A14 刚为"卡片被顶宽/左栏被压缩"修过一轮 ——
+         为一个入口去动那套布局，收益不抵风险。放在右栏顶部，进页面就能看见、滚动时随列表走。 -->
+    <view class="cat-search" bindtap="onSearchInCategory">
+      <text class="cat-search-icon">🔍</text>
+      <text class="cat-search-ph">在「{{activeName}}」中搜索</text>
+    </view>
+
     <!-- 子分类 chips：同样带图标，选中态与左栏同一套配色 -->
     <scroll-view scroll-x wx:if="{{activeChildren.length > 0}}" class="cat-children">
       <view

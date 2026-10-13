@@ -136,7 +136,14 @@ export const ListingDetailPage: React.FC = () => {
               <dt>卖家信用</dt>
               <dd>
                 {card.sellerId != null && card.sellerId !== '' ? (
-                  <CreditBadge sellerId={card.sellerId} label="卖家信用" />
+                  <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <CreditBadge sellerId={card.sellerId} label="卖家信用" />
+                    {/* S6-D1：进卖家主页。此前这里只能看到信用分，看不到"他是谁、还卖什么" ——
+                        C2C 的决策信息差一截，而小程序侧这一跳一直是通的。 */}
+                    <Link className="btn btn-ghost btn-sm" to={'/user/' + card.sellerId}>
+                      查看卖家主页
+                    </Link>
+                  </div>
                 ) : (
                   <span className="muted">暂无</span>
                 )}

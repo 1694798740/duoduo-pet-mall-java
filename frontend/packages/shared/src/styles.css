@@ -1468,3 +1468,22 @@ button.link:hover {
 .seckill-original {
   font-size: 0.85rem;
 }
+
+/* S6-D1 · 「看起来是文字、其实是按钮」的链接（他人主页入口等）。
+   为什么不直接用 <a>：站内跳转要走 react-router 的 navigate（否则整页刷新、丢状态）。
+   为什么不加 .link 类：项目里已有 button 体系，这里只补一个"去掉按钮外观"的变体，
+   保持可聚焦、可键盘操作、屏幕阅读器念得出"按钮"。 */
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.link-btn:hover b,
+.link-btn:focus-visible b {
+  color: var(--brand-dark);
+  text-decoration: underline;
+}

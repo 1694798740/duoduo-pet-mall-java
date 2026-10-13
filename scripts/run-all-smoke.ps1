@@ -34,6 +34,25 @@ if ($Only) {
 # 前置条件检查：search-smoke 要 ES。跳过的套件必须**说出来** ——
 # 静默跳过会让「19 套全绿」变成一句谎话。
 $skipped = @()
+
+# ── B-2 · 特权夹具账号的「运行前后 diff」（根治那一半）──────────────────────
+# 为什么必须在这里做：冒烟为了测「运营 / 商家」两条链路，**必须**现场造 OPERATOR/SELLER 账号；
+# 而几十套脚本里只有一部分记得收尾 ⇒ 每跑一轮全量回归就沉淀几十个能进后台的账号。
+# 实测：2026-10-10 是 199+139，2026-10-13 已涨到 510+436（合计 946）—— 暴露面在扩大。
+#
+# 做法刻意选「diff」而不是「按昵称/手机号猜夹具」：
+#   · diff 只看**这次运行新产生的**特权账号，天然不会误伤任何既有账号；
+#   · 不依赖昵称规范（那是会变的约定，今天加了明天就忘）；
+#   · 两个来源：跑之前一份 id 清单，跑之后一份，差集就是要收尾的那批。
+$sweepHelper = Join-Path (Join-Path $root 'scripts') 'lib/fixture-role-sweep.ps1'
+$privBefore = @()
+if (Test-Path $sweepHelper) {
+    $privBefore = @(& docker exec -i -e 'MYSQL_PWD=duoduo_root' duoduo-mysql mysql -uroot -N -B `
+            --default-character-set=utf8mb4 -e "SELECT id FROM duoduo_user.t_user WHERE role<>'USER';" 2>$null |
+        Where-Object { "$_".Trim() -match '^\d+$' } | ForEach-Object { "$_".Trim() })
+}
+Write-Host ("  [夹具收尾] 开跑前特权账号 {0} 个（跑完会把**新增的**降权）" -f $privBefore.Count) -ForegroundColor DarkGray
+
 if (@($scripts | Where-Object { $_.Name -eq 'search-smoke.ps1' }).Count -gt 0) {
     $esUp = $false
     try {
@@ -117,6 +136,30 @@ foreach ($n in $nodeSmoke) {
         Exit    = $code
         Summary = '(node 脚本，以退出码为准)'
         Guard   = 'n/a'
+    }
+}
+
+# ── B-2 · 收尾：把本轮**新增的**特权夹具账号降权（详见文件上方开跑前的注释）──────
+if (Test-Path $sweepHelper) {
+    Write-Host ""
+    Write-Host "------------------------------------------------------------------" -ForegroundColor DarkYellow
+    Write-Host " 夹具收尾：把本轮新增的特权账号降权" -ForegroundColor DarkYellow
+    Write-Host "------------------------------------------------------------------" -ForegroundColor DarkYellow
+    $privAfter = @(& docker exec -i -e 'MYSQL_PWD=duoduo_root' duoduo-mysql mysql -uroot -N -B `
+            --default-character-set=utf8mb4 -e "SELECT id FROM duoduo_user.t_user WHERE role<>'USER';" 2>$null |
+        Where-Object { "$_".Trim() -match '^\d+$' } | ForEach-Object { "$_".Trim() })
+    $newPriv = @($privAfter | Where-Object { $privBefore -notcontains $_ })
+    Write-Host ("  本轮新增特权账号 {0} 个（跑前 {1} → 跑后 {2}）" -f $newPriv.Count, $privBefore.Count, $privAfter.Count)
+    if ($newPriv.Count -eq 0) {
+        # ★ 0 个也要说出来：它和"这段没跑"长得一样（本项目的常见坑），所以显式打印"确实扫到 0"
+        Write-Host "  本轮没有新增特权账号（已核对：跑前跑后都读到了真实清单）" -ForegroundColor Green
+    } else {
+        $idsFile = Join-Path $env:TEMP ("duoduo-newpriv-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt')
+        [System.IO.File]::WriteAllLines($idsFile, $newPriv, (New-Object System.Text.UTF8Encoding $false))
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $sweepHelper -Apply -IdsFile $idsFile 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] 夹具收尾未成功（exit=$LASTEXITCODE）—— 不改本次冒烟结论，但请人工看一眼" -ForegroundColor Yellow
+        }
     }
 }
 

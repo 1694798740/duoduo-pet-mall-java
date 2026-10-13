@@ -72,6 +72,34 @@
   white-space: nowrap;
   margin-bottom: 20rpx;
 }
+
+/* S6-D3 · 分类内搜索入口。做成"看起来像输入框、点了整块跳转"的伪搜索栏：
+   真输入框在这里会带来"输入后要再点一次搜索"的两步操作，而分类内搜索的诉求是
+   "换个关键词"——那在结果页里做更合适。 */
+.cat-search {
+  display: flex;
+  align-items: center;
+  height: 64rpx;
+  margin-bottom: 20rpx;
+  padding: 0 20rpx;
+  border-radius: 32rpx;
+  background: #f1f3f9;
+}
+
+.cat-search-icon {
+  margin-right: 10rpx;
+  font-size: 24rpx;
+}
+
+.cat-search-ph {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 24rpx;
+  color: #9ca3af;
+}
 .cat-chip {
   display: inline-flex;
   align-items: center;

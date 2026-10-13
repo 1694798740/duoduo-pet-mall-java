@@ -432,8 +432,21 @@ public class SellerProductService {
             throw BizException.validation("请求体不能为空");
         }
         SpuEntity spu = requireOwned(spuId, scope);
+        // ★ A-1 / PLAN B-23 收窄（2026-10-13）：与 changeStatus 同款门禁。
+        //   E23 当时**刻意只拦上下架**（理由见 requireProxyForThirdParty 的注释：不借一次收窄
+        //   顺手改变更多行为），并把"编辑"登记为遗留项 —— 本次就是把那条欠账还上。
+        //   不收窄的后果很具体：运营绕过工单直接改第三方商品的标题/副标题/主图，
+        //   而「改了什么」既没有工单、也没有改前值留档。
+        requireProxyForThirdParty(spu, scope, "编辑");
 
         boolean changed = false;
+        // ★ 「传 "" = 清空」的三个可空字段要**单独记账**，原因见本方法末尾的显式 set(null) 段：
+        //   MyBatis-Plus 的 updateById 更新策略是 NOT_NULL，它**不写 null 字段**。
+        //   2026-10-13 实测：不记账时「清空副标题」接口返回 200、库里纹丝不动 ——
+        //   无异常、无日志、单测也抓不到（单测用的是 mock mapper，本来就不落库）。
+        boolean clearSubtitle = false;
+        boolean clearImages = false;
+        boolean clearDetail = false;
         if (request.title() != null) {
             String normalized = requireText(request.title(), "商品标题", TITLE_MAX);
             if (!normalized.equals(spu.getTitle())) {
@@ -452,6 +465,7 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(normalized, "商品副标题");
                 }
                 spu.setSubtitle(normalized);
+                if (normalized == null) { clearSubtitle = true; }
                 changed = true;
             }
         }
@@ -474,6 +488,7 @@ public class SellerProductService {
             String joined = images.isEmpty() ? null : String.join(",", images);
             if (!java.util.Objects.equals(joined, spu.getImages())) {
                 spu.setImages(joined);
+                if (joined == null) { clearImages = true; }
                 changed = true;
             }
         }
@@ -484,6 +499,7 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(normalized, "商品详情");
                 }
                 spu.setDetail(normalized);
+                if (normalized == null) { clearDetail = true; }
                 changed = true;
             }
         }
@@ -514,6 +530,21 @@ public class SellerProductService {
                     .set(SpuEntity::getAuditSource, null)
                     .set(SpuEntity::getAuditAt, null));
         }
+        // ★★ 同一个 NOT_NULL 坑的另一半：「传 "" = 清空」的三个字段。
+        //    上面那句 set(null) 已经处理了 audit_source / audit_at（那是"转人工"要写回 NULL），
+        //    但**卖家主动清空副标题 / 图片集 / 详情**走的是同一个 updateById —— 同样不写 null。
+        //    症状：接口 200、审计日志有记录、前端刷新后旧值还在。
+        //    ⇒ 凡是"语义上可清空"的列，都必须显式 set(col, null)。
+        if (clearSubtitle || clearImages || clearDetail) {
+            LambdaUpdateWrapper<SpuEntity> clear = new LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, spuId);
+            if (clearSubtitle) { clear.set(SpuEntity::getSubtitle, null); }
+            if (clearImages) { clear.set(SpuEntity::getImages, null); }
+            if (clearDetail) { clear.set(SpuEntity::getDetail, null); }
+            spuMapper.update(null, clear);
+            log.info("商品 {} 显式清空字段：subtitle={} images={} detail={}",
+                    spuId, clearSubtitle, clearImages, clearDetail);
+        }
         log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={}）",
                 spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
                 spu.getAuditStatus(), spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(),
@@ -542,7 +573,7 @@ public class SellerProductService {
         // ★ E23 收窄：`requireOwned` 对平台运营一律放行（platformScope），
         //   这在商品还没有第三方归属时是对的，但 E27 之后
         //   「平台能改别人的商品」就是越权。第三方商品必须走代运营 + 工单。
-        requireProxyForThirdParty(spu, scope);
+        requireProxyForThirdParty(spu, scope, "上下架");
         if (STATUS_ON_SALE.equals(target)) {
             requireShopActive(scope);
             if (isMerchantSupplied(spu) && !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
@@ -631,14 +662,19 @@ public class SellerProductService {
      * 同一段代码的含义就从「平台管自己的货」变成了「平台能改别人的商品」。
      * 这不是新增限制，而是把一个**已经变味**的既有行为收回到它原本的语义上。
      *
-     * <h2>为什么只拦上/下架，不顺手拦编辑与删除</h2>
-     * 因为这一项（E23）要解决的是「代下架」这一个动作的直接路径。
-     * 把编辑、删除、改价一并拦掉当然更严，但那是另一个决定（影响面、回滚方式、
-     * 运营既有习惯都不同），应当单独评估，而不是借一次收窄顺手改变更多行为 ——
-     * 顺手扩大改动范围，会让「这次上线到底改了什么」变得说不清。
-     * 同类风险已登记为遗留项。
+     * <h2>为什么当初只拦上/下架，后来又补上编辑（A-1 / PLAN B-23）</h2>
+     * E23 只拦"代下架"这一个动作的直接路径，把编辑、改价一并拦掉留给了单独评估 ——
+     * 理由是「不借一次收窄顺手改变更多行为，否则这次上线到底改了什么会说不清」。
+     * 那条欠账（**平台运营可绕过工单直接改第三方商品的标题 / 副标题 / 主图**）
+     * 已在 2026-10-13 还上：{@link #update} 现在走同一道门禁。
+     * <p>★ 两次改动**分两次落地、各有各的实测**（`E23_*` 与 `A1_*` 两组用例），
+     * 就是为了保住"可归因"这一点 —— 顺手扩大改动范围，代价是把两次变更的边界搞模糊。
+     * <p>仍然**没有**拦的：改价与删除（这两条在本服务里本就没有对第三方开放的入口，
+     * 见类注释里的调价边界；若有新入口加进来，必须一并挂上本门禁）。
+     *
+     * @param action 动作名（"上下架" / "编辑"），只用于把提示语说到点子上
      */
-    private static void requireProxyForThirdParty(SpuEntity spu, SellerScope scope) {
+    private static void requireProxyForThirdParty(SpuEntity spu, SellerScope scope, String action) {
         if (!scope.platformScope()) {
             // 店主 / 店员：归属由 requireOwned 判，不属于本次收窄范围
             return;
@@ -647,10 +683,15 @@ public class SellerProductService {
             // 平台自营：平台管自己的货，不需要任何授权
             return;
         }
+        // 提示必须指向**可执行的下一步**，而且不同的动作下一步不一样：
+        // 「上下架」有现成的代运营工单入口；「编辑」没有，也不该有 ——
+        // 第三方商品的内容由店主自己维护，平台代改内容本身就不是这门生意的做法。
+        String hint = "上下架".equals(action)
+                ? "如确需处理，请由该店铺店主在商家端发起代运营申请，再由平台持工单执行"
+                  + "（POST /api/admin/products/{spuId}/proxy-off-shelf）"
+                : "该商品的内容由店主在商家端自行维护；平台不代改第三方商品的内容";
         throw BizException.forbidden("商品 " + spu.getId() + " 属于第三方店铺（主体 "
-                + spu.getSellerId() + "），平台不能直接上下架；如确需处理，"
-                + "请由该店铺店主在商家端发起代运营申请，再由平台持工单执行"
-                + "（POST /api/admin/products/{spuId}/proxy-off-shelf）");
+                + spu.getSellerId() + "），平台不能直接" + action + "；" + hint);
     }
 
     /**

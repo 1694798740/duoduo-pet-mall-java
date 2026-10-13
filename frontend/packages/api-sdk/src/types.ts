@@ -1575,6 +1575,24 @@ export interface FollowCounts {
   following: number;
 }
 
+/**
+ * 他人主页（S6-D1 补缺 · Web 端对齐小程序 `pages/user-profile`）。
+ * 后端 `GET /api/socials/users/{userId}/profile` 一次拿齐：资料 + 计数 + 我与 TA 的关系。
+ */
+export interface UserProfileView {
+  userId: string;
+  nickname: string;
+  avatar: string | null;
+  followers: number;
+  following: number;
+  /** 我是否关注了 TA */
+  viewerFollowing: boolean;
+  /** TA 是否关注了我 */
+  viewerFollowedBy: boolean;
+  /** 互相关注 */
+  mutual: boolean;
+}
+
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1，duoduo-fulfilment） ----------
 
 /** 分享条目：原创与转发共用（转发多出 parent* 引用字段） */

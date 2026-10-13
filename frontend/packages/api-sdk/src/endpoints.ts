@@ -83,6 +83,7 @@ import type {
   FollowCounts,
   FollowState,
   FollowView,
+  UserProfileView,
   ChatMessageView,
   ConversationView,
   MessagePageData,
@@ -1069,6 +1070,8 @@ export const followApi = {
   followers: (query?: { page?: number; pageSize?: number }) =>
     api.get<PageResult<FollowView>>('/api/socials/follows/followers', { query }),
   counts: (userId: string) => api.get<FollowCounts>(`/api/socials/follows/${userId}/counts`),
+  /** 他人主页（S6-D1）：资料 + 计数 + 我与 TA 的关注关系，一次拿齐 */
+  profile: (userId: string) => api.get<UserProfileView>(`/api/socials/users/${userId}/profile`),
 };
 
 // ---------- 私信（R74-5 · Web 端补齐；此前只有小程序有） ----------
