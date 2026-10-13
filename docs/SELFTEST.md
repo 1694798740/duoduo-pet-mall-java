@@ -14,7 +14,7 @@
 |---|---|---|---|
 | **体检** | 静态自检（两个守卫脚本，不需要容器）+ 编译 + 核心冒烟 3 套 | ~5 分钟 | 每次改完代码 |
 | **域级** | 只跑你改的那个域对应的冒烟 + 前端 e2e | ~3 分钟/套 | 提测前 |
-| **全量** | 31 套冒烟（2026-10-11 实测 **15 分 26 秒**）+ 契约 + 小程序 + 浏览器 e2e（实测 **10 分 14 秒**）+ 压测 | 约半小时 | 交付前 |
+| **全量** | 32 套冒烟（2026-10-13 实测 **19 分 00 秒**）+ 契约 + 小程序 + 浏览器 e2e（实测 **10 分 14 秒**）+ 压测 | 约半小时 | 交付前 |
 
 > ★ **跑全量时别中途离开**：这套脚本是长任务，若所在的终端/会话被回收，
 > 它会**卡在半途且不报错**（表现是日志停止增长），此时数据库里可能留下夹具。
@@ -179,7 +179,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 
 ## 3. 功能点清单（功能 → 用哪套脚本验 → 多少项）
 
-### 3.1 接口冒烟（一键运行器 31 套；本轮实测 = 30 套实际执行 + 1 套按设计跳过）
+### 3.1 接口冒烟（一键运行器收录 33 套 = 32 套 PowerShell + 1 套 Node；本轮实测 32 套全过 + 1 套按设计跳过）
 
 | # | 功能域 | 脚本 | 项数 |
 |---|---|---|---|
@@ -210,7 +210,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 25 | 后台操作审计（E18） | `audit-log-smoke.ps1` | 58 |
 | 26 | 审核 SLA 与事后抽查（E28） | `audit-sla-smoke.ps1` | 62 |
 | 27 | 权限版本即时生效（E17） | `perm-version-smoke.ps1` | 34 |
-| 28 | 越权回归矩阵（E19） | `privilege-matrix-smoke.ps1` | 82 |
+| 28 | 越权回归矩阵（E19，含 **§7b 钱的口径（S5）**） | `privilege-matrix-smoke.ps1` | 115 |
 | 29 | 租户隔离硬化（E20） | `tenant-isolation-smoke.ps1` | 37 |
 | 30 | 代运营工单（E23） | `proxy-ops-smoke.ps1` | 121 |
 | 31 | **钱与库存每日自动对账（S3）** | `recon-smoke.ps1` | 53 |
@@ -218,10 +218,17 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
 | 34 | **租户健康度面板（E24）** | `tenant-health-smoke.ps1` | 90 |
 
+> ★ **本表的项数已在 2026-10-13 全套重跑后刷新。** 此后若有脚本变动，**要么重跑全套把总数实算一遍再改，
+> 要么就留着不改** —— 绝不允许**只把总数手改 +N**（那又是在写一个没人核的数字）。
+
 > 项数会随迭代增长，**以脚本自己打印的「通过 N 项」为准**，本表只用来定位该跑哪一套。
-> **最近一次实测（2026-10-11，原始日志 `logs/s3-final-smoke.txt`，EXIT=0，耗时 15 分 26 秒）**：
-> 运行器汇总 **共 31 套 / 通过 31 套 / 失败 0 套**，即 **31 套全部真跑了**
-> （**30 套 PowerShell 合计 2087 项** + **1 套 Node 17 项** = **2104 项断言**）。
+> **最近一次实测（2026-10-13，`EXIT=0`，耗时 19 分 00 秒；原始日志是本地产物
+> `logs/s5-fix-final-smoke.txt`，注意 `logs/` 已在 `.gitignore` 里、不进仓库；跑
+> `scripts\run-all-smoke.ps1` 即可逐套复现）**：
+> 运行器汇总 **共 32 套 / 通过 32 套 / 失败 0 套**，即 **32 套全部真跑了**
+> （**31 套 PowerShell 合计 2212 项** + **1 套 Node `e8-entry-scope-smoke.mjs` 以退出码为准**）。
+> ★ 这是**首次拿到 32/32 全绿**：同一天更早的一轮是 31/32，唯一红的 `smoke.ps1` 是**被越权矩阵的夹具残留
+> 挤红的**（见 README §十二「五、夹具残留的两轮拉锯」），本轮已修到根因。
 > ★ 运行器的「共 N 套」口径 = **实际执行**（读 `run-all-smoke.ps1:130` 的 `$results.Count` 确认过），
 > **按设计跳过的那套不在里面**，另行打印「已跳过 N 套」并逐条点名：
 > 本次为 `search-smoke.ps1`（ES 未运行）。**所有计数都不含它。**
@@ -839,7 +846,7 @@ CI 与本地验收环境都不保证外网可达 → 挂进流水线只会得到
       云端暂存映射表）。★ 清单里允许出现 **`[N/A]`**（本机不适用的项，如未配 `DUODUO_SYNC_STAGING`），
       但**不允许把 `[N/A]` 写成 `[PASS]`** —— 汇总会单独把 N/A 数出来。
 - [ ] `mvn -o test` → BUILD SUCCESS（**715 项 / 69 个测试类**，2026-10-12 实测）
-- [ ] `scripts\run-all-smoke.ps1` → **共 31 套 / 通过 31 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
+- [ ] `scripts\run-all-smoke.ps1` → **共 32 套 / 通过 32 套 / 失败 0 套**（另有 `search-smoke` 允许按设计跳过，但**必须在汇总里被点名**）
 - [ ] `python scripts/extract-api-contract.py --check` → PASS（**加了接口就必须先重新生成**）
 - [ ] `node --test scripts/mp-harness/*.test.js` + `scripts/lib/*.test.js` → 0 fail
 - [ ] `scripts\e2e\run-ui-checks.ps1` → **22 套全 PASS**

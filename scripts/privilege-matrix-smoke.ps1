@@ -171,6 +171,25 @@ foreach ($svc in @(@{ n = 'user'; u = $SvcUser }, @{ n = 'product'; u = $SvcProd
 }
 Check "直连服务端口可达（user/product/trade 的 /actuator/health 均 200）" $svcOk ($svcDetail -join ' ')
 
+# ---------------- ★ 起始自愈：清掉「上一次跑崩了、没走到收尾」留下的夹具 SKU ----------------
+# ★★ 放在这里的**要害**：必须在**任何夹具创建之前**（上面 §0 的两条就绪断言之后）。
+#   2026-10-13 的真实教训：这条守卫原本写在 §7b 段头，也就是 §7 的 `Resolve-SkuFixtures`
+#   **之后** —— 而 §7 在本段之前已经现场建了 3 个 SKU（小库存/售罄/已下架），于是它按
+#   `LIKE 'FIX-%'` 查到的**恰恰是本轮刚建的那 3 个**，被当成"上次遗留的"删掉了。
+#   症状极具欺骗性：每次跑都打印「发现 3 条上次遗留的夹具 SKU」，看着像跨套件污染，
+#   其实是本轮自己刚建的（跑前库里本来就干净）；而 §7 后面若用到 Tight/SoldOut/OffShelf 会直接崩。
+#   判据：位置对了以后，**库里本来干净时它就必须查到 0 条**；查到 >0 才说明"上一轮没跑到收尾"。
+#   清掉的条数必须打印，**0 条也要打印**（静默的成功与"这段根本没跑"长得一样）。
+$staleRaw = Sql 'duoduo_product' "SELECT id FROM t_sku WHERE sku_code LIKE 'FIX-%';"
+$staleFixIds = @("$staleRaw" -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
+if ($staleFixIds.Count -gt 0) {
+    Write-Host ("  [WARN] 起始自愈：发现 {0} 条**上一轮残留**的夹具 SKU（{1}）—— 说明上一轮没跑到收尾，先清掉" -f $staleFixIds.Count, ($staleFixIds -join ',')) -ForegroundColor Yellow
+    Remove-SkuFixtures -Ids $staleFixIds
+}
+$staleLeft = [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku WHERE sku_code LIKE 'FIX-%';")
+Check "★ 起始自愈：库内没有**历史遗留**的夹具 SKU（本轮清除 $($staleFixIds.Count) 条；>0 即上一轮没跑到收尾）" `
+    ($staleLeft -eq 0) "left=$staleLeft cleared=$($staleFixIds.Count)"
+
 # ---- 买家 A / B ----
 Call 'Post' "$Gateway/api/auth/register" @{ phone = $phoneBuyA; password = $Password; nickname = '矩阵夹具-买家A' } @{ 'X-Duoduo-Entry' = 'mall' } | Out-Null
 $loginA = Call 'Post' "$Gateway/api/auth/login/token" @{ phone = $phoneBuyA; password = $Password } @{ 'X-Duoduo-Entry' = 'mall' }
@@ -562,6 +581,184 @@ Check "★ 收尾自证：该 SKU 冻结量已回到下单前（否则冻结跨�
     ($frozenAfter -eq $frozenBefore) "frozen=$frozenAfter before=$frozenBefore sku=$selfSku"
 
 # ==============================================================================
+# §7b 钱的口径（S5）· 幂等 / 库存下界 / 券与退款的**算术**断言
+# ==============================================================================
+# 为什么单列一节：越权矩阵守的是「谁能做什么」，而「钱算得对不对」是一条**正交的轴**。
+# 权限全绿推不出钱是对的 —— 一个把 pay_amount 写成 total_amount − discount_amount
+# （漏了运费）的 bug，在越权矩阵里永远看不到。
+#
+# ★ 三条纪律（本项目反复栽过，写在这提醒后来者）：
+#   ① **金额断言必须做一次算术**：两边都是字符串时 `-eq` 恒真，一律转 [long] 再比；
+#   ② **结论要回表**：接口返回的数与库里的数是两个来源，只信一个等于没验；
+#   ③ **一个"跑不起来就跳过"的检查等于没有检查** —— 夹具建不起来必须显式报红。
+Write-Host ""
+Write-Host "> §7b 钱的口径（S5）· 幂等 / 库存下界 / 券与退款的算术"
+
+# ★ 起始自愈**已前移**到 §0 之后（在任何夹具创建之前）—— 见那里的注释。
+#   为什么不能留在这里：§7 的 `Resolve-SkuFixtures` 在本段之前**已经**现场建了 3 个 SKU
+#   （小库存/售罄/已下架），按 `LIKE 'FIX-%'` 查的守卫会把**本轮刚建的那 3 个**当成
+#   "上次遗留的"删掉（症状：每次跑都打印「发现 3 条上次遗留的夹具 SKU」，看着像跨套件污染）。
+
+# ---------------- ① 同一个幂等键重复下单，只扣一次 ----------------
+# 幂等键是「重复提交」的唯一防线（用户连点、网络重试、网关重发都会造成重复下单）。
+# 要防的不是"报错"，而是"静默生成第二单、多扣一件库存、多一笔待付款"。
+$idemKey = NewKey
+$frozenIdemBefore = [long](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $selfSku;")
+$p1 = Call 'Post' "$Gateway/api/orders" @{ buySkuId = [long]$selfSku; buyQuantity = 1; receiverName = '买家A'; receiverPhone = $phoneBuyA; receiverAddress = '上海市浦东新区矩阵路 1 号'; idempotentKey = $idemKey } (Bearer $tokenA)
+$noIdem = "$(@($p1.body.data.orders)[0].orderNo)"
+Check "① 夹具：带幂等键的第一次直购成功" ($p1.status -eq 200 -and $noIdem.Length -eq 21) "status=$($p1.status) orderNo=$noIdem raw=$($p1.raw)"
+
+$p2 = Call 'Post' "$Gateway/api/orders" @{ buySkuId = [long]$selfSku; buyQuantity = 1; receiverName = '买家A'; receiverPhone = $phoneBuyA; receiverAddress = '上海市浦东新区矩阵路 1 号'; idempotentKey = $idemKey } (Bearer $tokenA)
+$noIdem2 = "$(@($p2.body.data.orders)[0].orderNo)"
+Check "① 同一个幂等键再下一次 → 200 且**返回同一张订单**（幂等重放，不是静默新建）" `
+    ($p2.status -eq 200 -and $noIdem2 -eq $noIdem) "status=$($p2.status) no1=$noIdem no2=$noIdem2 raw=$($p2.raw)"
+
+$ordCnt = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE idempotent_key = '$idemKey';")
+Check "★ ① 回表：该幂等键在库里**只有一张订单**（重复下单没有生成第二单）" ($ordCnt -eq 1) "orders=$ordCnt key=$idemKey"
+$taskCnt = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_place_task WHERE idempotent_key = '$idemKey';")
+# ★ 这里断言的是 **≤ 1** 而不是 `= 1`：`t_order_place_task` 只在
+#   `duoduo.trade.order-mode = queue`（削峰模式）下才会写行，同步模式下本来就是 0 行
+#   （OrderPlaceService 上挂着 @ConditionalOnProperty）。所以 0 是当前部署的**正常值**。
+#   这条断言真正要抓的是「每个请求都插一条」—— 那种实现在两次请求后这里会是 2。
+Check "★ ① 回表：该键的下单任务没有按请求累积（同步模式 0 行属正常；抓的是'每请求插一条'）" `
+    ($taskCnt -le 1) "tasks=$taskCnt"
+$frozenIdemAfter = [long](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $selfSku;")
+Check "★ ① 算术：冻结量只增加 1（**同键重复下单只扣一次库存**）" `
+    (($frozenIdemAfter - $frozenIdemBefore) -eq 1) "delta=$($frozenIdemAfter - $frozenIdemBefore) before=$frozenIdemBefore after=$frozenIdemAfter"
+
+$rc = Call 'Post' "$Gateway/api/orders/$noIdem/cancel" @{} (Bearer $tokenA)
+Check "① 收尾：取消这张订单 → 200" ($rc.status -eq 200) "status=$($rc.status) raw=$($rc.raw)"
+$frozenIdemEnd = [long](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $selfSku;")
+Check "① 收尾自证：冻结量已回到下单前" ($frozenIdemEnd -eq $frozenIdemBefore) "end=$frozenIdemEnd before=$frozenIdemBefore"
+
+# ---------------- ② 并发扣库存：可售下界不为负 ----------------
+# 现场建一个**只有 1 件可售**的 SKU，然后让两个买家**同时**买它。
+# 要守的是不变量：可售 = stock − frozen 永远 >= 0，且成功单数不可能超过初始可售。
+# 只做「串行试两次」是不够的：串行第二次会被前一次的冻结挡住，压根测不到竞态。
+$raceSku = New-CatalogFixtureSku -SpuId $fxSku.HostSpu -Price 9900 -Stock 1 -Status 'ACTIVE' -Label '并发1件'
+Check "② 夹具：现场建了一个只有 1 件可售的 SKU" (-not [string]::IsNullOrWhiteSpace("$raceSku")) "sku=$raceSku"
+$raceAvail0 = [long](Sql 'duoduo_product' "SELECT stock - frozen_stock FROM t_sku WHERE id = $raceSku;")
+Check "② 夹具：该 SKU 初始可售 = 1" ($raceAvail0 -eq 1) "avail=$raceAvail0 sku=$raceSku"
+
+# 正对照：两个买家各自单独买它都能成功（否则"恰好一个成功"可能只是因为某个买家本身买不了）
+$warmA = Call 'Post' "$Gateway/api/orders" @{ buySkuId = [long]$raceSku; buyQuantity = 1; receiverName = '买家A'; receiverPhone = $phoneBuyA; receiverAddress = '上海市浦东新区矩阵路 1 号'; idempotentKey = (NewKey) } (Bearer $tokenA)
+Check "② 正对照：买家 A 单独买它 → 200（证明夹具本身买得到，后面的红不是夹具问题）" ($warmA.status -eq 200) "status=$($warmA.status) raw=$($warmA.raw)"
+Call 'Post' "$Gateway/api/orders/$(@($warmA.body.data.orders)[0].orderNo)/cancel" @{} (Bearer $tokenA) | Out-Null
+$warmB = Call 'Post' "$Gateway/api/orders" @{ buySkuId = [long]$raceSku; buyQuantity = 1; receiverName = '买家B'; receiverPhone = $phoneBuyB; receiverAddress = '北京市朝阳区矩阵路 2 号'; idempotentKey = (NewKey) } (Bearer $tokenB)
+Check "② 正对照：买家 B 单独买它 → 200" ($warmB.status -eq 200) "status=$($warmB.status) raw=$($warmB.raw)"
+Call 'Post' "$Gateway/api/orders/$(@($warmB.body.data.orders)[0].orderNo)/cancel" @{} (Bearer $tokenB) | Out-Null
+$raceAvailWarm = [long](Sql 'duoduo_product' "SELECT stock - frozen_stock FROM t_sku WHERE id = $raceSku;")
+Check "② 正对照自证：两次试买都取消后，可售回到 1" ($raceAvailWarm -eq 1) "avail=$raceAvailWarm"
+
+$raceJob = {
+    param($gw, $tok, $sku, $name, $phone, $addr, $key)
+    $body = @{ buySkuId = [long]$sku; buyQuantity = 1; receiverName = $name; receiverPhone = $phone; receiverAddress = $addr; idempotentKey = $key } | ConvertTo-Json -Compress
+    try {
+        $r = Invoke-WebRequest -Uri ($gw + '/api/orders') -Method Post -Body $body `
+            -ContentType 'application/json; charset=utf-8' -Headers @{ Authorization = "Bearer $tok" } `
+            -UseBasicParsing -TimeoutSec 30
+        $d = ($r.Content | ConvertFrom-Json)
+        return @{ status = [int]$r.StatusCode; orderNo = "$(@($d.data.orders)[0].orderNo)" }
+    } catch {
+        $code = 0
+        try { $code = [int]$_.Exception.Response.StatusCode.value__ } catch { }
+        return @{ status = $code; orderNo = '' }
+    }
+}
+$ja = Start-Job -ScriptBlock $raceJob -ArgumentList $Gateway, $tokenA, $raceSku, '买家A', $phoneBuyA, '上海市浦东新区矩阵路 1 号', (NewKey)
+$jb = Start-Job -ScriptBlock $raceJob -ArgumentList $Gateway, $tokenB, $raceSku, '买家B', $phoneBuyB, '北京市朝阳区矩阵路 2 号', (NewKey)
+Wait-Job @($ja, $jb) | Out-Null
+$ra = Receive-Job $ja
+$rb = Receive-Job $jb
+Remove-Job @($ja, $jb) -Force
+$okCount = @(@($ra, $rb) | Where-Object { $_.status -eq 200 }).Count
+Check "★ ② 并发：两个买家同时抢这 1 件，**恰好只有一个成功**（另一个必须被拒，不能两个都成）" `
+    ($okCount -eq 1) "A=$($ra.status)/$($ra.orderNo) B=$($rb.status)/$($rb.orderNo)"
+$raceWinner = if ($ra.status -eq 200) { $ra.orderNo } elseif ($rb.status -eq 200) { $rb.orderNo } else { '' }
+Check "② 竞态里至少产生了一个可追溯的订单号（否则下面几条核对无从做起）" ($raceWinner.Length -eq 21) "winner=$raceWinner"
+$raceFrozen = [long](Sql 'duoduo_product' "SELECT frozen_stock FROM t_sku WHERE id = $raceSku;")
+$raceStock = [long](Sql 'duoduo_product' "SELECT stock FROM t_sku WHERE id = $raceSku;")
+Check "★ ② 回表：冻结量 = 1（没超卖）" ($raceFrozen -eq 1) "frozen=$raceFrozen stock=$raceStock"
+Check "★ ② 算术：可售 = stock − frozen = 0，**不为负**（并发扣库存的下界）" `
+    (($raceStock - $raceFrozen) -eq 0 -and $raceFrozen -ge 0 -and ($raceStock - $raceFrozen) -ge 0) "stock=$raceStock frozen=$raceFrozen avail=$($raceStock - $raceFrozen)"
+
+# 收尾：取消赢家那张单，删掉现场建的 SKU，并自证删干净
+if ($raceWinner.Length -eq 21) { Call 'Post' "$Gateway/api/orders/$raceWinner/cancel" @{} (Bearer $(if ($ra.status -eq 200) { $tokenA } else { $tokenB })) | Out-Null }
+# ★ 必须先**真的删**，再回表自证 —— 只断言不删除就是"嘴上自毁"（本轮第一版就这么错的，
+#   回表 left=1 当场把它揪出来了）。
+Remove-SkuFixtures -Ids @($raceSku) | Out-Null
+$raceLeft = [long](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku WHERE id = $raceSku;")
+Check "② 收尾自证：现场建的 1 件 SKU 已删除（夹具不自毁＝越跑越多，坑下一个套件）" ($raceLeft -eq 0) "left=$raceLeft sku=$raceSku"
+
+# ---------------- ③ 券：分摊合计 == 优惠额（服务端口径） ----------------
+# 关键设计：下单请求里**只有券码、没有金额** —— 抵扣多少由营销域算、交易域落库。
+# 一旦接受客户端传金额，就等于把「能抵多少」的决定权交给浏览器（经典券漏洞）。
+# 所以这里要断言的是：**订单上的 discount_amount 与服务端试算结果逐分一致**。
+$tplId = [long](Sql 'duoduo_marketing' "SELECT COALESCE(MAX(id), 900000) + 7 FROM t_coupon_template;")
+Sql 'duoduo_marketing' "INSERT INTO t_coupon_template (id, name, description, type, threshold_amount, discount_amount, total_count, claimed_count, start_at, end_at, status, created_at, updated_at) VALUES ($tplId, '矩阵-券分摊', '冒烟夹具', 'FULL_REDUCE', 0, 500, 1, 0, UTC_TIMESTAMP() - INTERVAL 1 DAY, UTC_TIMESTAMP() + INTERVAL 365 DAY, 'ACTIVE', UTC_TIMESTAMP(), UTC_TIMESTAMP());" | Out-Null
+$tplOk = [long](Sql 'duoduo_marketing' "SELECT COUNT(*) FROM t_coupon_template WHERE id = $tplId AND discount_amount = 500;")
+Check "③ 夹具：种子券模板已落库（满 0 减 500 分）" ($tplOk -eq 1) "tplId=$tplId rows=$tplOk"
+
+$claim = Call 'Post' "$Gateway/api/coupons/templates/$tplId/claim" $null (Bearer $tokenA)
+$couponCode = "$($claim.body.data.code)"
+Check "③ 夹具：买家 A 领到券" ($claim.status -eq 200 -and $couponCode.Length -gt 0) "status=$($claim.status) code=$couponCode raw=$($claim.raw)"
+
+$pv = Call 'Post' "$Gateway/api/orders/preview" @{ couponCode = $couponCode; buySkuId = [long]$selfSku; buyQuantity = 1 } (Bearer $tokenA)
+$pvTotal = [long]$pv.body.data.totalAmount
+$pvFreight = [long]$pv.body.data.freightAmount
+$pvDiscount = [long]$pv.body.data.discountAmount
+$pvPay = [long]$pv.body.data.payAmount
+Check "③ 夹具：带券的结算预览成功" ($pv.status -eq 200) "status=$($pv.status) raw=$($pv.raw)"
+Check "★ ③ 算术：预览满足 应付 = 商品总额 + 运费 − 优惠" `
+    ($pvPay -eq ($pvTotal + $pvFreight - $pvDiscount)) "total=$pvTotal freight=$pvFreight discount=$pvDiscount pay=$pvPay"
+Check "★ ③ 券面额生效：优惠额 = 500 分（服务端按模板算，客户端说不了算）" ($pvDiscount -eq 500) "discount=$pvDiscount"
+
+$po = Call 'Post' "$Gateway/api/orders" @{ buySkuId = [long]$selfSku; buyQuantity = 1; receiverName = '买家A'; receiverPhone = $phoneBuyA; receiverAddress = '上海市浦东新区矩阵路 1 号'; idempotentKey = (NewKey); couponCode = $couponCode } (Bearer $tokenA)
+$noCoupon = "$(@($po.body.data.orders)[0].orderNo)"
+Check "③ 夹具：带券下单成功" ($po.status -eq 200 -and $noCoupon.Length -eq 21) "status=$($po.status) orderNo=$noCoupon raw=$($po.raw)"
+
+# 订单侧的四个数全部**回表**读（不信接口回显），再做算术
+$oRow = Sql 'duoduo_trade' "SELECT total_amount, freight_amount, discount_amount, pay_amount, coupon_code FROM t_order WHERE order_no = '$noCoupon';"
+$oc = ("$oRow" -split "`t")
+# ★ `"$($oc[4])"` 必须用子表达式：PowerShell 里 `"$oc[4]"` 会把 `$oc` 整个展开再拼一个字面量 `[4]`
+#   （实测输出过 `12900 0 0 12900 NULL[4]` 这种四不像）—— 这是本项目反复栽的字符串展开坑。
+$oTotal = [long]$oc[0]; $oFreight = [long]$oc[1]; $oDiscount = [long]$oc[2]; $oPay = [long]$oc[3]; $oCoupon = "$($oc[4])"
+Check "★ ③ 回表：订单记下的券码就是刚领的那一张" ($oCoupon -eq $couponCode) "db=$oCoupon claimed=$couponCode"
+Check "★ ③ 算术：订单满足 应付 = 商品总额 + 运费 − 优惠（漏运费/漏优惠都会在这里红）" `
+    ($oPay -eq ($oTotal + $oFreight - $oDiscount)) "total=$oTotal freight=$oFreight discount=$oDiscount pay=$oPay"
+Check "★ ③ 算术：**优惠额 == 券面额 500**（分摊合计与优惠额一致）" ($oDiscount -eq 500) "discount=$oDiscount"
+$itemSum = [long](Sql 'duoduo_trade' "SELECT COALESCE(SUM(amount), 0) FROM t_order_item i JOIN t_order o ON o.id = i.order_id WHERE o.order_no = '$noCoupon';")
+Check "★ ③ 算术：明细金额合计 == 订单商品总额（拆单/快照写错会在这里红）" ($itemSum -eq $oTotal) "itemSum=$itemSum total=$oTotal"
+
+$rc3 = Call 'Post' "$Gateway/api/orders/$noCoupon/cancel" @{} (Bearer $tokenA)
+Check "③ 收尾：取消这张带券订单 → 200（券应随之解锁）" ($rc3.status -eq 200) "status=$($rc3.status) raw=$($rc3.raw)"
+$tplLeft = [long](Sql 'duoduo_marketing' "SELECT COUNT(*) FROM t_coupon_template WHERE id = $tplId;")
+# 先删领到的券、再删模板（否则外键/残留数据会让下一次跑解析出一张"没有模板的券"）
+Sql 'duoduo_marketing' "DELETE FROM t_coupon WHERE template_id = $tplId;" | Out-Null
+Sql 'duoduo_marketing' "DELETE FROM t_coupon_template WHERE id = $tplId;" | Out-Null
+$tplLeft2 = [long](Sql 'duoduo_marketing' "SELECT COUNT(*) FROM t_coupon_template WHERE id = $tplId;")
+$couponLeft = [long](Sql 'duoduo_marketing' "SELECT COUNT(*) FROM t_coupon WHERE template_id = $tplId;")
+Check "③ 收尾自证：券模板与领到的券都已删干净" ($tplLeft -eq 1 -and $tplLeft2 -eq 0 -and $couponLeft -eq 0) "tpl=$tplLeft->$tplLeft2 couponLeft=$couponLeft"
+
+# ---------------- ④ 退款额 ≤ 实付（库内全量不变量） ----------------
+# 售后那条链（发货 → 立案 → 卖家同意 → 退款）由 after-sale-smoke 专门覆盖，这里不重复造数据；
+# 这里守的是**已经发生过的钱**的不变量：任何一张售后单的退款额都不允许超过它订单的实付额。
+# ★ 必须报出**比对行数**：比了 0 行也算通过的话，这条断言就等于不存在（本项目反复栽过）。
+$asTotal = [long](Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_after_sale WHERE refund_amount IS NOT NULL AND refund_amount > 0;")
+$asBad = [long](Sql 'duoduo_fulfilment' "SELECT COUNT(*) FROM t_after_sale a JOIN duoduo_trade.t_order o ON o.order_no = a.order_no WHERE a.refund_amount > o.pay_amount;")
+Check "★ ④ 算术：**每一笔退款额都 ≤ 该单实付额**（比对 $asTotal 笔已退款的售后单，违例 $asBad 笔）" `
+    ($asTotal -gt 0 -and $asBad -eq 0) "checked=$asTotal violations=$asBad"
+
+$ordTotal = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order;")
+$ordBad = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE pay_amount <> total_amount + freight_amount - discount_amount;")
+Check "★ ④ 算术：全库订单都满足 应付 = 商品总额 + 运费 − 优惠（比对 $ordTotal 单，违例 $ordBad 单）" `
+    ($ordTotal -gt 0 -and $ordBad -eq 0) "checked=$ordTotal violations=$ordBad"
+
+$ordBadCoupon = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE discount_amount > total_amount;")
+Check "★ ④ 算术：没有任何一张单的优惠额超过商品总额（抵扣不可能比东西还贵）" `
+    ($ordBadCoupon -eq 0) "violations=$ordBadCoupon"
+
+# ==============================================================================
 # §8 审计日志（user 域）· 纵向
 # ==============================================================================
 # E18 的口径：审计日志**对运营开放**（运营正是后台操作的主体，日志对他们的价值是自查互查），
@@ -612,12 +809,18 @@ $spuLeft = [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_spu WHERE id IN ($
 Check "★ 收尾自证：两件夹具商品已从库中删除（只下架不删除 = 夹具越跑越多，坑下一个套件）" `
     ($spuLeft -eq 0) "left=$spuLeft ids=$spuA,$spuB"
 
-$createdSkus = @($fxSku.CreatedIds)
+# ★ §7b 现场建的并发夹具 SKU 也并进来：§7b 自己收尾删过一次，这里再删一次是**幂等**的
+#   （`DELETE … WHERE id IN (…)` 删 0 行也不报错），换来的是「即使 §7b 中途异常、没走到它自己的收尾，
+#   本套件最终仍会把它清掉」—— 而残留会直接毒化 smoke.ps1（见 §7b 开头的自愈注释）。
+$createdSkus = @($fxSku.CreatedIds) + @($raceSku | Where-Object { "$_".Trim() -match '^\d+$' })
 Remove-SkuFixtures -Ids $createdSkus
-$skuLeft = if ($createdSkus.Count -gt 0) {
-    [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku WHERE id IN ($($createdSkus -join ','));")
-} else { 0 }
-Check "★ 收尾自证：§7 现场创建的夹具 SKU 已全部拆除（本套件创建 $($createdSkus.Count) 个）" `
+# ★ 收尾自证的**口径**必须是「**全库**还有没有 FIX-* 残留」，而不是「我删的那几个还在不在」。
+#   后者看不见「漏网的」—— 那个不在 $createdSkus 里的夹具 SKU 会被**判成 PASS**。
+#   2026-10-13 实测：起始自愈**连续两次**各清出 3 条（994205544 那批、996136614 那批），
+#   即本套件**每跑一次净留 3 条**，而旧口径的收尾自证对此**全程无感**（它只查自己知道的那 4 个 id）。
+#   判据必须比两个来源：一个是我以为我建了哪些，一个是库里**实际**还剩哪些。
+$skuLeft = [int](Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku WHERE sku_code LIKE 'FIX-%';")
+Check "★ 收尾自证：**全库**已无残留的夹具 SKU（本套件创建 $($createdSkus.Count) 个）" `
     ($skuLeft -eq 0) "left=$skuLeft created=$($createdSkus.Count)"
 
 # 吊销本次全部夹具账号的刷新令牌（账号本身留着，与 platform-operator.ps1 同一取舍）
