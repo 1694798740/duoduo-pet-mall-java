@@ -14,6 +14,7 @@
     本脚本只做「串联与汇总」，不重复实现任何检查：
       [0/5] 静态守卫        冒烟脚本静态自检 + 网关路由覆盖自检 + Mapper SQL 实体自检
                             + 运维手册一致性自检 + 双端功能对照表自检 + 依赖安全自检（无需 Docker / 编译）
+                            + 对象存储抽象层自检（S9）
                             + 文档飞书吞行吞字自检 + 图表主题接入点 + e2e 截图输出
                             + 云端暂存副本新鲜度（★ 只在配了 DUODUO_SYNC_STAGING 的机器上适用，
                               否则显式记 [N/A] 并在此处说明，不冒充通过）
@@ -93,7 +94,7 @@ Write-Host '====================================================================
 #   · 断言绑定写错（判假且不报错）
 #   · .ps1 少 BOM（PS 5.1 按 ANSI 解码 → 中文乱码 → 断言恒不命中）
 #   · 接口写了但网关没放行（唯一表现是 404，与"服务没起来"长得一模一样）
-Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出 / 云端暂存新鲜度）"
+Write-Host "`n[0/5] 前置检查：静态守卫（断言绑定 / UTF-8 BOM / 网关路由覆盖 / Mapper SQL 实体 / 运维手册一致性 / 双端功能对照表 / 依赖安全 / 对象存储抽象层 / 文档飞书吞行吞字 / 图表主题接入点 / e2e 截图输出 / 云端暂存新鲜度）"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-smoke-static.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '冒烟脚本静态自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-gateway-routes.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
@@ -115,6 +116,15 @@ Record '双端功能对照表自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 # 刻意不用 OWASP dependency-check / npm audit（都要联网，挂了等于没挂）。
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-dependency-security.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
 Record '第三方依赖安全自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+# 对象存储抽象层守卫（S9）—— 四层判据：① ObjectStorage 接口不得被 java.nio.file 污染；
+# ② 三个调用方（UploadController / MerchantMaterialReadController / MerchantMaterialStorage）
+# 不得绕过接口直接落盘；③ 配置一致性（type 默认必须是 local、compose 必须透传
+# UPLOADS_PUBLIC_BASE_URL 与 4 个 COS_*）；④ ★ 正对照（本地实现里必须能扫到 java.nio.file，
+# 否则"干净"只是没读到文件）。
+# ★ 为什么必须进一键自检：这类退化**不会自己报错** —— 表现是"配置改成了 COS，
+#   但某些新功能依然落在容器卷里"，两处都"看起来正常"。不进 CI ＝ 迟早静默腐烂。
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\lib\check-storage-guard.ps1') 2>&1 | Select-Object -Last 2 | Write-Host
+Record '对象存储抽象层自检' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 # 文档「只在飞书现形」的两条书写陷阱（2026-10-12 实测）——
 #   形态一：列表续行以行首裸反引号开头 ⇒ 导入飞书**整行**被吞；
 #   形态二：表格单元格里行内代码含未转义竖线 ⇒ 导入飞书该格**从竖线处被截断**。

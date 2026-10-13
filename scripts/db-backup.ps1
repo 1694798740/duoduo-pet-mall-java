@@ -192,10 +192,20 @@ function Log {
 }
 
 function Record {
-    param([string]$Name, [bool]$Ok, [string]$Detail)
-    if ($Ok) { Log ("  [PASS] {0}  {1}" -f $Name, $Detail) 'Green' }
-    else     { Log ("  [FAIL] {0}  {1}" -f $Name, $Detail) 'Red' }
-    $script:results += @{ name = $Name; ok = $Ok; detail = $Detail }
+    # ★ S9 起支持**第三态 GAP**：既不是 PASS 也不是 FAIL。
+    #   为什么必须有它：有些事情"没做错，但确实没做到"——典型如
+    #   「生产存储已切到 COS，而备份链还没覆盖桶」。把它算 PASS 是掩盖事实
+    #   （"看起来全绿"），把它算 FAIL 又会让每天的备份都红、很快没人看。
+    #   第三态 + 显式点名（`[GAP ]`）才能长期维持信噪比 —— 与 check-all 的 N/A 同一思路。
+    param([string]$Name, [bool]$Ok, [string]$Detail, [switch]$Gap)
+    if ($Gap) {
+        Log ("  [GAP ] {0}  {1}" -f $Name, $Detail) 'DarkYellow'
+    } elseif ($Ok) {
+        Log ("  [PASS] {0}  {1}" -f $Name, $Detail) 'Green'
+    } else {
+        Log ("  [FAIL] {0}  {1}" -f $Name, $Detail) 'Red'
+    }
+    $script:results += @{ name = $Name; ok = $Ok; gap = [bool]$Gap; detail = $Detail }
     if (-not $Ok) { $script:anyFail = $true }
 }
 
@@ -624,6 +634,56 @@ $volManifest = @()
 $volFail = 0
 $volFiles = 0
 $volBytes = 0
+$script:legacyGaps = 0
+
+# ── S9 · 生产存储是哪一份？（决定"卷"在备份里的角色）──────────────────────
+# ★ 为什么必须显式判：接对象存储之后，**生产用的那份存储会从「卷」变成「桶」**。
+#   若不区分，备份链会呈现最危险的一种状态 ——
+#   「脚本照跑、汇总照绿，但备的东西已经不是生产用的那份了」。
+#   （这与 [2/7] 里那条"校验和不能跨时刻比"是同一类问题：判据要盯住**真正在用的那份**。）
+#
+# 取值来源优先级：进程环境变量 > 仓库根 .env > 默认值。
+# 与 docker-compose.yml 的 ${STORAGE_TYPE:-local} 保持同一默认值。
+function Get-EnvOrDotEnv([string]$Name, [string]$Default) {
+    $v = [Environment]::GetEnvironmentVariable($Name)
+    if (-not [string]::IsNullOrWhiteSpace($v)) { return $v.Trim() }
+    $envFile = Join-Path $repo '.env'
+    if (Test-Path $envFile) {
+        $hit = Select-String -LiteralPath $envFile -Pattern ('^\s*' + [regex]::Escape($Name) + '\s*=') -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($hit) {
+            $v = ($hit.Line -split '=', 2)[1].Trim()
+            if ($v) { return $v }
+        }
+    }
+    return $Default
+}
+
+$StorageType = (Get-EnvOrDotEnv 'STORAGE_TYPE' 'local').Trim().ToLower()
+$BucketPublic = Get-EnvOrDotEnv 'COS_BUCKET_PUBLIC' ''
+$BucketPrivate = Get-EnvOrDotEnv 'COS_BUCKET_PRIVATE' ''
+
+# local ⇒ 卷就是生产存储，卷出问题＝备份不完整（必须红）
+# cos   ⇒ 卷已降级为"迁移期遗留副本"，卷的问题不再代表生产数据有问题（记为 GAP，不红）
+$volumeRole = $(if ($StorageType -eq 'cos') { 'legacy' } else { 'primary' })
+
+Log ("  生产存储（STORAGE_TYPE）= {0}；卷的角色 = {1}" -f $StorageType, $volumeRole)
+if ($StorageType -eq 'cos') {
+    Log '  ★ 提醒：本脚本**尚未**覆盖 COS 桶内容。桶侧的保护目前只有「版本控制 30 天 + 生命周期」，' 'Yellow'
+    Log '    它挡得住误删，挡不住整桶被清空 —— 见汇总里的 [GAP] 行与 manifest.storage。' 'Yellow'
+}
+
+# 卷级问题按角色分流：legacy 卷的问题只记为 GAP，不倒扣备份结论
+function VolProblemLog([string]$msg) {
+    if ($volumeRole -eq 'legacy') {
+        Log ("    [GAP] {0}（该卷已是遗留副本，不影响生产存储的备份结论）" -f $msg) 'DarkYellow'
+        $script:legacyGaps++
+    } else {
+        Log ("    [FAIL] {0}" -f $msg) 'Red'
+        $volFail++
+    }
+}
+
 foreach ($v in $UploadVolumes) {
     Log ("  — {0}（{1}）" -f $v.name, $v.label)
 
@@ -631,22 +691,19 @@ foreach ($v in $UploadVolumes) {
     $realVol = (& docker volume ls --format '{{.Name}}' 2>$null |
         Where-Object { $_ -match ('(^|_)' + [regex]::Escape($v.name) + '$') } | Select-Object -First 1)
     if (-not $realVol) {
-        Log ("    [FAIL] 反查不到卷「{0}」—— 卷不存在或还没建" -f $v.name) 'Red'
-        $volFail++
+        VolProblemLog ("反查不到卷「{0}」—— 卷不存在或还没建" -f $v.name)
         continue
     }
 
     # ② 容器在跑、且卷真的挂在预期路径（挂到别处 = 备份了别的东西）
     $running = ("$(& docker inspect --format '{{.State.Running}}' $v.container 2>$null)").Trim()
     if ($running -ne 'true') {
-        Log ("    [FAIL] 容器 {0} 没在跑，拿不到卷内容" -f $v.container) 'Red'
-        $volFail++
+        VolProblemLog ("容器 {0} 没在跑，拿不到卷内容" -f $v.container)
         continue
     }
     $dirOk = ("$(& docker exec $v.container sh -c ('test -d ' + $v.inner + ' && echo YES || echo NO') 2>$null)").Trim()
     if ($dirOk -ne 'YES') {
-        Log ("    [FAIL] 容器内 {0} 不存在 —— 卷没挂在预期位置" -f $v.inner) 'Red'
-        $volFail++
+        VolProblemLog ("容器内 {0} 不存在 —— 卷没挂在预期位置" -f $v.inner)
         continue
     }
 
@@ -704,6 +761,7 @@ foreach ($v in $UploadVolumes) {
     #   应改为只存 listingSha256 + 分片清单（判据不变）。
     $volManifest += @{
         name = $v.name; volume = [string]$realVol; container = $v.container; inner = $v.inner; label = $v.label
+        role = $volumeRole
         files = $b.Count; bytes = $bytesHere; listingSha256 = $listingHash
         copiedTo = ('uploads/' + $v.name)
         listing = @($b | ForEach-Object { @{ p = $_.p; h = $_.h } })
@@ -718,6 +776,33 @@ foreach ($v in $UploadVolumes) {
     }
 }
 Record '上传文件卷备份' ($volFail -eq 0) ("{0} 个卷 / {1} 个文件 / {2:N2} MB" -f $volManifest.Count, $volFiles, ($volBytes / 1MB))
+
+# ---------------------------------------------------------------------------
+# [4c/7] 生产存储覆盖度自证（S9）
+#
+# ★ 这一段的唯一职责：**把"备份链看起来在跑、但备的不是生产那份"这件事变成看得见**。
+#   判红 or 记 GAP 的分工：
+#     - type=local：卷就是生产存储，[4b/7] 的判据已经覆盖，这里只做一次显式确认；
+#     - type=cos  ：**桶才是生产存储**，而本脚本**没有**备桶 ⇒ 结论必须带缺口。
+#   缺口用第三态 `OK_WITH_GAP` 表达（与 check-all 的 N/A 同一思路）：
+#   **不是失败**（脚本本身没做错），但也**绝不是"完整备份"**。
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host '[4c/7] 生产存储覆盖度：本次备份到底覆盖了「生产在用的那一份」没有？'
+$bucketBackupCovered = ($StorageType -ne 'cos')
+if ($StorageType -eq 'local') {
+    Log '  [OK] 生产存储 = 本地盘卷，已由 [4b/7] 逐文件 sha256 双源覆盖' 'Green'
+    Record '生产存储覆盖度' $true 'type=local，卷已完整备份'
+} else {
+    $script:legacyGaps++
+    Log '  [GAP] 生产存储 = COS 桶，而本次备份**只备了库 + 遗留卷，没有备桶里的对象**。' 'DarkYellow'
+    Log '        ⇒ 本次备份**不是**一次"能救回全部数据"的备份。' 'DarkYellow'
+    Log '        桶侧现有保护：版本控制 30 天 + 生命周期（能挡误删，挡不住整桶被清空）。' 'DarkYellow'
+    Log '        补法二选一：① 给备份账号单独授 ListBucket 并导出对象清单 + 逐对象拉取（体积大）；' 'DarkYellow'
+    Log '                     ② 用 COS 的「清单功能(Inventory)」定期导出对象清单作为旁证。' 'DarkYellow'
+    Record '生产存储覆盖度' $true 'type=cos，桶未纳入备份（已记为 GAP）' -Gap
+}
+Write-Host ("  legacy 卷缺口/提示 {0} 条" -f $script:legacyGaps)
 
 # ---------------------------------------------------------------------------
 # 单张抽样表的比对（**恢复一张就立刻比一张**）
@@ -992,6 +1077,16 @@ $manifest = @{
     # ★ 上传文件卷的备份清单（[4b/7] 产出）。恢复演练（ops-restore.ps1）会读它并逐文件核 sha256；
     #   缺这一段 ⇒ 演练**拒绝出结论**（只备了库、没备文件，等于"订单在、图没了"而无人知道）。
     volumes     = @()
+    # ★ S9 · 生产存储是哪一份、以及本次备份是否覆盖了它。
+    #   读备份产物的人（尤其是 ops-restore.ps1 与排障的人）先看这一段，
+    #   就能回答"这份备份能不能救回生产数据"，而不必去猜卷和桶哪个在用。
+    storage     = @{
+        type                = 'local'
+        volumesRole         = 'primary'
+        bucketBackupCovered = $true
+        buckets             = @{ public = ''; private = '' }
+        gapNote             = ''
+    }
     status      = 'PENDING'
 }
 foreach ($db in $Databases) {
@@ -1011,7 +1106,19 @@ if ($script:samples) {
     }
 }
 $manifest.volumes = $volManifest
-$manifest.status = $(if ($script:anyFail) { 'FAILED' } else { 'OK' })
+$manifest.storage = @{
+    type                = $StorageType
+    volumesRole         = $volumeRole
+    bucketBackupCovered = $bucketBackupCovered
+    buckets             = @{ public = $BucketPublic; private = $BucketPrivate }
+    gapNote             = $(if ($bucketBackupCovered) { '' }
+                           else { '生产存储为 COS 桶，本次备份只覆盖了数据库与遗留卷，未覆盖桶内对象' })
+}
+# ★ 第三态 OK_WITH_GAP：六库与卷都对，但**生产存储没有被完整覆盖**。
+#   刻意不复用 'OK' —— 那样读 manifest 的人（或脚本）会把"有缺口的备份"当成完整备份。
+$manifest.status = $(if ($script:anyFail) { 'FAILED' }
+                     elseif (-not $bucketBackupCovered) { 'OK_WITH_GAP' }
+                     else { 'OK' })
 $manifestPath = Join-Path $script:runDir 'manifest.json'
 [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
 
@@ -1039,6 +1146,20 @@ if ($script:anyFail) {
     Send-Alert '备份过程中存在失败项（详见 backup.log）'
     Write-Host '结论：备份未通过 —— 已发出告警，请按上面 FAIL 行处置 ❌' -ForegroundColor Red
     exit 1
+}
+if (-not $bucketBackupCovered) {
+    # ★ 第三态：脚本本身没做错（六库 + 卷都验过），但**生产存储（COS 桶）没被覆盖**。
+    #   退 0 而不是 1：这不是"这次跑挂了"，而是"链路上有一个已知缺口"。
+    #   用 1 会让每天的备份都红、很快没人看；用 0 又太安静 ⇒ 所以用醒目的 GAP 结论行 + manifest 状态，
+    #   并**照发一条告警**，让它在夜间无人值守时也留痕。
+    Log ''
+    Send-Alert '备份完成但**不完整**：生产存储为 COS 桶，本次未覆盖桶内对象（manifest.status=OK_WITH_GAP）'
+    Write-Host ''
+    Write-Host '结论：数据库与遗留卷的备份**完整且双源一致**；但生产存储已切到 COS 桶，' -ForegroundColor DarkYellow
+    Write-Host '      **本次备份没有覆盖桶内对象** ⇒ 这是一次「OK_WITH_GAP」的备份，不是一次完整备份。 ⚠' -ForegroundColor DarkYellow
+    Write-Host '      补法见 [4c/7]：① 给备份账号加 ListBucket 后导出对象清单并逐对象拉取；' -ForegroundColor DarkGray
+    Write-Host '                    ② 或用 COS「清单功能(Inventory)」定期导出清单作为旁证。' -ForegroundColor DarkGray
+    exit 0
 }
 Write-Host ''
 Write-Host '结论：六库备份完整、抽验双源一致；上传文件卷逐文件 sha256 双源一致 ✅' -ForegroundColor Green
