@@ -67,6 +67,22 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $results = @()
 $anyFail = $false
 
+# ── 特权夹具账号的「跑前快照」（B-2）────────────────────────────────────────
+# 为什么放在 check-all 而不是只放在冒烟里：e2e 也会现场造 OPERATOR/SELLER，且部分套件不收尾。
+# 2026-10-18 实测：冒烟结束时已清扫 26 个，但 e2e 跑完又留下 19 个 OPERATOR + 17 个 SELLER。
+# 做法仍是 diff（只看**本轮新增的**），不猜昵称、不误伤既有账号 —— 包括你验收用的运营账号。
+$sweepHelper = Join-Path $repo 'scripts\lib\fixture-role-sweep.ps1'
+function Get-PrivilegedIds {
+    return @(& docker exec -i -e 'MYSQL_PWD=duoduo_root' duoduo-mysql mysql -uroot -N -B `
+            --default-character-set=utf8mb4 -e "SELECT id FROM duoduo_user.t_user WHERE role<>'USER';" 2>$null |
+        Where-Object { "$_".Trim() -match '^\d+$' } | ForEach-Object { "$_".Trim() })
+}
+$privBefore = @()
+if (Test-Path $sweepHelper) {
+    $privBefore = @(Get-PrivilegedIds)
+    Write-Host ("  [夹具] 跑前特权账号 {0} 个（跑完只降权本轮新增的）" -f $privBefore.Count) -ForegroundColor DarkGray
+}
+
 function Record($name, $ok, $detail) {
     if ($ok) { Write-Host ("  [PASS] {0}  {1}" -f $name, $detail) -ForegroundColor Green }
     else     { Write-Host ("  [FAIL] {0}  {1}" -f $name, $detail) -ForegroundColor Red }
@@ -243,6 +259,28 @@ if (-not $SkipE2E) {
 } else {
     Write-Host "`n[4/5] 浏览器 e2e：跳过（-SkipE2E）"
     $results += @{ name = '浏览器 e2e'; ok = $true; detail = '跳过' }
+}
+
+# ---------- 夹具收尾：降权本轮新增的特权账号（B-2） ----------
+# 必须在 e2e **之后**：e2e 同样会造运营/商家夹具，先扫后造等于没扫。
+if (Test-Path $sweepHelper) {
+    Write-Host "`n[夹具收尾] 降权本轮新增的 OPERATOR / SELLER 账号"
+    $privAfter = @(Get-PrivilegedIds)
+    $newPriv = @($privAfter | Where-Object { $privBefore -notcontains $_ })
+    Write-Host ("  跑前 {0} → 跑后 {1}，本轮新增 {2}" -f $privBefore.Count, $privAfter.Count, $newPriv.Count)
+    if ($newPriv.Count -eq 0) {
+        # ★ 0 个也要说出来：否则与「这段根本没跑」长得一样
+        Write-Host '  本轮没有新增特权账号（已核对：两次都读到了真实清单）' -ForegroundColor Green
+    } else {
+        $idsFile = Join-Path $env:TEMP ("duoduo-checkall-newpriv-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt')
+        [System.IO.File]::WriteAllLines($idsFile, $newPriv, (New-Object System.Text.UTF8Encoding $false))
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $sweepHelper -Apply -IdsFile $idsFile 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ("  [WARN] 夹具收尾未成功（exit={0}）—— 不改变本次结论，但请人工确认" -f $LASTEXITCODE) -ForegroundColor Yellow
+        } else {
+            Record '夹具收尾（本轮新增特权账号已降权）' $true ("降权 {0} 个" -f $newPriv.Count)
+        }
+    }
 }
 
 # ---------- [5/5] 汇总 ----------
