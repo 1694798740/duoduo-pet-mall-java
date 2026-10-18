@@ -45,12 +45,16 @@ function num(value: string | null): number | undefined {
 /**
  * 每条订单卡片的动作区：按状态给出可执行操作。
  *
- * 状态 → 按钮口径（2026-10-18 明确化）：
- *   · 待付款：去支付 + **取消订单**（无需先进详情/收银台）；剩余支付时间
- *   · 待发货：查看详情（自助退款在详情页，因为要填原因并确认金额）
- *   · 待收货：查看详情 + 申请售后 + 资金托管提示
- *   · 已完成：查看详情 + 申请售后 + 去评价 / 已评价
- *   · 已关闭 / 已退款：只有查看详情（终态，不再提供任何写操作）
+ * 状态 → 按钮口径（2026-10-18 明确化，配色见下）：
+ *   · 待付款：**橙实心**「去支付」+ **红实心**「取消订单」+ 问客服 + 剩余支付时间
+ *   · 待发货：**青实心**「查看详情」+ 问客服
+ *   · 待收货：青实心「查看详情」+ 描边「申请售后」+ 问客服 + 资金托管提示
+ *   · 已完成：青实心「查看详情」+ 描边「申请售后」+ **浅橙「去评价」**（已评价为描边）+ 问客服
+ *   · 已关闭 / 已退款：青实心「查看详情」+ 问客服（终态，无写操作）
+ *
+ * 六种视觉层级，任意两个动作都不会"长得一样"：
+ *   橙实心 = 付钱；红实心 = 破坏性；青实心 = 查看/导航；
+ *   浅橙 = 建设性次操作（评价）；青描边 = 售后；灰描边 = 客服 / 已评价等中性信息。
  *
  * 取消为什么放卡片上：这是「待付款」最高频的后悔路径，原先必须先点「去支付」
  * 进收银台再找取消，等于把用户往付款方向推了一步。
@@ -63,7 +67,7 @@ const OrderActions: React.FC<{
 }> = ({ order, reviewed, onCancel, cancelling }) => (
   <div className="row row-wrap">
     <Link
-      className={`btn btn-sm ${order.status === 'PENDING_PAYMENT' ? 'btn-primary' : 'btn-ghost'}`}
+      className={`btn btn-sm ${order.status === 'PENDING_PAYMENT' ? 'btn-primary' : 'btn-accent'}`}
       to={`/orders/${order.orderNo}`}
     >
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
@@ -81,7 +85,7 @@ const OrderActions: React.FC<{
     {/* 客服入口放在「取消订单」之后、「售后/评价」之前：同一条问题处理动线 */}
     <SupportEntry small />
     {order.status === 'SHIPPED' || order.status === 'COMPLETED' ? (
-      <Link className="btn btn-ghost btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
+      <Link className="btn btn-accent-outline btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
         申请售后
       </Link>
     ) : null}
@@ -91,7 +95,7 @@ const OrderActions: React.FC<{
           已评价
         </Link>
       ) : (
-        <Link className="btn btn-primary btn-sm" to={`/reviews/new?orderNo=${order.orderNo}`}>
+        <Link className="btn btn-brand-soft btn-sm" to={`/reviews/new?orderNo=${order.orderNo}`}>
           去评价
         </Link>
       )

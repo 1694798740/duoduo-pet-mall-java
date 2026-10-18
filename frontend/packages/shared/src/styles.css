@@ -393,6 +393,33 @@ h4 {
   background: var(--accent);
   color: #fff;
 }
+.btn-accent:hover:not(:disabled) {
+  background: #0f9e8f;
+}
+/* 品牌浅底（2026-10-18）：与「去支付」的实心橙区分——
+   同一色系但一个是**实心白字（主操作）**，一个是**浅底橙字（次操作）**，
+   放在同一张卡片里既关联又不会看错。用于「去评价」。 */
+.btn-brand-soft {
+  background: var(--brand-soft);
+  border-color: #ffd2c0;
+  color: var(--brand-dark);
+}
+.btn-brand-soft:hover:not(:disabled) {
+  background: #ffe3d4;
+  border-color: var(--brand);
+}
+/* 青色描边（2026-10-18）：给「申请售后」这类**次要但非中性**的动作，
+   与「问客服 / 已评价」的灰色描边区分开，又不至于和「查看详情」的青色实心抢注意力。 */
+.btn-accent-outline {
+  border-color: #9fe3da;
+  color: #0f8f82;
+  background: #fff;
+}
+.btn-accent-outline:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #0b7a6f;
+}
 .btn-ghost {
   border-color: var(--border);
   color: var(--text-2);
