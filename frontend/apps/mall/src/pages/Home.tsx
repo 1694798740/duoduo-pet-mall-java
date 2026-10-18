@@ -128,7 +128,6 @@ export const HomePage: React.FC = () => {
               <Link key={cat.id} className="card card-pad" to={`/search?categoryId=${cat.id}`}>
                 <div className="row-between">
                   <strong>
-                    {cat.icon ? `${cat.icon} ` : ''}
                     {cat.name}
                   </strong>
                   <span className="small muted">{cat.children.length} 个子类</span>
