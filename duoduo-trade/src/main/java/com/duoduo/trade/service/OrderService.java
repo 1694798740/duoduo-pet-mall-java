@@ -1110,7 +1110,9 @@ public class OrderService {
         // 渠道差异被收敛在这一处 —— 换渠道不改订单、库存、账本的任何代码。
         PaymentChannel.PrepayResult prepay = channel.prepay(new PaymentChannel.PrepayCommand(
                 payment.getPayNo(), order.getOrderNo(), nz(order.getPayAmount()),
-                "多多宠物商店订单 " + order.getOrderNo()));
+                "多多宠物商店订单 " + order.getOrderNo(),
+                null, // openId：JSAPI 需要；当前订单域不持有微信身份，后续由登录态补齐
+                request.clientIp()));
         payment.setCodeUrl(prepay.codeUrl());
         payment.setExpireAt(prepay.expireAt());
 

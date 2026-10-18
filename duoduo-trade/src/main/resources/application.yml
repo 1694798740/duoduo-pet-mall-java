@@ -134,6 +134,34 @@ duoduo:
       # 支付单有效期（分钟）：过期后二维码作废，由补偿调度置为 EXPIRED
       expire-minutes: ${SANDBOX_EXPIRE_MINUTES:15}
 
+      # ------------------------------------------------------------------
+      # 微信支付（2026-10-18 接入）。全部走环境变量，仓库里只有占位符：
+      # 商户私钥与 APIv3 密钥属于"能替你收钱、替你退款"的凭据，绝不能入库。
+      # 启用后启动时自检必填项，缺一项直接启动失败（fail closed）。
+      # 沙箱（上面的 sandbox 段）与 MOCK 渠道原样保留，切回来只改下面两个开关。
+      # ------------------------------------------------------------------
+      # 前端不传渠道时的默认渠道：生产 WECHAT_NATIVE / 联调 SANDBOX / 回归 MOCK
+    default-channel: ${PAY_DEFAULT_CHANNEL:SANDBOX}
+    wechat:
+      # 总开关：false 时不注册微信渠道（沙箱与 MOCK 照常可用）
+      enabled: ${WECHAT_PAY_ENABLED:false}
+      appid: ${WECHAT_PAY_APPID:}
+      mchid: ${WECHAT_PAY_MCHID:}
+      # APIv3 密钥（32 字节）：用于解密回调 resource
+      api-v3-key: ${WECHAT_PAY_API_V3_KEY:}
+      # 商户 API 证书私钥（PKCS#8 PEM 全文，或文件路径由部署层挂载后填内容）
+      private-key-pem: ${WECHAT_PAY_PRIVATE_KEY_PEM:}
+      # 商户 API 证书序列号
+      merchant-serial-no: ${WECHAT_PAY_MERCHANT_SERIAL_NO:}
+      # 微信支付平台证书（PEM）：用于回调验签；轮换时需更新
+      platform-cert-pem: ${WECHAT_PAY_PLATFORM_CERT_PEM:}
+      # 回调地址：必须是公网可访问的 https（联调可用内网穿透地址）
+      notify-url: ${WECHAT_PAY_NOTIFY_URL:}
+      # H5 支付的场景信息（需与商户平台配置的 H5 域名一致）
+      h5-wap-url: ${WECHAT_PAY_H5_WAP_URL:}
+      h5-wap-name: ${WECHAT_PAY_H5_WAP_NAME:多多宠物商店}
+      expire-minutes: ${WECHAT_PAY_EXPIRE_MINUTES:15}
+
 management:
   endpoints:
     web:

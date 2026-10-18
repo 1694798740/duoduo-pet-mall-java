@@ -312,12 +312,26 @@ public final class OrderDtos {
      * 重复提交返回首次结果，{@code idempotentReplay=true} 可用于区分。
      */
     public record PayRequest(
-            @NotBlank(message = "支付渠道不能为空")
+            /**
+             * 支付渠道。可空：留空时由服务端取 {@code duoduo.pay.default-channel}
+             * （生产配 WECHAT_NATIVE，联调配 SANDBOX），这样切换渠道<b>不用改前端代码</b>。
+             */
             @Size(max = 20, message = "支付渠道过长") String channel,
 
             @NotBlank(message = "idempotentKey 不能为空，用于防止重复扣款")
-            @Size(max = 64, message = "idempotentKey 过长") String idempotentKey
+            @Size(max = 64, message = "idempotentKey 过长") String idempotentKey,
+
+            /**
+             * 客户端 IP（H5 支付必填，其余渠道可空）。
+             *
+             * <p>微信 H5 要求传真实 {@code payer_client_ip}，缺失时渠道实现会<b>直接报错</b>，
+             * 而不是填假 IP —— 填假 IP 只会被风控判为异常交易。
+             */
+            @Size(max = 45, message = "clientIp 过长") String clientIp
     ) {
+        PayRequest(String channel, String idempotentKey) {
+            this(channel, idempotentKey, null);
+        }
     }
 
     /**

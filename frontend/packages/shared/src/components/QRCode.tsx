@@ -1,4 +1,18 @@
 /**
+ * 二维码渲染组件。
+ *
+ * <h2>2026-10-18：矩阵生成已改为使用成熟库 {@code qrcode}</h2>
+ * 本文件最早是「零依赖手写 ISO/IEC 18004」，实测生成的是<b>不合标准</b>的码：
+ *   · OpenCV 与 zbar 两套解码器都无法识别（同一内容用 OpenCV 生成的参考码可正常解出 —— 排除解码器问题）；
+ *   · 矩阵级诊断：三个定位图案均不在位（左上角 (0,0) 应为深色却是白）、时序图案 5 处错误、
+ *     校正图形错位、格式信息与 32 种合法组合最近汉明距离 6（要求 ≤3）。
+ * 表现就是「微信 / 支付宝 / 系统相机扫了毫无反应」，支付链路直接断在第一步。
+ *
+ * <p>二维码编码是有标准答案的事，自研没有收益只有风险，因此矩阵生成交给 {@code qrcode} 库；
+ * SVG 绘制仍保留在本文件（矢量不糊、样式与站内一致）。
+ * 原有的自研编码函数仅作留档，不再参与渲染。
+ */
+/**
  * 极简二维码渲染组件（零依赖）。
  *
  * 为什么不装第三方库：本项目只用于展示支付 codeUrl，
@@ -13,6 +27,7 @@
  */
 
 import React, { useMemo } from 'react';
+import QR from 'qrcode';
 
 // ---------------- GF(256) 伽罗华域算术 ----------------
 
@@ -408,7 +423,13 @@ function writeVersionInfo(matrix: QrMatrix, version: number): void {
 }
 
 /** 编码为模块矩阵 */
-function encodeToMatrix(text: string, ec: EcLevel): QrMatrix {
+/**
+ * 【留档】自研的编码实现 —— 已不再参与渲染（矩阵改由 {@code qrcode} 库生成，见文件头）。
+ *
+ * <p>保留的原因：它记录了当初按 ISO/IEC 18004 实现时踩过的坑（定位图案、格式信息、掩码择优），
+ * 以及为什么最终放弃自研。直接删掉会让"这里曾经为什么这么写"彻底失忆。
+ */
+export function encodeToMatrix(text: string, ec: EcLevel): QrMatrix {
   const bytes = Array.from(new TextEncoder().encode(text));
   const spec = pickVersion(bytes.length, ec);
 
@@ -525,7 +546,19 @@ export const QRCode: React.FC<QRCodeProps> = ({
   const matrix = useMemo(() => {
     if (!value) return null;
     try {
-      return encodeToMatrix(value, ecLevel);
+      // 二维码矩阵由成熟库生成（自研实现输出不合标，见文件头说明）
+      const qr = QR.create(value, { errorCorrectionLevel: ecLevel });
+      const size = qr.modules.size;
+      const bits = qr.modules.data as Uint8Array;
+      const modules: boolean[][] = [];
+      for (let r = 0; r < size; r += 1) {
+        const row: boolean[] = [];
+        for (let c = 0; c < size; c += 1) {
+          row.push(bits[r * size + c] === 1);
+        }
+        modules.push(row);
+      }
+      return { size, modules } as QrMatrix;
     } catch {
       return null;
     }

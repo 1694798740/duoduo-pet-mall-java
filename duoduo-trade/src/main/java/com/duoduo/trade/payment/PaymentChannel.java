@@ -65,15 +65,54 @@ public interface PaymentChannel {
      */
     CallbackPayload verifyCallback(String rawBody, Map<String, String> headers);
 
-    /** 预下单参数 */
-    record PrepayCommand(String payNo, String orderNo, long amount, String subject) {
+    /**
+     * 预下单参数。
+     *
+     * <p>{@code openId} 与 {@code clientIp} 是 2026-10-18 新增的可空字段：
+     * 微信 JSAPI 需要 openid、H5 需要客户端 IP，而 MOCK / 沙箱用不到 ——
+     * 放在这里（而不是另起一个接口）是为了让"渠道差异收敛在渠道实现里"这条约定不被破坏。
+     */
+    record PrepayCommand(String payNo, String orderNo, long amount, String subject,
+                         String openId, String clientIp) {
+        PrepayCommand(String payNo, String orderNo, long amount, String subject) {
+            this(payNo, orderNo, amount, subject, null, null);
+        }
     }
 
-    /** 预下单结果 */
-    record PrepayResult(String codeUrl, LocalDateTime expireAt) {
+    /**
+     * 预下单结果。
+     *
+     * <p>{@code codeUrl} 的语义统一为「前端可直接使用的支付入口」：
+     * Native = 二维码内容（wechatpay://…）、H5 = 跳转 URL、沙箱 = 收银台地址、JSAPI = 占位串。
+     * {@code prepayId} 只有 JSAPI 有值（小程序调起支付用）。
+     */
+    record PrepayResult(String codeUrl, String prepayId, LocalDateTime expireAt) {
+        PrepayResult(String codeUrl, LocalDateTime expireAt) {
+            this(codeUrl, null, expireAt);
+        }
     }
 
     /** 渠道回调的有效载荷（已通过验签） */
     record CallbackPayload(String payNo, String channelTradeNo, long amount, String status, LocalDateTime paidAt) {
+    }
+
+    /** 退款参数 */
+    record RefundCommand(String payNo, String refundNo, long amount, long totalAmount, String reason) {
+    }
+
+    /** 退款结果。{@code done=true} 表示已到终态（成功 / 关闭），否则仍处于处理中 */
+    record RefundResult(String refundNo, String channelRefundNo, String status, boolean done) {
+    }
+
+    /**
+     * 退款（2026-10-18 新增，默认不支持）。
+     *
+     * <p>用 default 方法而不是抽象方法：MOCK / 沙箱没有真实资金流，
+     * 让它们也必须实现退款只会逼出"假装退款成功"的代码 —— 那比不支持更危险。
+     */
+    default RefundResult refund(RefundCommand command) {
+        throw new com.duoduo.common.exception.BizException(
+                com.duoduo.common.enums.ErrorCode.BUSINESS_RULE,
+                "渠道 " + code() + " 不支持退款");
     }
 }

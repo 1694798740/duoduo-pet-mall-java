@@ -204,6 +204,15 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-18（二十八）· 微信支付接入（Native/JSAPI/H5）+ 二维码修复
+
+- 新增 payment/wechat：Config / Crypto（纯 JDK 签名验签解密）/ ChannelBase + 三渠道（@ConditionalOnProperty）。
+- SPI：PrepayCommand 增 openId、clientIp；PrepayResult 增 prepayId；新增 refund default 方法。
+- PayRequest.channel 可空（走 duoduo.pay.default-channel），新增可选 clientIp；ErrorCode 增 PAYMENT_CHANNEL_ERROR。
+- 二维码：自研矩阵不合标 ⇒ 改用 qrcode 库；pyzbar 解码实测通过。
+- 沙箱与 MOCK 全部保留，仅靠环境变量切换。
+- 验证：WechatPayCallbackTest 8/8；交易模块 107/0。联调待商户凭据 + 公网 HTTPS 回调地址。
+
 ### 2026-10-18（二十七）· 已关闭秒杀订单不再占用限购名额
 
 - 根因：限购由 Redis 计数判定，关单回补只回余量不回个人计数 ⇒ 计数只增不减，名额被占死。

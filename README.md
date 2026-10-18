@@ -1981,6 +1981,26 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-18（三十一）· 接入微信支付（Native / JSAPI / H5）＋ 修复二维码不合标
+
+**1. 微信支付渠道**：新增 `payment/wechat` 包，三种产品形态各一个渠道：
+`WECHAT_NATIVE`（网页扫码）/ `WECHAT_JSAPI`（小程序，返回 prepay_id）/ `WECHAT_H5`（手机非微信浏览器）。
+签名、验签、解密全部用 JDK 自带能力实现（`SHA256withRSA` + `AES/GCM`），**零新依赖**，兼容离线构建。
+回调复用既有 `POST /api/payments/callback/{channel}` 与入账链路；SPI 新增 `refund()` default 方法（默认不支持）。
+
+**2. 生产 / 沙箱切换**：`duoduo.pay.wechat.enabled` 决定微信渠道是否注册，
+`duoduo.pay.default-channel` 决定前端不传渠道时的默认值。**沙箱与 MOCK 的配置、代码、收银台页面全部保留**。
+
+**3. 修复二维码扫不出来**：自研编码器输出的矩阵不合标准（实测 OpenCV 与 zbar 双解码器均无法识别；
+矩阵级诊断：三个定位图案不在位、格式信息非法）。矩阵生成改用成熟库 `qrcode`，
+实测 pyzbar 可正确解出内容。这是本次扫码无反应的直接原因。
+
+**验证**：`WechatPayCallbackTest` **8/8**（正常回调、篡改签名、时间戳超窗、缺签名头、非 SUCCESS、
+密钥不匹配、配置自检、未启用不校验）；交易模块单测 **107/0**；二维码解码实测通过。
+
+**未完成**：真实联调待商户凭据与公网 HTTPS 回调地址（见《微信支付接入-配置项与联调说明-2026-10-18.md》）。
+
+
 ### 2026-10-18（三十）· 修复：已关闭的秒杀订单不再占用限购名额
 
 **现象**：抢到秒杀 → 未付款 → 关单（手动取消或超时），再抢同一商品提示「已达到该商品的限购件数」。

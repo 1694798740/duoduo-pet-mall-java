@@ -62,6 +62,7 @@ public enum ErrorCode {
     /** 支付渠道回调验签失败：对渠道而言等同于「调用方身份不可信」，故用 401 而非 422 */
     PAYMENT_SIGNATURE_INVALID(HttpStatus.UNAUTHORIZED, "支付回调签名校验未通过"),
     PAYMENT_CHANNEL_UNKNOWN(HttpStatus.UNPROCESSABLE_ENTITY, "不支持的支付渠道"),
+    PAYMENT_CHANNEL_ERROR(HttpStatus.BAD_GATEWAY, "支付渠道调用失败"),
     PAYMENT_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "支付回调金额与支付单不一致"),
 
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁，请稍后再试"),

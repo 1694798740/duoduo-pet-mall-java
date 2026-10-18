@@ -30,7 +30,13 @@ public class PaymentChannelRegistry {
 
     private final Map<String, PaymentChannel> channels;
 
-    public PaymentChannelRegistry(List<PaymentChannel> implementations) {
+    /** 默认渠道（{@code duoduo.pay.default-channel}）：前端不传渠道时使用；为空则不提供默认，仍按未知渠道拒绝 */
+    private final String defaultChannel;
+
+    public PaymentChannelRegistry(List<PaymentChannel> implementations,
+                                  @org.springframework.beans.factory.annotation.Value(
+                                          "${duoduo.pay.default-channel:}") String defaultChannel) {
+        this.defaultChannel = defaultChannel == null ? "" : defaultChannel.trim().toUpperCase();
         Map<String, PaymentChannel> map = new LinkedHashMap<>();
         for (PaymentChannel channel : implementations) {
             String key = channel.code().trim().toUpperCase();
@@ -48,6 +54,10 @@ public class PaymentChannelRegistry {
     /** 取渠道实现；未知渠道抛 422 并列出当前可用渠道（便于前端与排查） */
     public PaymentChannel require(String code) {
         String key = code == null ? "" : code.trim().toUpperCase();
+        if (key.isEmpty() && !defaultChannel.isEmpty()) {
+            // 前端没指定渠道 → 用配置里的默认（生产 WECHAT_NATIVE / 联调 SANDBOX）
+            key = defaultChannel;
+        }
         PaymentChannel channel = channels.get(key);
         if (channel == null) {
             throw new BizException(ErrorCode.PAYMENT_CHANNEL_UNKNOWN,
