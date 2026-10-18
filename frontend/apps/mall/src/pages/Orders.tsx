@@ -16,6 +16,7 @@ import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/type
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 import { SupportEntry } from '../components/SupportEntry';
 
 const TABS: { value: string; label: string }[] = [
@@ -113,6 +114,7 @@ const OrderActions: React.FC<{
 export const OrdersPage: React.FC = () => {
   const [params, setParams] = useSearchParams();
   const { push } = useToast();
+  const confirm = useConfirm();
   const [cancelling, setCancelling] = useState<string | null>(null);
 
   const status = params.get('status') ?? '';
@@ -162,7 +164,13 @@ export const OrdersPage: React.FC = () => {
    */
   const cancelOrder = useCallback(
     async (orderNo: string) => {
-      const ok = window.confirm('确定取消这笔订单吗？取消后库存与优惠券会立即释放。');
+      const ok = await confirm({
+        title: '取消订单',
+        message: '确定取消这笔订单吗？取消后库存与优惠券会立即释放。',
+        confirmText: '确定取消',
+        cancelText: '再想想',
+        danger: true,
+      });
       if (!ok) return;
       setCancelling(orderNo);
       try {

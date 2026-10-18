@@ -15,12 +15,14 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
 import { ShareCard } from '@duoduo/shared/components/share';
 import { useAsync } from '@duoduo/shared/components/hooks';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 
 const PAGE_SIZE = 10;
 const MAX_TOPICS = 2;
 
 export const ShareMinePage: React.FC = () => {
   const { push } = useToast();
+  const confirm = useConfirm();
   const [page, setPage] = useState(1);
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -124,7 +126,16 @@ export const ShareMinePage: React.FC = () => {
                 className="btn btn-ghost btn-sm"
                 style={{ color: 'var(--danger)' }}
                 disabled={busy}
-                onClick={() => { if (window.confirm(`删除这条分享？（软删：别人转发单的引用块会显示「原内容已被作者删除」）`)) void remove(it); }}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: '删除分享',
+                    message: '删除这条分享？删除后，别人转发的引用块会显示「原内容已被作者删除」。',
+                    confirmText: '删除',
+                    cancelText: '取消',
+                    danger: true,
+                  });
+                  if (ok) void remove(it);
+                }}
               >
                 删除
               </button>

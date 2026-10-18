@@ -1981,6 +1981,28 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-18（二十二）· 原生 confirm/alert 全部替换为站内统一弹窗
+
+**问题**：取消订单、删除分享仍在用 `window.confirm` —— 浏览器原生弹窗与站内风格完全是两张皮
+（系统默认字体、方块按钮、无法用主色/危险色），且会阻塞主线程（弹窗期间轮询与动画停摆）。
+
+**做法**：新增全局 `ConfirmProvider`（`@duoduo/shared/components/confirm`），提供 Promise 化 API：
+
+```ts
+const confirm = useConfirm();
+if (!(await confirm({ title: '取消订单', message: '…', danger: true }))) return;
+```
+
+- 弹窗本体**直接复用站内 `Modal`**（与「在线客服」同一张白卡、同一个右上角关闭、同一套 footer 按钮）；
+- 行为与原生等价：**确定 → true；取消 / 右上角 × / Esc → false**；`alert` 只有「知道了」；
+- `danger: true` 时确定按钮用危险色（删除、取消订单）；文案可定制（如「再想想 / 确定取消」）；
+- 三个应用入口（商城 / 后台 / 商家端）都已挂载 Provider；未挂载时直接报错，不静默退回原生弹窗。
+
+**替换点**：`Orders.tsx`（取消订单）、`ShareMine.tsx`（删除分享）。全仓库已无 `window.confirm/alert/prompt`。
+
+**验证**：三端 `tsc` + 构建通过；Playwright 实测 6/6 —— 点击取消**未触发原生 dialog**、
+弹出站内弹窗、点「再想想」订单仍为待付款、点「确定取消」订单变已关闭、全程无原生弹窗。
+
 ### 2026-10-18（二十一）· 订单按钮统一 ＋ 商品详情「问客服」入口 ＋ 客服方案评估
 
 **先说核对结果**：你截图里的卡片只有「去支付」，但当前线上产物已经包含「取消订单」——

@@ -204,6 +204,13 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-18（十九）· 原生 confirm/alert 替换为站内统一弹窗
+
+- 新增 `@duoduo/shared/components/confirm`：`ConfirmProvider` + `useConfirm` / `useAlert`，Promise 化，
+  复用站内 `Modal`；确定/取消/Esc/× 行为与原生等价，`danger` 用危险色。
+- 三个入口均挂载 Provider；`Orders.tsx` 取消订单、`ShareMine.tsx` 删除分享改用自定义弹窗。
+- 全仓库不再有 `window.confirm/alert/prompt`。三端 typecheck + 构建通过；Playwright 6/6（无原生 dialog）。
+
 ### 2026-10-18（十八）· 订单按钮统一 + 问客服入口（占位）+ 客服方案评估
 
 - 新增 `SupportEntry` 组件，商品详情 / 订单列表 / 订单详情三处统一「问客服」入口；
