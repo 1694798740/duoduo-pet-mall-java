@@ -5,10 +5,14 @@ import com.duoduo.fulfilment.client.ProductClient;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -70,8 +74,75 @@ public class ProductRatingSyncer {
         }
     }
 
-    private long asLong(Object value) {
-        if (value instanceof Number number) {
+    /**
+     * 启动后对账一次（2026-10-18）：修掉历史种子假数据与「回写曾失败」的漂移。
+     *
+     * <p>为什么不在建库脚本里直接改：假数据与真实评价的差异只有评价库知道，
+     * 一次性 SQL 只是把 4.0 强行改成 0，遇到「其实有评价只是没回写」的商品会把真数据也抹掉。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void reconcileOnStartup() {
+        reconcile("启动");
+    }
+
+    /**
+     * 定时对账（默认每小时）：兜住 best-effort 回写的偶发失败。
+     * 间隔与首次延迟都可用配置覆盖，便于测试时调小。
+     */
+    @Scheduled(fixedDelayString = "${duoduo.review.rating-reconcile-interval-ms:3600000}",
+            initialDelayString = "${duoduo.review.rating-reconcile-initial-ms:120000}")
+    public void reconcilePeriodically() {
+        reconcile("定时");
+    }
+
+    /**
+     * 对账主流程：候选（商品域说「我有评分」）∪ 评价库真实聚合 → 补丁。
+     *
+     * @return 商品域实际生效的行数（失败时 0，不抛异常 —— 对账失败不该阻断业务）
+     */
+    public int reconcile(String trigger) {
+        try {
+            List<ProductClient.RatingCandidateBrief> candidatesResp = null;
+            ApiResponse<List<ProductClient.RatingCandidateBrief>> candidatesAnswer =
+                    productClient.ratingCandidates();
+            if (candidatesAnswer != null) {
+                candidatesResp = candidatesAnswer.data();
+            }
+            List<ProductClient.RatingCandidateBrief> candidates =
+                    candidatesResp == null ? List.of() : candidatesResp;
+
+            List<RatingReconcile.Candidate> claimed = new ArrayList<>();
+            for (ProductClient.RatingCandidateBrief c : candidates) {
+                if (c != null && c.spuId() != null) {
+                    claimed.add(new RatingReconcile.Candidate(
+                            c.spuId(), c.ratingCount() == null ? 0 : c.ratingCount()));
+                }
+            }
+
+            List<RatingReconcile.Aggregate> actual = new ArrayList<>();
+            for (Map<String, Object> row : reviewMapper.ratingAggregatesAll()) {
+                actual.add(new RatingReconcile.Aggregate(
+                        asLong(row.get("spuId")), asDouble(row.get("avgRating")), (int) asLong(row.get("cnt"))));
+            }
+
+            List<ProductClient.RatingPatch> patches = RatingReconcile.plan(claimed, actual);
+            if (patches.isEmpty()) {
+                // ★ 0 也要说出来：否则与「这段没跑」长得一样
+                log.info("评分对账（{}）：候选 0 个、有评价 0 个 —— 已核对，无需回写", trigger);
+                return 0;
+            }
+            ApiResponse<Integer> response = productClient.recomputeRatings(patches);
+            int applied = response == null || response.data() == null ? 0 : response.data();
+            log.info("评分对账（{}）：候选 {} / 有评价 {} / 补丁 {} / 生效 {}",
+                    trigger, claimed.size(), actual.size(), patches.size(), applied);
+            return applied;
+        } catch (Exception e) {
+            log.warn("评分对账失败（{}）—— 下一轮会重试，不影响评价主流程", trigger, e);
+            return 0;
+        }
+    }
+
+    private long asLong(Object value) {        if (value instanceof Number number) {
             return number.longValue();
         }
         try {

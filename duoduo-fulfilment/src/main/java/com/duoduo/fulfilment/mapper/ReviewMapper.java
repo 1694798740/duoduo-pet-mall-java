@@ -49,6 +49,17 @@ public interface ReviewMapper extends BaseMapper<ReviewEntity> {
     List<Map<String, Object>> ratingAggregatesBySpu(@Param("spuIds") Collection<Long> spuIds);
 
     /**
+     * 全量评分聚合（2026-10-18）：对账用，一次取回所有「有评价的 SPU」的真实聚合。
+     *
+     * <p>为什么不能只查候选：商品域的候选是「它认为自己有评分」的集合，
+     * 若某次回写失败，评价库里已有评价但商品域是 0 —— 只在候选里找永远补不上。
+     * 两个方向都扫（候选 ∪ 有评价），才能把漂移收敛干净。
+     */
+    @Select("SELECT spu_id AS spuId, COUNT(*) AS cnt, COALESCE(AVG(rating), 0) AS avgRating "
+            + "FROM t_review WHERE audit_status = 'APPROVED' GROUP BY spu_id")
+    List<Map<String, Object>> ratingAggregatesAll();
+
+    /**
      * 我在这些订单里已评价过的订单号（去重）。
      *
      * <p>订单列表页要给「已完成」订单显示「去评价 / 已评价」，若逐单调

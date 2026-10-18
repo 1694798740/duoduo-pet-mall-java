@@ -4,9 +4,16 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.web.storage.ObjectStorage;
+import com.duoduo.fulfilment.support.RemoteImageImport;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +29,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -73,6 +81,15 @@ public class UploadController {
     private final ObjectStorage storage;
     private final int maxSizeMb;
     private final String publicBaseUrl;
+
+    /**
+     * 下载远程图片的客户端：<b>不跟随重定向</b>。
+     * 跟随 3xx 会绕过「公网地址校验」（先给公网，再 302 到内网），是最常见的一类 SSRF 绕法。
+     */
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
 
     public UploadController(
             @Qualifier("publicObjectStorage") ObjectStorage storage,
@@ -130,6 +147,94 @@ public class UploadController {
         // 不记原文件名：它是不可信输入，进日志只会污染检索
         log.info("用户 {} 上传图片 {}（{} 字节，后端 {}）", userId, stored, file.getSize(), storage.backend());
         return ApiResponse.ok(Map.of("url", url));
+    }
+
+    /**
+     * 从远程地址导入一张图片（2026-10-18）：下载 → 校验 → 落同一个存储 → 返回本站 URL。
+     *
+     * <p><b>为什么要有这个端点</b>：评价表单此前只接受「图片直链」，而直链会带来三个问题：
+     * 外站图随时失效（评价变裂图）、外站防盗链、以及 http 页面里的混合内容。
+     * 统一转存到自己的 COS 后，评价展示用的就是本站地址，和本地上传的图完全同源同生命周期。
+     *
+     * <p>安全边界见 {@link RemoteImageImport}（协议 / 公网地址 / 文件头三道闸门，
+     * 不跟随重定向，连接 5s、读取 10s、体积上限与普通上传一致）。
+     */
+    @PostMapping("/api/uploads/from-url")
+    public ApiResponse<Map<String, String>> uploadFromUrl(
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest request) throws IOException {
+        Long userId = UserContext.requireUserId();
+        URI uri = RemoteImageImport.validateUrl(body == null ? null : body.get("url"));
+
+        HttpRequest remote = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(10))
+                .header("User-Agent", "duoduo-review-image-importer/1.0")
+                .header("Accept", "image/*")
+                .GET()
+                .build();
+
+        HttpResponse<InputStream> response;
+        try {
+            response = httpClient.send(remote, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw BizException.businessRule("图片下载被中断，请重试");
+        } catch (IOException e) {
+            log.warn("远程图片下载失败 url={}", uri, e);
+            throw BizException.businessRule("图片地址无法访问，请检查后重试");
+        }
+
+        if (response.statusCode() != 200) {
+            // 3xx 也走这里：不跟随重定向是刻意的（见 httpClient 注释），给用户可理解的提示
+            throw BizException.validation("图片地址返回 " + response.statusCode() + "，无法导入");
+        }
+        String contentType = response.headers().firstValue("content-type").orElse("");
+        if (!RemoteImageImport.isAllowedContentType(contentType)) {
+            throw BizException.validation("该地址不是 jpg / png / webp / gif 图片");
+        }
+        long limitMb = maxSizeMb > 0 ? maxSizeMb : 20;
+        long limit = limitMb * 1024L * 1024L;
+        byte[] bytes;
+        try (InputStream in = response.body()) {
+            bytes = readAtMost(in, limit);
+        }
+        if (bytes == null) {
+            throw BizException.validation("图片不能超过 " + limitMb + "MB");
+        }
+        if (!RemoteImageImport.looksLikeImage(bytes)) {
+            // Content-Type 可以撒谎，文件头不会：拒绝「声称是图片的错误页 / HTML」
+            throw BizException.validation("该地址返回的内容不是有效图片");
+        }
+
+        String ext = RemoteImageImport.extOf(contentType);
+        String stored = UUID.randomUUID() + "." + ext;
+        try {
+            storage.put(ObjectStorage.PREFIX_PUBLIC + stored, bytes, contentType);
+        } catch (BizException e) {
+            log.error("远程图片写入存储失败 backend={} stored={}", storage.backend(), stored, e);
+            throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
+        }
+
+        String url = baseUrl(request) + "/uploads/" + stored;
+        log.info("用户 {} 从 {} 导入图片 {}（{} 字节，后端 {}）",
+                userId, uri.getHost(), stored, bytes.length, storage.backend());
+        return ApiResponse.ok(Map.of("url", url));
+    }
+
+    /** 读取上限内的字节；超限返回 null（不抛 IO 异常，便于给出「超过 xMB」的准确提示）。 */
+    private byte[] readAtMost(InputStream in, long limit) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(8192);
+        byte[] buf = new byte[8192];
+        long total = 0;
+        int n;
+        while ((n = in.read(buf)) > 0) {
+            total += n;
+            if (total > limit) {
+                return null;
+            }
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
     }
 
     /** 公开读：图片标签直出。文件名不是服务端生成的格式一律 404，不探测底层存储。 */

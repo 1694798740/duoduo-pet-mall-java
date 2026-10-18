@@ -3,6 +3,7 @@ package com.duoduo.product.controller;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.service.ProductService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -34,5 +35,17 @@ public class InternalRatingController {
     @PostMapping("/ratings/recompute")
     public ApiResponse<Integer> recompute(@RequestBody List<ProductDtos.RatingPatch> patches) {
         return ApiResponse.ok(productService.recomputeRatings(patches));
+    }
+
+    /**
+     * 评分对账候选（2026-10-18）：返回本域 rating_count &gt; 0 的 SPU。
+     *
+     * <p>评价域据此做两件事：① 候选里有、评价库里没有 → 推 0 复位（种子假数据 / 回写失败）；
+     * ② 评价库里有、候选里没有 → 补推真实聚合（回写曾失败的漏网）。
+     * 有了这条，首页与详情页的评分口径才真正收敛到「评价库」这一个事实源。
+     */
+    @GetMapping("/ratings/candidates")
+    public ApiResponse<List<ProductDtos.RatingCandidate>> candidates() {
+        return ApiResponse.ok(productService.ratingCandidates());
     }
 }

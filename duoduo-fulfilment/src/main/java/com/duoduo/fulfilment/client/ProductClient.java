@@ -43,9 +43,21 @@ public interface ProductClient {
     ApiResponse<Integer> recomputeRatings(@RequestBody List<RatingPatch> patches);
 
     /**
+     * 评分对账候选（2026-10-18）：商品域当前 rating_count &gt; 0 的 SPU。
+     *
+     * <p>与 {@link #recomputeRatings} 配对使用：候选里有、评价库没有 ⇒ 推 0 复位。
+     */
+    @GetMapping("/internal/ratings/candidates")
+    ApiResponse<List<RatingCandidateBrief>> ratingCandidates();
+
+    /**
      * 评分补丁（与商品域 {@code ProductDtos.RatingPatch} 对齐的跨域契约副本）。
      * 字段名必须逐字一致：spuId / avgRating / ratingCount。
      */
     record RatingPatch(Long spuId, Double avgRating, Integer ratingCount) {
+    }
+
+    /** 对账候选（与商品域 {@code ProductDtos.RatingCandidate} 对齐） */
+    record RatingCandidateBrief(Long spuId, Integer ratingCount) {
     }
 }

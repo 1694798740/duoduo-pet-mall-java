@@ -1046,6 +1046,11 @@ export const uploadApi = {
     form.append('file', file);
     return api.post<{ url: string }>('/api/uploads', form);
   },
+  /**
+   * 把外部图片地址转存到自己的对象存储，返回本站 URL。
+   * 为什么要转存：外站图可能失效 / 防盗链 / 是 http 混合内容；转存后与本地图同源同生命周期。
+   */
+  fromUrl: (url: string) => api.post<{ url: string }>('/api/uploads/from-url', { url }),
 };
 
 // ---------- 通知中心 / 关注与粉丝（duoduo-social；第六十七轮补齐 Web 端） ----------

@@ -204,6 +204,18 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-18（十六）· 评分一致性修复 + 评价图片双通道（本地/外链转存 COS）
+
+- **评分根因**：首页读 `t_spu.rating/rating_count` 冗余列（种子假数据），详情读评价库汇总；
+  冗余列只在新增评价时回写 ⇒ 历史假数据永不纠正。
+- **修法**：商品域加 `GET /api/products/internal/ratings/candidates`；履约域加双向对账
+  （启动 + 每小时）：候选有/评价无 → 复位 0；评价有/候选无 → 补推。回写改为只更新两列。
+- **验证**：31 个假评分复位（1101 4.8/126 → 0/0）；1001 保持 5.0/1；
+  card 与 summary 逐项一致；review-smoke 62/0；review-ui-check 24/0；
+  模块单测 product 118/0、fulfilment 20/0。
+- **图片**：新增 `POST /api/uploads/from-url`（公网校验、不跟随重定向、魔数校验、体积/超时限制）；
+  评价页支持「+ 本地上传」与「地址转存」，均落 COS。负例：内网地址 400、HTML 400。
+
 ### 2026-10-18（十五）· 测试商品补齐（每类 5 个自营）+ 分类名去英文前缀
 
 - 新增 `docs/sql/incremental/35-seed-test-products.sql`（30 SPU / 36 SKU，全部 `self` + `seller_id=0`，

@@ -531,12 +531,30 @@ public class ProductService {
                 log.warn("评分补丁指向不存在的 SPU {}: 跳过", patch.spuId());
                 continue;
             }
-            spu.setRating(BigDecimal.valueOf(patch.avgRating()).setScale(1, RoundingMode.HALF_UP));
-            spu.setRatingCount(patch.ratingCount());
-            spuMapper.updateById(spu);
+            // ★ 只更新这两列，不用 updateById 回写整行：
+            //   整行覆盖会在「读出来 → 写回去」之间把别人刚改的标题/价格一起盖掉（并发下的静默丢更新）。
+            spuMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, patch.spuId())
+                    .set(SpuEntity::getRating, BigDecimal.valueOf(patch.avgRating()).setScale(1, RoundingMode.HALF_UP))
+                    .set(SpuEntity::getRatingCount, patch.ratingCount()));
             applied++;
         }
         return applied;
+    }
+
+    /**
+     * 评分对账候选：本域当前「认为自己有评分」的 SPU（rating_count &gt; 0）。
+     *
+     * <p>刻意只返回 id 与条数，不返回分数 —— 对账的目的是找出「本域说有、评价库说没有」的行，
+     * 分数由评价域给，本域不参与计算。
+     */
+    public List<ProductDtos.RatingCandidate> ratingCandidates() {
+        return spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
+                        .select(SpuEntity::getId, SpuEntity::getRatingCount)
+                        .gt(SpuEntity::getRatingCount, 0))
+                .stream()
+                .map(spu -> new ProductDtos.RatingCandidate(spu.getId(), spu.getRatingCount()))
+                .toList();
     }
 
     // ---------------- 供交易服务调用（内部接口） ----------------

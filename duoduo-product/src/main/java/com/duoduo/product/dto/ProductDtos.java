@@ -626,4 +626,17 @@ public final class ProductDtos {
             Integer ratingCount
     ) {
     }
+
+    /**
+     * 评分对账候选（2026-10-18）：本域认为「自己有评分」的 SPU 清单。
+     *
+     * <p>用途只有一个 —— 让评价域拿真实聚合与它做差集：
+     * 候选里有、评价库里没有的 SPU，说明这一列是历史种子假数据（或回写曾失败），
+     * 必须被复位成 0；否则首页卡片会显示「4.0 分 / 4 条评价」，而详情页一条评价都没有。
+     */
+    public record RatingCandidate(
+            Long spuId,
+            Integer ratingCount
+    ) {
+    }
 }

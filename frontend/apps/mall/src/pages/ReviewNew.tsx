@@ -17,7 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { orderApi, reviewApi } from '@duoduo/api-sdk/endpoints';
+import { orderApi, reviewApi, uploadApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, ReviewItemRequest, ReviewView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, Field, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
@@ -31,8 +31,15 @@ interface DraftItem {
   specText: string | null;
   rating: number;
   content: string;
-  images: string;
+  /** 已完成上传/转存、可以直接提交的图片地址 */
+  images: string[];
+  /** 手工填写、还没转存的地址（支持多张：空格或逗号分隔） */
+  urlInput: string;
+  /** 该商品正在上传，提交按钮需要等它结束 */
+  uploading: boolean;
 }
+
+const MAX_IMAGES = 9;
 
 export const ReviewNewPage: React.FC = () => {
   const [params] = useSearchParams();
@@ -78,7 +85,9 @@ export const ReviewNewPage: React.FC = () => {
         specText: item.specText,
         rating: 5,
         content: '',
-        images: '',
+        images: [],
+        urlInput: '',
+        uploading: false,
       });
     }
     setDrafts(next);
@@ -89,7 +98,7 @@ export const ReviewNewPage: React.FC = () => {
   const loadError = order.error || mine.error;
 
   const canSubmit = useMemo(
-    () => drafts.length > 0 && drafts.every((d) => d.rating >= 1 && d.rating <= 5) && !busy,
+    () => drafts.length > 0 && drafts.every((d) => d.rating >= 1 && d.rating <= 5 && !d.uploading) && !busy,
     [drafts, busy],
   );
 
@@ -127,6 +136,85 @@ export const ReviewNewPage: React.FC = () => {
     setDrafts((list) => list.map((d) => (d.spuId === spuId ? { ...d, ...patch } : d)));
   };
 
+  /**
+   * 本地图片上传（2026-10-18）：逐张上传到 /api/uploads（后端落 COS），
+   * 失败的**不静默**——把文件名与原因带出来，用户能知道哪张没成功。
+   */
+  const pickImages = async (spuId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const draft = drafts.find((d) => d.spuId === spuId);
+    if (!draft) return;
+    const room = MAX_IMAGES - draft.images.length;
+    if (room <= 0) {
+      push(`最多上传 ${MAX_IMAGES} 张图片`, 'error');
+      return;
+    }
+    const picked = Array.from(files).slice(0, room);
+    update(spuId, { uploading: true });
+    const uploaded: string[] = [];
+    const failed: string[] = [];
+    for (const file of picked) {
+      try {
+        const res = await uploadApi.image(file);
+        if (res?.url) uploaded.push(res.url);
+      } catch (err) {
+        failed.push(`${file.name}：${toFriendlyMessage(err)}`);
+      }
+    }
+    setDrafts((list) =>
+      list.map((d) =>
+        d.spuId === spuId ? { ...d, images: [...d.images, ...uploaded], uploading: false } : d,
+      ),
+    );
+    if (uploaded.length) push(`已上传 ${uploaded.length} 张图片`, 'success');
+    if (failed.length) push(`上传失败 ${failed.length} 张 —— ${failed[0]}`, 'error');
+  };
+
+  /** 外部地址转存：由服务端下载并落 COS，返回的是本站地址（不直接使用外链） */
+  const importUrls = async (spuId: string) => {
+    const draft = drafts.find((d) => d.spuId === spuId);
+    if (!draft) return;
+    const urls = draft.urlInput
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (urls.length === 0) {
+      push('请先填写图片地址', 'info');
+      return;
+    }
+    const room = MAX_IMAGES - draft.images.length;
+    if (room <= 0) {
+      push(`最多 ${MAX_IMAGES} 张图片`, 'error');
+      return;
+    }
+    update(spuId, { uploading: true });
+    const imported: string[] = [];
+    const failed: string[] = [];
+    for (const url of urls.slice(0, room)) {
+      try {
+        const res = await uploadApi.fromUrl(url);
+        if (res?.url) imported.push(res.url);
+      } catch (err) {
+        failed.push(toFriendlyMessage(err));
+      }
+    }
+    setDrafts((list) =>
+      list.map((d) =>
+        d.spuId === spuId
+          ? { ...d, images: [...d.images, ...imported], urlInput: '', uploading: false }
+          : d,
+      ),
+    );
+    if (imported.length) push(`已转存 ${imported.length} 张图片`, 'success');
+    if (failed.length) push(`转存失败 ${failed.length} 张 —— ${failed[0]}`, 'error');
+  };
+
+  const removeImage = (spuId: string, url: string) => {
+    setDrafts((list) =>
+      list.map((d) => (d.spuId === spuId ? { ...d, images: d.images.filter((x) => x !== url) } : d)),
+    );
+  };
+
   const submit = async () => {
     setError(null);
     setBusy(true);
@@ -136,10 +224,7 @@ export const ReviewNewPage: React.FC = () => {
         skuId: d.skuId,
         rating: d.rating,
         content: d.content.trim() || undefined,
-        images: d.images
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        images: d.images,
       }));
       const result = await reviewApi.create({ orderNo, anonymous, items });
       push(`已提交 ${result.created} 条评价`, 'success');
@@ -229,13 +314,95 @@ export const ReviewNewPage: React.FC = () => {
                 />
               </Field>
 
-              <Field label="图片直链（可选，多张用空格或逗号分隔，最多 9 张）">
-                <input
-                  className="input"
-                  placeholder="https://…jpg https://…png"
-                  value={draft.images}
-                  onChange={(e) => update(draft.spuId, { images: e.target.value })}
-                />
+              <Field label={`评价图片（可选，最多 ${MAX_IMAGES} 张，已添加 ${draft.images.length} 张）`}>
+                <div className="row row-wrap" style={{ gap: 8 }}>
+                  {draft.images.map((url) => (
+                    <div key={url} style={{ position: 'relative', width: 72, height: 72 }}>
+                      <img
+                        src={url}
+                        alt=""
+                        style={{
+                          width: 72,
+                          height: 72,
+                          objectFit: 'cover',
+                          borderRadius: 8,
+                          border: '1px solid var(--border)',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        aria-label="移除这张图片"
+                        onClick={() => removeImage(draft.spuId, url)}
+                        style={{
+                          position: 'absolute',
+                          top: -6,
+                          right: -6,
+                          width: 20,
+                          height: 20,
+                          borderRadius: 10,
+                          border: 'none',
+                          background: 'rgba(0,0,0,.6)',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          lineHeight: '18px',
+                          fontSize: 13,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {draft.images.length < MAX_IMAGES ? (
+                    <label
+                      style={{
+                        width: 72,
+                        height: 72,
+                        borderRadius: 8,
+                        border: '1px dashed var(--border-strong, #ccc)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: draft.uploading ? 'default' : 'pointer',
+                        color: 'var(--text-2, #888)',
+                        fontSize: 24,
+                      }}
+                    >
+                      {draft.uploading ? '…' : '+'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        multiple
+                        style={{ display: 'none' }}
+                        disabled={draft.uploading}
+                        onChange={(e) => {
+                          void pickImages(draft.spuId, e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  ) : null}
+                </div>
+                <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    placeholder="或粘贴图片地址（多张用空格 / 逗号分隔）"
+                    value={draft.urlInput}
+                    disabled={draft.uploading}
+                    onChange={(e) => update(draft.spuId, { urlInput: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={draft.uploading || !draft.urlInput.trim()}
+                    onClick={() => void importUrls(draft.spuId)}
+                  >
+                    {draft.uploading ? '处理中…' : '转存到图床'}
+                  </button>
+                </div>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  本地图片与外部地址都会转存到对象存储（COS），评价展示使用转存后的地址。
+                </div>
               </Field>
             </div>
           ))}

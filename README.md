@@ -1981,6 +1981,37 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-18（十九）· 评分两处不一致的根因修复 ＋ 评价图片支持本地/外链双通道
+
+**问题一：首页 4.0 分 4 条，详情页「暂无评分」**
+
+根因：两处读的是**两个数据源** —— 首页卡片读 `t_spu.rating / rating_count`（冗余列），
+详情页读评价库实时汇总（`/api/reviews/product/{id}/summary`）。冗余列只在「新评价提交后」回写，
+而建库时写入的 4.0 / 4 是**种子假数据**，没有任何评价与之对应，因此永远纠正不过来。
+（本轮补的 30 个商品也带了 4.x/126 这类展示值 —— 同一问题的放大版。）
+
+修法：
+- 商品域新增内部接口 `GET /api/products/internal/ratings/candidates`（rating_count > 0 的 SPU）；
+- 履约域新增**双向对账** `RatingReconcile`：候选有、评价库没有 ⇒ 复位 0/0；
+  评价库有、候选没有 ⇒ 补推真实聚合。触发点＝**启动后立即一次 + 每小时一次**，
+  不再依赖「必须有人再写一条评价」；
+- `recomputeRatings` 从「读整行 → 写整行」改为**只更新 rating / rating_count 两列**，
+  避免并发下把别人刚改的标题/价格覆盖掉。
+
+实测：31 个假评分被复位（1101 从 4.8/126 → 0/0）；1001 有 1 条真实评价 ⇒ 保留 5.0/1；
+接口对比 `card.rating=5.0/count=1` 与 `summary.avgRating=5.0/total=1` 一致，
+1101 两侧同为 0；`review-smoke` 62/0（含「评分复原」）、`review-ui-check` 24/0。
+
+**问题二：评价只能填图片 URL**
+
+- 后端新增 `POST /api/uploads/from-url`：服务端下载 → 校验 → 落**同一个 ObjectStorage**（当前是 COS）
+  → 返回本站 URL。安全边界：只允许 http/https、解析后必须是**公网地址**（回环/私有/链路本地/组播一律拒绝）、
+  **不跟随重定向**、Content-Type 白名单 + 文件头魔数校验、连接 5s/读取 10s/体积与普通上传同限。
+- 评价页（`ReviewNew.tsx`）改为双通道：**「+」选本地图片**（多选、逐张上传、缩略图、可删除、失败点名）
+  ＋**地址输入「转存到图床」**（支持多张、同样落 COS）。提交的就是转存后的本站地址。
+- 实测：本地上传 → COS URL；用该 URL 走 from-url → 另一个 COS URL 且 HTTP 200；
+  `http://127.0.0.1:8080/...` → 400「该地址不允许访问」；`https://example.com/` → 400「不是图片」。
+
 ### 2026-10-18（十八）· 每个一级分类补到 5 个自营商品（30 SPU / 36 SKU）＋ 去掉分类名前的英文前缀
 
 **数据**：`docs/sql/incremental/35-seed-test-products.sql`（同时并入 `02-duoduo-product.sql`，
