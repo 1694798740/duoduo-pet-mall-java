@@ -40,6 +40,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { QRCode } from '@duoduo/shared/components/QRCode';
 import { LogisticsTimeline } from '@duoduo/shared/components/LogisticsTimeline';
+import { SupportEntry } from '../components/SupportEntry';
 
 /** 轮询间隔（毫秒）——与真实扫码支付的体验对齐 */
 const POLL_INTERVAL = 3000;
@@ -502,6 +503,9 @@ export const OrderDetailPage: React.FC = () => {
                   申请退款
                 </button>
               ) : null}
+
+              {/* 位置与文案与订单列表一致：取消 → 问客服 → 其他写操作 → 刷新 */}
+              <SupportEntry />
 
               <button className="btn btn-ghost" disabled={acting} onClick={() => void reloadOrder()}>
                 刷新

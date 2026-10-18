@@ -16,6 +16,7 @@ import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/type
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { SupportEntry } from '../components/SupportEntry';
 
 const TABS: { value: string; label: string }[] = [
   { value: '', label: '全部' },
@@ -73,6 +74,8 @@ const OrderActions: React.FC<{
         {cancelling ? '取消中…' : '取消订单'}
       </button>
     ) : null}
+    {/* 客服入口放在「取消订单」之后、「售后/评价」之前：同一条问题处理动线 */}
+    <SupportEntry small />
     {order.status === 'SHIPPED' || order.status === 'COMPLETED' ? (
       <Link className="btn btn-ghost btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
         申请售后

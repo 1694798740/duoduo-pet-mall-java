@@ -32,6 +32,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
+import { SupportEntry } from '../components/SupportEntry';
 
 const SPECIES_LABEL: Record<string, string> = {
   cat: '猫',
@@ -434,6 +435,8 @@ export const ProductDetailPage: React.FC = () => {
               >
                 立即购买
               </button>
+              {/* 统一入口：位置固定放在购买动作右侧，售罄时同样可用（买不到也需要问） */}
+              <SupportEntry />
             </div>
 
             {!canBuy ? (
