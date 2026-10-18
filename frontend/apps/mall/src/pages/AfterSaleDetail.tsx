@@ -75,9 +75,16 @@ export const AfterSaleDetailPage: React.FC = () => {
       <div className="row-between" style={{ marginBottom: 12 }}>
         <h2 className="section-title">售后详情</h2>
         {data ? (
-          <Link className="btn btn-sm btn-ghost" to={`/orders/${data.orderNo}`}>
-            查看订单
-          </Link>
+          <div className="row" style={{ gap: 8 }}>
+            {/* 返回列表（2026-10-18）：原先详情页只有「查看订单」，看完想回到售后记录
+                只能靠浏览器后退 —— 菜单入口补上后，这里也要有对称的回程。 */}
+            <Link className="btn btn-sm btn-ghost" to="/after-sales">
+              返回列表
+            </Link>
+            <Link className="btn btn-sm btn-ghost" to={`/orders/${data.orderNo}`}>
+              查看订单
+            </Link>
+          </div>
         ) : null}
       </div>
 

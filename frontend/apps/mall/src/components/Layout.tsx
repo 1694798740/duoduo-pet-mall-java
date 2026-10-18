@@ -278,6 +278,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/orders" style={{ display: 'block' }}>
                       我的订单
                     </Link>
+                    {/* 我的售后（2026-10-18）：原先菜单里没有入口，用户提交售后后只能靠
+                        「订单卡片 → 申请售后」或记住 /after-sales 路径才能找回记录；
+                        收进头像菜单（紧跟我的订单）后，售后记录与订单一样随时可达。 */}
+                    <Link className="nav-link" to="/after-sales" style={{ display: 'block' }}>
+                      我的售后
+                    </Link>
                     <Link className="nav-link" to="/coupons" style={{ display: 'block' }}>
                       我的券包
                     </Link>
