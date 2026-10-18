@@ -34,12 +34,30 @@ Page({
   data: {
     tabs: TABS,
     activeTab: 'ALL',
+    orderType: '',
     orders: [],
     loading: false,
     error: '',
     payingOrderNo: '',
     page: 1,
     hasMore: false,
+  },
+
+  /**
+   * D4：`?type=SECKILL` 进入即「只看抢购记录」。
+   * onLoad 早于 onShow，所以这里设好标记后首次 fetch 就已经带上筛选，
+   * 不会出现「先拉一遍全部、再拉一遍秒杀」的双请求闪烁。
+   */
+  onLoad(options) {
+    if (options && options.type === 'SECKILL') {
+      this.setData({ orderType: 'SECKILL' });
+    }
+  },
+
+  /** 从「只看秒杀」退回全部订单 */
+  clearType() {
+    this.setData({ orderType: '' });
+    this.fetchOrders(true);
   },
 
   onShow() {
@@ -72,7 +90,7 @@ Page({
     this.setData(reset ? { loading: true, error: '', needLogin: false, page: 1, orders: [] } : { loading: true, error: '', needLogin: false });
     return api
       .ensureSession()
-      .then(() => api.order.list(page, this.data.activeTab, PAGE_SIZE))
+      .then(() => api.order.list(page, this.data.activeTab, PAGE_SIZE, this.data.orderType))
       .then((data) => {
         const items = ((data && data.items) || []).map((o) => this.decorate(o));
         const merged = page === 1 ? items : this.data.orders.concat(items);

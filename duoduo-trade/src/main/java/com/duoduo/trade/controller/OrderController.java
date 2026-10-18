@@ -126,9 +126,10 @@ public class OrderController {
     @GetMapping
     public ApiResponse<PageResult<OrderView>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String orderType,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(orderService.listMine(status, page, pageSize));
+        return ApiResponse.ok(orderService.listMine(status, orderType, page, pageSize));
     }
 
     /**

@@ -28,3 +28,17 @@
 .sk-price { color: var(--accent); font-weight: 700; font-size: 36rpx; }
 .sk-price::before { content: '¥'; font-size: 22rpx; }
 .sk-btn { flex-shrink: 0; width: 150rpx; }
+
+/* D4：抢购记录入口 —— 一行式，不做成卡片，避免与下面的活动卡抢视觉重心 */
+.mine-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20rpx 24rpx 0;
+  padding: 20rpx 24rpx;
+  border-radius: 16rpx;
+  background: #fff;
+  font-size: 26rpx;
+  color: var(--text-2, #666);
+}
+.mine-arrow { font-size: 32rpx; color: var(--text-3, #999); line-height: 1; }

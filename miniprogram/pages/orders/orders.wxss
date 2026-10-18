@@ -68,3 +68,17 @@
   font-size: 26rpx;
   color: #23262f;
 }
+
+/* D4：秒杀筛选提示条 */
+.type-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16rpx 24rpx 0;
+  padding: 18rpx 24rpx;
+  border-radius: 14rpx;
+  background: var(--accent-weak, #fff3e8);
+  font-size: 24rpx;
+  color: var(--text-2, #666);
+}
+.type-clear { color: var(--accent, #ff6b35); font-size: 24rpx; }

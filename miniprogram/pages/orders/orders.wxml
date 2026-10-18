@@ -12,6 +12,13 @@
   >{{item.label}}</view>
 </scroll-view>
 
+<!-- D4：从秒杀页带 type=SECKILL 进来时的显式提示 —— 不说清楚的话，
+     用户会把「只显示秒杀单」误当成「我的其他订单不见了」 -->
+<view wx:if="{{orderType === 'SECKILL'}}" class="type-banner">
+  <text>当前只显示秒杀单</text>
+  <text class="type-clear" bindtap="clearType">查看全部订单</text>
+</view>
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button wx:if="{{needLogin}}" class="btn btn-plain btn-mini" bindtap="goLogin">去登录</button>
@@ -19,7 +26,7 @@
 <view wx:elif="{{loading && orders.length === 0}}" class="empty">加载中…</view>
 <view wx:elif="{{orders.length === 0}}" class="empty">
   <view class="icon">📦</view>
-  <view>还没有相关订单</view>
+  <view>{{orderType === 'SECKILL' ? '还没有抢到过秒杀商品' : '还没有相关订单'}}</view>
 </view>
 
 <view

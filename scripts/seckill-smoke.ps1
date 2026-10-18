@@ -202,6 +202,34 @@ $r = Call 'Post' "$Gateway/api/seckill/orders" $u3.session @{
 Check "买家丙在余量 0 时被拒（STOCK_INSUFFICIENT）" ($r.status -eq 422 -or $r.body.code -eq 'STOCK_INSUFFICIENT') "$($r.status)/$($r.raw)"
 Check "DB 配额未被扣成负数" ((Sql 'duoduo_trade' "SELECT available_stock FROM t_seckill_sku WHERE activity_id=$actId AND sku_id=$SKU;") -eq '0')
 
+# ---------- 5.5 D4：我的抢购记录（订单列表按类型筛选） ----------
+Write-Host ""
+Write-Host "> D4：抢购记录筛选（服务端筛 + 越权隔离 + 未知类型 400）"
+$u1Id = Sql 'duoduo_user' "SELECT id FROM t_user WHERE phone='$phoneU1';"
+$r = Call 'Get' "$Gateway/api/orders?orderType=SECKILL&page=1&pageSize=20" $u1.session $null
+Check "买家甲按 SECKILL 查订单 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$seckillOrders = @($r.body.data.items)
+Check "★ 记录里确实有自己的秒杀单（$orderNo1）" (@($seckillOrders | Where-Object { $_.orderNo -eq $orderNo1 }).Count -eq 1) "$($r.raw)"
+Check "★ 返回的每一条都是 SECKILL（不是前端过滤剩下的）" (
+    @($seckillOrders | Where-Object { $_.orderType -ne 'SECKILL' }).Count -eq 0) "非秒杀条目混入"
+Check "★ 不出现别人的秒杀单（买家乙 $orderNo2 不得出现）" (
+    @($seckillOrders | Where-Object { $_.orderNo -eq $orderNo2 }).Count -eq 0) '越权：看到了他人订单'
+$dbCount = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE user_id=$u1Id AND order_type='SECKILL';"
+Check "★ 两个来源一致：接口 total=$($r.body.data.total) / 库内 $dbCount" (
+    "$($r.body.data.total)" -eq "$dbCount") "接口 $($r.body.data.total) vs 库 $dbCount"
+
+$r = Call 'Get' "$Gateway/api/orders?orderType=NORMAL&page=1&pageSize=20" $u1.session $null
+Check "按 NORMAL 查订单 200" ($r.status -eq 200) $r.status
+Check "★ 反向对照：NORMAL 结果里不得出现刚才那笔秒杀单" (
+    @($r.body.data.items | Where-Object { $_.orderNo -eq $orderNo1 }).Count -eq 0) '类型筛选没生效'
+
+$r = Call 'Get' "$Gateway/api/orders?orderType=SECKILL&page=1&pageSize=20" $u3.session $null
+Check "★ 买家丙（尚未抢到任何东西）的记录为空" (
+    $r.status -eq 200 -and [int]$r.body.data.total -eq 0) "$($r.status)/$($r.raw)"
+
+$r = Call 'Get' "$Gateway/api/orders?orderType=seckill" $u1.session $null
+Check "★ 未知订单类型（小写 seckill）→ 400，不静默返回空列表" ($r.status -eq 400) "$($r.status)/$($r.raw)"
+
 # ---------- 6. 取消回补（验收⑥） ----------
 Write-Host ""
 Write-Host "> 验收⑥：取消回补活动配额"

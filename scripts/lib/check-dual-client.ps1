@@ -11,9 +11,11 @@
     ② tabBar 一致性：文档 §1.1 标为「（tab）」的小程序页，集合必须与
        miniprogram/app.json 的 tabBar.list.pagePath 集合**相等**（双向）。
 
-    ③ 缺口清单自证：§3 里 D1/D2 标注的「对端确实没有」必须成立 ——
-       D1 断言网页端 grep UserProfile 命中 0；D2 断言小程序 grep pages/pets 命中 0。
-       一旦有人补齐，守卫报红，提醒把该 D 项从「缺口」改为「已完成」。
+    ③ 缺口清单自证：§3 里 D1/D2/D4 标注的状态必须与代码一致（**双向**）——
+       D1 看网页端是否有 UserProfile；D2 看小程序是否有 pages/pets；
+       D4 看双端是否都有「秒杀记录」入口（`type=SECKILL`）。
+       文档标「待补」⇒ 断言代码里没有；标「已完成」⇒ 断言代码里有。
+       一旦有人补齐却没更新文档（或反过来），守卫报红并点名。
 
   ★ 自证纪律（铁律 29）：任何一层「一个都没扫到」都判**违规**，不许降级成 WARN。
     —— 扫描数为 0 时守卫若通过，等于文档改名后守卫静默失效。
@@ -169,10 +171,10 @@ else {
 }
 
 # ─────────────────────────────────────────────────────────────
-# ③ 缺口清单自证（D1 / D2）
+# ③ 缺口清单自证（D1 / D2 / D4）
 # ─────────────────────────────────────────────────────────────
 Say ''
-Say '③ 缺口清单自证（§3 D1/D2 必须仍然成立）' 'Cyan'
+Say '③ 缺口清单自证（§3 D1/D2/D4 必须与代码一致）' 'Cyan'
 
 # ★ 不要用 grep：这个脚本在 CI 与容器里跑，`grep` 不保证存在（实测 PowerShell 下
 #   `& grep` 报 CommandNotFoundException，且 $ErrorActionPreference='Stop' 时直接炸）。
@@ -236,6 +238,29 @@ if ($n2 -lt 0) {
     else { Bad "D2 已不成立：小程序出现 $n2 处 pages/pets 引用 -> 请更新 §3-D2 的状态标注" }
 } else {
     Bad 'D2 状态无法从文档判定（标题行没写 待补/已完成）'
+}
+
+# D4：秒杀抢购记录（双端）
+$st4 = Get-GapStatus $doc 'D4'
+$n4w = Count-Hits 'type=SECKILL' $mallSrc @('.tsx', '.ts')
+$n4s = Count-Hits 'type=SECKILL' (Join-Path $repo 'miniprogram\pages\seckill') @('.js')
+$n4o = Count-Hits 'orderType' (Join-Path $repo 'miniprogram\pages\orders') @('.js')
+if ($n4w -lt 0 -or $n4s -lt 0 -or $n4o -lt 0) {
+    Bad ("D4 无法判定：候选文件扫描失败（web={0} / mini-seckill={1} / mini-orders={2}）—— 判据层静默失效" -f $n4w, $n4s, $n4o)
+} elseif ($st4 -eq 'DONE') {
+    if ($n4w -gt 0 -and $n4s -gt 0 -and $n4o -gt 0) {
+        Ok ("D4 文档标为已完成，双端确实都有（web {0} / 小程序秒杀页 {1} / 订单页 {2}）" -f $n4w, $n4s, $n4o)
+    } else {
+        Bad ("D4 文档标为「已完成」，但代码不齐：web={0}、小程序秒杀页={1}、订单页 orderType={2} —— 文档在说谎" -f $n4w, $n4s, $n4o)
+    }
+} elseif ($st4 -eq 'OPEN') {
+    if ($n4w -eq 0 -and $n4s -eq 0) {
+        Ok 'D4 成立：文档标为待补，双端确实都没有秒杀记录入口（命中 0）'
+    } else {
+        Bad ("D4 已不成立：代码里已出现入口（web {0} / mini {1}）-> 请把 §3-D4 改为「已完成」" -f $n4w, $n4s)
+    }
+} else {
+    Bad 'D4 状态无法从文档判定（标题行没写 待补/已完成）'
 }
 
 # ─────────────────────────────────────────────────────────────

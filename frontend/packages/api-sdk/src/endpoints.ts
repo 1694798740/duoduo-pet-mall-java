@@ -372,7 +372,12 @@ export const orderApi = {
    */
   place: (body: PlaceOrderRequest) => api.post<PlaceOrderResult>('/api/orders', body),
 
-  list: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  /**
+   * 我的订单列表。
+   * @param orderType 订单类型（NORMAL / SECKILL / C2C）；**服务端筛选**，不是前端过滤 ——
+   *                  分页下前端过滤只会得到「当前页里的那几条」，数据在下一页时表现为「没有」。
+   */
+  list: (query?: { status?: string; orderType?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/orders', { query }),
 
   detail: (orderNo: string) => api.get<OrderView>(`/api/orders/${orderNo}`),

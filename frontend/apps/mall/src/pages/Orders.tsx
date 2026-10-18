@@ -1,8 +1,9 @@
 /**
  * 订单列表页。
  *
- * 数据来源：GET /api/orders?status=&page=&pageSize=
+ * 数据来源：GET /api/orders?status=&type=&page=&pageSize=
  *  · status 为空即「全部」；取值与后端 OrderStatus 枚举一致
+ *  · type=SECKILL 即「只看秒杀抢购」（D4）：秒杀页的「我的抢购记录」直接链到这里
  *  · 状态中文文案直接用服务端返回的 statusLabel，前端不维护映射表
  *  · 分页结构在 data 内部（items/total/page/pageSize/pageCount），不是顶层 meta
  */
@@ -24,6 +25,13 @@ const TABS: { value: string; label: string }[] = [
   { value: 'REFUNDED', label: '已退款' },
   { value: 'CLOSED', label: '已关闭' },
 ];
+
+/** 订单类型中文名。服务端只给枚举值，展示文案由前端决定（与状态文案的口径不同）。 */
+const TYPE_LABEL: Record<string, string> = {
+  NORMAL: '普通单',
+  SECKILL: '秒杀单',
+  C2C: '闲置单',
+};
 
 function num(value: string | null): number | undefined {
   if (value === null || value === '') return undefined;
@@ -84,19 +92,22 @@ export const OrdersPage: React.FC = () => {
   const [params, setParams] = useSearchParams();
 
   const status = params.get('status') ?? '';
+  const orderType = params.get('type') ?? '';
   const page = num(params.get('page')) ?? 1;
 
   const fetcher = useCallback(
     () =>
       orderApi.list({
         status: status || undefined,
+        orderType: orderType || undefined,
         page,
         pageSize: 10,
       }),
-    [status, page],
+    [status, orderType, page],
   );
   const { data, loading, error, reload } = useAsync<PageResult<OrderView>>(fetcher, true, [
     status,
+    orderType,
     page,
   ]);
 
@@ -129,6 +140,14 @@ export const OrdersPage: React.FC = () => {
     setParams(next);
   };
 
+  /** 从「只看秒杀」退回全部订单 —— 页码必须一起清掉，否则会停在原页看到空列表 */
+  const clearType = () => {
+    const next = new URLSearchParams(params);
+    next.delete('type');
+    next.delete('page');
+    setParams(next);
+  };
+
   const setPage = (value: number) => {
     const next = new URLSearchParams(params);
     next.set('page', String(value));
@@ -136,10 +155,11 @@ export const OrdersPage: React.FC = () => {
   };
 
   const emptyHint = useMemo(() => {
+    if (orderType === 'SECKILL' && !status) return '还没有抢到过秒杀商品，去秒杀会场看看';
     if (!status) return '还没有订单，去挑一件试试';
     const label = TABS.find((t) => t.value === status)?.label ?? status;
     return `没有「${label}」的订单`;
-  }, [status]);
+  }, [status, orderType]);
 
   return (
     <div>
@@ -147,6 +167,20 @@ export const OrdersPage: React.FC = () => {
         <h2 className="section-title">我的订单</h2>
         <span className="section-sub">{data ? `共 ${data.total} 笔` : ''}</span>
       </div>
+
+      {orderType === 'SECKILL' ? (
+        <div
+          className="card card-pad"
+          style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        >
+          <span className="small">
+            当前只显示 <span className="tag tag-warn">秒杀单</span>，其他订单不会出现在这里
+          </span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={clearType}>
+            查看全部订单
+          </button>
+        </div>
+      ) : null}
 
       <div className="tabs" style={{ marginBottom: 16 }}>
         {TABS.map((tab) => (
@@ -179,7 +213,11 @@ export const OrdersPage: React.FC = () => {
                   <div className="row row-wrap">
                     <strong className="small">订单号 {order.orderNo}</strong>
                     <span className="tag">{order.statusLabel}</span>
-                    {order.orderType ? <span className="tag">{order.orderType}</span> : null}
+                    {order.orderType ? (
+                      <span className={order.orderType === 'SECKILL' ? 'tag tag-warn' : 'tag'}>
+                        {TYPE_LABEL[order.orderType] ?? order.orderType}
+                      </span>
+                    ) : null}
                   </div>
                   <span className="small muted">{formatDate(order.createdAt)}</span>
                 </div>
@@ -244,8 +282,8 @@ export const OrdersPage: React.FC = () => {
           icon="📦"
           title={emptyHint}
           action={
-            <Link className="btn btn-primary" to="/search">
-              去逛商品
+            <Link className="btn btn-primary" to={orderType === 'SECKILL' ? '/seckill' : '/search'}>
+              {orderType === 'SECKILL' ? '去秒杀会场' : '去逛商品'}
             </Link>
           }
         />

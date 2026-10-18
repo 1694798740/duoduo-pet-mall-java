@@ -1,5 +1,12 @@
 <nav-bar title="限时秒杀" back="{{true}}" />
 
+<!-- D4：抢购记录入口。秒杀页只放「入口」，记录复用订单页（type=SECKILL）——
+     两处各造一份列表迟早口径不一致（状态文案、分页、售后入口都要维护两遍）。 -->
+<view class="mine-entry" bindtap="goMyOrders">
+  <text>我的抢购记录</text>
+  <text class="mine-arrow">›</text>
+</view>
+
 <view wx:if="{{error}}" class="error-box">
   <view>{{error}}</view>
   <button class="btn btn-plain btn-mini" bindtap="fetch">重试</button>

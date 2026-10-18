@@ -48,6 +48,17 @@ Page({
       );
   },
 
+  /** D4：「我的抢购记录」复用订单页，服务端按 orderType=SECKILL 筛选（不在此页自己拉一遍订单） */
+  goMyOrders() {
+    getApp()
+      .ensureLogin()
+      .then(() => wx.navigateTo({ url: '/pages/orders/orders?type=SECKILL' }))
+      .catch((err) => {
+        if (err && err.needLogin) return;
+        wx.showToast({ title: (err && err.message) || '请先登录', icon: 'none' });
+      });
+  },
+
   buy(e) {
     const activityId = e.currentTarget.dataset.activityId;
     const skuId = e.currentTarget.dataset.skuId;

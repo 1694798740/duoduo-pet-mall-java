@@ -120,6 +120,14 @@ public class OrderService {
     public static final long PLATFORM_SELLER_ID = com.duoduo.common.seller.SellerOwnership.SELF_SELLER_ID;
 
     private static final String ORDER_TYPE_NORMAL = "NORMAL";
+    /**
+     * 订单类型白名单 —— 与 {@code t_order.order_type} 的取值一一对应。
+     *
+     * <p>白名单而不是「任意字符串都拼进 SQL」：未知取值必须 400，
+     * 否则「筛错了类型」会表现成「我确实没有这类订单」，没有任何报错可查。
+     */
+    private static final java.util.Set<String> ORDER_TYPES =
+            java.util.Set.of("NORMAL", "SECKILL", "C2C");
     private static final String OPERATOR_USER = "USER";
     private static final String OPERATOR_SELLER = "SELLER";
     private static final String OPERATOR_SYSTEM = "SYSTEM";
@@ -734,17 +742,39 @@ public class OrderService {
     // ---------------- 查询 ----------------
 
     public PageResult<OrderView> listMine(String status, int page, int pageSize) {
+        return listMine(status, null, page, pageSize);
+    }
+
+    /**
+     * 我的订单（可按状态 + 订单类型筛选）。
+     *
+     * <p><b>orderType 为什么必须服务端筛、不能前端过滤：</b>列表是分页的。
+     * 前端只在「当前这一页」里过滤，用户看到的就是「抢购记录里只有 1 条」，
+     * 而真实的第 2 条落在下一页 —— 这种「数据明明在、就是看不见」最难排查。
+     *
+     * <p>类型取值与 {@code t_order.order_type} 一致（{@code NORMAL} 普通下单 /
+     * {@code SECKILL} 秒杀 / {@code C2C} 闲置担保交易）。**未知取值直接报 400**，
+     * 不做「猜一个最接近的」—— 静默返回空列表会让人以为「我真的没抢到过」。
+     */
+    public PageResult<OrderView> listMine(String status, String orderType, int page, int pageSize) {
         Long userId = UserContext.requireUserId();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
         if (status != null && !status.isBlank() && OrderStatus.of(status.trim()) == null) {
             throw BizException.validation("不支持的订单状态：" + status.trim());
         }
+        String type = orderType == null ? null : orderType.trim();
+        if (type != null && !type.isEmpty() && !ORDER_TYPES.contains(type)) {
+            throw BizException.validation("不支持的订单类型：" + type);
+        }
 
         LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>()
                 .eq(OrderEntity::getUserId, userId);
         if (status != null && !status.isBlank()) {
             wrapper.eq(OrderEntity::getStatus, status.trim());
+        }
+        if (type != null && !type.isEmpty()) {
+            wrapper.eq(OrderEntity::getOrderType, type);
         }
         wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
 

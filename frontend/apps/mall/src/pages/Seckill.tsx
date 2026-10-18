@@ -107,6 +107,15 @@ export const SeckillPage: React.FC = () => {
       <div className="page-head">
         <h1>限时秒杀</h1>
         <p className="page-sub">手快有手慢无 · 余量以服务端实时判定为准</p>
+        <button
+          type="button"
+          className="link-btn"
+          onClick={() =>
+            user ? navigate('/orders?type=SECKILL') : navigate('/login', { state: { from: '/seckill' } })
+          }
+        >
+          我的抢购记录 <b>→</b>
+        </button>
       </div>
 
       {activities.length === 0 ? (

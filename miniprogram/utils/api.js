@@ -195,9 +195,15 @@ const cart = {
 };
 
 const order = {
-  list(page, status, pageSize) {
+  /**
+   * 我的订单列表。
+   * @param orderType 订单类型（NORMAL / SECKILL / C2C）—— **由服务端筛**。
+   *   分页下前端自己过滤只会得到「当前页里的那几条」，记录落在下一页时表现为「没有」，最难排查。
+   */
+  list(page, status, pageSize, orderType) {
     const s = status && status !== 'ALL' ? '&status=' + status : '';
-    return req.get('/api/orders?page=' + (page || 1) + '&pageSize=' + (pageSize || 20) + s);
+    const t = orderType ? '&orderType=' + encodeURIComponent(orderType) : '';
+    return req.get('/api/orders?page=' + (page || 1) + '&pageSize=' + (pageSize || 20) + s + t);
   },
   detail(orderNo) {
     return req.get('/api/orders/' + orderNo);
