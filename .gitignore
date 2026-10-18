@@ -52,3 +52,7 @@ scripts/tmp_*
 # 真的要更新 frontend/docs/screenshots/ 里的文档配图时，显式指定 SHOTS=<路径>。
 # 见 scripts/lib/e2e-shots.mjs
 scripts/e2e/.shots/
+.env
+*.pem
+*.p12
+*.pfx

@@ -236,6 +236,26 @@ services:
       # A14 · 秒杀 Redis（原子预扣挡量；Redis 不可用时 SeckillService 自动降级纯 DB 路径）
       REDIS_HOST: redis
       REDIS_PORT: '6379'
+      # ------------------------------------------------------------------
+      # 微信支付（2026-10-18）：全部走宿主机环境变量或 .env，值不落在仓库里。
+      # 启用步骤：
+      #   1) WECHAT_PAY_ENABLED=true + 填齐下面所有凭据；
+      #   2) PAY_DEFAULT_CHANNEL 改成 WECHAT_NATIVE（生产）或保持 SANDBOX（联调对照）；
+      #   3) WECHAT_PAY_NOTIFY_URL 用公网 https 回调地址（联调期填内网穿透域名）。
+      # 注意：穿透的免费域名重启会变，变了要同步改 NOTIFY_URL 与商户平台配置。
+      # ------------------------------------------------------------------
+      PAY_DEFAULT_CHANNEL: ${PAY_DEFAULT_CHANNEL:-SANDBOX}
+      WECHAT_PAY_ENABLED: ${WECHAT_PAY_ENABLED:-false}
+      WECHAT_PAY_APPID: ${WECHAT_PAY_APPID:-}
+      WECHAT_PAY_MCHID: ${WECHAT_PAY_MCHID:-}
+      WECHAT_PAY_API_V3_KEY: ${WECHAT_PAY_API_V3_KEY:-}
+      WECHAT_PAY_PRIVATE_KEY_PEM: ${WECHAT_PAY_PRIVATE_KEY_PEM:-}
+      WECHAT_PAY_MERCHANT_SERIAL_NO: ${WECHAT_PAY_MERCHANT_SERIAL_NO:-}
+      WECHAT_PAY_PLATFORM_CERT_PEM: ${WECHAT_PAY_PLATFORM_CERT_PEM:-}
+      WECHAT_PAY_NOTIFY_URL: ${WECHAT_PAY_NOTIFY_URL:-}
+      WECHAT_PAY_H5_WAP_URL: ${WECHAT_PAY_H5_WAP_URL:-}
+      WECHAT_PAY_H5_WAP_NAME: ${WECHAT_PAY_H5_WAP_NAME:-多多宠物商店}
+      WECHAT_PAY_EXPIRE_MINUTES: ${WECHAT_PAY_EXPIRE_MINUTES:-15}
     ports:
       - '8083:8083'
     depends_on:
