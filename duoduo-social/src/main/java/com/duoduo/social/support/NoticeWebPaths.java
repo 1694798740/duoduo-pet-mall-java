@@ -19,7 +19,13 @@ public final class NoticeWebPaths {
     private NoticeWebPaths() {
     }
 
-    public static String of(String category, String bizId, String jumpPage) {
+    public static String of(String category, String bizType, String bizId, String jumpPage) {
+        if ("ORDER".equals(category) && bizType != null && bizType.startsWith("AFTER_SALE")) {
+            // 售后类通知（2026-10-18 起）：bizId 是**售后单 id**（推送侧已改为传 id 而非订单号），
+            // 网页端深链到售后详情页，而不是订单详情 —— 用户点的是"售后有进展"，
+            // 落地页就该是那张售后单。
+            return bizId != null && !bizId.isBlank() ? "/after-sales/" + bizId.trim() : null;
+        }
         if ("ORDER".equals(category) && bizId != null && !bizId.isBlank()) {
             return "/orders/" + bizId.trim();
         }

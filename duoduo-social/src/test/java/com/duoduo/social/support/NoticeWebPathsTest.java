@@ -17,7 +17,7 @@ class NoticeWebPathsTest {
     @Test
     @DisplayName("订单通知：用 bizId（订单号）生成网页路由，不用小程序 jumpPage")
     void 订单通知映射到订单详情() {
-        assertThat(NoticeWebPaths.of("ORDER", "202610181002019756854",
+        assertThat(NoticeWebPaths.of("ORDER", "ORDER_PAID", "202610181002019756854",
                 "/pages/order-detail/order-detail?orderNo=202610181002019756854"))
                 .isEqualTo("/orders/202610181002019756854");
     }
@@ -25,23 +25,36 @@ class NoticeWebPathsTest {
     @Test
     @DisplayName("好友消息：从小程序 jumpPage 里取出 peerId，映射到网页会话页")
     void 好友消息映射到会话() {
-        assertThat(NoticeWebPaths.of("FRIEND", "1:2", "/pages/chat/chat?peerId=370104871447302144"))
+        assertThat(NoticeWebPaths.of("FRIEND", "MESSAGE", "1:2", "/pages/chat/chat?peerId=370104871447302144"))
                 .isEqualTo("/messages/370104871447302144");
     }
 
     @Test
     @DisplayName("公告 / 商家违规：网页端没有对应页面，必须返回 null（前端只标已读）")
     void 无对应页面返回空() {
-        assertThat(NoticeWebPaths.of("ANNOUNCEMENT", null, null)).isNull();
-        assertThat(NoticeWebPaths.of("MERCHANT", "1792306083352967", null)).isNull();
+        assertThat(NoticeWebPaths.of("ANNOUNCEMENT", null, null, null)).isNull();
+        assertThat(NoticeWebPaths.of("MERCHANT", "MERCHANT_VIOLATION_SUSPEND", "1792306083352967", null)).isNull();
     }
 
     @Test
     @DisplayName("订单缺 bizId、好友缺 peerId：不能拼出半截路径")
     void 缺关键参数返回空() {
-        assertThat(NoticeWebPaths.of("ORDER", null, "/pages/order-detail/order-detail")).isNull();
-        assertThat(NoticeWebPaths.of("ORDER", "   ", null)).isNull();
-        assertThat(NoticeWebPaths.of("FRIEND", "1:2", "/pages/chat/chat")).isNull();
-        assertThat(NoticeWebPaths.of("FRIEND", "1:2", null)).isNull();
+        assertThat(NoticeWebPaths.of("ORDER", "ORDER_PLACED", null, "/pages/order-detail/order-detail")).isNull();
+        assertThat(NoticeWebPaths.of("ORDER", "ORDER_PLACED", "   ", null)).isNull();
+        assertThat(NoticeWebPaths.of("FRIEND", "MESSAGE", "1:2", "/pages/chat/chat")).isNull();
+        assertThat(NoticeWebPaths.of("FRIEND", "MESSAGE", "1:2", null)).isNull();
+    }
+
+    @Test
+    @DisplayName("售后类通知：bizId 是售后单 id，映射到售后详情页（不是订单详情）")
+    void 售后通知映射到售后详情() {
+        assertThat(NoticeWebPaths.of("ORDER", "AFTER_SALE_CREATED", "370206974748540928",
+                "/pages/after-sales/after-sales"))
+                .isEqualTo("/after-sales/370206974748540928");
+        assertThat(NoticeWebPaths.of("ORDER", "AFTER_SALE_REFUNDED", "370167663105818624",
+                "/pages/after-sales/after-sales"))
+                .isEqualTo("/after-sales/370167663105818624");
+        assertThat(NoticeWebPaths.of("ORDER", "AFTER_SALE_CREATED", null,
+                "/pages/after-sales/after-sales")).isNull();
     }
 }

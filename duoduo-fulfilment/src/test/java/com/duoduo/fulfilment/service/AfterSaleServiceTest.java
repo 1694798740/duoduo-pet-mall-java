@@ -104,7 +104,7 @@ class AfterSaleServiceTest {
         // 关键：货还没回来，钱不能动 —— 这正是本次要补的流程缺口
         verify(orderClient, never()).refund(any(), any(RefundRequest.class));
         verify(mapper).markWaitingReturn(eq(9001L), any(), any());
-        verify(notifier).notifyReturnAgreed(eq(101L), eq("ORDER-1"));
+        verify(notifier).notifyReturnAgreed(eq(101L), eq("ORDER-1"), eq(9001L));
     }
 
     @Test
@@ -130,7 +130,7 @@ class AfterSaleServiceTest {
 
         verify(mapper).markReturning(eq(9001L), eq("顺丰"), eq("SF123"), any());
         // 通知卖家去收货：不通知的话这条单子会一直停在「待收货」
-        verify(notifier).notifyReturnShipped(eq(202L), eq("ORDER-1"), eq("SF123"));
+        verify(notifier).notifyReturnShipped(eq(202L), eq("ORDER-1"), eq(9001L), eq("SF123"));
     }
 
     @Test
@@ -158,7 +158,7 @@ class AfterSaleServiceTest {
 
         verify(orderClient).refund(eq("ORDER-1"), any(RefundRequest.class));
         verify(mapper).markReceivedRefunded(eq(9001L), eq(9900L), any());
-        verify(notifier).notifyAfterSaleRefunded(eq(101L), eq("ORDER-1"), eq(9900L));
+        verify(notifier).notifyAfterSaleRefunded(eq(101L), eq("ORDER-1"), eq(9001L), eq(9900L));
         assertThat(view.status()).isEqualTo(AfterSaleStatus.REFUNDED);
     }
 

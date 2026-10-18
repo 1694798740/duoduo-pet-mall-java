@@ -450,7 +450,7 @@ public class NoticeService {
                 notice.getBizType(),
                 notice.getBizId(),
                 notice.getJumpPage(),
-                NoticeWebPaths.of(notice.getCategory(), notice.getBizId(), notice.getJumpPage()),
+                NoticeWebPaths.of(notice.getCategory(), notice.getBizType(), notice.getBizId(), notice.getJumpPage()),
                 readIds.contains(notice.getId()),
                 utc(notice.getCreatedAt())
         );

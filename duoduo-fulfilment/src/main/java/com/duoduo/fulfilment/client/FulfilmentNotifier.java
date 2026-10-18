@@ -47,8 +47,13 @@ public class FulfilmentNotifier {
     /**
      * 售后相关的落地页：小程序的「我的售后」列表。
      *
-     * <p>不深链到具体售后单：目前没有独立的售后详情页，拼一个不存在的路径
+     * <p>小程序侧不深链到具体售后单：目前没有独立的售后详情页，拼一个不存在的路径
      * 会被社交域的白名单校验挡下（那正是白名单存在的意义）。
+     *
+     * <p><b>bizId 的口径（2026-10-18 起）</b>：AFTER_SALE_* 通知的 {@code bizId}
+     * 存<b>售后单 id</b>（不再是订单号）—— 网页端要深链到 {@code /after-sales/{id}} 详情页，
+     * 而一张订单可能有多次售后，用订单号定位不到唯一一条。网页端的映射见
+     * 社交域 {@code NoticeWebPaths}；小程序仍用本页面的列表落地页，不受影响。
      */
     private static final String PAGE_AFTER_SALES = "/pages/after-sales/after-sales";
     private static final String PAGE_ORDER_DETAIL = "/pages/order-detail/order-detail";
@@ -65,15 +70,15 @@ public class FulfilmentNotifier {
     }
 
     /** 买家立案成功：给一条回执，让用户确认「平台收到了」 */
-    public void notifyAfterSaleCreated(Long buyerId, String orderNo) {
+    public void notifyAfterSaleCreated(Long buyerId, String orderNo, Long afterSaleId) {
         push(buyerId, "售后申请已提交", "订单的售后申请已受理，等待卖家处理",
-                "AFTER_SALE_CREATED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_CREATED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 卖家同意退货（第五十八轮 P1-5）：告诉买家「接下来该你寄回了」，否则他会一直等退款 */
-    public void notifyReturnAgreed(Long buyerId, String orderNo) {
+    public void notifyReturnAgreed(Long buyerId, String orderNo, Long afterSaleId) {
         push(buyerId, "卖家已同意退货", "请尽快寄回商品并填写物流单号，卖家签收后即退款",
-                "AFTER_SALE_RETURN_AGREED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_RETURN_AGREED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /**
@@ -83,41 +88,41 @@ public class FulfilmentNotifier {
      * 拼一个「卖家售后页」的路径会被社交域的白名单校验挡下 —— 而那种错误既不报错也
      * 不打日志，只表现为「点了通知没反应」。要用新页面，得先加进 {@code MiniProgramPages}。
      */
-    public void notifyReturnShipped(Long sellerId, String orderNo, String trackingNo) {
+    public void notifyReturnShipped(Long sellerId, String orderNo, Long afterSaleId, String trackingNo) {
         push(sellerId, "买家已寄回商品", "运单号 " + trackingNo + "，收到货后请确认收货并退款",
-                "AFTER_SALE_RETURN_SHIPPED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_RETURN_SHIPPED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 卖家同意退款 */
-    public void notifyAfterSaleRefunded(Long buyerId, String orderNo, long amount) {
+    public void notifyAfterSaleRefunded(Long buyerId, String orderNo, Long afterSaleId, long amount) {
         push(buyerId, "售后已同意退款", "卖家已同意退款 ¥" + yuan(amount) + "，款项按原路退回",
-                "AFTER_SALE_REFUNDED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_REFUNDED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 卖家拒绝（带上原因，并提示还有仲裁这条路） */
-    public void notifyAfterSaleRejected(Long buyerId, String orderNo, String reason) {
+    public void notifyAfterSaleRejected(Long buyerId, String orderNo, Long afterSaleId, String reason) {
         String brief = brief(reason);
         push(buyerId, "售后被拒绝",
                 "卖家拒绝了售后申请" + (brief == null ? "" : "：" + brief) + "。如不认可，可申请平台介入",
-                "AFTER_SALE_REJECTED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_REJECTED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 买家申请平台仲裁：回执 */
-    public void notifyAfterSaleEscalated(Long buyerId, String orderNo) {
+    public void notifyAfterSaleEscalated(Long buyerId, String orderNo, Long afterSaleId) {
         push(buyerId, "已申请平台介入", "平台将介入处理该售后，请留意后续结果",
-                "AFTER_SALE_ESCALATED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_ESCALATED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 运营裁定支持退款（终态） */
-    public void notifyAfterSaleArbitratedRefund(Long buyerId, String orderNo, long amount, String note) {
+    public void notifyAfterSaleArbitratedRefund(Long buyerId, String orderNo, Long afterSaleId, long amount, String note) {
         String brief = brief(note);
         push(buyerId, "平台裁定支持退款",
                 "平台已裁定支持退款 ¥" + yuan(amount) + (brief == null ? "" : "：" + brief),
-                "AFTER_SALE_ARBITRATED", orderNo, PAGE_AFTER_SALES);
+                "AFTER_SALE_ARBITRATED", String.valueOf(afterSaleId), PAGE_AFTER_SALES);
     }
 
     /** 运营裁定驳回（终态） */
-    public void notifyAfterSaleArbitratedRejected(Long buyerId, String orderNo, String note) {
+    public void notifyAfterSaleArbitratedRejected(Long buyerId, String orderNo, Long afterSaleId, String note) {
         String brief = brief(note);
         push(buyerId, "平台裁定结果",
                 "售后申请经平台审核未获支持" + (brief == null ? "" : "：" + brief),
