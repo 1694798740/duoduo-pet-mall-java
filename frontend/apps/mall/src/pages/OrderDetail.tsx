@@ -487,7 +487,7 @@ export const OrderDetailPage: React.FC = () => {
 
             <div className="row row-wrap">
               {canPay ? (
-                <button className="btn btn-primary" disabled={acting || payBusy} onClick={() => void startPay()}>
+                <button className="btn btn-pay" disabled={acting || payBusy} onClick={() => void startPay()}>
                   {payBusy ? '正在创建支付单…' : '去支付'}
                 </button>
               ) : null}
