@@ -268,6 +268,40 @@ Check "★ 取消后券立即回到未使用（不等 TTL）" (
 $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actCoupon" $sessOp $null
 Check "券叠加活动收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 
+# ---------- 5.7 关单释放限购名额（2026-10-18 修复） ----------
+Write-Host ""
+Write-Host "> 限购口径：已关闭的未付款订单不占用限购名额"
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-limit'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 100; totalStock = 2; perLimit = 1 } ) }
+Check "新建「限购释放」活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$actLimit = "$($r.body.data.id)"
+
+$r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
+    activityId = $actLimit; skuId = $SKU; addressId = $addr1; idempotentKey = (NewKey) }
+Check "买家甲第一次抢购成功（限购 1 件）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$orderNoLimit = "$($r.body.data.orderNo)"
+
+$r = Call 'Post' "$Gateway/api/orders/$orderNoLimit/cancel" $u1.session @{ reason = '冒烟-释放限购' }
+Check "买家甲取消未付款订单" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+Start-Sleep -Seconds 1
+
+# 修复前：这里会被 Redis 计数（关单不回吐）拒绝 —— 限购名额被已关闭订单占死
+$r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
+    activityId = $actLimit; skuId = $SKU; addressId = $addr1; idempotentKey = (NewKey) }
+Check "★ 关单后同一买家可再次抢购（限购已释放）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$orderNoLimit2 = "$($r.body.data.orderNo)"
+
+# 第二单未关闭，名额被占用：第三次必须被拒（Redis 拒 + DB 仲裁确认）
+$r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
+    activityId = $actLimit; skuId = $SKU; addressId = $addr1; idempotentKey = (NewKey) }
+Check "★ 未关闭订单仍占用名额（第三次 422）" ($r.status -eq 422) "$($r.status)/$($r.raw)"
+
+$r = Call 'Post' "$Gateway/api/orders/$orderNoLimit2/cancel" $u1.session @{ reason = '冒烟-限购收尾' }
+Check "收尾取消第二单" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actLimit" $sessOp $null
+Check "限购释放活动收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+
 # ---------- 6. 取消回补（验收⑥） ----------
 Write-Host ""
 Write-Host "> 验收⑥：取消回补活动配额"

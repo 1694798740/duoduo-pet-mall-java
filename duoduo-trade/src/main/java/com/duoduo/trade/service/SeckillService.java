@@ -112,9 +112,28 @@ public class SeckillService {
             return 1
             """;
 
-    /** 回补脚本：订单关闭时余量 +1（键不存在则放弃 —— 会在下次访问时按 DB 重新装载）。 */
+    /**
+     * 回补脚本：订单关闭时余量 +1、个人已购 -1（2026-10-18 修复）。
+     *
+     * <p><b>为什么必须同时动两个键</b>：限购由 {@code seckill:bought:{sku}:{user}} 计数，
+     * 若关单只回补余量不回吐个人计数，用户取消 / 超时关单后计数永远停在限购值上，
+     * 表现就是「已关闭的未付款订单占死了限购名额，再也买不了」（验收实测的 bug）。
+     * 两个键都做**有下界的增减**（bought 不到 0），键被逐出时放弃 —— 下次访问按 DB 装载。
+     */
     private static final String RESTOCK_LUA = """
             if redis.call('EXISTS', KEYS[1]) == 1 then redis.call('INCR', KEYS[1]) end
+            local bought = tonumber(redis.call('GET', KEYS[2]) or '0')
+            if bought > 0 then redis.call('DECR', KEYS[2]) end
+            return 1
+            """;
+
+    /**
+     * 计数自愈脚本：Redis 说「超限」但 DB 说「没有」时，回吐一次偏高的计数再重试。
+     * 只在 DB 判定未达限购时执行，正常路径永远不会碰到。
+     */
+    private static final String BOUGHT_RELEASE_LUA = """
+            local bought = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if bought > 0 then redis.call('DECR', KEYS[1]) end
             return 1
             """;
 
@@ -135,6 +154,7 @@ public class SeckillService {
     private final DefaultRedisScript<Long> preDeductScript = new DefaultRedisScript<>(PRE_DEDUCT_LUA, Long.class);
     private final DefaultRedisScript<Long> rollbackScript = new DefaultRedisScript<>(ROLLBACK_LUA, Long.class);
     private final DefaultRedisScript<Long> restockScript = new DefaultRedisScript<>(RESTOCK_LUA, Long.class);
+    private final DefaultRedisScript<Long> boughtReleaseScript = new DefaultRedisScript<>(BOUGHT_RELEASE_LUA, Long.class);
 
     public SeckillService(SeckillActivityMapper activityMapper,
                           SeckillSkuMapper seckillSkuMapper,
@@ -574,7 +594,10 @@ public class SeckillService {
         }
         seckillSkuMapper.restock(seckillOrder.getSeckillSkuId());
         try {
-            redis.execute(restockScript, List.of(KEY_STOCK + seckillOrder.getSeckillSkuId()));
+            // KEYS[2] = 个人已购计数：关单必须一并回吐，否则已关闭的订单会占死限购名额（2026-10-18 修复）
+            redis.execute(restockScript, List.of(
+                    KEY_STOCK + seckillOrder.getSeckillSkuId(),
+                    KEY_BOUGHT + seckillOrder.getSeckillSkuId() + ":" + order.getUserId()));
         } catch (Exception e) {
             log.warn("秒杀配额 Redis 回补失败（DB 已回补，余量键会在下次访问时重新装载）：{}", e.getMessage());
         }
@@ -586,6 +609,12 @@ public class SeckillService {
     /**
      * 预扣一次。返回是否扣上了（false = Redis 不可用降级，或被限购 / 抢完拒绝）。
      * 限购与抢完在这里直接拒（省掉后续跨服务调用），Redis 不可用则放行到 DB 兜底。
+     *
+     * <p><b>-2（超限）不再无条件拒绝</b>（2026-10-18 修复）：Redis 计数器只增不减的历史
+     * （关单未回吐、进程崩溃等）会让计数**虚高** —— 修好关单回吐只挡住增量，挡不住存量。
+     * 所以收到 -2 时先查 DB：按「未关闭的秒杀订单」数一下，若确实未达限购，
+     * 判定 Redis 计数偏高 → 回吐一次再重试（自愈）；DB 也确实到限了才真正拒绝。
+     * DB 查询按主键 + 归属走索引，只在被拒路径上执行，正常抢购零额外开销。
      */
     private boolean preDeductQuietly(SeckillSkuEntity seckillSku, Long userId) {
         try {
@@ -600,6 +629,14 @@ public class SeckillService {
                     continue;
                 }
                 if (r != null && r == -2L) {
+                    long active = seckillOrderMapper.countActiveByUserAndSku(userId, seckillSku.getId());
+                    if (active < seckillSku.getPerLimit()) {
+                        // DB 说没到限、Redis 说到了 ⇒ 计数偏高（多为关单未回吐的历史残留），回吐一次自愈
+                        log.info("秒杀限购计数自愈：user={} sku={} redis 判超限但 DB 未关闭单={} < 限购 {}",
+                                userId, seckillSku.getId(), active, seckillSku.getPerLimit());
+                        redis.execute(boughtReleaseScript, List.of(boughtKey));
+                        continue;
+                    }
                     throw BizException.businessRule("已达到该商品的限购件数（" + seckillSku.getPerLimit() + " 件）");
                 }
                 if (r != null && r == -3L) {

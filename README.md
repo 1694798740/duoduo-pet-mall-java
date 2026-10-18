@@ -1981,6 +1981,28 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-18（三十）· 修复：已关闭的秒杀订单不再占用限购名额
+
+**现象**：抢到秒杀 → 未付款 → 关单（手动取消或超时），再抢同一商品提示「已达到该商品的限购件数」。
+
+**根因**：限购由 Redis 计数器 `seckill:bought:{sku}:{user}` 判定，而关单回补（`onOrderClosed`）
+只回补了**活动余量**（`seckill:stock:*` 与 `t_seckill_sku.available_stock`），
+**没有回吐个人已购计数**——计数只增不减，已关闭订单把名额永久占死。
+
+**修法（两层）**：
+1. **关单回吐**：`RESTOCK_LUA` 扩为同时回吐个人计数（有下界，不降到负数），
+   `onOrderClosed` 传入 `KEYS[2]=bought` —— 手动取消、超时关单、运营强关三条路径都经过这里；
+2. **计数自愈**：预扣收到「超限」拒绝时不再无条件拒绝，先查 DB
+   （`t_seckill_order JOIN t_order`，按**未关闭**状态计数；新增 `SeckillOrderMapper.countActiveByUserAndSku`），
+   DB 未达限购 → 判定 Redis 计数偏高 → 回吐一次并重试；DB 也到限才真正拒绝。
+   这样即使 Redis 曾漏回吐（历史残留 / 进程崩溃），也能在下一次抢购时自愈，无需手工清 Redis。
+
+**口径**：退款（REFUNDED）订单**仍计入**限购——确曾成交；是否释放退款名额是独立口径，未在本次处理。
+
+**验证**：`seckill-smoke` **76/0**（新增 7 条：抢 → 关单 → **同一买家再抢成功** →
+未关闭订单仍占名额（第三次 422）→ 收尾）；静态守卫 exit 0。
+受影响用户（如 zgh001）无需清 Redis，下次抢购会自动自愈。
+
 ### 2026-10-18（二十九）· 售后类通知点击直达售后详情页（不再落到订单详情）
 
 **根因**：售后类通知（`AFTER_SALE_*`）的 `biz_id` 存的是**订单号**，`jump_page` 是小程序售后
