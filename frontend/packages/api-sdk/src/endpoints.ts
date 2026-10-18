@@ -995,9 +995,15 @@ export const seckillApi = {
   /**
    * 秒杀下单。idempotentKey 由前端生成（uuid）：双击 / 网络重试都会被服务端幂等去重，
    * 返回 replay=true 与首次订单号，不会重复扣配额。
+   * couponCode 可选：秒杀价与券**叠加**（门槛按秒杀价判定），不传即不用券。
    */
-  place: (body: { activityId: string; skuId: string; addressId: string; idempotentKey: string }) =>
-    api.post<PlaceSeckillResult>('/api/seckill/orders', body),
+  place: (body: {
+    activityId: string;
+    skuId: string;
+    addressId: string;
+    idempotentKey: string;
+    couponCode?: string;
+  }) => api.post<PlaceSeckillResult>('/api/seckill/orders', body),
 };
 
 // ---------- 我的闲置（C2C 闲置管理 · 第六十六轮补齐 Web 端） ----------

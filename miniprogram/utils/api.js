@@ -458,13 +458,16 @@ const seckill = {
   detail(id) {
     return req.get('/api/seckill/activities/' + id);
   },
-  place(activityId, skuId, addressId) {
-    return req.post('/api/seckill/orders', {
+  /** 秒杀下单；couponCode 可选（与秒杀价叠加，门槛按秒杀价判定） */
+  place(activityId, skuId, addressId, couponCode) {
+    const payload = {
       activityId,
       skuId,
       addressId,
       idempotentKey: 'sk-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
-    });
+    };
+    if (couponCode) payload.couponCode = couponCode;
+    return req.post('/api/seckill/orders', payload);
   },
 };
 

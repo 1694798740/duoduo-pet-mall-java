@@ -63,6 +63,7 @@ Page({
     const activityId = e.currentTarget.dataset.activityId;
     const skuId = e.currentTarget.dataset.skuId;
     const phase = e.currentTarget.dataset.phase;
+    const price = e.currentTarget.dataset.price;
     if (phase !== 'ONGOING') {
       wx.showToast({ title: '不在抢购时间内', icon: 'none' });
       return;
@@ -70,7 +71,7 @@ Page({
     if (this.data.placingSkuId) return; // 防连点
     getApp()
       .ensureLogin()
-      .then(() => this.place(activityId, skuId))
+      .then(() => this.place(activityId, skuId, price))
       .catch((err) => {
         // needLogin：已引导登录页或用户放弃登录，无需再弹错误
         if (err && err.needLogin) return;
@@ -78,7 +79,25 @@ Page({
       });
   },
 
-  place(activityId, skuId) {
+  /**
+   * 挑一张当前秒杀价可用的最优券（2026-10-18：秒杀价与券叠加）。
+   * 只做预选，最终由服务端锁券裁决；券服务异常时按"不用券"继续，不阻断抢购。
+   */
+  bestCouponFor(price) {
+    return api.coupon
+      .mine('UNUSED')
+      .then((list) => {
+        let best = null;
+        (list || []).forEach((c) => {
+          if (Number(c.thresholdAmount) > Number(price)) return;
+          if (!best || Number(c.discountAmount) > Number(best.discountAmount)) best = c;
+        });
+        return best ? best.code : '';
+      })
+      .catch(() => '');
+  },
+
+  place(activityId, skuId, price) {
     this.setData({ placingSkuId: skuId });
     return api.address
       .default()
@@ -97,7 +116,9 @@ Page({
         }
         // 秒杀讲「快」，所以不在流程里插"选地址"这一步；但下单后要把收货信息摆给用户看，
         // 避免手快抢到却寄错地方（要换地址可去「购物车 → 地址」或「我的 → 收货地址」）
-        return api.seckill.place(activityId, skuId, addr.id).then((result) => {
+        return this.bestCouponFor(price)
+          .then((code) => api.seckill.place(activityId, skuId, addr.id, code))
+          .then((result) => {
           wx.showToast({
             title: result && result.replay ? '你已抢到过该商品' : '秒杀成功！',
             icon: 'success',

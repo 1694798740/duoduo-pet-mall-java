@@ -84,11 +84,19 @@ public final class SeckillDtos {
     }
 
     /** C 端秒杀下单 */
+    /**
+     * C 端秒杀下单请求。
+     *
+     * <p>{@code couponCode} 可选（2026-10-18 放开）：秒杀价与优惠券**叠加**，
+     * 券的门槛按秒杀价判定、抵扣封顶为秒杀价（营销域已封顶），实付不低于 0。
+     * 不传即不使用券 —— 与普通下单同一套契约，避免两端各写一份「能不能用券」的规则。
+     */
     public record PlaceSeckillRequest(
             @NotNull(message = "活动不能为空") Long activityId,
             @NotNull(message = "商品规格不能为空") Long skuId,
             @NotNull(message = "收货地址不能为空") Long addressId,
-            @NotBlank(message = "幂等键不能为空") @Size(max = 64, message = "幂等键过长") String idempotentKey) {
+            @NotBlank(message = "幂等键不能为空") @Size(max = 64, message = "幂等键过长") String idempotentKey,
+            @Size(max = 64, message = "券码过长") String couponCode) {
     }
 
     /** C 端秒杀下单结果（订单号 + 应付金额，前端拿去走沙箱支付） */

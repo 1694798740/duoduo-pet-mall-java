@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.trade.client.MarketingGateway;
 import com.duoduo.trade.client.ProductGateway;
 import com.duoduo.trade.client.UserAddressGateway;
 import com.duoduo.trade.client.dto.AddressCallDtos.ReceiverSnapshot;
+import com.duoduo.trade.client.dto.CouponCallDtos.LockResult;
 import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.dto.SeckillDtos.ActivityView;
 import com.duoduo.trade.dto.SeckillDtos.CreateActivityRequest;
@@ -124,6 +126,7 @@ public class SeckillService {
     private final OrderStatusLogMapper statusLogMapper;
     private final ProductGateway productGateway;
     private final UserAddressGateway userAddressGateway;
+    private final MarketingGateway marketingGateway;
     private final OrderNoGenerator orderNoGenerator;
     private final SnowflakeIdGenerator idGenerator;
     private final StringRedisTemplate redis;
@@ -141,6 +144,7 @@ public class SeckillService {
                           OrderStatusLogMapper statusLogMapper,
                           ProductGateway productGateway,
                           UserAddressGateway userAddressGateway,
+                          MarketingGateway marketingGateway,
                           OrderNoGenerator orderNoGenerator,
                           SnowflakeIdGenerator idGenerator,
                           StringRedisTemplate redis,
@@ -153,6 +157,7 @@ public class SeckillService {
         this.statusLogMapper = statusLogMapper;
         this.productGateway = productGateway;
         this.userAddressGateway = userAddressGateway;
+        this.marketingGateway = marketingGateway;
         this.orderNoGenerator = orderNoGenerator;
         this.idGenerator = idGenerator;
         this.redis = redis;
@@ -286,8 +291,31 @@ public class SeckillService {
         }
 
         // 5) 建单（秒杀价快照；不走购物车、不冻结商品库存）
+        String orderNo = orderNoGenerator.next();
+        boolean couponLocked = false;
+        long couponDiscount = 0L;
         try {
-            String orderNo = orderNoGenerator.next();
+            // 5.1) 优惠券（可选，2026-10-18 放开）：与秒杀价**叠加**，门槛按秒杀价判定。
+            //     顺序：先锁券再建单（营销域按订单号定位券，解锁/核销都走订单号）。
+            //     锁不到就让整单不成立 —— 券抵的是真金白银，绝不能"券用不了就按原价下单"。
+            String couponCode = request.couponCode() == null ? null : request.couponCode().trim();
+            if (couponCode != null && couponCode.isEmpty()) {
+                couponCode = null;
+            }
+            if (couponCode != null) {
+                LockResult locked = marketingGateway.lock(couponCode, userId, orderNo,
+                        seckillSku.getSeckillPrice());
+                if (locked == null || !locked.success()) {
+                    throw new BizException(ErrorCode.BUSINESS_RULE,
+                            locked == null || locked.reason() == null ? "优惠券不可用" : locked.reason());
+                }
+                couponLocked = true;
+                couponCode = locked.code();
+                // 营销域已按订单金额封顶，这里再兜一层，确保实付不为负
+                couponDiscount = Math.min(locked.discountAmount(), seckillSku.getSeckillPrice());
+            }
+            long payAmount = Math.max(0L, seckillSku.getSeckillPrice() - couponDiscount);
+
             LocalDateTime expireAt = now.plusMinutes(orderExpireMinutes);
 
             OrderEntity order = new OrderEntity();
@@ -299,8 +327,9 @@ public class SeckillService {
             order.setStatus(com.duoduo.trade.support.OrderStatus.PENDING_PAYMENT.name());
             order.setTotalAmount(seckillSku.getSeckillPrice());
             order.setFreightAmount(0L);
-            order.setDiscountAmount(0L);
-            order.setPayAmount(seckillSku.getSeckillPrice());
+            order.setDiscountAmount(couponDiscount);
+            order.setPayAmount(payAmount);
+            order.setCouponCode(couponDiscount > 0 ? couponCode : null);
             order.setReceiverName(receiver.receiverName());
             order.setReceiverPhone(receiver.receiverPhone());
             order.setReceiverAddress(receiver.fullAddress());
@@ -347,12 +376,17 @@ public class SeckillService {
             statusLog.setCreatedAt(now);
             statusLogMapper.insert(statusLog);
 
-            log.info("秒杀下单成功：user={} activity={} sku={} orderNo={} 预扣={}（true=Redis 挡量生效）",
-                    userId, activity.getId(), request.skuId(), orderNo, preDeducted);
-            return new PlaceSeckillResult(orderNo, seckillSku.getSeckillPrice(), seckillSku.getSeckillPrice(), false);
+            log.info("秒杀下单成功：user={} activity={} sku={} orderNo={} 券={} 抵扣={} 实付={} 预扣={}（true=Redis 挡量生效）",
+                    userId, activity.getId(), request.skuId(), orderNo,
+                    couponDiscount > 0 ? couponCode : "无", couponDiscount, payAmount, preDeducted);
+            return new PlaceSeckillResult(orderNo, payAmount, seckillSku.getSeckillPrice(), false);
         } catch (RuntimeException e) {
-            // 事务回滚后 DB 配额不受影响（同事务），但 Redis 预扣不归事务管，必须手动吐回
+            // 事务回滚后 DB 配额不受影响（同事务），但 Redis 预扣不归事务管，必须手动吐回；
+            // 券同样是跨服务写，锁成功后建单失败必须立刻解锁，不能等营销域 TTL 的 35 分钟。
             rollbackQuietly(preDeducted, seckillSku.getId(), userId);
+            if (couponLocked) {
+                marketingGateway.release(orderNo, "秒杀下单失败补偿");
+            }
             throw e;
         }
     }

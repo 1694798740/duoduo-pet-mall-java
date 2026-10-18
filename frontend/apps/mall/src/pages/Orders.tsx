@@ -8,13 +8,14 @@
  *  · 分页结构在 data 内部（items/total/page/pageSize/pageCount），不是顶层 meta
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 
 const TABS: { value: string; label: string }[] = [
   { value: '', label: '全部' },
@@ -42,18 +43,36 @@ function num(value: string | null): number | undefined {
 /**
  * 每条订单卡片的动作区：按状态给出可执行操作。
  *
- * 「已完成」的订单要显示去评价 / 已评价 —— 评价入口只在订单域出现一次，
- * 比在导航里加一个「评价中心」更符合用户心智（评价总是从「我买过的那单」出发）。
- * 是否已评价由父组件批量查询后传入，避免每条卡片各发一次请求。
+ * 状态 → 按钮口径（2026-10-18 明确化）：
+ *   · 待付款：去支付 + **取消订单**（无需先进详情/收银台）；剩余支付时间
+ *   · 待发货：查看详情（自助退款在详情页，因为要填原因并确认金额）
+ *   · 待收货：查看详情 + 申请售后 + 资金托管提示
+ *   · 已完成：查看详情 + 申请售后 + 去评价 / 已评价
+ *   · 已关闭 / 已退款：只有查看详情（终态，不再提供任何写操作）
  *
- * 售后（A3）同理，只在订单上开入口：已发货 / 已完成的订单显示「申请售后」。
- * 未发货的订单不显示 —— 那种情况买家本来就能在详情页自助退款，走售后反而绕远。
+ * 取消为什么放卡片上：这是「待付款」最高频的后悔路径，原先必须先点「去支付」
+ * 进收银台再找取消，等于把用户往付款方向推了一步。
  */
-const OrderActions: React.FC<{ order: OrderView; reviewed?: boolean }> = ({ order, reviewed }) => (
+const OrderActions: React.FC<{
+  order: OrderView;
+  reviewed?: boolean;
+  onCancel: (orderNo: string) => void;
+  cancelling: boolean;
+}> = ({ order, reviewed, onCancel, cancelling }) => (
   <div className="row row-wrap">
     <Link className="btn btn-ghost btn-sm" to={`/orders/${order.orderNo}`}>
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
     </Link>
+    {order.status === 'PENDING_PAYMENT' ? (
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        disabled={cancelling}
+        onClick={() => onCancel(order.orderNo)}
+      >
+        {cancelling ? '取消中…' : '取消订单'}
+      </button>
+    ) : null}
     {order.status === 'SHIPPED' || order.status === 'COMPLETED' ? (
       <Link className="btn btn-ghost btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
         申请售后
@@ -90,6 +109,8 @@ const OrderActions: React.FC<{ order: OrderView; reviewed?: boolean }> = ({ orde
 
 export const OrdersPage: React.FC = () => {
   const [params, setParams] = useSearchParams();
+  const { push } = useToast();
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   const status = params.get('status') ?? '';
   const orderType = params.get('type') ?? '';
@@ -131,6 +152,28 @@ export const OrdersPage: React.FC = () => {
     [completedKey],
   );
   const reviewedSet = useMemo(() => new Set(reviewed.data?.orderNos ?? []), [reviewed.data]);
+
+  /**
+   * 卡片上直接取消（仅待付款）。取消后库存冻结与优惠券由服务端立即释放，
+   * 所以这里必须 reload —— 不刷新会看到一条已关单却仍显示「去支付」的卡片。
+   */
+  const cancelOrder = useCallback(
+    async (orderNo: string) => {
+      const ok = window.confirm('确定取消这笔订单吗？取消后库存与优惠券会立即释放。');
+      if (!ok) return;
+      setCancelling(orderNo);
+      try {
+        await orderApi.cancel(orderNo, '买家在订单列表取消');
+        push('订单已取消', 'success');
+        reload();
+      } catch (err) {
+        push(toFriendlyMessage(err), 'error');
+      } finally {
+        setCancelling(null);
+      }
+    },
+    [push, reload],
+  );
 
   const setStatus = (value: string) => {
     const next = new URLSearchParams(params);
@@ -265,7 +308,12 @@ export const OrdersPage: React.FC = () => {
                 </div>
 
                 <div className="divider" />
-                <OrderActions order={order} reviewed={reviewedSet.has(order.orderNo)} />
+                <OrderActions
+                  order={order}
+                  reviewed={reviewedSet.has(order.orderNo)}
+                  onCancel={cancelOrder}
+                  cancelling={cancelling === order.orderNo}
+                />
               </div>
             ))}
           </div>

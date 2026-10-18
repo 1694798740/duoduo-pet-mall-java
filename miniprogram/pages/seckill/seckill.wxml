@@ -42,6 +42,7 @@
         data-activity-id="{{act.id}}"
         data-sku-id="{{sku.skuId}}"
         data-phase="{{act.phase}}"
+        data-price="{{sku.seckillPrice}}"
         bindtap="buy"
         disabled="{{act.phase !== 'ONGOING' || sku.soldOut || placingSkuId === sku.skuId}}"
         loading="{{placingSkuId === sku.skuId}}"

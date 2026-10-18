@@ -19,8 +19,8 @@ import React, { useCallback, useState } from 'react';
 import { skuImage } from '@duoduo/api-sdk/images';
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { addressApi, seckillApi } from '@duoduo/api-sdk/endpoints';
-import type { SeckillActivityView } from '@duoduo/api-sdk/types';
+import { addressApi, couponApi, seckillApi } from '@duoduo/api-sdk/endpoints';
+import type { CouponView, SeckillActivityView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -64,6 +64,28 @@ export const SeckillPage: React.FC = () => {
     [user?.id],
   );
 
+  /**
+   * 我的未使用券（2026-10-18 起秒杀可用券）：一次拉回本地按秒杀价挑最优，
+   * 真正能不能用仍由服务端锁券决定 —— 这里只负责展示与预选，不做最终裁决。
+   */
+  const coupons = useAsync<CouponView[]>(
+    (signal) => (user ? couponApi.mine({ status: 'UNUSED' }, { signal }) : Promise.resolve([])),
+    true,
+    [user?.id],
+  );
+
+  const bestCouponFor = useCallback(
+    (price: number): CouponView | null => {
+      let best: CouponView | null = null;
+      for (const c of coupons.data ?? []) {
+        if (Number(c.thresholdAmount) > price) continue;
+        if (!best || Number(c.discountAmount) > Number(best.discountAmount)) best = c;
+      }
+      return best;
+    },
+    [coupons.data],
+  );
+
   const grab = useCallback(
     async (activity: SeckillActivityView, skuId: string) => {
       if (!user) {
@@ -84,6 +106,7 @@ export const SeckillPage: React.FC = () => {
           skuId,
           addressId: address.id,
           idempotentKey: newIdempotentKey(),
+          couponCode: bestCouponFor(Number(activity.skus.find((s) => s.skuId === skuId)?.seckillPrice ?? 0))?.code,
         });
         push(result.replay ? '你已抢到过该商品，已为你打开原订单' : '抢购成功，请尽快付款！', 'success');
         navigate(`/orders/${result.orderNo}`);
@@ -95,7 +118,7 @@ export const SeckillPage: React.FC = () => {
         setPlacingSku(null);
       }
     },
-    [user, navigate, push, state],
+    [user, navigate, push, state, bestCouponFor],
   );
 
   if (state.loading) return <LoadingBlock />;
@@ -137,6 +160,8 @@ export const SeckillPage: React.FC = () => {
                 {act.skus.map((sku) => {
                   const soldOut = sku.availableStock <= 0;
                   const disabled = act.phase !== 'ONGOING' || soldOut;
+                  // 秒杀价与券叠加：展示"用券后再减多少"，下单时把券码一起带上
+                  const coupon = bestCouponFor(Number(sku.seckillPrice));
                   return (
                     <li key={sku.skuId} className="seckill-sku">
                       {sku.image && <img src={skuImage(sku.skuId, sku.skuId, sku.image)} alt={sku.spuTitle} className="seckill-img" />}
@@ -155,6 +180,11 @@ export const SeckillPage: React.FC = () => {
                           <span className={soldOut ? 'tag' : 'tag tag-success'}>
                             {soldOut ? '已抢完' : `仅剩 ${sku.availableStock} 件`}
                           </span>
+                          {coupon && !soldOut ? (
+                            <span className="tag tag-warn" title={coupon.name ?? '优惠券'}>
+                              可用券 -{formatPrice(Number(coupon.discountAmount))}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                       <button

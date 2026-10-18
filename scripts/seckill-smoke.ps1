@@ -230,6 +230,44 @@ Check "★ 买家丙（尚未抢到任何东西）的记录为空" (
 $r = Call 'Get' "$Gateway/api/orders?orderType=seckill" $u1.session $null
 Check "★ 未知订单类型（小写 seckill）→ 400，不静默返回空列表" ($r.status -eq 400) "$($r.status)/$($r.raw)"
 
+# ---------- 5.6 秒杀价与优惠券叠加（2026-10-18） ----------
+Write-Host ""
+Write-Host "> 秒杀券叠加：秒杀价 + 优惠券，取消后券必须回到未使用"
+# 单独建一场高价活动：主流程那场是 1 元，达不到任何券的门槛
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-coupon'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 25000; totalStock = 1; perLimit = 1 } ) }
+Check "新建「券叠加」活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$actCoupon = "$($r.body.data.id)"
+
+$tpls = (Call 'Get' "$Gateway/api/coupons/templates" $null $null).body.data
+$tpl = @($tpls | Where-Object { [long]$_.thresholdAmount -le 25000 -and [long]$_.discountAmount -gt 0 } |
+    Sort-Object { [long]$_.discountAmount } -Descending | Select-Object -First 1)
+Check "券模板里有可用于 250 元订单的券" ($tpl.Count -eq 1) "templates=$(@($tpls).Count)"
+$claim = Call 'Post' "$Gateway/api/coupons/templates/$($tpl[0].id)/claim" $u1.session $null
+Check "买家甲领券成功" ($claim.status -eq 200 -and $claim.body.data.code) "$($claim.status)/$($claim.raw)"
+$couponCode = "$($claim.body.data.code)"
+$couponDiscount = [long]$claim.body.data.discountAmount
+
+$r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
+    activityId = $actCoupon; skuId = $SKU; addressId = $addr1
+    idempotentKey = (NewKey); couponCode = $couponCode }
+Check "★ 秒杀下单可用券（200）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$orderNo4 = "$($r.body.data.orderNo)"
+Check "★ 实付 = 秒杀价 - 券抵扣（25000 - $couponDiscount）" (
+    [long]$r.body.data.payAmount -eq (25000 - $couponDiscount)) "pay=$($r.body.data.payAmount)"
+Check "★ 订单落库：折扣与券码都在" (
+    (Sql 'duoduo_trade' "SELECT CONCAT(discount_amount,'|',IFNULL(coupon_code,'')) FROM t_order WHERE order_no='$orderNo4';") -eq "$couponDiscount|$couponCode")
+
+$r = Call 'Post' "$Gateway/api/orders/$orderNo4/cancel" $u1.session @{ reason = '冒烟-券叠加取消' }
+Check "取消券叠加订单成功" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$mine = @((Call 'Get' "$Gateway/api/coupons/mine?status=UNUSED" $u1.session $null).body.data)
+Check "★ 取消后券立即回到未使用（不等 TTL）" (
+    @($mine | Where-Object { $_.code -eq $couponCode }).Count -eq 1) "未使用券 $($mine.Count) 张"
+
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actCoupon" $sessOp $null
+Check "券叠加活动收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+
 # ---------- 6. 取消回补（验收⑥） ----------
 Write-Host ""
 Write-Host "> 验收⑥：取消回补活动配额"
