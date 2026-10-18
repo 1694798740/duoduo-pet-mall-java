@@ -409,6 +409,21 @@ h4 {
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-soft);
 }
+/* 实心危险按钮（2026-10-18）：用于「取消订单」这类**必须一眼认出、且与主操作明显区分**的动作。
+   与 .btn-danger（白底红字，用于次要的"申请退款"等）刻意分成两档：
+   同一屏里出现「去支付（橙）」与「取消订单（红）」时，两个都是实心、颜色不同，
+   用户不会把二者看成同一类按钮，也不会因为都"白底"而误点。 */
+.btn-danger-solid {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(229, 72, 77, 0.24);
+}
+.btn-danger-solid:hover:not(:disabled) {
+  background: #c93b40;
+  border-color: #c93b40;
+  color: #fff;
+}
 .btn-sm {
   height: 32px;
   padding: 0 12px;

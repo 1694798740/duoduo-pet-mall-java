@@ -62,13 +62,16 @@ const OrderActions: React.FC<{
   cancelling: boolean;
 }> = ({ order, reviewed, onCancel, cancelling }) => (
   <div className="row row-wrap">
-    <Link className="btn btn-ghost btn-sm" to={`/orders/${order.orderNo}`}>
+    <Link
+      className={`btn btn-sm ${order.status === 'PENDING_PAYMENT' ? 'btn-primary' : 'btn-ghost'}`}
+      to={`/orders/${order.orderNo}`}
+    >
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
     </Link>
     {order.status === 'PENDING_PAYMENT' ? (
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="btn btn-danger-solid btn-sm"
         disabled={cancelling}
         onClick={() => onCancel(order.orderNo)}
       >

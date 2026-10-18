@@ -493,7 +493,7 @@ export const OrderDetailPage: React.FC = () => {
               ) : null}
 
               {canCancel ? (
-                <button className="btn btn-ghost" disabled={acting} onClick={() => void doCancel()}>
+                <button className="btn btn-danger-solid" disabled={acting} onClick={() => void doCancel()}>
                   取消订单
                 </button>
               ) : null}
