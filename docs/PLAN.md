@@ -204,6 +204,12 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-19（二十九）· 秒杀紧急修复（支付入账 + 时区）
+
+- completePayment 对 SECKILL 跳过冻结台账扣减（秒杀单此前永远无法支付）。
+- 活动时间时区感知解析（naive 输入按 Asia/Shanghai），place 窗口校验自此与展示一致；存量活动 -8h 修正。
+- 冒烟 82/0；交易单测 107/0。
+
 ### 2026-10-18（二十八）· 微信支付接入（Native/JSAPI/H5）+ 二维码修复
 
 - 新增 payment/wechat：Config / Crypto（纯 JDK 签名验签解密）/ ChannelBase + 三渠道（@ConditionalOnProperty）。

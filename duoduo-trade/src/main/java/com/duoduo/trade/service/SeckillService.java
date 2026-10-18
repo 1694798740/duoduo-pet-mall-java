@@ -86,6 +86,35 @@ public class SeckillService {
     private static final String PHASE_ONGOING = "ONGOING";
     private static final String PHASE_ENDED = "ENDED";
 
+    /**
+     * 活动时间的业务时区：运营在管理端输入的是**北京时间**。
+     *
+     * <p>历史事故（2026-10-18）：管理端输入 07:02～23:08（北京时间），旧实现把它当 UTC 存取，
+     * 结果活动的实际结束时间比展示的晚 8 小时 —— 已到次日 00:52 仍能下单。
+     * 修复后：无时区的输入一律按北京时间（+08:00）解析再转 UTC 存储；
+     * 带时区/Z 的输入（如冒烟脚本发送的 UTC 格式）按其自身时区解析。
+     */
+    private static final java.time.ZoneId BUSINESS_ZONE = java.time.ZoneId.of("Asia/Shanghai");
+
+    /** 活动时间解析：带时区按其时区，不带按北京时间；统一转 UTC 存储 */
+    static LocalDateTime parseActivityTime(String raw, String field) {
+        if (raw == null || raw.isBlank()) {
+            throw BizException.validation(field + "不能为空");
+        }
+        String v = raw.trim();
+        try {
+            if (v.endsWith("Z") || v.contains("+") || v.matches(".*[+-]\\d{2}:\\d{2}$")) {
+                return java.time.OffsetDateTime.parse(v).atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
+            }
+            return java.time.LocalDateTime.parse(v).atZone(BUSINESS_ZONE)
+                    .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BizException.validation(field + "格式不正确（应为 ISO 时间，如 2026-10-19T10:00:00）");
+        }
+    }
+
     private static final String KEY_STOCK = "seckill:stock:";
     private static final String KEY_BOUGHT = "seckill:bought:";
 
@@ -415,7 +444,9 @@ public class SeckillService {
 
     @Transactional
     public ActivityView createActivity(CreateActivityRequest request) {
-        if (!request.endAt().isAfter(request.startAt())) {
+        LocalDateTime startAt = parseActivityTime(request.startAt(), "开始时间");
+        LocalDateTime endAt = parseActivityTime(request.endAt(), "结束时间");
+        if (!endAt.isAfter(startAt)) {
             throw BizException.validation("活动结束时间必须晚于开始时间");
         }
         List<Long> skuIds = request.skus().stream().map(CreateActivityRequest.CreateSkuItem::skuId).toList();
@@ -430,8 +461,8 @@ public class SeckillService {
         SeckillActivityEntity activity = new SeckillActivityEntity();
         activity.setId(idGenerator.nextId());
         activity.setTitle(request.title().trim());
-        activity.setStartAt(request.startAt());
-        activity.setEndAt(request.endAt());
+        activity.setStartAt(startAt);
+        activity.setEndAt(endAt);
         activity.setStatus(SeckillActivityEntity.STATUS_ENABLED);
         activity.setCreatedAt(now);
         activity.setUpdatedAt(now);
@@ -494,17 +525,19 @@ public class SeckillService {
         if (activity == null) {
             throw BizException.notFound("秒杀活动");
         }
-        if (!request.endAt().isAfter(request.startAt())) {
+        LocalDateTime startAt = parseActivityTime(request.startAt(), "开始时间");
+        LocalDateTime endAt = parseActivityTime(request.endAt(), "结束时间");
+        if (!endAt.isAfter(startAt)) {
             throw BizException.validation("活动结束时间必须晚于开始时间");
         }
         long orders = countOrders(activityId);
-        if (orders > 0 && request.startAt().isAfter(nowUtc())) {
+        if (orders > 0 && startAt.isAfter(nowUtc())) {
             throw BizException.businessRule("该活动已产生 " + orders + " 笔秒杀订单，开始时间不能改到未来"
                     + "（否则已成交的活动会显示成「未开始」）");
         }
         activity.setTitle(request.title().trim());
-        activity.setStartAt(request.startAt());
-        activity.setEndAt(request.endAt());
+        activity.setStartAt(startAt);
+        activity.setEndAt(endAt);
         activity.setUpdatedAt(nowUtc());
         activityMapper.updateById(activity);
 

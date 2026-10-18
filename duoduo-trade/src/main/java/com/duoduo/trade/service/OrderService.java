@@ -1953,21 +1953,30 @@ public class OrderService {
             return toPayResult(order, winner == null ? payment : winner, true);
         }
 
-        // 扣减库存：库存与冻结量同时减少；失败则整批回滚（含上面的 CAS），本次支付不成立
-        List<StockFreezeEntity> freezes = stockFreezeMapper.selectList(
-                new LambdaQueryWrapper<StockFreezeEntity>()
-                        .eq(StockFreezeEntity::getOrderId, order.getId())
-                        .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
-        if (freezes.isEmpty()) {
-            throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
+        // 扣减库存：库存与冻结量同时减少；失败则整批回滚（含上面的 CAS），本次支付不成立。
+        // 秒杀单（2026-10-18 修复）不走商品库存冻结台账 —— 它的"货"是活动配额，
+        // 在下单时已从 t_seckill_sku.available_stock 原子扣掉，关单/超时由 onOrderClosed 回补。
+        // 修复前这里对秒杀单也找冻结记录，必然为空 ⇒ 秒杀订单永远无法支付（"没有可扣减的库存冻结记录"）。
+        boolean seckillOrder = "SECKILL".equals(order.getOrderType());
+        List<StockFreezeEntity> freezes = List.of();
+        if (!seckillOrder) {
+            freezes = stockFreezeMapper.selectList(
+                    new LambdaQueryWrapper<StockFreezeEntity>()
+                            .eq(StockFreezeEntity::getOrderId, order.getId())
+                            .eq(StockFreezeEntity::getStatus, StockFreezeEntity.STATUS_FROZEN));
+            if (freezes.isEmpty()) {
+                throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
+            }
         }
-        List<StockChangeItem> items = freezes.stream()
-                .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
-                .toList();
-        StockChangeOutcome outcome = productGateway.deduct(order.getId(), items);
-        if (outcome == null || !outcome.allSuccess()) {
-            throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
-                    "扣减库存失败：" + describeFailure(outcome, Map.of()));
+        if (!seckillOrder) {
+            List<StockChangeItem> items = freezes.stream()
+                    .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
+                    .toList();
+            StockChangeOutcome outcome = productGateway.deduct(order.getId(), items);
+            if (outcome == null || !outcome.allSuccess()) {
+                throw new BizException(ErrorCode.STOCK_INSUFFICIENT,
+                        "扣减库存失败：" + describeFailure(outcome, Map.of()));
+            }
         }
 
         // 同步内存对象，供返回视图使用（库内状态已由上面的 CAS 落好）

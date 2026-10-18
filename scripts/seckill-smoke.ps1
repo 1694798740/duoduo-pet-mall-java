@@ -142,8 +142,8 @@ Check "匿名秒杀下单 401" ($r.status -eq 401) $r.status
 # ---------- 3. 运营准入（验收②） ----------
 Write-Host ""
 Write-Host "> 验收②：运营准入"
-$start = (Get-Date).ToUniversalTime().AddSeconds(-60).ToString('yyyy-MM-ddTHH:mm:ss')
-$end   = (Get-Date).ToUniversalTime().AddMinutes(30).ToString('yyyy-MM-ddTHH:mm:ss')
+$start = (Get-Date).AddSeconds(-60).ToString('yyyy-MM-ddTHH:mm:sszzz')
+$end   = (Get-Date).AddMinutes(30).ToString('yyyy-MM-ddTHH:mm:sszzz')
 $actBody = @{
     title = '冒烟-宠物零食疯抢'; startAt = $start; endAt = $end
     skus = @( @{ skuId = $SKU; seckillPrice = 100; totalStock = 2; perLimit = 1 } )
@@ -297,10 +297,35 @@ $r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
     activityId = $actLimit; skuId = $SKU; addressId = $addr1; idempotentKey = (NewKey) }
 Check "★ 未关闭订单仍占用名额（第三次 422）" ($r.status -eq 422) "$($r.status)/$($r.raw)"
 
-$r = Call 'Post' "$Gateway/api/orders/$orderNoLimit2/cancel" $u1.session @{ reason = '冒烟-限购收尾' }
-Check "收尾取消第二单" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+# 修复验证：秒杀单没有商品库存冻结台账，支付入账必须正常（修复前必现
+# "订单没有可扣减的库存冻结记录" ⇒ 秒杀订单永远无法支付）
+$r = Call 'Post' "$Gateway/api/orders/$orderNoLimit2/pay" $u1.session @{
+    channel = 'MOCK'; idempotentKey = (NewKey) }
+Check "★ 秒杀订单 MOCK 支付成功（无冻结台账也可入账）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+Check "★ 支付单状态为 SUCCESS" ("$($r.body.data.payStatus)" -eq 'SUCCESS') "$($r.body.data.payStatus)"
+$r = Call 'Get' "$Gateway/api/orders/$orderNoLimit2" $u1.session $null
+Check "★ 订单已转为已付款" ("$($r.body.data.status)" -eq 'PAID') "$($r.body.data.status)"
+
+# 有已付款订单的活动不允许删除（删除规则：没有未关闭订单）
 $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actLimit" $sessOp $null
-Check "限购释放活动收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+Check "有已付款订单时删除活动被拒" ($r.status -eq 422) "$($r.status)/$($r.raw)"
+
+# ---------- 5.8 活动时间窗（时区修复回归） ----------
+Write-Host ""
+Write-Host "> 活动结束后不可购买（修复前：管理端北京时间被当 UTC，实际结束晚 8 小时）"
+$pastStart = (Get-Date).AddHours(-2).ToString('yyyy-MM-ddTHH:mm:sszzz')
+$pastEnd   = (Get-Date).AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:sszzz')
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-ended'; startAt = $pastStart; endAt = $pastEnd
+    skus = @( @{ skuId = $SKU; seckillPrice = 100; totalStock = 1; perLimit = 1 } ) }
+Check "创建「已结束」活动 200（允许配置历史时段）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$actEnded = "$($r.body.data.id)"
+$r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
+    activityId = $actEnded; skuId = $SKU; addressId = $addr1; idempotentKey = (NewKey) }
+Check "★ 活动结束后下单被拒（422 活动不在进行时间内）" ($r.status -eq 422) "$($r.status)/$($r.raw)"
+Check "拒绝原因点名时间窗" ("$($r.body.message)" -match '活动不在进行时间内') "$($r.body.message)"
+$r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actEnded" $sessOp $null
+Check "已结束活动（无订单）收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 
 # ---------- 6. 取消回补（验收⑥） ----------
 Write-Host ""
@@ -321,7 +346,7 @@ Write-Host ""
 Write-Host "> R74：活动编辑与删除"
 # 口径：编辑只开「标题 + 时间」；删除只允许「没有未关闭订单」的活动（还有待付款/已付款等订单时必须走 下架）。
 $editedTitle = 'smoke-seckill-edited'   # 刻意用 ASCII：docker exec 读库输出中文会被转成 ?
-$newEnd = (Get-Date).ToUniversalTime().AddMinutes(45).ToString('yyyy-MM-ddTHH:mm:ss')
+$newEnd = (Get-Date).AddMinutes(45).ToString('yyyy-MM-ddTHH:mm:sszzz')
 $editBody = @{ title = $editedTitle; startAt = $start; endAt = $newEnd }
 
 $r = Call 'Put' "$Gateway/api/admin/seckill/activities/$actId" $null $editBody
@@ -335,7 +360,7 @@ Check "编辑后标题已改" ($r.body.data.title -eq $editedTitle) $r.body.data
 #   「10/10/2026 09:44:47」，与期望前缀「2026-10-10T09:44」完全不匹配 → 本机绿、CI 红。
 #   改回断言**原始报文**里服务器的原样输出。
 $endAtRaw = ([regex]::Match($r.raw, '"endAt"\s*:\s*"([^"]+)"')).Groups[1].Value
-Check "编辑后结束时间已改" ($endAtRaw -like "$($newEnd.Substring(0,16))*") "raw endAt=$endAtRaw 期望前缀=$($newEnd.Substring(0,16))"
+Check "编辑后结束时间已改" ($endAtRaw -like "$([DateTimeOffset]::Parse($newEnd).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm'))*") "raw endAt=$endAtRaw 期望前缀=$($newEnd.Substring(0,16))"
 Check "编辑已落库（不是只改了响应体）" (
     (Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;") -eq $editedTitle) "DB 实得：$(Sql 'duoduo_trade' "SELECT title FROM t_seckill_activity WHERE id=$actId;")"
 

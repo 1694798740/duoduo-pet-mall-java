@@ -51,8 +51,8 @@ public final class SeckillDtos {
     /** 运营端创建活动 */
     public record CreateActivityRequest(
             @NotBlank(message = "活动标题不能为空") @Size(max = 100, message = "活动标题过长") String title,
-            @NotNull(message = "开始时间不能为空") LocalDateTime startAt,
-            @NotNull(message = "结束时间不能为空") LocalDateTime endAt,
+            @NotBlank(message = "开始时间不能为空") String startAt,
+            @NotBlank(message = "结束时间不能为空") String endAt,
             @NotEmpty(message = "至少配置一个秒杀商品") List<CreateSkuItem> skus) {
 
         public record CreateSkuItem(
@@ -75,8 +75,8 @@ public final class SeckillDtos {
      */
     public record EditActivityRequest(
             @NotBlank(message = "活动标题不能为空") @Size(max = 100, message = "活动标题过长") String title,
-            @NotNull(message = "开始时间不能为空") LocalDateTime startAt,
-            @NotNull(message = "结束时间不能为空") LocalDateTime endAt) {
+            @NotBlank(message = "开始时间不能为空") String startAt,
+            @NotBlank(message = "结束时间不能为空") String endAt) {
     }
 
     /** 运营端上下架 */
