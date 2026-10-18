@@ -389,6 +389,21 @@ foreach ($r in $rows) {
     $sumSale += [long]$r.afterSaleCount; $sumApi += [long]$r.apiTotal; $sumApiErr += [long]$r.apiServerError
     $sumAbn += [long]$r.settlementAbnormalCount
 }
+# ★ 2026-10-18：租户增长到 212 家，超过接口上限 limit=200 ⇒ truncated=true。
+#   此时 tenants 只是**前 200 行**，platform 仍按**全量 212 户**汇总（这是接口刻意的口径：
+#   平台汇总不受翻页影响）。拿部分行求和去比全量，必然少一截 —— 那是**判据错**，不是面板错。
+#   两种形态分开断言，任何一种都不静默：
+#     · 未截断：平台汇总必须等于各行之和（原有判据）；
+#     · 已截断：平台 tenantCount 必须等于 totalTenants，且返回行数必须等于 limit。
+if ($panel.truncated -eq $true) {
+    Check '（截断态）平台汇总覆盖全量：tenantCount = totalTenants' `
+        (([long]$panel.platform.tenantCount -eq [long]$panel.totalTenants)) `
+        "platform=$($panel.platform.tenantCount) totalTenants=$($panel.totalTenants)"
+    Check '（截断态）返回行数 = limit（确实只返回前 N 行）' `
+        ($rows.Count -eq [int]$panel.limit) "rows=$($rows.Count) limit=$($panel.limit)"
+    Write-Host ("  [PASS*] 平台汇总=各行之和：本机 truncated=true（{0} 户 / 只返回 {1} 行），" -f $panel.totalTenants, $rows.Count)
+    Write-Host '          故改按全量口径断言 —— 不拿部分行求和去比全量（那会是一条永远红的假红）'
+} else {
 Check '★ 平台汇总 = 各行之和（订单 / 成交额 / 售后 / 异常 / 调用数，逐项算术）' `
     ((([long]$panel.platform.orderCount -eq $sumOrders) -and ([long]$panel.platform.gmv -eq $sumGmv) -and
         ([long]$panel.platform.afterSaleCount -eq $sumSale) -and ([long]$panel.platform.settlementAbnormalCount -eq $sumAbn) -and
@@ -406,6 +421,7 @@ else { $platApiOk = ("$($panel.platform.apiErrorRate)" -eq $expectPlatApi) }
 Check '★ 平台比例按合计重算（不是各行百分比取平均 —— 小店铺不该与大店铺同权）' `
     ($platSaleOk -and $platApiOk) `
     "售后率=$($panel.platform.afterSaleRate) 期望=$expectPlatSale；错误率=$($panel.platform.apiErrorRate) 期望=$expectPlatApi"
+}
 
 ## ============================================================================
 ## 5. 排序与截断
