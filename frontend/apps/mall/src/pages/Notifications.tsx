@@ -16,6 +16,7 @@ import type { NoticeView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
+import { useApp } from '@duoduo/shared/store/app';
 
 const PAGE_SIZE = 15;
 
@@ -40,6 +41,8 @@ const CATEGORIES: { key: string; label: string }[] = [
 export const NotificationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { push } = useToast();
+  /** 顶栏未读角标的数据源；标记已读后必须立刻刷新，不能等 60 秒兜底轮询 */
+  const { refreshUnread } = useApp();
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
   const [tick, setTick] = useState(0);
@@ -55,18 +58,21 @@ export const NotificationsPage: React.FC = () => {
   const unread = useMemo(() => items.filter((it) => !it.read).length, [items]);
   const pages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
-  /** 打开通知：未读则标记已读；jumpPage 是服务端建议的落地页 */
+  /** 打开通知：未读则标记已读并**立即刷新顶栏角标**；落地页只用服务端给的网页路径 */
   const open = async (it: NoticeView) => {
     setBusyId(it.id);
     try {
       if (!it.read) await noticeApi.markRead(it.id);
       setTick((v) => v + 1);
+      // 等角标刷新完成再跳转：否则页面已经离开，用户回头仍看到旧数字
+      await refreshUnread();
     } catch (err) {
       push(toFriendlyMessage(err), 'error');
     } finally {
       setBusyId(null);
     }
-    if (it.jumpPage) navigate(it.jumpPage);
+    // webPath 为空 = 网页端没有对应页面（如纯公告）——只标已读，不跳到 404
+    if (it.webPath) navigate(it.webPath);
   };
 
   const readAll = async () => {
@@ -74,6 +80,7 @@ export const NotificationsPage: React.FC = () => {
       await noticeApi.readAll();
       push('已全部标记为已读', 'success');
       setTick((v) => v + 1);
+      await refreshUnread();
     } catch (err) {
       push(toFriendlyMessage(err), 'error');
     }

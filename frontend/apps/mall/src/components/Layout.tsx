@@ -295,12 +295,34 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/share/mine" style={{ display: 'block' }}>
                       我的分享
                     </Link>
-                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回），不再各查各的 */}
-                    <Link className="nav-link" to="/notifications" style={{ display: 'block' }}>
-                      通知中心{unread.notice > 0 ? `（${badgeText(unread.notice)}）` : ''}
+                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回），不再各查各的。
+                        2026-10-18：入口从「通知中心（1）」改为图标 + 右上角数字角标 ——
+                        括号数字读起来像标题的一部分，角标才是"有几条没看"的通用表达。 */}
+                    <Link
+                      className="nav-link"
+                      to="/notifications"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
+                      <span style={{ position: 'relative', display: 'inline-block', lineHeight: 1 }}>
+                        <span aria-hidden>🔔</span>
+                        {unread.notice > 0 ? (
+                          <span className="badge-dot">{badgeText(unread.notice)}</span>
+                        ) : null}
+                      </span>
+                      通知中心
                     </Link>
-                    <Link className="nav-link" to="/messages" style={{ display: 'block' }}>
-                      私信{unread.message > 0 ? `（${badgeText(unread.message)}）` : ''}
+                    <Link
+                      className="nav-link"
+                      to="/messages"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
+                      <span style={{ position: 'relative', display: 'inline-block', lineHeight: 1 }}>
+                        <span aria-hidden>💬</span>
+                        {unread.message > 0 ? (
+                          <span className="badge-dot">{badgeText(unread.message)}</span>
+                        ) : null}
+                      </span>
+                      私信
                     </Link>
                     <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
                       关注与粉丝

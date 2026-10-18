@@ -15,6 +15,7 @@ import com.duoduo.social.entity.SocialNoticeReadEntity;
 import com.duoduo.social.mapper.SocialNoticeMapper;
 import com.duoduo.social.mapper.SocialNoticeReadMapper;
 import com.duoduo.social.support.MiniProgramPages;
+import com.duoduo.social.support.NoticeWebPaths;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -449,6 +450,7 @@ public class NoticeService {
                 notice.getBizType(),
                 notice.getBizId(),
                 notice.getJumpPage(),
+                NoticeWebPaths.of(notice.getCategory(), notice.getBizId(), notice.getJumpPage()),
                 readIds.contains(notice.getId()),
                 utc(notice.getCreatedAt())
         );

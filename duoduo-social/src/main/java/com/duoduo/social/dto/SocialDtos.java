@@ -296,6 +296,15 @@ public final class SocialDtos {
             String bizType,
             String bizId,
             String jumpPage,
+            /**
+             * 网页端落地页（2026-10-18）：与 {@code jumpPage} 并列下发。
+             *
+             * <p>为什么需要两个：{@code jumpPage} 是**小程序路由**（`/pages/order-detail/order-detail?orderNo=…`），
+             * 网页 SPA 没有这条路由，直接 navigate 就是「页面不存在」。
+             * 而"通知该跳哪"是业务事实，只该在服务端定义一次 —— 前端各写一套映射迟早对不上。
+             * 为空表示该通知在网页端没有对应页面（例如纯公告），此时前端**不跳转**，而不是跳到 404。
+             */
+            String webPath,
             boolean read,
             String createdAt
     ) {

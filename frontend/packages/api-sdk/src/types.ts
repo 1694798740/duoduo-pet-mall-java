@@ -1468,8 +1468,13 @@ export interface NoticeView {
   content: string;
   bizType: string | null;
   bizId: string | null;
-  /** 服务端建议的跳转页（前端据此决定跳哪，不自己猜） */
+  /** 小程序端落地页（`/pages/...`），网页端**不可直接使用** */
   jumpPage: string | null;
+  /**
+   * 网页端落地页（如 `/orders/2026…`）；为 null 表示该通知在网页端没有对应页面，
+   * 此时应「只标已读、不跳转」，而不是拿 jumpPage 去 navigate（会 404）。
+   */
+  webPath: string | null;
   read: boolean;
   createdAt: string;
 }

@@ -204,6 +204,14 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-18（二十）· 通知中心：角标即时刷新 + 网页落地页 + 图标角标
+
+- 角标：`Notifications` 已读/全部已读后 `await refreshUnread()`，不再等 60 秒轮询。
+- 404：`jump_page` 是小程序路由；新增 `NoticeView.webPath`（`NoticeWebPaths` 映射：
+  ORDER→`/orders/{orderNo}`、FRIEND→`/messages/{peerId}`，其余 null 不跳转），单测 4/4。
+- 入口：头像下拉「通知中心（1）」改为 🔔 + `.badge-dot`（私信同步改 💬）。
+- 浏览器 9/9：角标 1→0、通知落订单详情、无括号数字。
+
 ### 2026-10-18（十九）· 原生 confirm/alert 替换为站内统一弹窗
 
 - 新增 `@duoduo/shared/components/confirm`：`ConfirmProvider` + `useConfirm` / `useAlert`，Promise 化，
