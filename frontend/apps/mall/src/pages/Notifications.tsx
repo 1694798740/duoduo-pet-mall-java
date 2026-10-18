@@ -41,7 +41,7 @@ const CATEGORIES: { key: string; label: string }[] = [
 export const NotificationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { push } = useToast();
-  /** 顶栏未读角标的数据源；标记已读后必须立刻刷新，不能等 60 秒兜底轮询 */
+  /** 顶栏未读角标的数据源；标记已读后必须立刻刷新，不能等 10 秒兜底轮询 */
   const { refreshUnread } = useApp();
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);

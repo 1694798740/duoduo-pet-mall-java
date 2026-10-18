@@ -256,6 +256,23 @@ h4 {
   font-weight: 600;
 }
 
+/* 行内数字角标（2026-10-18）：跟在「通知中心 / 私信」文字后面，没有未读时不渲染。
+   与 .badge-dot 的区别只在于**不绝对定位**——它参与文字排版，不会压住图标。 */
+.badge-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+}
+
 /* ---------- 卡片与基础元素 ---------- */
 .card {
   background: var(--surface);

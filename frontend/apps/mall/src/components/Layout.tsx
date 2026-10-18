@@ -1,7 +1,7 @@
 /**
  * 全局布局：顶部导航 + 购物车角标 + **未读角标（S7）** + 用户菜单。
  *
- * 未读角标由本组件**启用**（登录后开 60 秒兜底轮询、页面重新可见时刷新），
+ * 未读角标由本组件**启用**（登录后开 10 秒兜底轮询；下单/支付/切页/回前台/打开菜单时各自立即刷新），
  * 但口径与刷新实现都在 `@duoduo/shared/store/app` —— 本组件只决定「什么时候开着」。
  * 结果就是：用户在**任何**页面（首页 / 商品详情 / 分享圈…）都能从顶栏头像上看到未读数。
  *
@@ -109,7 +109,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   }, [location.pathname]);
 
   /**
-   * 未读角标（S7）：登录后启用全站 60 秒兜底轮询，登出即停并清零。
+   * 未读角标（S7）：登录后启用全站 10 秒兜底轮询（自己的动作不等轮询，见页面内的显式刷新），登出即停并清零。
    *
    * 口径与刷新点都在 `@duoduo/shared/store/app`（唯一数据源 `unread-summary`，服务端合并通知与私信）；
    * 这里只负责「什么时候启用」。R74-5 时「不为此加全站轮询」的取舍已被本轮决策取代 ——
@@ -127,7 +127,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     return () => stopUnreadPolling();
   }, [loggedIn, refreshUnread, clearUnread, startUnreadPolling, stopUnreadPolling]);
 
-  // 页面重新可见时立刻刷一次（对齐小程序的「回前台刷新」）：切走再回来不该还显示 60 秒前的数字
+  // 页面重新可见时立刻刷一次（对齐小程序的「回前台刷新」）：切走再回来不该还显示 10 秒前的数字
   useEffect(() => {
     if (!loggedIn) return undefined;
     const onVisible = () => {
@@ -137,11 +137,18 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loggedIn, refreshUnread]);
 
-  // 打开头像菜单时也刷一次 —— 用户正要看这个数字，不该是 60 秒前那个
+  // 打开头像菜单时也刷一次 —— 用户正要看这个数字，不该是 10 秒前那个
   useEffect(() => {
     if (!menuOpen || !loggedIn) return;
     void refreshUnread();
   }, [menuOpen, loggedIn, refreshUnread]);
+
+  // 站内切换页面时刷一次（2026-10-18）：用户下单/支付后通常会跳到订单详情，
+  // 跳转本身就是一个明确的"可能产生了新通知"的信号，没必要等下一次轮询。
+  useEffect(() => {
+    if (!loggedIn) return;
+    void refreshUnread();
+  }, [location.pathname, loggedIn, refreshUnread]);
 
   /**
    * 头像下拉的关闭行为（R74-2）。
@@ -295,34 +302,28 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <Link className="nav-link" to="/share/mine" style={{ display: 'block' }}>
                       我的分享
                     </Link>
-                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回），不再各查各的。
-                        2026-10-18：入口从「通知中心（1）」改为图标 + 右上角数字角标 ——
-                        括号数字读起来像标题的一部分，角标才是"有几条没看"的通用表达。 */}
+                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回）。
+                        2026-10-18 二次调整：不再显示 🔔 / 💬 图标，只保留**数字角标**——
+                        入口本身就是文字，图标只是噪音；有未读才出现数字，没有就什么都不显示。 */}
                     <Link
                       className="nav-link"
                       to="/notifications"
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
-                      <span style={{ position: 'relative', display: 'inline-block', lineHeight: 1 }}>
-                        <span aria-hidden>🔔</span>
-                        {unread.notice > 0 ? (
-                          <span className="badge-dot">{badgeText(unread.notice)}</span>
-                        ) : null}
-                      </span>
                       通知中心
+                      {unread.notice > 0 ? (
+                        <span className="badge-inline">{badgeText(unread.notice)}</span>
+                      ) : null}
                     </Link>
                     <Link
                       className="nav-link"
                       to="/messages"
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
-                      <span style={{ position: 'relative', display: 'inline-block', lineHeight: 1 }}>
-                        <span aria-hidden>💬</span>
-                        {unread.message > 0 ? (
-                          <span className="badge-dot">{badgeText(unread.message)}</span>
-                        ) : null}
-                      </span>
                       私信
+                      {unread.message > 0 ? (
+                        <span className="badge-inline">{badgeText(unread.message)}</span>
+                      ) : null}
                     </Link>
                     <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
                       关注与粉丝

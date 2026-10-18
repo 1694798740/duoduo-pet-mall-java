@@ -40,7 +40,7 @@ const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const { push } = useToast();
-  const { refreshCart } = useApp();
+  const { refreshCart, refreshUnread } = useApp();
 
   const [receiverName, setReceiverName] = useState('');
   const [receiverPhone, setReceiverPhone] = useState('');
@@ -201,6 +201,8 @@ export const CheckoutPage: React.FC = () => {
         // 清购物车失败不影响下单结果，静默即可
       }
       await refreshCart();
+      // 下单会生成「订单已提交」通知：与购物车角标同一口径，立刻刷新，不等轮询
+      await refreshUnread();
 
       if (placed.idempotentReplay) {
         push('该笔订单已提交过，为你展示已有订单', 'info');

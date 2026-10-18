@@ -41,6 +41,7 @@ import {
 import { QRCode } from '@duoduo/shared/components/QRCode';
 import { LogisticsTimeline } from '@duoduo/shared/components/LogisticsTimeline';
 import { SupportEntry } from '../components/SupportEntry';
+import { useApp } from '@duoduo/shared/store/app';
 
 /** 轮询间隔（毫秒）——与真实扫码支付的体验对齐 */
 const POLL_INTERVAL = 3000;
@@ -61,6 +62,8 @@ const SETTLEMENT_TEXT: Record<string, { label: string; kind: 'info' | 'success' 
 export const OrderDetailPage: React.FC = () => {
   const { orderNo = '' } = useParams<{ orderNo: string }>();
   const { push } = useToast();
+  /** 支付成功会生成「支付成功」通知：与购物车同一口径，立即刷新角标 */
+  const { refreshUnread } = useApp();
 
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -114,6 +117,7 @@ export const OrderDetailPage: React.FC = () => {
           push('支付成功', 'success');
           await reloadOrder();
           await reloadSettlement();
+          await refreshUnread();
           setPayOpen(false);
         } else if (latest.payStatus === 'EXPIRED' || latest.payStatus === 'CLOSED') {
           push(latest.payStatus === 'EXPIRED' ? '支付单已过期，请重新下单' : '支付单已关闭', 'error');
@@ -135,7 +139,7 @@ export const OrderDetailPage: React.FC = () => {
         pollRef.current = null;
       }
     };
-  }, [payOpen, payResult, push, reloadOrder, reloadSettlement]);
+  }, [payOpen, payResult, push, reloadOrder, reloadSettlement, refreshUnread]);
 
   /** 关闭弹窗时停掉轮询与倒计时 */
   const closePay = useCallback(() => {
@@ -163,6 +167,7 @@ export const OrderDetailPage: React.FC = () => {
         push('支付成功', 'success');
         await reloadOrder();
         await reloadSettlement();
+        await refreshUnread();
         setPayOpen(false);
       }
     } catch (err) {
@@ -184,6 +189,7 @@ export const OrderDetailPage: React.FC = () => {
         push('支付成功', 'success');
         await reloadOrder();
         await reloadSettlement();
+        await refreshUnread();
         setPayOpen(false);
       }
     } catch (err) {
