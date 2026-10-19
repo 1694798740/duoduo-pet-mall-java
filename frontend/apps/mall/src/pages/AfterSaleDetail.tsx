@@ -12,7 +12,7 @@ import { Link, useParams } from 'react-router-dom';
 import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import { AfterSaleStatusTag, AfterSaleSteps } from '@duoduo/shared/components/afterSale';
 
 /**
@@ -31,11 +31,14 @@ export const AfterSaleDetailPage: React.FC = () => {
   const [courier, setCourier] = useState('');
   const [trackingNo, setTrackingNo] = useState('');
 
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, reloadSilently } = useAsync(
     useCallback(() => afterSaleApi.detail(id), [id]),
     id.length > 0,
     [id],
   );
+
+  /** 售后单会被卖家/平台推进（受理、拒绝、打款）—— 详情页静默跟随，不用手动刷新 */
+  useLiveRefresh(reloadSilently, { enabled: id.length > 0 });
 
   const escalate = async () => {
     setActionError(null);

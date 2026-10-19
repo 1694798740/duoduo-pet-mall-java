@@ -36,6 +36,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import { shotsDir } from '../lib/e2e-shots.mjs';
 import { createSellerFixture } from '../lib/e2e-seller-fixture.mjs';
 import { randomUUID } from 'node:crypto';
@@ -245,7 +246,23 @@ await shot(pb, 'as_buyer_new.png');
 
 const REASON = '收到的猫粮外包装破损、内袋漏气，要求退款';
 await pb.getByPlaceholder(/要求退款/).fill(REASON);
-await pb.getByPlaceholder(/photo-1\.jpg/).fill('https://example.com/break-1.jpg');
+/**
+ * 举证图入口（2026-10-19 图片上传重构后）：走**本地上传**这条真路径 ——
+ * 生成一张 1×1 PNG，经组件的 file input 真实传到 /api/uploads，
+ * 后端落盘后返回**绝对 URL**，随表单一起提交。这比贴外链更能代表真实用户，
+ * 也顺带覆盖了「上传 → 提交 → 详情页可看图」的整条链。
+ *
+ * （不能贴 `/uploads/...` 本站相对路径：售后接口按安全口径只收 http/https 直链，
+ *  相对路径会被 400 —— 上传器允许采纳本站路径与售后接口校验之间的口径错位，已知小问题。）
+ */
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+const evidencePath = path.join(SHOTS, 'as-evidence-1px.png');
+fs.writeFileSync(evidencePath, PNG_1PX);
+await pb.setInputFiles('input[type="file"]', evidencePath);
+await pb.waitForTimeout(1500); // 等上传完成（成功会有「已上传 1 张图片」toast）
 await pb.getByRole('button', { name: '提交售后申请' }).click();
 await pb.waitForURL(/\/after-sales\/\d+/, { timeout: 20000 });
 await pb.waitForTimeout(1200);

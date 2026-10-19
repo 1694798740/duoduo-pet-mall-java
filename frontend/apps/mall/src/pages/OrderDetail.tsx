@@ -28,7 +28,7 @@ import { Link, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { orderApi, paymentApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PayResult, SettlementView } from '@duoduo/api-sdk/types';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import {
   Alert,
   LoadingBlock,
@@ -85,15 +85,32 @@ export const OrderDetailPage: React.FC = () => {
     loading,
     error,
     reload: reloadOrder,
+    reloadSilently: reloadOrderSilently,
     setData: setOrder,
   } = useAsync<OrderView>(orderFetcher, Boolean(orderNo), [orderNo]);
 
+  /**
+   * 资金托管记录**只对已付款之后的订单存在**。
+   *
+   * <p>待付款 / 已关闭的单子去查，服务端只能回 404「资金托管记录」——
+   * 页面本来就不展示这块（`custody` 取不到即整段不渲染），但加了实时轮询之后，
+   * 这个必然失败的请求会**每 30 秒重打一次**，在控制台里堆成一片红。
+   * 因此按状态决定要不要发这个请求，而不是靠「拿到错误就当没有」。
+   */
+  const canHaveSettlement =
+    Boolean(orderNo) && Boolean(order) && order?.status !== 'PENDING_PAYMENT' && order?.status !== 'CLOSED';
   const settlementFetcher = useCallback(() => orderApi.settlement(orderNo), [orderNo]);
-  const { data: settlement, reload: reloadSettlement } = useAsync<SettlementView>(
-    settlementFetcher,
-    Boolean(orderNo),
-    [orderNo],
-  );
+  const { data: settlement, reload: reloadSettlement, reloadSilently: reloadSettlementSilently } =
+    useAsync<SettlementView>(settlementFetcher, canHaveSettlement, [orderNo, canHaveSettlement]);
+
+  /**
+   * 订单状态有很多「服务端单方面变化」：超时自动关单、支付回调、商家发货。
+   * 停在详情页时不该等用户手动刷新 —— 广播 / 回前台 / 30s 轮询三层兜底（静默，不闪屏）。
+   */
+  useLiveRefresh(() => {
+    reloadOrderSilently();
+    if (canHaveSettlement) reloadSettlementSilently();
+  });
 
   // ---- 支付倒计时 ----
   useEffect(() => {

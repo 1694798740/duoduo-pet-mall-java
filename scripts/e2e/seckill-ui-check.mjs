@@ -94,7 +94,16 @@ async function call(method, p, body, jar) {
 }
 
 /** 服务端与容器时区均为 UTC —— 时间一律按 UTC 挂钟下发，不能用本地时间直觉 */
-const utc = (plusMinutes) => new Date(Date.now() + plusMinutes * 60_000).toISOString().slice(0, 19);
+/**
+ * 秒杀活动的时间入参口径（2026-10-19 起）：
+ *   · **带时区**（`Z` / `+08:00`）→ 按绝对时刻处理；
+ *   · **不带时区** → 按**北京时间**挂钟处理（后端会减 8 小时存 UTC）。
+ *
+ * 这里刻意带上 `Z`：夹具要的是「此刻 -5 分钟 / +120 分钟」，用绝对时刻表达才不会
+ * 因为口径变化而整体偏 8 小时 —— 之前正是截掉了 `Z`，活动一建就是「8 小时前已结束」，
+ * 表现为秒杀按钮一直是 disabled（这条断言本身没错，错在夹具把时间说歧义了）。
+ */
+const utc = (plusMinutes) => new Date(Date.now() + plusMinutes * 60_000).toISOString().slice(0, 19) + 'Z';
 
 const randPhone = () => '137' + String(Math.floor(1e7 + Math.random() * 8e7));
 

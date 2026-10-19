@@ -13,7 +13,7 @@ import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/types';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useConfirm } from '@duoduo/shared/components/confirm';
@@ -139,11 +139,17 @@ export const OrdersPage: React.FC = () => {
       }),
     [status, orderType, page],
   );
-  const { data, loading, error, reload } = useAsync<PageResult<OrderView>>(fetcher, true, [
+  const { data, loading, error, reload, reloadSilently } = useAsync<PageResult<OrderView>>(fetcher, true, [
     status,
     orderType,
     page,
   ]);
+
+  /**
+   * 订单状态会因服务端动作变化（超时自动关单、支付回调、商家发货）—— 停在列表页时
+   * 用「广播 / 回前台 / 30s 轮询」三层静默刷新，避免看到一条早已过期的「去支付」。
+   */
+  useLiveRefresh(reloadSilently);
 
   /**
    * 「已完成」订单里我评过哪些 —— 一次批量查，避免每张卡片各发一次请求。

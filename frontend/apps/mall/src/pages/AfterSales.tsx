@@ -11,14 +11,14 @@ import React, { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 
 export const AfterSalesPage: React.FC = () => {
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
 
-  const { data, loading, error } = useAsync(
+  const { data, loading, error, reloadSilently } = useAsync(
     useCallback(
       () => afterSaleApi.mine({ status: status || undefined, page, pageSize: 10 }),
       [status, page],
@@ -26,6 +26,9 @@ export const AfterSalesPage: React.FC = () => {
     true,
     [status, page],
   );
+
+  /** 售后由卖家/平台推进状态 —— 列表页同样三层静默刷新，不用手动按 F5 */
+  useLiveRefresh(reloadSilently);
 
   return (
     <div>
