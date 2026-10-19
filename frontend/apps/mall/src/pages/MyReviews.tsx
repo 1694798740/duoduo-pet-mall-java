@@ -146,7 +146,7 @@ export const MyReviewsPage: React.FC = () => {
           ))
         : null}
 
-      {data && data.pageCount > 1 ? (
+      {data ? (
         <Pagination page={page} pageCount={data.pageCount} total={data.total} onChange={setPage} />
       ) : null}
 

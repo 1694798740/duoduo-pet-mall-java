@@ -255,7 +255,7 @@ public class AuditSampleService {
      *
      * @param status PENDING（默认，待复核）/ PASSED / REJECTED / null 表示全部
      */
-    public PageResult<AuditSampleView> pageSamples(String status, int page, int pageSize) {
+    public PageResult<AuditSampleView> pageSamples(String status, String keyword, int page, int pageSize) {
         OperatorGuard.requireOperator();
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
@@ -264,6 +264,13 @@ public class AuditSampleService {
         LambdaQueryWrapper<AuditSampleEntity> wrapper = new LambdaQueryWrapper<>();
         if (target != null) {
             wrapper.eq(AuditSampleEntity::getStatus, target);
+        }
+        // 关键字（2026-10-19）：商品标题 / 抽查单号。抽查行不存标题快照，
+        // 只能按 bizId 反查商品表 —— 因此这里是一条参数化子查询，不是拼串。
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.apply("(biz_id IN (SELECT id FROM t_spu WHERE title LIKE {0}) OR CAST(id AS CHAR) LIKE {1})",
+                    like, like);
         }
         // 待复核按「先来先做」升序（24h 响应时长的守门就是它），已复核按复核时间倒序看最近的
         if (STATUS_PENDING.equals(target) || target == null) {
@@ -275,6 +282,11 @@ public class AuditSampleService {
 
         Page<AuditSampleEntity> result = sampleMapper.selectPage(new Page<>(p, size), wrapper);
         return PageResult.of(toViews(result.getRecords()), result.getTotal(), p, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AuditSampleView> pageSamples(String status, int page, int pageSize) {
+        return pageSamples(status, null, page, pageSize);
     }
 
     /**

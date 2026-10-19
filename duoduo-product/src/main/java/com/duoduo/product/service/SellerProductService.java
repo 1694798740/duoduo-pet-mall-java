@@ -854,6 +854,12 @@ public class SellerProductService {
 
     // ---------------- 平台侧：上架审核台 ----------------
 
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AdminProductAuditView> listForAudit(String auditStatus, Long sellerId,
+                                                          int page, int pageSize) {
+        return listForAudit(auditStatus, sellerId, null, page, pageSize);
+    }
+
     /**
      * 审核台列表：按审核状态筛选的<b>第三方</b>商品。
      *
@@ -864,7 +870,7 @@ public class SellerProductService {
      * <p>审核结论是按时间先后处理的，所以<b>待审的排最前</b>：列表默认顺序若按更新时间倒排，
      * 一个刚被编辑过的已通过商品会插到待办前面，运营很容易漏掉真正等着审的那几条。
      */
-    public PageResult<AdminProductAuditView> listForAudit(String auditStatus, Long sellerId,
+    public PageResult<AdminProductAuditView> listForAudit(String auditStatus, Long sellerId, String keyword,
                                                           int page, int pageSize) {
         OperatorGuard.requireOperator();
         int p = Math.max(1, page);
@@ -878,6 +884,10 @@ public class SellerProductService {
         String audit = normalizeAuditFilter(auditStatus);
         if (audit != null) {
             wrapper.eq(SpuEntity::getAuditStatus, audit);
+        }
+        // 关键字：商品标题（运营找的是「那件被举报的猫粮」，不是 19 位 spuId）
+        if (keyword != null && !keyword.isBlank()) {
+            wrapper.like(SpuEntity::getTitle, keyword.trim());
         }
         wrapper.orderByAsc(SpuEntity::getAuditStatus)
                 .orderByDesc(SpuEntity::getUpdatedAt)

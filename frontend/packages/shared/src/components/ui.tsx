@@ -324,37 +324,121 @@ export const ListingGrid: React.FC<{ items: ListingCard[] }> = ({ items }) => (
 
 // ---------------- 分页 ----------------
 
+/**
+ * 页码窗口：始终含首页、末页与当前页左右各 2 个，空隙用 `'…'` 占位。
+ *
+ * <p>为什么不是「全部页码平铺」：后台有列表能到几百页，平铺会把工具栏撑爆，
+ * 也会让「当前页在哪」更难看清。为什么不是「只显示上一页/下一页」：
+ * 用户明确要求能**直接跳到某一页**，翻十几次才能到第 12 页是不可接受的。</p>
+ */
+export function pageWindow(page: number, pageCount: number, span = 2): Array<number | 'gap'> {
+  const total = Math.max(1, pageCount);
+  const current = Math.min(Math.max(1, page), total);
+  const from = Math.max(2, current - span);
+  const to = Math.min(total - 1, current + span);
+  const out: Array<number | 'gap'> = [1];
+  if (from > 2) out.push('gap');
+  for (let i = from; i <= to; i += 1) out.push(i);
+  if (to < total - 1) out.push('gap');
+  if (total > 1) out.push(total);
+  // 页数很少时（≤7）窗口已覆盖全量，去掉多余的 gap
+  return out.filter((v, i, arr) => !(v === 'gap' && arr[i - 1] === 'gap'));
+}
+
+/**
+ * 分页条：**上一页 / 数字页码 / 下一页**。
+ *
+ * <p>三端共用同一个组件（用户端、商家端、平台后台）。此前只有「第 x / y 页」
+ * 加前后翻页，页数一多就没法直接跳转；各端又各自复制了一份样式，
+ * 交互细节（是否禁用、是否显示总数）不一致。现在统一在这里，页面只传 4 个参数。</p>
+ */
 export const Pagination: React.FC<{
   page: number;
   pageCount: number;
   total: number;
   onChange: (page: number) => void;
-}> = ({ page, pageCount, total, onChange }) => {
-  if (pageCount <= 1) {
-    return (
-      <div className="small muted" style={{ textAlign: 'center', marginTop: 16 }}>
-        共 {total} 条
-      </div>
-    );
-  }
+  /** 列表很短时也显示「共 N 条」，默认 true */
+  showTotalWhenSingle?: boolean;
+}> = ({ page, pageCount, total, onChange, showTotalWhenSingle = true }) => {
+  const count = Math.max(1, pageCount);
+  const current = Math.min(Math.max(1, page), count);
+  if (count <= 1 && !showTotalWhenSingle) return null;
+  const items = pageWindow(current, count);
   return (
-    <div className="pagination">
-      <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => onChange(page - 1)}>
+    <nav className="pagination" aria-label="分页">
+      <button
+        type="button"
+        className="page-btn page-btn-arrow"
+        disabled={current <= 1}
+        onClick={() => onChange(current - 1)}
+        aria-label="上一页"
+      >
         上一页
       </button>
-      <span className="small muted">
-        第 {page} / {pageCount} 页 · 共 {total} 条
-      </span>
+      {count > 1
+        ? items.map((item, i) =>
+            item === 'gap' ? (
+              <span key={`gap-${i}`} className="page-gap" aria-hidden="true">…</span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                className={`page-btn${item === current ? ' is-active' : ''}`}
+                aria-current={item === current ? 'page' : undefined}
+                onClick={() => onChange(item)}
+              >
+                {item}
+              </button>
+            ),
+          )
+        : null}
       <button
-        className="btn btn-ghost btn-sm"
-        disabled={page >= pageCount}
-        onClick={() => onChange(page + 1)}
+        type="button"
+        className="page-btn page-btn-arrow"
+        disabled={current >= count}
+        onClick={() => onChange(current + 1)}
+        aria-label="下一页"
       >
         下一页
       </button>
-    </div>
+      <span className="page-total">
+        共 {total} 条 · 第 {current}/{count} 页
+      </span>
+    </nav>
   );
 };
+
+/**
+ * 列表搜索框（三端统一交互）。
+ *
+ * <p>输入即搜（页面配合 {@code useDebounced}），Enter 立即生效，右侧 × 一键清空。
+ * 不做「必须点搜索按钮」：列表页的搜索是持续性的筛选，多一次点击只会让人以为没生效。</p>
+ */
+export const SearchBar: React.FC<{
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  /** 请求进行中：只做轻提示，不禁用输入（否则打字会被吞） */
+  busy?: boolean;
+  width?: number;
+}> = ({ value, onChange, placeholder = '搜索', busy = false, width = 260 }) => (
+  <div className="search-bar" style={{ width }}>
+    <span className="search-bar-icon" aria-hidden="true">⌕</span>
+    <input
+      className="search-bar-input"
+      value={value}
+      placeholder={placeholder}
+      aria-label={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+    />
+    {busy ? <span className="spinner" aria-label="搜索中" /> : null}
+    {value ? (
+      <button type="button" className="search-bar-clear" aria-label="清空搜索" onClick={() => onChange('')}>
+        ×
+      </button>
+    ) : null}
+  </div>
+);
 
 // ---------------- 订单状态步骤条 ----------------
 

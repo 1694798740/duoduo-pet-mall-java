@@ -1456,13 +1456,235 @@ button.link:hover {
   height: 36px;
 }
 
+/* ---------- 分页（三端统一：上一页 / 数字页码 / 下一页） ---------- */
 .pagination {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  margin-top: 22px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 18px;
 }
+
+.page-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.page-btn:hover:not(:disabled):not(.is-active) {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.page-btn.is-active {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+
+.page-btn-arrow {
+  padding: 0 12px;
+}
+
+.page-gap {
+  min-width: 20px;
+  text-align: center;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.page-total {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* ---------- 列表搜索框（三端统一） ---------- */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.search-bar:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.search-bar-icon {
+  color: var(--text-3);
+  font-size: 15px;
+  line-height: 1;
+  transform: rotate(-45deg);
+}
+
+.search-bar-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+}
+
+.search-bar-input::placeholder {
+  color: var(--text-3);
+}
+
+.search-bar-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.search-bar-clear:hover {
+  color: var(--text);
+}
+
+/* 列表页工具栏：左筛选 / 右搜索，窄屏自动换行不重叠 */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* ---------- 活动余量（三端统一口径：活动自身剩余库存） ---------- */
+.sk-remain {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 96px;
+}
+
+.sk-remain-line {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.sk-remain-label {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-right: 4px;
+}
+
+.sk-remain-num {
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: var(--brand-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-remain-unit {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.sk-remain-total {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-remain-bar {
+  height: 5px;
+  min-width: 72px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  overflow: hidden;
+}
+
+.sk-remain-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff9f6b 0%, #ff7a45 100%);
+  transition: width 0.4s ease;
+}
+
+.sk-remain-sm .sk-remain-num {
+  font-size: 18px;
+}
+
+.sk-remain-md {
+  min-width: 130px;
+}
+
+.sk-remain-md .sk-remain-num {
+  font-size: 26px;
+}
+
+.sk-remain.is-empty .sk-remain-num {
+  color: var(--text-3);
+}
+
+/* 后台列表表格：列多时可横向滚动，不与操作列挤在一起 */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap > .table {
+  min-width: 720px;
+}
+
+/* 活动统计条（进行中 / 未开始 / 已结束） */
+.seckill-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.seckill-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.seckill-stat b {
+  font-size: 15px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 
 .auth-shell {
   max-width: 420px;
@@ -1480,6 +1702,10 @@ button.link:hover {
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.seckill-head-remain {
+  margin-left: auto;
 }
 
 .seckill-head h2 {
@@ -1966,4 +2192,12 @@ button.link:hover {
   object-fit: cover;
   vertical-align: -6px;
   border: 1px solid var(--border);
+}
+
+/* 后台秒杀列表：商品行紧凑排布，不再用内联 padding 撑出锯齿感 */
+.seckill-admin-skus {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
 }

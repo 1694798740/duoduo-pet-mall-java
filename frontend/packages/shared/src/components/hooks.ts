@@ -144,6 +144,22 @@ export function useLiveRefresh(
   }, [enabled, intervalMs, poll]);
 }
 
+/**
+ * 输入防抖（搜索框用）。
+ *
+ * <p>列表搜索走**服务端**筛选（分页下前端过滤只能看到当前页那几条），
+ * 每敲一个字打一次接口既费流量又会让结果乱序闪。350ms 是「打完一个词的停顿」
+ * 与「感觉不到延迟」之间的常用折中。</p>
+ */
+export function useDebounced<T>(value: T, delay = 350): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
 /** 401 单独识别：用于「需要登录」这类提示，与业务错误区分开 */
 export function isAuthError(error: unknown): boolean {
   return error instanceof ApiError && error.isAuthError;

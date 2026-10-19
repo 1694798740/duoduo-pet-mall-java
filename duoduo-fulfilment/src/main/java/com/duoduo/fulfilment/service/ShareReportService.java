@@ -146,12 +146,23 @@ public class ShareReportService {
     // ---------------- 运营侧 ----------------
 
     /** 举报列表（可按状态过滤；默认全部，按提交时间倒序） */
-    public PageResult<ReportView> listForAdmin(String status, int page, int pageSize) {
+    /**
+     * 全平台举报列表。
+     *
+     * @param keyword 举报理由 / 被举报内容 ID（包含匹配）。运营翻旧案时手里通常只有
+     *                「上次那条说虐猫的」这类记忆碎片，没有单号可抄。
+     */
+    public PageResult<ReportView> listForAdmin(String status, String keyword, int page, int pageSize) {
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
         LambdaQueryWrapper<ShareReportEntity> wrapper = new LambdaQueryWrapper<>();
         if (status != null && !status.isBlank()) {
             wrapper.eq(ShareReportEntity::getStatus, status.trim().toUpperCase());
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.and(w -> w.like(ShareReportEntity::getReason, keyword.trim())
+                    .or().apply("CAST(target_id AS CHAR) LIKE {0}", like));
         }
         wrapper.orderByDesc(ShareReportEntity::getCreatedAt).orderByDesc(ShareReportEntity::getId);
         Page<ShareReportEntity> result = reportMapper.selectPage(new Page<>(pageNo, size), wrapper);
@@ -162,6 +173,11 @@ public class ShareReportService {
                 .map(r -> toView(r, shares, comments))
                 .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<ReportView> listForAdmin(String status, int page, int pageSize) {
+        return listForAdmin(status, null, page, pageSize);
     }
 
     /**

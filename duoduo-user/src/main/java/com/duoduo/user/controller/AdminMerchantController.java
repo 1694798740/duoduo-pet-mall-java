@@ -49,9 +49,10 @@ public class AdminMerchantController {
     public ApiResponse<PageResult<ApplicationSummary>> page(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize,
-            @RequestParam(required = false) String status) {
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword) {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(onboardingService.adminPage(page, pageSize, status));
+        return ApiResponse.ok(onboardingService.adminPage(page, pageSize, status, keyword));
     }
 
     /**
@@ -112,10 +113,11 @@ public class AdminMerchantController {
     @GetMapping("/audit-sla/samples")
     public ApiResponse<PageResult<com.duoduo.user.dto.MerchantAuditSlaDtos.AuditSampleView>> auditSamples(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(sampleService.pageSamples(status, page, pageSize));
+        return ApiResponse.ok(sampleService.pageSamples(status, keyword, page, pageSize));
     }
 
     /** 复核一条入驻抽查任务：PASS / REJECT（判违规必须填原因；判违规 = 直接停业 + 联动下架） */

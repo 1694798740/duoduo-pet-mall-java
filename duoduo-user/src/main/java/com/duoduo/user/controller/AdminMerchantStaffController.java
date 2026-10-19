@@ -35,9 +35,10 @@ public class AdminMerchantStaffController {
     @GetMapping
     public ApiResponse<PageResult<StaffAdminView>> page(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String keyword) {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(staffService.adminPage(page, pageSize));
+        return ApiResponse.ok(staffService.adminPage(page, pageSize, keyword));
     }
 
     @PostMapping("/{memberId}/disable")

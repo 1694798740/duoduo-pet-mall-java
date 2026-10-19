@@ -340,13 +340,25 @@ public class MerchantOnboardingService {
 
     // ---------------- 运营侧（E11 审核台的后端） ----------------
 
-    public PageResult<ApplicationSummary> adminPage(int page, int pageSize, String statusFilter) {
-        Page<MerchantEntity> p = merchantMapper.selectPage(new Page<>(page, pageSize),
-                new LambdaQueryWrapper<MerchantEntity>()
-                        .eq(statusFilter != null && !statusFilter.isBlank(),
-                                MerchantEntity::getStatus, statusFilter)
-                        .orderByDesc(MerchantEntity::getAppliedAt)
-                        .orderByDesc(MerchantEntity::getCreatedAt));
+    /**
+     * 入驻审核台列表。
+     *
+     * @param keyword 店铺名 / 店主手机号 / 店主姓名（包含匹配）。
+     *                运营接到商家电话时手里只有「店名」或「手机号」，
+     *                让他自己去几十页里翻是纯粹的浪费。
+     */
+    public PageResult<ApplicationSummary> adminPage(int page, int pageSize, String statusFilter, String keyword) {
+        LambdaQueryWrapper<MerchantEntity> wrapper = new LambdaQueryWrapper<MerchantEntity>()
+                .eq(statusFilter != null && !statusFilter.isBlank(),
+                        MerchantEntity::getStatus, statusFilter);
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.apply("(name LIKE {0} OR owner_user_id IN "
+                    + "(SELECT id FROM t_user WHERE phone LIKE {1} OR real_name LIKE {1}))", like, like);
+        }
+        wrapper.orderByDesc(MerchantEntity::getAppliedAt)
+                .orderByDesc(MerchantEntity::getCreatedAt);
+        Page<MerchantEntity> p = merchantMapper.selectPage(new Page<>(page, pageSize), wrapper);
         Map<Long, String> phones = loadOwnerPhones(p.getRecords());
         LocalDateTime current = now();
         List<ApplicationSummary> items = p.getRecords().stream()
@@ -362,6 +374,11 @@ public class MerchantOnboardingService {
                         m.getSuspendedReason()))
                 .toList();
         return PageResult.of(items, p.getTotal(), page, pageSize);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<ApplicationSummary> adminPage(int page, int pageSize, String statusFilter) {
+        return adminPage(page, pageSize, statusFilter, null);
     }
 
     public ApplicationView adminDetail(Long merchantId) {
@@ -876,7 +893,15 @@ public class MerchantOnboardingService {
         if (merchants.isEmpty()) {
             return Map.of();
         }
-        List<Long> ids = merchants.stream().map(MerchantEntity::getOwnerUserId).distinct().toList();
+        List<Long> ids = merchants.stream()
+                .map(MerchantEntity::getOwnerUserId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        // 空集合不能进 selectBatchIds：会拼出 `IN ( )`，JSqlParser 直接解析失败（接口 500）
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
         return userMapper.selectBatchIds(ids).stream()
                 .collect(Collectors.toMap(UserEntity::getId,
                         u -> u.getPhone() == null ? "" : mask(u.getPhone())));

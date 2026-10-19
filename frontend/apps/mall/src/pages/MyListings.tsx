@@ -22,8 +22,8 @@ import { Link } from 'react-router-dom';
 import { listingApi } from '@duoduo/api-sdk/endpoints';
 import type { ListingMineView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, Modal, formatPrice, useToast } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { Alert, Empty, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 
 const PAGE_SIZE = 10;
 
@@ -53,15 +53,17 @@ export const MyListingsPage: React.FC = () => {
   const [tick, setTick] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ListingMineView | null>(null);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const params = useMemo(() => FILTERS.find((f) => f.key === filter)?.params ?? {}, [filter]);
 
   const fetcher = useCallback(
-    () => listingApi.mine({ ...params, page, pageSize: PAGE_SIZE }),
+    () => listingApi.mine({ ...params, keyword: keyword || undefined, page, pageSize: PAGE_SIZE }),
     // 依赖只放 primitive：params 每次渲染都是新对象，放进去会变成每轮都重发请求
-    [params.status, params.auditStatus, page, tick],
+    [params.status, params.auditStatus, keyword, page, tick],
   );
-  const { data, loading, error } = useAsync(fetcher, true, [params.status, params.auditStatus, page, tick]);
+  const { data, loading, error } = useAsync(fetcher, true, [params.status, params.auditStatus, keyword, page, tick]);
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -108,13 +110,35 @@ export const MyListingsPage: React.FC = () => {
         </Link>
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜标题、品种或城市"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的闲置 {total} 件</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading && !data ? <LoadingBlock text="正在加载你的闲置…" /> : null}
 
       {!loading && items.length === 0 ? (
         <Empty
           icon="🏷️"
-          title={filter === 'ALL' ? '还没有发布过闲置' : '这个分类下没有闲置'}
+          title={
+            keywordInput.trim()
+              ? `没有匹配「${keywordInput.trim()}」的闲置`
+              : filter === 'ALL'
+                ? '还没有发布过闲置'
+                : '这个分类下没有闲置'
+          }
           desc="把闲置的猫爬架、旧猫包挂出来，让它到需要的人手里去"
           action={
             <Link className="btn btn-primary" to="/listings/new">
@@ -209,16 +233,8 @@ export const MyListingsPage: React.FC = () => {
         })}
       </div>
 
-      {pages > 1 ? (
-        <div className="row" style={{ gap: 10, justifyContent: 'center', marginTop: 16 }}>
-          <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-            上一页
-          </button>
-          <span className="small muted">{page} / {pages}</span>
-          <button className="btn btn-ghost btn-sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-            下一页
-          </button>
-        </div>
+      {data ? (
+        <Pagination page={page} pageCount={pages} total={total} onChange={setPage} />
       ) : null}
 
       <Modal

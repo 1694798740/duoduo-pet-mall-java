@@ -8,8 +8,10 @@
  *  1. 「进行中 / 未开始 / 已结束」（phase）与「上架 / 下架」（enabled）是<b>两个正交维度</b>：
  *     phase 由当前时间与 start_at/end_at 比较得出，enabled 是运营开关。
  *     一个「上架 + 已结束」的活动是完全正常的（活动过期不必手动置状态）。
- *  2. 服务端存的是 **UTC 挂钟**（容器时区全 UTC），所以时间输入框里的值**按 UTC 解读**，
- *     不是北京时间。页面上明确标注，避免「填了 20:00 却 12:00 就开抢」。
+ *  2. 服务端存的是 **UTC**，但页面上的时间**一律按北京时间**录入与展示
+ *     （提交时换算成带 `+08:00` 的 ISO 串）。页面上明确标注，避免「填了 20:00 却 12:00 就开抢」。
+ *     注：这条口径在 2026-10-19（三十七）改过一次 —— 更早的页面是让运营**直接填 UTC**，
+ *     但运营不会去看时区说明，实际上当天就出现了「填 20:00、12:00 开抢」。
  *
  * 另：列表**会显示已下架的活动**（后端 /api/admin/seckill/activities 全量下发）——
  * 否则「下架」就成了不可逆操作，活动消失后没有任何入口能把它放回来。
@@ -30,9 +32,10 @@ import type {
   SkuView,
 } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { SeckillRemainStat } from '@duoduo/shared/components/seckill';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -74,6 +77,28 @@ const utcToBj = (iso: string | null | undefined): string => {
 };
 
 /**
+ * 列表里的北京时间展示串（`YYYY-MM-DD HH:mm`）。
+ *
+ * <p>★ 2026-10-19：此前直接复用 `utcToBj` 的输出，于是表格里出现了
+ * `2026-10-19T20:00` —— `datetime-local` 输入框要求的 `T` 混进了只读展示，
+ * 用户看到的就是一串「机器格式」。展示与录入是两种用途，各用各的格式化函数。</p>
+ */
+const bjText = (iso: string | null | undefined): string => utcToBj(iso).replace('T', ' ');
+
+/** 一场活动的余量 = 该活动**所有 SKU 行的配额剩余之和**（不是商品 SKU 库存） */
+const remainOf = (item: SeckillActivityView): { available: number; total: number } => {
+  let available = 0;
+  let total = 0;
+  for (const s of item.skus ?? []) {
+    available += Math.max(0, s.availableStock ?? 0);
+    total += Math.max(0, s.totalStock ?? 0);
+  }
+  return { available, total };
+};
+
+const PAGE_SIZE = 10;
+
+/**
  * 北京时间 datetime-local 值 → **带 +08:00 偏移的 ISO 串**（如 `2026-10-19T20:00:00+08:00`）。
  *
  * <p>★ 2026-10-19 修：这里以前返回的是**去掉时区的 UTC 挂钟串**（`2026-10-19T12:00:00`），
@@ -109,6 +134,9 @@ export const AdminSeckillPage: React.FC = () => {
   const [rows, setRows] = useState<RowState[]>([emptyRow()]);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
+  const [page, setPage] = useState(1);
 
   // ---- 编辑（R74）：只改标题与时间；商品 / 价格 / 配额刻意不开（会让配置与已成交事实对不上） ----
   const [editing, setEditing] = useState<SeckillActivityView | null>(null);
@@ -386,91 +414,138 @@ export const AdminSeckillPage: React.FC = () => {
     }
   };
 
+  // ---- 列表侧：搜索 + 分页（接口一次返回全量，故在本地切分） ----
+  const kw = keyword.toLowerCase();
+  const filtered = kw ? items.filter((i) => i.title.toLowerCase().includes(kw)) : items;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  const ongoing = items.filter((i) => i.phase === 'ONGOING').length;
+  const upcoming = items.filter((i) => i.phase === 'UPCOMING').length;
+  const ended = items.filter((i) => i.phase === 'ENDED').length;
+
   return (
     <div>
-      <h2 className="section-title">平台管理后台 · 秒杀活动</h2>
+      <div className="row-between row-wrap" style={{ gap: 10, marginBottom: 8 }}>
+        <h2 className="section-title" style={{ margin: 0 }}>平台管理后台 · 秒杀活动</h2>
+        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建活动</button>
+      </div>
       <AdminTabs />
 
-      <div className="row-between row-wrap" style={{ marginBottom: 14 }}>
-        <span className="small muted">
-          共 {items.length} 场活动（含已下架）　·　时间均为 <b>北京时间</b>（服务端按 UTC 存储，页面已自动换算）
-        </span>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建活动</button>
+      {/*
+       * 布局修复（2026-10-19）：原来「共 N 场活动 · 时间均为北京时间（服务端按 UTC 存储…）」
+       * 这行长文案和「+ 新建活动」按钮挤在同一行，窄屏直接重叠。现在拆成
+       * ① 标题行（右侧按钮）② 统计条 ③ 工具栏（左搜索 / 右口径说明），三段各自换行。
+       */}
+      <div className="seckill-stats">
+        <span className="seckill-stat">全部 <b>{items.length}</b></span>
+        <span className="seckill-stat">进行中 <b style={{ color: 'var(--brand-dark)' }}>{ongoing}</b></span>
+        <span className="seckill-stat">未开始 <b>{upcoming}</b></span>
+        <span className="seckill-stat">已结束 <b>{ended}</b></span>
+        <span className="seckill-stat">已下架 <b>{items.filter((i) => !i.enabled).length}</b></span>
+      </div>
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          placeholder="搜活动标题"
+          width={260}
+        />
+        <span className="small muted">时间均为北京时间 · 含已下架活动</span>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
       {/* 创建弹窗的校验错误渲染在弹窗内部（见下），这里不再重复一份 */}
 
-      {items.length === 0 ? (
-        <Empty title="还没有秒杀活动" desc="点右上角「新建活动」创建第一场" />
+      {filtered.length === 0 ? (
+        <Empty
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的活动` : '还没有秒杀活动'}
+          desc={keywordInput.trim() ? '换个关键词试试' : '点右上角「新建活动」创建第一场'}
+        />
       ) : (
         <div className="card card-pad">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>活动</th>
-                <th>时间（北京时间）</th>
-                <th>阶段</th>
-                <th>开关</th>
-                <th>秒杀商品与余量</th>
-                <th style={{ width: 200 }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => {
-                const phase = PHASE_LABELS[item.phase] ?? { text: item.phase, cls: 'badge badge-muted' };
-                return (
-                  <tr key={item.id}>
-                    <td>
-                      <div>{item.title}</div>
-                      <div className="small muted mono">{item.id}</div>
-                    </td>
-                    <td className="small">
-                      <div>{utcToBj(item.startAt)}</div>
-                      <div className="muted">至 {utcToBj(item.endAt)}</div>
-                    </td>
-                    <td><span className={phase.cls}>{phase.text}</span></td>
-                    <td>
-                      {item.enabled
-                        ? <span className="tag tag-success">已上架</span>
-                        : <span className="tag">已下架</span>}
-                    </td>
-                    <td>
-                      {(item.skus ?? []).length === 0 ? (
-                        <span className="small muted">无</span>
-                      ) : (
-                        <ul style={{ margin: 0, paddingLeft: 16 }}>
-                          {item.skus.map((s) => (
-                            <li key={s.skuId} className="small">
-                              <span>{s.spuTitle}</span>
-                              {s.specText ? <span className="muted">　{s.specText}</span> : null}
-                              <span className="muted">　{formatPrice(s.seckillPrice)}</span>
-                              <span className="muted">
-                                　余 {s.availableStock}/{s.totalStock}　限购 {s.perLimit}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </td>
-                    <td>
-                      <div className="row row-wrap" style={{ gap: 6 }}>
-                        {item.enabled ? (
-                          <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, false)}>下架</button>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>活动</th>
+                  <th>时间（北京时间）</th>
+                  <th>阶段 / 开关</th>
+                  {/*
+                   * 「余量」独立成列并加粗数字：它是运营最关心的一个数。
+                   * 口径写在列头 title 上，避免有人把它理解成商品 SKU 库存 ——
+                   * 两者是两个数（活动配额 50、SKU 库存 500 很常见）。
+                   */}
+                  <th title="活动余量 = 本场活动配额的剩余件数（不是商品 SKU 库存）">活动余量</th>
+                  <th>秒杀商品</th>
+                  <th style={{ width: 190 }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((item) => {
+                  const phase = PHASE_LABELS[item.phase] ?? { text: item.phase, cls: 'tag' };
+                  const remain = remainOf(item);
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        {/* 活动 ID 刻意不展示：19 位数字对运营没有任何决策价值，只会挤掉标题 */}
+                        <div style={{ fontWeight: 600 }}>{item.title}</div>
+                      </td>
+                      <td className="small">
+                        <div>{bjText(item.startAt)}</div>
+                        <div className="muted">至 {bjText(item.endAt)}</div>
+                      </td>
+                      <td>
+                        <div className="row row-wrap" style={{ gap: 6 }}>
+                          <span className={phase.cls}>{phase.text}</span>
+                          {item.enabled
+                            ? <span className="tag tag-success">已上架</span>
+                            : <span className="tag">已下架</span>}
+                        </div>
+                      </td>
+                      <td>
+                        <SeckillRemainStat available={remain.available} total={remain.total} />
+                      </td>
+                      <td>
+                        {(item.skus ?? []).length === 0 ? (
+                          <span className="small muted">无</span>
                         ) : (
-                          <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, true)}>上架</button>
+                          <ul className="seckill-admin-skus">
+                            {item.skus.map((s) => (
+                              <li key={s.skuId} className="small">
+                                <span>{s.spuTitle}</span>
+                                {s.specText ? <span className="muted">　{s.specText}</span> : null}
+                                <span className="muted">　{formatPrice(s.seckillPrice)}</span>
+                                <span className="muted">　限购 {s.perLimit}</span>
+                              </li>
+                            ))}
+                          </ul>
                         )}
-                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>编辑</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => { setDeleteError(null); setDeleting(item); }}>
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td>
+                        <div className="row row-wrap" style={{ gap: 6 }}>
+                          {item.enabled ? (
+                            <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, false)}>下架</button>
+                          ) : (
+                            <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, true)}>上架</button>
+                          )}
+                          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>编辑</button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => { setDeleteError(null); setDeleting(item); }}>
+                            删除
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={current} pageCount={pageCount} total={filtered.length} onChange={setPage} />
         </div>
       )}
 
@@ -692,7 +767,6 @@ export const AdminSeckillPage: React.FC = () => {
       >
         {editing ? (
           <>
-            <p className="small muted mono">活动 ID：{editing.id}</p>
             <Field label="活动标题" required>
               <input
                 className="input"
@@ -752,7 +826,7 @@ export const AdminSeckillPage: React.FC = () => {
         {deleting ? (
           <>
             <p>
-              即将删除活动 <b>{deleting.title}</b>（<span className="mono small">{deleting.id}</span>）。
+              即将删除活动 <b>{deleting.title}</b>。
             </p>
             <p className="small muted">
               只能删除<b>没有未关闭订单</b>的活动（自测残留、建错的草稿；历史上被下过单但订单都已关闭的也算）。

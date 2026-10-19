@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { followApi } from '@duoduo/api-sdk/endpoints';
 import type { FollowView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Pagination, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 
 const PAGE_SIZE = 20;
@@ -141,16 +141,8 @@ export const FollowPage: React.FC = () => {
         ))}
       </div>
 
-      {pages > 1 ? (
-        <div className="row" style={{ gap: 10, justifyContent: 'center', marginTop: 16 }}>
-          <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-            上一页
-          </button>
-          <span className="small muted">{page} / {pages}</span>
-          <button className="btn btn-ghost btn-sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-            下一页
-          </button>
-        </div>
+      {data ? (
+        <Pagination page={page} pageCount={pages} total={total} onChange={setPage} />
       ) : null}
     </div>
   );

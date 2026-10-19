@@ -36,9 +36,10 @@ public class AdminListingController {
     @GetMapping
     public ApiResponse<PageResult<ListingAuditView>> list(
             @RequestParam(required = false) String auditStatus,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(listingService.listForAudit(auditStatus, page, pageSize));
+        return ApiResponse.ok(listingService.listForAudit(auditStatus, keyword, page, pageSize));
     }
 
     @PostMapping("/{id}/audit")

@@ -19,12 +19,13 @@ import React, { useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { sellerApi } from '@duoduo/api-sdk/endpoints';
 import type { SellerWalletView, SettlementBill, SettlementPage } from '@duoduo/api-sdk/types';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import {
   Alert,
   Empty,
   LoadingBlock,
   Pagination,
+  SearchBar,
   formatDate,
   formatPrice,
 } from '@duoduo/shared/components/ui';
@@ -50,16 +51,18 @@ export const SellerSettlementsPage: React.FC = () => {
 
   const status = params.get('status') ?? '';
   const page = num(params.get('page')) ?? 1;
+  const rawKeyword = params.get('q') ?? '';
+  const keyword = useDebounced(rawKeyword.trim(), 350);
   const allowed = canAccessSellerConsole(user?.role);
 
   const fetcher = useCallback(
-    () => sellerApi.settlements({ status: status || undefined, page, pageSize: 20 }),
-    [status, page],
+    () => sellerApi.settlements({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 20 }),
+    [status, keyword, page],
   );
   const { data, loading, error, reload } = useAsync<SettlementPage>(
     fetcher,
     allowed,
-    [allowed, status, page],
+    [allowed, status, keyword, page],
   );
 
   // 钱包与账单各自独立请求：它们比明细台账重要得多，
@@ -232,6 +235,25 @@ export const SellerSettlementsPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={rawKeyword}
+          onChange={(v) => {
+            const next = new URLSearchParams(params);
+            if (v) next.set('q', v);
+            else next.delete('q');
+            next.delete('page');
+            setParams(next, { replace: true });
+          }}
+          busy={loading && Boolean(rawKeyword.trim())}
+          placeholder="搜订单号"
+          width={280}
+        />
+        {rawKeyword.trim() ? (
+          <span className="small muted">匹配「{rawKeyword.trim()}」的结算 {data ? data.total : 0} 笔</span>
+        ) : null}
+      </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>
         {TABS.map((tab) => (

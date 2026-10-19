@@ -511,7 +511,7 @@ public class ListingService {
      * 一条实际不可见的闲置会一头雾水 —— 审核维度过滤就是给「审核中 / 审核失败」
      * 分类标签用的。
      */
-    public PageResult<ListingMineView> listMine(String status, String auditStatus, int page, int pageSize) {
+    public PageResult<ListingMineView> listMine(String status, String auditStatus, String keyword, int page, int pageSize) {
         LoginUser user = UserContext.require();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -537,12 +537,25 @@ public class ListingService {
             }
             wrapper.eq(ListingEntity::getAuditStatus, normalized);
         }
+        // 关键字（2026-10-19）：标题 / 品种 / 城市 —— 卖家找自己的货时说的是
+        // 「那台猫爬架」「布偶」「上海」，都不会去记 19 位闲置 ID。
+        String kw = trimToNull(keyword);
+        if (kw != null) {
+            wrapper.and(w -> w.like(ListingEntity::getTitle, kw)
+                    .or().like(ListingEntity::getBreed, kw)
+                    .or().like(ListingEntity::getCity, kw));
+        }
         // 待审核的排前面：卖家最需要处理的就是「还没通过」的那些
         wrapper.orderByDesc(ListingEntity::getCreatedAt).orderByDesc(ListingEntity::getId);
 
         Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size), wrapper);
         List<ListingMineView> views = result.getRecords().stream().map(this::toMineView).toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<ListingMineView> listMine(String status, String auditStatus, int page, int pageSize) {
+        return listMine(status, auditStatus, null, page, pageSize);
     }
 
     /**
@@ -922,7 +935,7 @@ public class ListingService {
     private static final String AUDIT_REJECTED = "REJECTED";
 
     /** 运营侧审核列表：按审核状态过滤，含未审核通过的内容（公开接口里这些是不可见的） */
-    public PageResult<ListingAuditView> listForAudit(String auditStatus, int page, int pageSize) {
+    public PageResult<ListingAuditView> listForAudit(String auditStatus, String keyword, int page, int pageSize) {
         OperatorGuard.requireOperator();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -933,12 +946,24 @@ public class ListingService {
         if (auditStatus != null && !auditStatus.isBlank()) {
             wrapper.eq(ListingEntity::getAuditStatus, auditStatus.trim().toUpperCase());
         }
+        // 关键字：标题 / 品种 / 城市（与「我的闲置」同口径，运营与卖家说的是同一批词）
+        String kw = trimToNull(keyword);
+        if (kw != null) {
+            wrapper.and(w -> w.like(ListingEntity::getTitle, kw)
+                    .or().like(ListingEntity::getBreed, kw)
+                    .or().like(ListingEntity::getCity, kw));
+        }
         wrapper.orderByAsc(ListingEntity::getAuditStatus)
                 .orderByDesc(ListingEntity::getCreatedAt)
                 .orderByDesc(ListingEntity::getId);
         Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size), wrapper);
         List<ListingAuditView> views = result.getRecords().stream().map(this::toAuditView).toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<ListingAuditView> listForAudit(String auditStatus, int page, int pageSize) {
+        return listForAudit(auditStatus, null, page, pageSize);
     }
 
     /**

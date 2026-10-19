@@ -3,16 +3,20 @@
  *
  * <p>准入 OWNER-only（后端 403 兜底）；店员打开本页会看到"店员账号不可管理成员"。
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { merchantStaffApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { StaffView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, formatDate, useToast,
+  Alert, Empty, Field, LoadingBlock, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { SellerDenied } from './shared';
+
+/** 本店成员人数很少（个位数到几十），接口一次性返回全量 —— 因此搜索与分页在本地做。
+ *  与服务端分页的页面写法一致（同样的 SearchBar / Pagination），只是数据源不同。 */
+const PAGE_SIZE = 10;
 
 const statusTagClass = (s: string) =>
   s === 'ACTIVE' ? 'tag' : s === 'DISABLED' ? 'tag tag-danger' : 'tag';
@@ -25,12 +29,32 @@ export const SellerStaffPage: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
+  const [page, setPage] = useState(1);
 
   const { data, loading, error: loadError, reload } = useAsync(
     useCallback(() => merchantStaffApi.list(), []),
     isOwner,
     [],
   );
+
+  // ★ 派生计算必须写在提前 return **之前**：hooks 不能条件调用，
+  // 否则 isOwner 从 false 变 true 时 hooks 数量变化，React 会直接抛错。
+  const all = data ?? [];
+  const filtered = useMemo(() => {
+    if (!keyword) return all;
+    const kw = keyword.toLowerCase();
+    return all.filter(
+      (m) =>
+        (m.nickname ?? '').toLowerCase().includes(kw)
+        || (m.phoneMasked ?? '').includes(kw)
+        || (m.role === 'OWNER' ? '店主' : '店员').includes(kw),
+    );
+  }, [all, keyword]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const rows = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
   if (!isOwner) return <SellerDenied reason="店员账号不可管理成员，请联系店主" />;
 
@@ -102,12 +126,32 @@ export const SellerStaffPage: React.FC = () => {
         </div>
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜昵称、手机号或身份"
+          width={280}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的成员 {filtered.length} 人</span>
+        ) : null}
+      </div>
+
       {loadError ? <Alert kind="error">{loadError}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载成员…" /> : null}
-      {!loading && data && data.length === 0 ? (
-        <Empty icon="👥" title="还没有成员" desc="先邀请一位店员吧" />
+      {!loading && filtered.length === 0 ? (
+        <Empty
+          icon="👥"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的成员` : '还没有成员'}
+          desc={keywordInput.trim() ? '换个昵称或手机号试试' : '先邀请一位店员吧'}
+        />
       ) : null}
-      {!loading && data && data.length > 0 ? (
+      {!loading && filtered.length > 0 ? (
         <div className="card card-pad">
           <table className="table">
             <thead>
@@ -121,7 +165,7 @@ export const SellerStaffPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {data.map((m) => (
+              {rows.map((m) => (
                 <tr key={m.memberId}>
                   <td>{m.nickname}</td>
                   <td>{m.phoneMasked}</td>
@@ -145,6 +189,7 @@ export const SellerStaffPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          <Pagination page={current} pageCount={pageCount} total={filtered.length} onChange={setPage} />
         </div>
       ) : null}
     </div>

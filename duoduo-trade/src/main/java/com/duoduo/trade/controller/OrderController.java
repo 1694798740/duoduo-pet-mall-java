@@ -122,14 +122,21 @@ public class OrderController {
         return service;
     }
 
-    /** 我的订单列表；status 可按状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / CLOSED） */
+    /**
+     * 我的订单列表。
+     *
+     * @param status    状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / CLOSED）
+     * @param orderType NORMAL / SECKILL / C2C
+     * @param keyword   订单号或商品标题（包含匹配；服务端筛，前端不做「当前页过滤」）
+     */
     @GetMapping
     public ApiResponse<PageResult<OrderView>> list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String orderType,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(orderService.listMine(status, orderType, page, pageSize));
+        return ApiResponse.ok(orderService.listMine(status, orderType, keyword, page, pageSize));
     }
 
     /**

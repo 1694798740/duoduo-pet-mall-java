@@ -62,13 +62,19 @@ public class SellerController {
         return ApiResponse.ok(sellerService.analytics());
     }
 
-    /** 卖出的订单列表；status 可按状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED） */
+    /**
+     * 卖出的订单列表。
+     *
+     * @param status  状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED）
+     * @param keyword 订单号或商品标题（包含匹配）
+     */
     @GetMapping("/orders")
     public ApiResponse<PageResult<OrderView>> listOrders(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sellerService.listOrders(status, page, pageSize));
+        return ApiResponse.ok(sellerService.listOrders(status, keyword, page, pageSize));
     }
 
     /** 订单详情（卖家视角） */
@@ -106,14 +112,15 @@ public class SellerController {
      * 我的资金托管单（对账），附全量汇总。
      *
      * <p>status 可选 CUSTODY（托管中）/ RELEASED（已放款）/ REFUNDED（已退回买家）；
-     * 汇总不受该过滤影响，理由见服务层注释。
+     * keyword 按订单号过滤；两者都<b>不影响</b>汇总数字，理由见服务层注释。
      */
     @GetMapping("/settlements")
     public ApiResponse<SettlementPage> settlements(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sellerService.settlements(status, page, pageSize));
+        return ApiResponse.ok(sellerService.settlements(status, keyword, page, pageSize));
     }
 
     /**

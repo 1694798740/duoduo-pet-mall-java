@@ -154,7 +154,13 @@ public class MerchantAuditSampleService {
 
     // ==================== 二、运营侧：队列与复核 ====================
 
-    public PageResult<AuditSampleView> pageSamples(String status, int page, int pageSize) {
+    /**
+     * 入驻抽查列表。
+     *
+     * @param keyword 店铺名 / 抽查单号（包含匹配）。抽查行不存店名快照，
+     *                只能按 bizId 反查 t_merchant —— 参数化子查询，不拼串。
+     */
+    public PageResult<AuditSampleView> pageSamples(String status, String keyword, int page, int pageSize) {
         OperatorGuard.requireOperator();
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
@@ -163,6 +169,11 @@ public class MerchantAuditSampleService {
         LambdaQueryWrapper<AuditSampleEntity> wrapper = new LambdaQueryWrapper<>();
         if (target != null) {
             wrapper.eq(AuditSampleEntity::getStatus, target);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.apply("(biz_id IN (SELECT id FROM t_merchant WHERE name LIKE {0}) OR CAST(id AS CHAR) LIKE {1})",
+                    like, like);
         }
         if (STATUS_PENDING.equals(target) || target == null) {
             wrapper.orderByAsc(AuditSampleEntity::getCreatedAt);
@@ -173,6 +184,11 @@ public class MerchantAuditSampleService {
 
         Page<AuditSampleEntity> result = sampleMapper.selectPage(new Page<>(p, size), wrapper);
         return PageResult.of(toViews(result.getRecords()), result.getTotal(), p, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AuditSampleView> pageSamples(String status, int page, int pageSize) {
+        return pageSamples(status, null, page, pageSize);
     }
 
     /**

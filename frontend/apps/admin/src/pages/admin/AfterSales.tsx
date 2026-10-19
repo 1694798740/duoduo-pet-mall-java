@@ -18,9 +18,9 @@ import { adminApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { AfterSaleArbitrateResult, AfterSaleView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, formatDate, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -35,6 +35,8 @@ export const AdminAfterSalesPage: React.FC = () => {
 
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [target, setTarget] = useState<AfterSaleView | null>(null);
   const [result, setResult] = useState<AfterSaleArbitrateResult>('REJECT');
@@ -44,11 +46,11 @@ export const AdminAfterSalesPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminApi.afterSales({ status: status || undefined, page, pageSize: 10 }),
-      [status, page],
+      () => adminApi.afterSales({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     operator,
-    [status, page],
+    [status, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -106,11 +108,31 @@ export const AdminAfterSalesPage: React.FC = () => {
         ))}
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜售后单号或订单号"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的售后 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载售后单…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <Empty icon="⚖️" title="没有符合条件的售后单" desc="买家提起售后、或卖家拒绝后会出现在这里" />
+        <Empty
+          icon="⚖️"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的售后` : '没有符合条件的售后单'}
+          desc="买家提起售后、或卖家拒绝后会出现在这里"
+        />
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
@@ -156,7 +178,7 @@ export const AdminAfterSalesPage: React.FC = () => {
         </div>
       ) : null}
 
-      {data && data.total > data.pageSize ? (
+      {data ? (
         <Pagination
           page={page}
           pageCount={Math.max(1, data.pageCount)}

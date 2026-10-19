@@ -30,7 +30,9 @@ import {
   formatServerTime,
   useToast,
 } from '@duoduo/shared/components/ui';
-import { SeckillCountdown, SeckillPrice, SeckillProgress } from '@duoduo/shared/components/seckill';
+import {
+  SeckillCountdown, SeckillPrice, SeckillProgress, SeckillRemainStat,
+} from '@duoduo/shared/components/seckill';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 const phaseTone = (phase: string): string => {
@@ -137,7 +139,9 @@ export const SeckillPage: React.FC = () => {
     <div className="page">
       <div className="page-head">
         <h1>限时秒杀</h1>
-        <p className="page-sub">手快有手慢无 · 余量以服务端实时判定为准</p>
+        <p className="page-sub">
+          手快有手慢无 · 「余量」为本场活动剩余库存（非商品总库存），最终以服务端判定为准
+        </p>
         <button
           type="button"
           className="link-btn"
@@ -152,13 +156,29 @@ export const SeckillPage: React.FC = () => {
       {activities.length === 0 ? (
         <Empty title="暂无秒杀活动" desc="暂时没有进行中的秒杀活动，过阵子再来看看～" />
       ) : (
-        activities.map((act) => (
+        activities.map((act) => {
+          /*
+           * 活动余量 = 本场活动**所有 SKU 行的配额剩余之和**（不是商品 SKU 库存）。
+           * 放在活动头部而不是只放在每个商品行上：用户先判断「这场还值不值得看」，
+           * 再决定点哪个商品；只在行内显示「仅剩 2 件」时，得滑到下面才知道。
+           */
+          const remain = act.skus.reduce(
+            (acc, s) => ({
+              available: acc.available + Math.max(0, s.availableStock ?? 0),
+              total: acc.total + Math.max(0, s.totalStock ?? 0),
+            }),
+            { available: 0, total: 0 },
+          );
+          return (
           <section key={act.id} className="card seckill-card">
             <header className="seckill-head">
               <h2>{act.title}</h2>
               <span className={phaseTone(act.phase)}>{phaseLabel(act.phase)}</span>
               <span className="muted">
-                {formatServerTime(act.startAt)} ~ {formatServerTime(act.endAt)}
+                {formatServerTime(act.startAt)} 至 {formatServerTime(act.endAt)}
+              </span>
+              <span className="seckill-head-remain">
+                <SeckillRemainStat available={remain.available} total={remain.total} size="md" showLabel />
               </span>
             </header>
             {act.skus.length === 0 ? (
@@ -235,7 +255,8 @@ export const SeckillPage: React.FC = () => {
               </ul>
             )}
           </section>
-        ))
+          );
+        })
       )}
     </div>
   );

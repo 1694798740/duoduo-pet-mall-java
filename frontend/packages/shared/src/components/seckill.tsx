@@ -116,8 +116,48 @@ export const SeckillProgress: React.FC<{ available: number; total: number }> = (
         <span className="sk-progress-fill" style={{ width: `${percent}%` }} />
       </div>
       <span className="sk-progress-text">
-        {available <= 0 ? '已抢完' : `仅剩 ${available} 件`}
+        {available <= 0 ? '已抢完' : `剩 ${available} 件`}
       </span>
+    </div>
+  );
+};
+
+/**
+ * **活动余量**（2026-10-19 统一口径）。
+ *
+ * <p>「余量」全站只有一个含义：<b>这场秒杀活动自身还剩多少件可抢</b>，
+ * 即活动配额的剩余（`totalStock - 已下单件数`），**不是商品的 SKU 库存**。
+ * 两者完全不同：SKU 库存 500 的活动，配额可能只配了 50；把 SKU 库存当余量展示，
+ * 用户会以为「还剩 500 件」，点进去却提示抢完了。</p>
+ *
+ * <p>用户端、商家端、平台后台共用本组件，避免三处各算一遍、各写一种样式。
+ * 数字放在最前并加粗，是因为运营在后台列表里扫一眼要看到的就是它。</p>
+ */
+export const SeckillRemainStat: React.FC<{
+  available: number;
+  total: number;
+  /** sm = 表格行内；md = 活动卡片头部 */
+  size?: 'sm' | 'md';
+  /** 是否显示「活动余量」四个字（表格列头已有时可省） */
+  showLabel?: boolean;
+}> = ({ available, total, size = 'sm', showLabel = false }) => {
+  const safeTotal = Math.max(0, total);
+  const safeAvailable = Math.max(0, Math.min(available, safeTotal));
+  const percent = safeTotal > 0 ? Math.round((safeAvailable / safeTotal) * 100) : 0;
+  return (
+    <div
+      className={`sk-remain sk-remain-${size}${safeAvailable <= 0 ? ' is-empty' : ''}`}
+      title={`活动余量：本场活动还剩 ${safeAvailable} 件可抢（活动配额 ${safeTotal} 件，不是商品 SKU 库存）`}
+    >
+      <div className="sk-remain-line">
+        {showLabel ? <span className="sk-remain-label">活动余量</span> : null}
+        <b className="sk-remain-num">{safeAvailable}</b>
+        <span className="sk-remain-unit">件</span>
+        <span className="sk-remain-total">/ 共 {safeTotal}</span>
+      </div>
+      <div className="sk-remain-bar">
+        <span className="sk-remain-fill" style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 };

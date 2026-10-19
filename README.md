@@ -4,6 +4,44 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-19（三十八）· 秒杀活动页三端重构 ＋ 全站分页/搜索统一**
+
+**① 秒杀活动页（用户端 / 商家端 / 平台后台）**
+- 布局拆成三段：**标题行**（右侧按钮）／**统计条**（全部 / 进行中 / 未开始 / 已结束 / 已下架）／
+  **工具栏**（左搜索、右口径说明）。此前三样挤在同一行，窄屏直接重叠。
+- **隐藏秒杀活动 ID**：列表列、编辑弹窗、删除确认弹窗里的 19 位数字全部移除 —— 运营看它没有任何决策价值，只会挤爆单元格。
+- **时间去掉 `T`**：服务端仍下发 ISO（契约不动），展示层统一 `utcToBj(iso).replace('T',' ')`；
+  页面口径明确写「时间均为北京时间」，提交时换算成带 `+08:00` 的 ISO 串。
+- **「余量」定义唯一**：本场活动自身剩余库存 `sum(availableStock)/sum(totalStock)`，**不是商品 SKU 库存**。
+  表格列头写「活动余量」，单元格用数字 + 进度条（`SeckillRemainStat`），`title` 写明「不是商品 SKU 库存」；
+  C 端进度条文案同步收敛为「剩 N 件」。
+
+**② 分页统一（三端 27 处）**：`@duoduo/shared` 的 `Pagination` 重写为
+**上一页 ＋ 数字页码 ＋ 下一页 ＋ 共 N 条 · 第 x/y 页**。页码用 `pageWindow()` 窗口法
+（恒含首页与末页、当前页 ±2、空隙显示 `…`），既满足「直接跳页」，又不会把几百页平铺撑爆工具栏。
+替换掉 4 处手写分页，并把渲染条件统一成「有数据就渲染」（原先 `total > pageSize` 判据会让「共 0 条」时连总数都看不到）。
+
+**③ 搜索统一（用户端 3 处 / 后台 12 处 / 商家端 4 处）**：新增 `SearchBar` + `useDebounced(350ms)`，
+**输入即搜**、Enter 立即生效、右侧 × 清空。**一律服务端筛**（分页下前端过滤只能看到当前页，必然漏），
+后端 10 个接口新增 `keyword`（保留无关键字重载，旧调用不破），全部走参数化 `LIKE {0}`，不拼串；
+搜索词进 URL 时用 `replace`，避免每敲一个字 push 一条历史。
+
+**④ 同轮修掉的两个真缺陷**
+- **`selectBatchIds(空集合)` → `WHERE id IN ( )` → 接口 500**：后台成员接口按关键字筛出 0 条时触发
+  （MyBatis-Plus 的 JSqlParser 解析空 IN 直接抛异常）。已加空集合守卫，并复查全仓其余调用。
+- **e2e 清理脚本库名写错**：`t_after_sale` / `t_logistics_track` 在 `duoduo_fulfilment` 而非 `duoduo_trade`，
+  写错的后果是**清理段中途抛错 → 剩余表与账号全不删 → 夹具整批留在库里**。已改按实物库名并逐条容错。
+
+**验证**：新增 `scripts/e2e/pagination-search-ui-check.mjs` **49/49 全绿**（接口 + 真实 Chromium 双轨：
+11 笔订单凑 2 页 → 数字页码跳转 / 上一页回退 / 搜索收敛并回第 1 页 / 空态文案；三端有搜索框与分页条；
+秒杀页无 19 位 ID、无 `T`、有活动余量列；跑完逐表清理 + 自证 0 残留 + SKU 冻结库存回补）。
+回归 `seckill-ui-check`、`seckill-price-ui-check` 18/0、`aftersale-ui-check` 44/0、`my-listings-ui-check` 52/0、
+`seller-ui-check` 40/0、`merchant-staff-ui-check`、`audit-sla-ui-check` 56/0、`share-report-ui-check` 32/0。
+三端 `tsc --noEmit` + `vite build` 全绿，四镜像重建后容器 healthy。
+
+> 跑 e2e 时注意：`run-ui-checks.ps1` 要带 `-UiBase http://localhost:8088`，否则套件默认打 `localhost:5173`（Vite dev），
+> 未启动 dev server 时会以「navigating to ... 5173」整体失败 —— **这是基址没传，不是功能回归**。
+
 **E8（2026-10-08，P1 最后一步：入口边界加固）** — **登录令牌加入口声明，网关据此收窄跨端专属路径。P1「三平台独立部署」阶段收口。**
 
 **解决什么问题（以及能解决到什么程度）**：三个站点各有登录页，但账号中心是同一个 —— 商城登录签发的令牌在令牌层面对三端一视同仁。一旦 Cookie 隔离哪天失效、或令牌以 Bearer 形态被带出浏览器，它就能直接去调后台/商家的接口。E8 把**入口**（mall/admin/merchant）写进令牌的 `ent` 声明，网关据此收窄两组**跨端专属路径族**。

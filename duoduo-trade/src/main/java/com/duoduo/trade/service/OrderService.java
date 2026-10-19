@@ -742,7 +742,12 @@ public class OrderService {
     // ---------------- 查询 ----------------
 
     public PageResult<OrderView> listMine(String status, int page, int pageSize) {
-        return listMine(status, null, page, pageSize);
+        return listMine(status, null, null, page, pageSize);
+    }
+
+    /** 兼容旧调用（无关键字）；分页筛选行为与带 keyword 的重载一致 */
+    public PageResult<OrderView> listMine(String status, String orderType, int page, int pageSize) {
+        return listMine(status, orderType, null, page, pageSize);
     }
 
     /**
@@ -755,8 +760,12 @@ public class OrderService {
      * <p>类型取值与 {@code t_order.order_type} 一致（{@code NORMAL} 普通下单 /
      * {@code SECKILL} 秒杀 / {@code C2C} 闲置担保交易）。**未知取值直接报 400**，
      * 不做「猜一个最接近的」—— 静默返回空列表会让人以为「我真的没抢到过」。
+     *
+     * <p><b>keyword（2026-10-19）</b>：匹配订单号**或**订单内商品标题。买家通常记不住
+     * 21 位订单号，记得的是「那袋猫粮」；只按订单号搜等于没搜。子查询走
+     * {@code t_order_item}，参数化占位符（{@code {0}}）由 MyBatis 绑定，不拼串。
      */
-    public PageResult<OrderView> listMine(String status, String orderType, int page, int pageSize) {
+    public PageResult<OrderView> listMine(String status, String orderType, String keyword, int page, int pageSize) {
         Long userId = UserContext.requireUserId();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -776,10 +785,20 @@ public class OrderService {
         if (type != null && !type.isEmpty()) {
             wrapper.eq(OrderEntity::getOrderType, type);
         }
+        applyOrderKeyword(wrapper, keyword);
         wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
 
         Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
         return PageResult.of(toViews(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
+    /** 订单关键字：订单号 或 商品标题（两者都做「包含」匹配，不是前缀匹配） */
+    private void applyOrderKeyword(LambdaQueryWrapper<OrderEntity> wrapper, String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        String kw = keyword.trim();
+        wrapper.and(w -> w.like(OrderEntity::getOrderNo, kw)
+                .or()
+                .apply("id IN (SELECT order_id FROM t_order_item WHERE title LIKE {0})", "%" + kw + "%"));
     }
 
     public OrderView detail(String orderNo) {
@@ -794,12 +813,12 @@ public class OrderService {
     // ---------------- 运营查询（M10，无归属限制；调用方须先过 OperatorGuard） ----------------
 
     /**
-     * 运营全平台订单列表：可按状态 / 订单号模糊过滤。
+     * 运营全平台订单列表：可按状态 / 订单号或商品标题模糊过滤。
      *
      * <p>不做归属校验 —— 这是后台运营视角，准入由控制层的
      * {@code OperatorGuard.requireOperator()} 统一把关。
      */
-    public PageResult<OrderView> adminList(String status, String orderNo, int page, int pageSize) {
+    public PageResult<OrderView> adminList(String status, String keyword, int page, int pageSize) {
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
         if (status != null && !status.isBlank() && OrderStatus.of(status.trim()) == null) {
@@ -810,9 +829,7 @@ public class OrderService {
         if (status != null && !status.isBlank()) {
             wrapper.eq(OrderEntity::getStatus, status.trim());
         }
-        if (orderNo != null && !orderNo.isBlank()) {
-            wrapper.likeRight(OrderEntity::getOrderNo, orderNo.trim());
-        }
+        applyOrderKeyword(wrapper, keyword);
         wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
 
         Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);

@@ -19,9 +19,9 @@ import React, { useCallback, useState } from 'react';
 import { adminApi, adminMerchantApi } from '@duoduo/api-sdk/endpoints';
 import type { AuditSampleView, MerchantAuditSampleView, PageResult } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminStat, AdminTabs, isOperator } from './shared';
@@ -118,6 +118,8 @@ export const AdminAuditSlaPage: React.FC = () => {
   const [domain, setDomain] = useState<Domain>('product');
   const [status, setStatus] = useState('PENDING');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [reviewing, setReviewing] = useState<Row | null>(null);
   const [note, setNote] = useState('');
@@ -129,13 +131,13 @@ export const AdminAuditSlaPage: React.FC = () => {
   // 另一个域的 Promise 就赋不进去（编译报 storeName 缺失）。归一化在 normalize 里做。
   const { data, loading, error, reload } = useAsync<PageResult<AnySample>>(
     useCallback(() => {
-      const query = { status, page, pageSize: 10 };
+      const query = { status, keyword: keyword || undefined, page, pageSize: 10 };
       return domain === 'product'
         ? adminApi.auditSlaSamples(query)
         : adminMerchantApi.auditSamples(query);
-    }, [domain, status, page]),
+    }, [domain, status, keyword, page]),
     operator,
-    [domain, status, page],
+    [domain, status, keyword, page],
   );
 
   // 指标与队列分开取：读指标会**顺带触发自动收紧评估**，不该跟着翻页反复执行
@@ -274,6 +276,22 @@ export const AdminAuditSlaPage: React.FC = () => {
         </>
       ) : null}
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder={domain === 'product' ? '搜商品标题' : '搜店铺名'}
+          width={280}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的抽查 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       <div className="row row-wrap row-between" style={{ gap: 12, marginBottom: 14, alignItems: 'center' }}>
         <div className="row row-wrap" style={{ gap: 8 }}>
           {STATUS_TABS.map((tab) => (
@@ -307,7 +325,13 @@ export const AdminAuditSlaPage: React.FC = () => {
       ) : rows.length === 0 ? (
         <Empty
           icon="🔍"
-          title={status === 'PENDING' ? '当前没有待复核的抽查任务' : '这个状态下没有记录'}
+          title={
+            keywordInput.trim()
+              ? `没有匹配「${keywordInput.trim()}」的抽查`
+              : status === 'PENDING'
+                ? '当前没有待复核的抽查任务'
+                : '这个状态下没有记录'
+          }
           desc={
             status === 'PENDING'
               ? '自动放行的内容会被按比例抽中；也可以点右上角「立即抽查」对昨天那批跑一轮'

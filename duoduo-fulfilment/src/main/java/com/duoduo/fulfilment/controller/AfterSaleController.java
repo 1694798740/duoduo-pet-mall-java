@@ -42,22 +42,30 @@ public class AfterSaleController {
         return ApiResponse.ok(afterSaleService.create(UserContext.requireUserId(), request));
     }
 
-    /** 我提起的售后（买家视角，分页） */
+    /**
+     * 我提起的售后（买家视角，分页）。
+     *
+     * @param keyword 售后单号 / 订单号（包含匹配）
+     */
     @GetMapping("/mine")
     public ApiResponse<PageResult<AfterSaleView>> mine(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize) {
-        return ApiResponse.ok(afterSaleService.listMine(UserContext.requireUserId(), status, page, pageSize));
+        return ApiResponse.ok(
+                afterSaleService.listMine(UserContext.requireUserId(), status, keyword, page, pageSize));
     }
 
     /** 我店铺的售后（卖家视角；可见范围由登录态推导，接受不到 sellerId 参数） */
     @GetMapping("/seller")
     public ApiResponse<PageResult<AfterSaleView>> seller(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize) {
-        return ApiResponse.ok(afterSaleService.listForSeller(UserContext.requireUserId(), status, page, pageSize));
+        return ApiResponse.ok(
+                afterSaleService.listForSeller(UserContext.requireUserId(), status, keyword, page, pageSize));
     }
 
     /** 售后单详情（当事人或运营） */

@@ -2,7 +2,7 @@
  * 平台管理后台 · 订单干预（M10）。
  *
  * 数据源：
- *   GET  /api/admin/orders                 —— 全平台订单列表（状态 / 订单号前缀过滤）
+ *   GET  /api/admin/orders                 —— 全平台订单列表（状态 / 订单号或商品名过滤）
  *   GET  /api/admin/orders/{orderNo}       —— 无归属限制的订单详情
  *   POST /api/admin/orders/{orderNo}/force-close —— 强制关单（仅待付款）
  *
@@ -15,9 +15,9 @@ import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderStatus, OrderView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, formatDate, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -38,8 +38,8 @@ export const AdminOrdersPage: React.FC = () => {
   const { push } = useToast();
 
   const [status, setStatus] = useState('');
-  const [keyword, setKeyword] = useState('');
-  const [orderNo, setOrderNo] = useState('');
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
   const [page, setPage] = useState(1);
 
   const [closing, setClosing] = useState<OrderView | null>(null);
@@ -49,21 +49,16 @@ export const AdminOrdersPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminApi.orders({ status: status || undefined, orderNo: orderNo || undefined, page, pageSize: 10 }),
-      [status, orderNo, page],
+      () => adminApi.orders({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     operator,
-    [status, orderNo, page],
+    [status, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
 
   const pageCount = data ? Math.max(1, data.pageCount) : 1;
-
-  const search = () => {
-    setPage(1);
-    setOrderNo(keyword.trim());
-  };
 
   const forceClose = async () => {
     if (!closing) return;
@@ -107,25 +102,27 @@ export const AdminOrdersPage: React.FC = () => {
         ))}
       </div>
 
-      <div className="row" style={{ gap: 8, marginBottom: 14 }}>
-        <input
-          className="input"
-          style={{ maxWidth: 320 }}
-          placeholder="按订单号前缀搜索…"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') search();
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
           }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜订单号或商品名称"
+          width={320}
         />
-        <button className="btn btn-ghost" onClick={search}>搜索</button>
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的订单 {data ? data.total : 0} 笔</span>
+        ) : null}
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载订单…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <Empty title="没有符合条件的订单" />
+        <Empty title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的订单` : '没有符合条件的订单'} />
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
@@ -172,7 +169,7 @@ export const AdminOrdersPage: React.FC = () => {
         </div>
       ) : null}
 
-      {data && data.total > data.pageSize ? (
+      {data ? (
         <Pagination page={page} pageCount={pageCount} total={data.total} onChange={setPage} />
       ) : null}
 

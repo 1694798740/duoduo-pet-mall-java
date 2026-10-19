@@ -217,8 +217,12 @@ step('UI：后台秒杀管理页（运营视角 · 后台独立站点）');
   let rowText = await row.innerText();
   check('阶段列显示「进行中」', rowText.includes('进行中'), rowText);
   check('开关列显示「已上架」', rowText.includes('已上架'), rowText);
-  check(`余量按 剩余/总量 展示（${TOTAL_STOCK}/${TOTAL_STOCK}）`, rowText.includes(`${TOTAL_STOCK}/${TOTAL_STOCK}`), rowText);
-  check('页头写明时间是 UTC（避免运营按北京时间填，白等 8 小时）', body.includes('UTC'), body.slice(0, 400));
+  // 2026-10-19 秒杀页重构：余量改为「大号数字 + 件 / 共 N」的可视化组件
+  check(`余量按「剩余 件 / 共 总量」展示（${TOTAL_STOCK} 件 / 共 ${TOTAL_STOCK}）`,
+    new RegExp(`${TOTAL_STOCK}\\s*件\\s*\\/\\s*共\\s*${TOTAL_STOCK}`).test(rowText), rowText);
+  // 时间口径自 2026-10-19（三十七）起改为「页面一律北京时间，提交时换算 UTC」
+  check('页头写明时间按北京时间（避免按 UTC 填而白等 8 小时）',
+    body.includes('北京时间'), body.slice(0, 400));
   await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_list.png'), fullPage: true });
 
   // 下架 → 列表仍能列出（「下架不可逆」是本页最容易踩的坑，必须有断言守着）
@@ -270,7 +274,9 @@ step('UI：C 端 /seckill 抢购');
   let secText = await section.innerText();
   check('阶段标签显示「抢购中」', secText.includes('抢购中'), secText);
   check('秒杀价按分转元展示 ¥1.00', secText.includes('¥1.00'), secText);
-  check(`余量展示「仅剩 ${TOTAL_STOCK} 件」`, secText.includes(`仅剩 ${TOTAL_STOCK} 件`), secText);
+  // 2026-10-19 文案收敛：「仅剩 N 件」→「剩 N 件」（同一含义，少两个字更醒目）
+  check(`余量展示「剩 ${TOTAL_STOCK} 件」`,
+    new RegExp(`剩\\s*${TOTAL_STOCK}\\s*件`).test(secText), secText);
   check('展示限购件数', secText.includes(`限购 ${PER_LIMIT} 件`), secText);
 
   await section.getByRole('button', { name: '马上抢' }).click();

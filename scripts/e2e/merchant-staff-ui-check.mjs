@@ -157,7 +157,9 @@ try {
   await loginUI(page, MERCHANT_UI, owner.phone);
   await page.goto(`${MERCHANT_UI}/seller/staff`, { waitUntil: 'networkidle' });
   await page.getByText('店员管理', { exact: true }).first().waitFor({ timeout: 10000 });
-  check('店员管理页渲染（含邀请表单）', await page.locator('input[placeholder*="手机号"]').isVisible());
+  // 2026-10-19 该页新增了列表搜索框（placeholder「搜昵称、手机号或身份」），
+  // 与邀请表单的「11 位手机号」同含「手机号」→ 旧选择器变歧义。按 placeholder 精确区分。
+  check('店员管理页渲染（含邀请表单）', await page.locator('input[placeholder="11 位手机号"]').isVisible());
   await page.screenshot({ path: `${SHOTS}/merchant_staff_page.png` });
   // 平台总览页
   await page.goto(`${ADMIN_UI}/login`, { waitUntil: 'networkidle' });

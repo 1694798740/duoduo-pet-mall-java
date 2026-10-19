@@ -27,6 +27,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -149,16 +151,35 @@ public class MerchantStaffService {
 
     // ---------------- 平台侧（跨租户） ----------------
 
-    public PageResult<StaffAdminView> adminPage(int page, int pageSize) {
-        Page<MerchantMemberEntity> p = memberMapper.selectPage(new Page<>(Math.max(1, page), pageSize),
-                new LambdaQueryWrapper<MerchantMemberEntity>()
-                        .orderByDesc(MerchantMemberEntity::getCreatedAt));
-        Map<Long, MerchantEntity> stores = merchantMapper.selectBatchIds(
-                        p.getRecords().stream().map(MerchantMemberEntity::getMerchantId).distinct().toList())
-                .stream().collect(Collectors.toMap(MerchantEntity::getId, m -> m));
-        Map<Long, UserEntity> users = userMapper.selectBatchIds(
-                        p.getRecords().stream().map(MerchantMemberEntity::getUserId).distinct().toList())
-                .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
+    /**
+     * 平台侧成员总览。
+     *
+     * @param keyword 店铺名 / 手机号 / 真实姓名（包含匹配）
+     */
+    public PageResult<StaffAdminView> adminPage(int page, int pageSize, String keyword) {
+        LambdaQueryWrapper<MerchantMemberEntity> wrapper = new LambdaQueryWrapper<MerchantMemberEntity>()
+                .orderByDesc(MerchantMemberEntity::getCreatedAt);
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.apply("(merchant_id IN (SELECT id FROM t_merchant WHERE name LIKE {0})"
+                    + " OR user_id IN (SELECT id FROM t_user WHERE phone LIKE {1} OR real_name LIKE {1}))",
+                    like, like);
+        }
+        Page<MerchantMemberEntity> p = memberMapper.selectPage(new Page<>(Math.max(1, page), pageSize), wrapper);
+        // 注意：关键字筛出 0 条时不能直接 selectBatchIds(空集合) —— 会生成 `IN ( )`，
+        // MyBatis-Plus 的 JSqlParser 解析直接抛异常，接口变成 500。空集合走空 Map。
+        Set<Long> merchantIds = p.getRecords().stream()
+                .map(MerchantMemberEntity::getMerchantId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> userIds = p.getRecords().stream()
+                .map(MerchantMemberEntity::getUserId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, MerchantEntity> stores = merchantIds.isEmpty() ? Map.of()
+                : merchantMapper.selectBatchIds(merchantIds).stream()
+                        .collect(Collectors.toMap(MerchantEntity::getId, m -> m));
+        Map<Long, UserEntity> users = userIds.isEmpty() ? Map.of()
+                : userMapper.selectBatchIds(userIds).stream()
+                        .collect(Collectors.toMap(UserEntity::getId, u -> u));
         List<StaffAdminView> items = p.getRecords().stream().map(m -> {
             MerchantEntity store = stores.get(m.getMerchantId());
             UserEntity u = users.get(m.getUserId());
@@ -171,6 +192,11 @@ public class MerchantStaffService {
                     m.getCreatedAt() == null ? null : m.getCreatedAt().toString());
         }).toList();
         return PageResult.of(items, p.getTotal(), page, pageSize);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<StaffAdminView> adminPage(int page, int pageSize) {
+        return adminPage(page, pageSize, null);
     }
 
     /** 平台侧停用 / 启用（跨租户）：风控场景由平台直接处置，事后审计 */

@@ -377,7 +377,7 @@ export const orderApi = {
    * @param orderType 订单类型（NORMAL / SECKILL / C2C）；**服务端筛选**，不是前端过滤 ——
    *                  分页下前端过滤只会得到「当前页里的那几条」，数据在下一页时表现为「没有」。
    */
-  list: (query?: { status?: string; orderType?: string; page?: number; pageSize?: number }) =>
+  list: (query?: { status?: string; orderType?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/orders', { query }),
 
   detail: (orderNo: string) => api.get<OrderView>(`/api/orders/${orderNo}`),
@@ -426,7 +426,7 @@ export const sellerApi = {
   analytics: () => api.get<SellerAnalytics>('/api/seller/analytics'),
 
   /** 卖出的订单列表；status 可选 PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED */
-  orders: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  orders: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/seller/orders', { query }),
 
   orderDetail: (orderNo: string) => api.get<OrderView>(`/api/seller/orders/${orderNo}`),
@@ -440,7 +440,7 @@ export const sellerApi = {
     api.post<RefundResult>(`/api/seller/orders/${orderNo}/refund`, reason ? { reason } : undefined),
 
   /** 我的资金托管单；status 可选 CUSTODY / RELEASED / REFUNDED，汇总不受过滤影响 */
-  settlements: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  settlements: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<SettlementPage>('/api/seller/settlements', { query }),
 
   /**
@@ -544,7 +544,7 @@ export const merchantStaffApi = {
 
 /** 平台侧成员总览（E13；跨租户 + 平台处置） */
 export const adminMerchantStaffApi = {
-  page: (query?: { page?: number; pageSize?: number }) =>
+  page: (query?: { keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<StaffAdminView>>('/api/admin/merchant-staff', { query }),
   disable: (memberId: string) =>
     api.post<StaffAdminView>(`/api/admin/merchant-staff/${memberId}/disable`),
@@ -554,7 +554,7 @@ export const adminMerchantStaffApi = {
 
 /** 入驻审核台（E11；落在 duoduo-user，路径属 E8 的 admin 专属族） */
 export const adminMerchantApi = {
-  page: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  page: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<ApplicationSummary>>('/api/admin/merchants', { query }),
   detail: (id: string) => api.get<MerchantApplicationView>(`/api/admin/merchants/${id}`),
   /** 开始审核：SUBMITTED → REVIEWING（幂等） */
@@ -584,7 +584,7 @@ export const adminMerchantApi = {
    * 抽查**不是**上线前的人工关卡：店铺已经自动放行、已在营业，这里复核的是
    * 「放行判对了没有」。所以这个队列里的东西比待审队列更紧急（处置错了两边后果不同）。
    */
-  auditSamples: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  auditSamples: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<MerchantAuditSampleView>>('/api/admin/merchants/audit-sla/samples', { query }),
 
   /** 复核：PASS 只记结论；REJECT = 直接停业 + 联动下架该店商品（note 必填） */
@@ -622,7 +622,7 @@ export const adminApi = {
   tenantHealthLimits: () => api.get<TenantHealthLimits>('/api/admin/tenant-health/limits'),
 
   // ---- 订单干预（落在 duoduo-trade；仅待付款订单可强关） ----
-  orders: (query?: { status?: string; orderNo?: string; page?: number; pageSize?: number }) =>
+  orders: (query?: { status?: string; orderNo?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/admin/orders', { query }),
   orderDetail: (orderNo: string) => api.get<OrderView>(`/api/admin/orders/${orderNo}`),
   forceCloseOrder: (orderNo: string, reason?: string) =>
@@ -645,7 +645,7 @@ export const adminApi = {
   deleteBrand: (id: string) => api.del<void>(`/api/admin/brands/${id}`),
 
   // ---- 内容审核（落在 duoduo-product；含未审核通过的内容） ----
-  listingsForAudit: (query?: { auditStatus?: string; page?: number; pageSize?: number }) =>
+  listingsForAudit: (query?: { auditStatus?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<ListingAuditView>>('/api/admin/listings', { query }),
   auditListing: (id: string, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
@@ -654,7 +654,7 @@ export const adminApi = {
   // 只列第三方商品：平台自营免审（auditStatus 恒 APPROVED），混进队列只会干扰待办。
   // 与闲置审核同一套状态口径（PENDING / APPROVED / REJECTED + 驳回必填原因），
   // 运营在两处不需要学两套规则。
-  productsForAudit: (query?: { auditStatus?: string; sellerId?: number; page?: number; pageSize?: number }) =>
+  productsForAudit: (query?: { auditStatus?: string; sellerId?: number; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<AdminProductAuditView>>('/api/admin/products', { query }),
   productAuditDetail: (spuId: string) => api.get<AdminProductAuditView>(`/api/admin/products/${spuId}`),
   /** 审核结论：驳回时 reason 必填（服务端会 400）；审核可重入（允许改判） */
@@ -667,7 +667,7 @@ export const adminApi = {
   // 这个是「已经自动放行、现在回头抽查」。合并后运营分不清「在等我审」和
   // 「已经在卖、我只是复核」—— 后者更紧急，且判错的后果落在真实在售商品上。
   /** 抽查队列；status 不传 = PENDING */
-  auditSlaSamples: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  auditSlaSamples: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<AuditSampleView>>('/api/admin/audit-sla/samples', { query }),
 
   /** 复核：PASS 只记结论；REJECT = 驳回并**强制下架**（note 必填） */
@@ -695,7 +695,7 @@ export const adminApi = {
   // ---- 售后仲裁工作台（A3，落在 duoduo-fulfilment） ----
 
   /** 全平台售后列表（按状态过滤） */
-  afterSales: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  afterSales: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<AfterSaleView>>('/api/admin/aftersales', { query }),
 
   /**
@@ -714,7 +714,7 @@ export const adminApi = {
    * 服务端会把被举报内容的摘要（`targetExcerpt`）一并下发 —— 列表里直接显示摘要，
    * 运营不必逐条点开才知道在举报什么。内容已被删除时摘要是「（内容已被删除）」。
    */
-  shareReports: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  shareReports: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<ShareReportView>>('/api/admin/share-reports', { query }),
 
   /**
@@ -841,11 +841,11 @@ export const afterSaleApi = {
   create: (body: AfterSaleCreateRequest) => api.post<AfterSaleView>('/api/aftersales', body),
 
   /** 我提起的售后（买家视角） */
-  mine: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  mine: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<AfterSaleView>>('/api/aftersales/mine', { query }),
 
   /** 我店铺的售后（卖家 / 运营视角；非卖家返回 403） */
-  seller: (query?: { status?: string; page?: number; pageSize?: number }) =>
+  seller: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<AfterSaleView>>('/api/aftersales/seller', { query }),
 
   /** 详情（当事人或运营） */
@@ -1019,7 +1019,7 @@ export const listingApi = {
   publish: (body: ListingPublishRequest) => api.post<ListingMineView>('/api/listings', body),
 
   /** 我的发布；status 与 auditStatus 正交组合（前端分类标签按此过滤） */
-  mine: (query?: { status?: string; auditStatus?: string; page?: number; pageSize?: number }) =>
+  mine: (query?: { status?: string; auditStatus?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<ListingMineView>>('/api/listings/mine/list', { query }),
 
   /** 卖家视角详情：编辑表单的回填来源（公开详情对未过审内容 404） */

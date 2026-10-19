@@ -8,13 +8,16 @@ import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { BrandSaveRequest, BrandView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, useToast,
 } from '@duoduo/shared/components/ui';
 import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
+
+/** 本地分页每页条数（数据量小，够用即可） */
+const PAGE_SIZE = 10;
 
 const emptyForm: BrandSaveRequest = { name: '', logo: '', country: '', story: '' };
 
@@ -29,6 +32,9 @@ export const AdminBrandsPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
+  const [page, setPage] = useState(1);
 
   const { data, loading, error, reload } = useAsync(
     useCallback(() => adminApi.brands(), []),
@@ -40,6 +46,14 @@ export const AdminBrandsPage: React.FC = () => {
   if (loading) return <LoadingBlock text="正在加载品牌…" />;
 
   const items = data ?? [];
+  // 接口返回全量（品牌 / 类目通常只有几十条），搜索与分页在本地做；
+  // 与服务端分页的页面用同一套 SearchBar / Pagination，交互保持一致。
+  const filtered = keyword
+    ? items.filter((it) => ([it.name, it.country, it.story ?? ''].join(' ')).toLowerCase().includes(keyword.toLowerCase()))
+    : items;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
   const openCreate = () => {
     setEditing(null);
@@ -105,16 +119,31 @@ export const AdminBrandsPage: React.FC = () => {
       <h2 className="section-title">平台管理后台 · 品牌管理</h2>
       <AdminTabs />
 
-      <div className="row-between row-wrap" style={{ marginBottom: 14 }}>
+      <div className="row-between row-wrap" style={{ marginBottom: 8 }}>
         <span className="small muted">共 {items.length} 个品牌</span>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建品牌</button>
+        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建类目</button>
+      </div>
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          placeholder="搜品牌名称"
+          width={260}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的结果 {filtered.length} 个</span>
+        ) : null}
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
       {actionError ? <Alert kind="error">{actionError}</Alert> : null}
 
-      {items.length === 0 ? (
-        <Empty title="暂无品牌" />
+      {filtered.length === 0 ? (
+        <Empty title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的结果` : "暂无品牌"} />
       ) : (
         <div className="card card-pad">
           <table className="table">
@@ -124,7 +153,7 @@ export const AdminBrandsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {visible.map((item) => (
                 <tr key={item.id}>
                   <td className="mono">{item.id}</td>
                   <td>
@@ -153,6 +182,7 @@ export const AdminBrandsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          <Pagination page={current} pageCount={pageCount} total={filtered.length} onChange={setPage} />
         </div>
       )}
 

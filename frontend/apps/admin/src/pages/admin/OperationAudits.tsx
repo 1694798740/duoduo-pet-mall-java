@@ -23,7 +23,7 @@
 import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { AuditLogView } from '@duoduo/api-sdk/types';
-import { Alert, Empty, LoadingBlock } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Pagination } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -299,27 +299,14 @@ export const AdminOperationAuditsPage: React.FC = () => {
             </tbody>
           </table>
 
-          <div className="row-between" style={{ marginTop: 10 }}>
-            <span className="small muted">
-              共 {data?.total ?? 0} 条 · 第 {data?.page ?? 1} / {data?.pageCount ?? 1} 页
-              （时间按 UTC 显示）
-            </span>
-            <div className="row" style={{ gap: 6 }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={(data?.page ?? 1) <= 1}
-                onClick={() => goPage((data?.page ?? 1) - 1)}
-              >
-                上一页
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={(data?.page ?? 1) >= (data?.pageCount ?? 1)}
-                onClick={() => goPage((data?.page ?? 1) + 1)}
-              >
-                下一页
-              </button>
-            </div>
+          <Pagination
+            page={data?.page ?? 1}
+            pageCount={data?.pageCount ?? 1}
+            total={data?.total ?? 0}
+            onChange={goPage}
+          />
+          <div className="small muted" style={{ textAlign: 'center', marginTop: 6 }}>
+            时间按 UTC 显示
           </div>
         </div>
       )}

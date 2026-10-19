@@ -11,9 +11,9 @@ import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { ListingAuditView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -38,6 +38,8 @@ export const AdminAuditsPage: React.FC = () => {
 
   const [auditStatus, setAuditStatus] = useState('PENDING');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
   const [rejecting, setRejecting] = useState<ListingAuditView | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -45,11 +47,11 @@ export const AdminAuditsPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminApi.listingsForAudit({ auditStatus, page, pageSize: 10 }),
-      [auditStatus, page],
+      () => adminApi.listingsForAudit({ auditStatus, keyword: keyword || undefined, page, pageSize: 10 }),
+      [auditStatus, keyword, page],
     ),
     operator,
-    [auditStatus, page],
+    [auditStatus, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -93,13 +95,29 @@ export const AdminAuditsPage: React.FC = () => {
         ))}
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜标题、品种或城市"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的闲置 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {actionError ? <Alert kind="error">{actionError}</Alert> : null}
 
       {loading ? (
         <LoadingBlock text="正在拉取审核队列…" />
       ) : items.length === 0 ? (
-        <Empty title="当前没有该状态的闲置内容" />
+        <Empty title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的闲置` : '当前没有该状态的闲置内容'} />
       ) : (
         <div className="stack">
           {items.map((item) => (

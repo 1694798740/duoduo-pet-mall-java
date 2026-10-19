@@ -39,14 +39,15 @@ public class ShareAdminReportController {
         this.reportService = reportService;
     }
 
-    /** 全平台举报列表（可按状态 PENDING / ACCEPTED / REJECTED 过滤，分页） */
+    /** 全平台举报列表（可按状态 PENDING / ACCEPTED / REJECTED 过滤，可搜理由/内容 ID，分页） */
     @GetMapping
     public ApiResponse<PageResult<ReportView>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(reportService.listForAdmin(status, page, pageSize));
+        return ApiResponse.ok(reportService.listForAdmin(status, keyword, page, pageSize));
     }
 
     /** 处理举报：ACCEPT（成立 → 内容下架）/ REJECT（不成立），**处理说明必填** */

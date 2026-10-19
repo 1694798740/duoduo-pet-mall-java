@@ -19,9 +19,9 @@ import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { AdminProductAuditView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SupplyTag, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, SupplyTag, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -67,6 +67,8 @@ export const AdminProductAuditsPage: React.FC = () => {
   const [sellerInput, setSellerInput] = useState('');
   const [sellerId, setSellerId] = useState<number | undefined>(undefined);
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [rejecting, setRejecting] = useState<AdminProductAuditView | null>(null);
   const [reason, setReason] = useState('');
@@ -75,11 +77,13 @@ export const AdminProductAuditsPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminApi.productsForAudit({ auditStatus, sellerId, page, pageSize: 10 }),
-      [auditStatus, sellerId, page],
+      () => adminApi.productsForAudit({
+        auditStatus, sellerId, keyword: keyword || undefined, page, pageSize: 10,
+      }),
+      [auditStatus, sellerId, keyword, page],
     ),
     operator,
-    [auditStatus, sellerId, page],
+    [auditStatus, sellerId, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -124,6 +128,22 @@ export const AdminProductAuditsPage: React.FC = () => {
     <div>
       <h2 className="section-title">平台管理后台 · 商品上架审核</h2>
       <AdminTabs />
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜商品标题"
+          width={280}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的商品 {data ? data.total : 0} 件</span>
+        ) : null}
+      </div>
 
       <div className="row row-wrap row-between" style={{ gap: 12, marginBottom: 14, alignItems: 'flex-end' }}>
         <div className="row row-wrap" style={{ gap: 8 }}>
@@ -176,7 +196,10 @@ export const AdminProductAuditsPage: React.FC = () => {
       {loading ? (
         <LoadingBlock text="正在拉取商品审核队列…" />
       ) : items.length === 0 ? (
-        <Empty title="当前没有该状态的商品" desc="第三方卖家提交商品后，会先进入「待审核」" />
+        <Empty
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的商品` : '当前没有该状态的商品'}
+          desc="第三方卖家提交商品后，会先进入「待审核」"
+        />
       ) : (
         <div className="stack">
           {items.map((item) => {

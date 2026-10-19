@@ -18,7 +18,7 @@ import React, { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { sellerApi } from '@duoduo/api-sdk/endpoints';
 import type { PageResult, SellerProductDetailView, SellerProductView } from '@duoduo/api-sdk/types';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import {
   Alert,
   Empty,
@@ -26,6 +26,7 @@ import {
   LoadingBlock,
   Modal,
   Pagination,
+  SearchBar,
   formatPrice,
   useToast,
 } from '@duoduo/shared/components/ui';
@@ -68,6 +69,8 @@ export const SellerProductsPage: React.FC = () => {
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keywordDraft, setKeywordDraft] = useState(keyword);
+  /** 请求用防抖值；URL 里的 keyword 只在首次进入时作为初值（deep link） */
+  const keywordQuery = useDebounced(keywordDraft.trim(), 350);
   const [publishing, setPublishing] = useState(false);
   const [editing, setEditing] = useState<SellerProductView | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
@@ -80,26 +83,26 @@ export const SellerProductsPage: React.FC = () => {
   const fetcher = useCallback(
     () =>
       sellerApi.products({
-        keyword: keyword || undefined,
+        keyword: keywordQuery || undefined,
         auditStatus: auditStatus || undefined,
         page,
         pageSize: 20,
       }),
-    [keyword, auditStatus, page],
+    [keywordQuery, auditStatus, page],
   );
   const { data, loading, error, reload } = useAsync<PageResult<SellerProductView>>(
     fetcher,
     allowed,
-    [allowed, keyword, auditStatus, page],
+    [allowed, keywordQuery, auditStatus, page],
   );
 
-  const setQuery = (patch: Record<string, string | undefined>) => {
+  const setQuery = (patch: Record<string, string | undefined>, replace = false) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) {
       if (v) next.set(k, v);
       else next.delete(k);
     }
-    setParams(next);
+    setParams(next, { replace });
   };
 
   const toggle = async (item: SellerProductView) => {
@@ -242,34 +245,20 @@ export const SellerProductsPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="row" style={{ marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
-        <input
-          className="input"
-          style={{ maxWidth: 320 }}
+      <div className="list-toolbar">
+        <SearchBar
           value={keywordDraft}
-          onChange={(e) => setKeywordDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') setQuery({ keyword: keywordDraft.trim() || undefined, page: undefined });
+          onChange={(v) => {
+            setKeywordDraft(v);
+            // 每敲一个字只替换当前历史项，不 push —— 否则「后退」只能退掉一个字符
+            setQuery({ keyword: v.trim() || undefined, page: undefined }, true);
           }}
-          placeholder="按商品标题搜索"
-          maxLength={60}
+          busy={loading && Boolean(keywordDraft.trim())}
+          placeholder="搜商品标题"
+          width={300}
         />
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={() => setQuery({ keyword: keywordDraft.trim() || undefined, page: undefined })}
-        >
-          搜索
-        </button>
-        {keyword ? (
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => {
-              setKeywordDraft('');
-              setQuery({ keyword: undefined, page: undefined });
-            }}
-          >
-            清除
-          </button>
+        {keywordDraft.trim() ? (
+          <span className="small muted">匹配「{keywordDraft.trim()}」的商品 {total} 件</span>
         ) : null}
       </div>
 

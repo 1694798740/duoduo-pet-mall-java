@@ -139,7 +139,13 @@ public class SellerService {
     // ---------------- 卖出订单 ----------------
 
     /** 卖出的订单列表：按卖家维度隔离，支持状态过滤与分页。 */
-    public PageResult<OrderView> listOrders(String status, int page, int pageSize) {
+    /**
+     * 我卖出的订单。
+     *
+     * @param keyword 订单号或商品标题（包含匹配）—— 商家最常按「哪件商品」找单，
+     *                只给订单号输入框等于让他先记住 21 位数字
+     */
+    public PageResult<OrderView> listOrders(String status, String keyword, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -150,10 +156,25 @@ public class SellerService {
         if (normalized != null) {
             wrapper.eq(OrderEntity::getStatus, normalized);
         }
+        applyOrderKeyword(wrapper, keyword);
         wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
 
         Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
         return PageResult.of(orderService.toViews(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<OrderView> listOrders(String status, int page, int pageSize) {
+        return listOrders(status, null, page, pageSize);
+    }
+
+    /** 与买家端同口径：订单号 或 商品标题（参数化子查询，不拼串） */
+    private void applyOrderKeyword(LambdaQueryWrapper<OrderEntity> wrapper, String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        String kw = keyword.trim();
+        wrapper.and(w -> w.like(OrderEntity::getOrderNo, kw)
+                .or()
+                .apply("id IN (SELECT order_id FROM t_order_item WHERE title LIKE {0})", "%" + kw + "%"));
     }
 
     /** 订单详情（卖家视角，含明细快照与资金托管状态） */
@@ -240,7 +261,17 @@ public class SellerService {
         return settlementService.billOf(UserContext.requireUserId(), period);
     }
 
-    public SettlementPage settlements(String status, int page, int pageSize) {
+    /**
+     * 我的资金托管明细。
+     *
+     * @param keyword 订单号（包含匹配）。结算行本身不存订单号，只能先按订单号查出
+     *                orderId 再过滤 —— 因此「关键字命不中」时**必须显式给出空结果**，
+     *                不能把空集合交给 {@code in()}：MyBatis-Plus 会直接跳过这个条件，
+     *                于是「搜一个不存在的单号」反而返回全部结算记录。
+     *                <p>页面顶部的托管/已放款/已退款汇总**不受关键字影响**：
+     *                那是「我的钱总共多少」，跟着搜索变会让人以为钱变少了。</p>
+     */
+    public SettlementPage settlements(String status, String keyword, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
         if (scope.staffMember()) {
             // E13 · 店员不可见结算：托管资金是「钱」的视图，店员是「干活的人」。
@@ -255,6 +286,21 @@ public class SellerService {
                 .in(SettlementEntity::getSellerId, scope.visibleSellerIds());
         if (normalized != null) {
             wrapper.eq(SettlementEntity::getStatus, normalized);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            List<Long> orderIds = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                            .select(OrderEntity::getId)
+                            .in(OrderEntity::getSellerId, scope.visibleSellerIds())
+                            .like(OrderEntity::getOrderNo, keyword.trim()))
+                    .stream().map(OrderEntity::getId).toList();
+            if (orderIds.isEmpty()) {
+                // 显式空结果（detail 见方法注释：空集合会让 in() 整体失效）。
+                // 用「主键 = -1」而不是提前 return：汇总数字要继续按真实数据算，
+                // 否则搜一个不存在的单号会让「可提现余额」显示成 0，看起来像钱没了。
+                wrapper.eq(SettlementEntity::getId, -1L);
+            } else {
+                wrapper.in(SettlementEntity::getOrderId, orderIds);
+            }
         }
         wrapper.orderByDesc(SettlementEntity::getCreatedAt).orderByDesc(SettlementEntity::getId);
 
@@ -286,6 +332,11 @@ public class SellerService {
                 custody[0], custody[1], custody[0] - custody[1],
                 released[0], released[1], released[0] - released[1],
                 refundedAmount);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public SettlementPage settlements(String status, int page, int pageSize) {
+        return settlements(status, null, page, pageSize);
     }
 
     /** 商家端概览：订单状态分布 + 资金三栏。 */

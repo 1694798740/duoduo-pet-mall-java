@@ -40,14 +40,15 @@ public class AdminProductAuditController {
         this.sellerProductService = sellerProductService;
     }
 
-    /** 审核列表：按审核状态过滤（不传＝全部），可按店铺归属筛 */
+    /** 审核列表：按审核状态过滤（不传＝全部），可按店铺归属筛，可按商品标题搜 */
     @GetMapping
     public ApiResponse<PageResult<AdminProductAuditView>> list(
             @RequestParam(required = false) String auditStatus,
             @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sellerProductService.listForAudit(auditStatus, sellerId, page, pageSize));
+        return ApiResponse.ok(sellerProductService.listForAudit(auditStatus, sellerId, keyword, page, pageSize));
     }
 
     /** 审核详情（含全部背审材料：详情正文、全部图片、类目 / 品牌名、SKU 明细） */

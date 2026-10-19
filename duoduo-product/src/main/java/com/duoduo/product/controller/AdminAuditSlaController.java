@@ -55,14 +55,16 @@ public class AdminAuditSlaController {
     /**
      * 抽查列表。
      *
-     * @param status PENDING（默认）/ PASSED / REJECTED / ALL
+     * @param status  PENDING（默认）/ PASSED / REJECTED / ALL
+     * @param keyword 商品标题 / 抽查单号（包含匹配）
      */
     @GetMapping("/samples")
     public ApiResponse<PageResult<AuditSampleView>> samples(
             @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "pageSize", defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sampleService.pageSamples(status, page, pageSize));
+        return ApiResponse.ok(sampleService.pageSamples(status, keyword, page, pageSize));
     }
 
     /** 复核一条抽查任务：PASS / REJECT（判违规必须填原因） */

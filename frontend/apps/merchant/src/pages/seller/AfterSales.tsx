@@ -15,9 +15,9 @@ import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { AfterSaleReplyAction, AfterSaleView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, formatDate, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
@@ -29,6 +29,8 @@ export const SellerAfterSalesPage: React.FC = () => {
 
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [handling, setHandling] = useState<AfterSaleView | null>(null);
   const [action, setAction] = useState<AfterSaleReplyAction>('AGREE');
@@ -38,11 +40,11 @@ export const SellerAfterSalesPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => afterSaleApi.seller({ status: status || undefined, page, pageSize: 10 }),
-      [status, page],
+      () => afterSaleApi.seller({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     allowed,
-    [status, page],
+    [status, keyword, page],
   );
 
   if (!allowed) {
@@ -137,6 +139,22 @@ export const SellerAfterSalesPage: React.FC = () => {
         ))}
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜售后单号或订单号"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的售后 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载售后单…" /> : null}
 
@@ -194,7 +212,9 @@ export const SellerAfterSalesPage: React.FC = () => {
         </div>
       ) : null}
 
-      {data && data.total > data.pageSize ? (
+      {/* 与商家端订单页、用户端售后页同一口径：只要有数据就渲染分页条，
+          否则「共 0 条」时看不到任何页码信息，三端观感不一致 */}
+      {data ? (
         <Pagination
           page={page}
           pageCount={Math.max(1, data.pageCount)}

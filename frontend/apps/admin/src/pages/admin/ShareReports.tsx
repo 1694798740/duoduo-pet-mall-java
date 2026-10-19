@@ -20,9 +20,9 @@ import { adminApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { ShareReportView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, formatDate, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
@@ -58,6 +58,8 @@ export const AdminShareReportsPage: React.FC = () => {
 
   const [status, setStatus] = useState('PENDING');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [target, setTarget] = useState<ShareReportView | null>(null);
   const [action, setAction] = useState<'ACCEPT' | 'REJECT'>('REJECT');
@@ -67,11 +69,11 @@ export const AdminShareReportsPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminApi.shareReports({ status: status || undefined, page, pageSize: 10 }),
-      [status, page],
+      () => adminApi.shareReports({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     operator,
-    [status, page],
+    [status, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -130,11 +132,31 @@ export const AdminShareReportsPage: React.FC = () => {
         ))}
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜举报理由或被举报内容 ID"
+          width={320}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的举报 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载举报…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <Empty icon="🚩" title="没有符合条件的举报" desc="用户举报分享或评论后会出现在这里" />
+        <Empty
+          icon="🚩"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的举报` : '没有符合条件的举报'}
+          desc="用户举报分享或评论后会出现在这里"
+        />
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
@@ -185,7 +207,7 @@ export const AdminShareReportsPage: React.FC = () => {
         </div>
       ) : null}
 
-      {data && data.total > data.pageSize ? (
+      {data ? (
         <Pagination
           page={page}
           pageCount={Math.max(1, data.pageCount)}

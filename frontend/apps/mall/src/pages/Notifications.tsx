@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router-dom';
 import { noticeApi } from '@duoduo/api-sdk/endpoints';
 import type { NoticeView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Pagination, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useApp } from '@duoduo/shared/store/app';
 
@@ -56,7 +56,8 @@ export const NotificationsPage: React.FC = () => {
 
   const items = data?.items ?? [];
   const unread = useMemo(() => items.filter((it) => !it.read).length, [items]);
-  const pages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
+  const total = data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   /** 打开通知：未读则标记已读并**立即刷新顶栏角标**；落地页只用服务端给的网页路径 */
   const open = async (it: NoticeView) => {
@@ -146,16 +147,8 @@ export const NotificationsPage: React.FC = () => {
         ))}
       </div>
 
-      {pages > 1 ? (
-        <div className="row" style={{ gap: 10, justifyContent: 'center', marginTop: 16 }}>
-          <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-            上一页
-          </button>
-          <span className="small muted">{page} / {pages}</span>
-          <button className="btn btn-ghost btn-sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-            下一页
-          </button>
-        </div>
+      {data ? (
+        <Pagination page={page} pageCount={pages} total={total} onChange={setPage} />
       ) : null}
     </div>
   );

@@ -8,9 +8,9 @@ import { adminMerchantStaffApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { StaffAdminView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, LoadingBlock, Pagination, formatDate, useToast,
+  Alert, Empty, LoadingBlock, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 
@@ -20,11 +20,16 @@ export const AdminMerchantStaffPage: React.FC = () => {
   const { push } = useToast();
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const { data, loading, error: loadError, reload } = useAsync(
-    useCallback(() => adminMerchantStaffApi.page({ page, pageSize: 10 }), [page]),
+    useCallback(
+      () => adminMerchantStaffApi.page({ keyword: keyword || undefined, page, pageSize: 10 }),
+      [keyword, page],
+    ),
     operator,
-    [page],
+    [keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -54,10 +59,30 @@ export const AdminMerchantStaffPage: React.FC = () => {
         本页不允许操作 OWNER。
       </Alert>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜店铺名或手机号"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的成员 {data ? data.total : 0} 人</span>
+        ) : null}
+      </div>
+
       {loadError ? <Alert kind="error">{loadError}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载成员…" /> : null}
       {!loading && data && data.items.length === 0 ? (
-        <Empty icon="👥" title="暂无成员" desc="有商家邀请店员后会出现在这里" />
+        <Empty
+          icon="👥"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的成员` : '暂无成员'}
+          desc="有商家邀请店员后会出现在这里"
+        />
       ) : null}
       {!loading && data && data.items.length > 0 ? (
         <div className="card card-pad">
@@ -105,7 +130,7 @@ export const AdminMerchantStaffPage: React.FC = () => {
           </table>
           <Pagination
             page={page}
-            pageCount={Math.max(1, Math.ceil(data.total / 10))}
+            pageCount={Math.max(1, data.pageCount)}
             total={data.total}
             onChange={setPage}
           />

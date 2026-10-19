@@ -385,13 +385,24 @@ public class AfterSaleService {
 
     // ---------------- 读 ----------------
 
-    /** 我提起的售后（买家视角） */
-    public PageResult<AfterSaleView> listMine(Long userId, String status, int page, int pageSize) {
+    /**
+     * 我提起的售后（买家视角）。
+     *
+     * @param keyword 售后单号 / 订单号（包含匹配）。售后单本身没有「标题」，
+     *                用户能记住的两个标识就是这两串数字。
+     */
+    public PageResult<AfterSaleView> listMine(Long userId, String status, String keyword, int page, int pageSize) {
         requireLogin(userId);
         LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<AfterSaleEntity>()
                 .eq(AfterSaleEntity::getBuyerId, userId);
         applyStatusFilter(wrapper, status);
+        applyKeyword(wrapper, keyword);
         return page(wrapper, page, pageSize);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AfterSaleView> listMine(Long userId, String status, int page, int pageSize) {
+        return listMine(userId, status, null, page, pageSize);
     }
 
     /**
@@ -402,7 +413,7 @@ public class AfterSaleService {
      * 运营额外可见平台自营（{@code sellerId = 0}）：当前商品域没有商家字段，
      * 自营单没有真的卖家账号可登录，只能由运营代处理（与卖家中心同一口径）。
      */
-    public PageResult<AfterSaleView> listForSeller(Long userId, String status, int page, int pageSize) {
+    public PageResult<AfterSaleView> listForSeller(Long userId, String status, String keyword, int page, int pageSize) {
         LoginUser user = requireLogin(userId);
         if (!user.canAccessSellerConsole()) {
             throw BizException.forbidden("仅卖家或运营可查看店铺售后");
@@ -415,15 +426,42 @@ public class AfterSaleService {
         LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<AfterSaleEntity>()
                 .in(AfterSaleEntity::getSellerId, scope);
         applyStatusFilter(wrapper, status);
+        applyKeyword(wrapper, keyword);
         return page(wrapper, page, pageSize);
     }
 
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AfterSaleView> listForSeller(Long userId, String status, int page, int pageSize) {
+        return listForSeller(userId, status, null, page, pageSize);
+    }
+
     /** 全平台售后（运营） */
-    public PageResult<AfterSaleView> listAll(String status, int page, int pageSize) {
+    public PageResult<AfterSaleView> listAll(String status, String keyword, int page, int pageSize) {
         OperatorGuard.requireOperator();
         LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<>();
         applyStatusFilter(wrapper, status);
+        applyKeyword(wrapper, keyword);
         return page(wrapper, page, pageSize);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<AfterSaleView> listAll(String status, int page, int pageSize) {
+        return listAll(status, null, page, pageSize);
+    }
+
+    /**
+     * 关键字：售后单号 / 订单号。
+     *
+     * <p>用 {@code like}（包含）而不是 {@code likeRight}：用户往往只记得单号中间一段，
+     * 前缀匹配会让人以为「查无此单」。两张表都只有几万行级别，索引前缀失效的代价可接受；
+     * 真要放大到百万级时，这里应改为「精确匹配优先 + 后四位兜底」，而不是把 like 去掉。</p>
+     */
+    private void applyKeyword(LambdaQueryWrapper<AfterSaleEntity> wrapper, String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        String kw = keyword.trim();
+        wrapper.and(w -> w.like(AfterSaleEntity::getOrderNo, kw)
+                .or()
+                .apply("CAST(id AS CHAR) LIKE {0}", "%" + kw + "%"));
     }
 
     /** 售后单详情：当事人（买家 / 该单卖家）或运营 */

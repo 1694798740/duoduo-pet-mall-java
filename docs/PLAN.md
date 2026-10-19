@@ -204,6 +204,65 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-19（三十八）· 秒杀页三端重构 ＋ 全站分页/搜索统一
+
+**用户诉求（原话要点）**：秒杀活动页（用户端/商家端/平台后台）修元素重叠、隐藏秒杀活动 ID、时间去掉 `T`、
+明确「余量」= 秒杀活动自身剩余库存；三端所有列表补数字页码（1、2、3…）＋ 上一页/下一页；
+我的订单、我的售后、我的闲置、平台后台、商家端等缺失搜索处补搜索，并保持交互一致。
+
+**① 秒杀页（后台重构为主）**
+- 布局拆三段：标题行（标题 + 新建按钮）／`.seckill-stats` 统计条／`.list-toolbar`（左搜索、右口径说明），
+  不再是「标题、按钮、筛选挤在一行」——重叠的直接成因。
+- **活动 ID 全删**（列表列、编辑弹窗、删除确认弹窗）：19 位数字对运营无信息量，只会挤爆单元格。
+- 时间列统一 `utcToBj(iso).replace('T',' ')`：**服务端仍下发 ISO**（契约不动），只在展示层去掉 `T`。
+- 「余量」定死为**秒杀活动自身剩余库存**：`sum(availableStock) / sum(totalStock)`，表头写「活动余量」，
+  配 `SeckillRemainStat`（大号数字 + 进度条），`title` 明示「不是商品 SKU 库存」。详情列不再混用 SKU 库存。
+- 统计条把「进行中／待开始／已结束」与总活动数并排，页面顶部一眼可读。
+
+**② 分页统一（三端 27 处）**
+- `packages/shared/components/ui.tsx` 重写 `Pagination`：**上一页 ＋ 数字页码 ＋ 下一页 ＋ 共 N 条 · 第 x/y 页**。
+  页码用 `pageWindow(page, pageCount, span=2)` 窗口法：始终含首页与末页，中间按当前页 ±2，空隙插 `…`
+  （后台有几百页的列表，平铺会撑爆工具栏；只给前后翻页又违背「直接跳页」的要求）。
+- 替换 4 处手写分页（我的闲置 / 关注 / 我的分享 / 通知），并统一**渲染条件**为「有数据就渲染」——
+  原先多处写成 `total > pageSize` 才渲染，导致「共 0 条」时连总数都看不到，三端观感不一致。
+- 数字页码按钮带 `aria-current="page"`，容器是 `nav[aria-label="分页"]`（可被 e2e 直查）。
+
+**③ 搜索统一（用户端 3 + 后台 12 + 商家端 4）**
+- 新增 `SearchBar`（右侧 × 清空）＋ `useDebounced(350ms)`：**输入即搜**，Enter 立即生效；
+  不再要求点「搜索」按钮——列表搜索是持续筛选，多一次点击只会让人以为没生效。
+- **一律服务端筛**：分页存在时前端过滤只能看到当前页，必然漏。后端 10 个接口新增 `keyword` 参数
+  （全部保留无关键字重载，旧调用不破）：订单（订单号 / 商品标题子查询）、售后（售后单号 / 订单号）、
+  我的闲置、后台订单、后台售后、后台商家、后台成员、后台审核样本、后台商品审核、后台举报、商家订单/售后/结算。
+- 参数化一律走 `.apply("... LIKE {0}", "%"+kw+"%")`，不拼串；结算空命中用 `eq(id, -1)` 而不是提前 return，
+  保证「汇总金额」仍按真实数据算（提前 return 会连汇总一起清零）。
+- URL 搜索词用 `setParams(next, { replace: true })`：避免每敲一个字 push 一条历史。
+
+**④ 修掉的两个真缺陷（本轮实测暴露）**
+- **`selectBatchIds(空集合)` → `IN ( )` → 500**。后台成员接口按关键字筛出 0 条时，
+  `merchantMapper.selectBatchIds(empty)` 生成 `WHERE id IN ( )`，JSqlParser 直接解析失败，
+  接口 500 而不是返回空页。已给 `MerchantStaffService.adminPage` / `MerchantOnboardingService.loadOwnerPhones`
+  加空集合守卫（空集合走 `Map.of()`），并复查全仓其余 `selectBatchIds` 调用均有守卫。
+  **教训：空结果是正常业务态，不是异常态；一条「查不到」的路径必须真跑一次。**
+- **e2e 清理脚本库名写错**：`t_after_sale` / `t_logistics_track` 在 `duoduo_fulfilment`，不在 `duoduo_trade`。
+  写错的后果不是「少删两张表」，而是**清理段中途抛错 → 后面的表与账号全不删 → 夹具整批留在库里**。
+  改为按实物库名删除，并给每条删除加容错（`del()` 记录 WARN 不中断），最后用自证查询兜底。
+
+**⑤ 验证**
+- 新增 `scripts/e2e/pagination-search-ui-check.mjs`：接口 + 真实 Chromium 双轨，**49 项全绿**。
+  覆盖：11 笔订单凑 2 页 → 数字页码 1/2 可点、点 2 换页、上一页回退、搜索收敛到 1 条且页码回 1/1、
+  乱码空态文案；三端「有搜索框 / 有分页条」；秒杀页无 19 位 ID、无 `T`、有活动余量列与进度条、布局不重叠；
+  跑完逐表删除 + 自证 0 残留 + SKU 冻结库存回补。
+- **401 判定收紧而非放宽**：未登录时前端会探活 `/api/users/me`、`/api/cart/count`、`/api/auth/refresh`，
+  这些 401 是「没登录」的正常答复。原先的「无 4xx/5xx」会把它们报红（假红），
+  一律放行又会漏掉真问题。改为**按请求是否携带 `dd_at`/`dd_rt` Cookie 区分**：
+  无 Cookie 的 401 计数忽略，**带 Cookie 仍 401 照样报红**。
+- 回归：`seckill-ui-check`、`seckill-price-ui-check` 18/0、`aftersale-ui-check`、`my-listings-ui-check`、
+  `seller-ui-check` 40/0、`merchant-staff-ui-check`、`audit-sla-ui-check` 56/0、`share-report-ui-check` 32/0。
+- 三端 `tsc --noEmit` + `vite build` 全绿；`duoduo-user` `mvn -o -pl -am package` 通过；
+  四镜像重建（user / web / admin / merchant）后容器 healthy。
+- 门禁提醒：`run-ui-checks.ps1` 需带 `-UiBase http://localhost:8088`，否则套件默认打 `localhost:5173`（Vite dev），
+  没起 dev server 就会以「navigating to ... 5173」整体失败——**这是基址没传，不是功能回归**。
+
 ### 2026-10-19（三十七）· 秒杀价规则（< 原价、> 0.01 元）＋ 时间双重换算修复
 
 - 后端 `SeckillService.createActivity`：`seckillPrice <= 1` 分拒（>0.01 元）；`seckillPrice >= 原售价` 拒

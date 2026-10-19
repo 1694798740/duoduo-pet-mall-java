@@ -18,7 +18,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { sellerApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PageResult } from '@duoduo/api-sdk/types';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import {
   Alert,
   Empty,
@@ -26,6 +26,7 @@ import {
   LoadingBlock,
   Modal,
   Pagination,
+  SearchBar,
   formatDate,
   formatPrice,
   useToast,
@@ -65,16 +66,18 @@ export const SellerOrdersPage: React.FC = () => {
 
   const status = params.get('status') ?? '';
   const page = num(params.get('page')) ?? 1;
+  const rawKeyword = params.get('q') ?? '';
+  const keyword = useDebounced(rawKeyword.trim(), 350);
   const allowed = canAccessSellerConsole(user?.role);
 
   const fetcher = useCallback(
-    () => sellerApi.orders({ status: status || undefined, page, pageSize: 10 }),
-    [status, page],
+    () => sellerApi.orders({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+    [status, keyword, page],
   );
   const { data, loading, error, reload } = useAsync<PageResult<OrderView>>(
     fetcher,
     allowed,
-    [allowed, status, page],
+    [allowed, status, keyword, page],
   );
 
   const [shipTarget, setShipTarget] = useState<OrderView | null>(null);
@@ -170,6 +173,25 @@ export const SellerOrdersPage: React.FC = () => {
             售后处理
           </Link>
         </div>
+      </div>
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={rawKeyword}
+          onChange={(v) => {
+            const next = new URLSearchParams(params);
+            if (v) next.set('q', v);
+            else next.delete('q');
+            next.delete('page');
+            setParams(next, { replace: true });
+          }}
+          busy={loading && Boolean(rawKeyword.trim())}
+          placeholder="搜订单号或商品名称"
+          width={300}
+        />
+        {rawKeyword.trim() ? (
+          <span className="small muted">匹配「{rawKeyword.trim()}」的订单 {data ? data.total : 0} 笔</span>
+        ) : null}
       </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>
@@ -288,7 +310,13 @@ export const SellerOrdersPage: React.FC = () => {
       ) : (
         <Empty
           icon="🧾"
-          title={status ? '该状态下没有订单' : '还没有卖出订单'}
+          title={
+            rawKeyword.trim()
+              ? `没有匹配「${rawKeyword.trim()}」的订单`
+              : status
+                ? '该状态下没有订单'
+                : '还没有卖出订单'
+          }
           desc={
             status
               ? undefined

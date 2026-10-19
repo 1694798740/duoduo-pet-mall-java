@@ -34,13 +34,18 @@ public class AdminAfterSaleController {
         this.afterSaleService = afterSaleService;
     }
 
-    /** 全平台售后列表（按状态过滤，分页） */
+    /**
+     * 全平台售后列表（按状态过滤，分页）。
+     *
+     * @param keyword 售后单号 / 订单号（包含匹配）
+     */
     @GetMapping
     public ApiResponse<PageResult<AfterSaleView>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize) {
-        return ApiResponse.ok(afterSaleService.listAll(status, page, pageSize));
+        return ApiResponse.ok(afterSaleService.listAll(status, keyword, page, pageSize));
     }
 
     /** 裁定：APPROVE_REFUND（支持退款，会真的执行退款）/ REJECT（驳回），**必须填裁定说明** */

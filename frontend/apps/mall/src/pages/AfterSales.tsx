@@ -10,21 +10,25 @@
 import React, { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
-import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice } from '@duoduo/shared/components/ui';
-import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
+import {
+  Alert, Empty, LoadingBlock, Pagination, SearchBar, formatDate, formatPrice,
+} from '@duoduo/shared/components/ui';
+import { useAsync, useDebounced, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
 
 export const AfterSalesPage: React.FC = () => {
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const { data, loading, error, reloadSilently } = useAsync(
     useCallback(
-      () => afterSaleApi.mine({ status: status || undefined, page, pageSize: 10 }),
-      [status, page],
+      () => afterSaleApi.mine({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     true,
-    [status, page],
+    [status, keyword, page],
   );
 
   /** 售后由卖家/平台推进状态 —— 列表页同样三层静默刷新，不用手动按 F5 */
@@ -59,11 +63,31 @@ export const AfterSalesPage: React.FC = () => {
         ))}
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜售后单号或订单号"
+          width={300}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的售后 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载售后单…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <Empty icon="🧾" title="还没有售后记录" desc="在订单里点「申请售后」即可发起" />
+        <Empty
+          icon="🧾"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的售后` : '还没有售后记录'}
+          desc={keywordInput.trim() ? '试试售后单号后几位或订单号' : '在订单里点「申请售后」即可发起'}
+        />
       ) : null}
 
       {!loading && data
@@ -115,7 +139,7 @@ export const AfterSalesPage: React.FC = () => {
           ))
         : null}
 
-      {data && data.total > data.pageSize ? (
+      {data ? (
         <Pagination
           page={page}
           pageCount={Math.max(1, data.pageCount)}

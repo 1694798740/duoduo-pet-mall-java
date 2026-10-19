@@ -27,9 +27,9 @@ import {
   MerchantRejectReason,
 } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, LoadingBlock, Modal, Pagination, formatDate, useToast,
+  Alert, Empty, LoadingBlock, Modal, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 
@@ -111,6 +111,8 @@ export const AdminMerchantsPage: React.FC = () => {
 
   const [status, setStatus] = useState('SUBMITTED');
   const [page, setPage] = useState(1);
+  const [keywordInput, setKeywordInput] = useState('');
+  const keyword = useDebounced(keywordInput.trim(), 350);
 
   const [detail, setDetail] = useState<MerchantApplicationView | null>(null);
   const [rejecting, setRejecting] = useState(false);
@@ -123,11 +125,11 @@ export const AdminMerchantsPage: React.FC = () => {
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
-      () => adminMerchantApi.page({ status: status || undefined, page, pageSize: 10 }),
-      [status, page],
+      () => adminMerchantApi.page({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
+      [status, keyword, page],
     ),
     operator,
-    [status, page],
+    [status, keyword, page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -233,11 +235,31 @@ export const AdminMerchantsPage: React.FC = () => {
         </button>
       </div>
 
+      <div className="list-toolbar">
+        <SearchBar
+          value={keywordInput}
+          onChange={(v) => {
+            setKeywordInput(v);
+            setPage(1);
+          }}
+          busy={loading && Boolean(keywordInput.trim())}
+          placeholder="搜店铺名、店主手机号或姓名"
+          width={320}
+        />
+        {keywordInput.trim() ? (
+          <span className="small muted">匹配「{keywordInput.trim()}」的申请 {data ? data.total : 0} 条</span>
+        ) : null}
+      </div>
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <LoadingBlock text="正在加载申请…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <Empty icon="🏪" title="没有符合条件的申请" desc="商家提交入驻材料后会出现在这里" />
+        <Empty
+          icon="🏪"
+          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的申请` : '没有符合条件的申请'}
+          desc="商家提交入驻材料后会出现在这里"
+        />
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
@@ -277,7 +299,7 @@ export const AdminMerchantsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          <Pagination page={page} pageCount={Math.max(1, Math.ceil(data.total / 10))} total={data.total} onChange={setPage} />
+          <Pagination page={page} pageCount={Math.max(1, data.pageCount)} total={data.total} onChange={setPage} />
         </div>
       ) : null}
 

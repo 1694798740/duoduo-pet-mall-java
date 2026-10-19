@@ -17,9 +17,9 @@ import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import type { AdminUserView } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, useToast,
 } from '@duoduo/shared/components/ui';
-import { useAsync } from '@duoduo/shared/components/hooks';
+import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isAdminRole, isOperator } from './shared';
@@ -45,6 +45,8 @@ export const AdminOperatorsPage: React.FC = () => {
   const [kwInput, setKwInput] = useState('');
   const [roleInput, setRoleInput] = useState('');
   const [query, setQuery] = useState<{ role?: string; keyword?: string; page: number }>({ page: 1 });
+  /** 输入防抖后直接改查询条件（不再要求点「查询」：列表搜索是持续筛选，不是表单提交） */
+  const kw = useDebounced(kwInput.trim(), 350);
 
   const [target, setTarget] = useState<AdminUserView | null>(null);
   const [newRole, setNewRole] = useState('');
@@ -53,9 +55,17 @@ export const AdminOperatorsPage: React.FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsync(
-    useCallback(() => adminApi.adminUsers({ ...query, pageSize: PAGE_SIZE }), [query]),
+    useCallback(
+      () => adminApi.adminUsers({
+        role: roleInput || undefined,
+        keyword: kw || undefined,
+        page: query.page,
+        pageSize: PAGE_SIZE,
+      }),
+      [roleInput, kw, query.page],
+    ),
     operator,
-    [operator, query],
+    [operator, roleInput, kw, query.page],
   );
 
   if (!operator) return <AdminDenied />;
@@ -63,10 +73,7 @@ export const AdminOperatorsPage: React.FC = () => {
 
   const items = data?.items ?? [];
 
-  const search = () => {
-    setQuery({ role: roleInput || undefined, keyword: kwInput.trim() || undefined, page: 1 });
-    setNotice(null);
-  };
+  const setPage = (value: number) => setQuery({ page: value });
 
   const openChange = (item: AdminUserView) => {
     setTarget(item);
@@ -120,16 +127,17 @@ export const AdminOperatorsPage: React.FC = () => {
             <option key={r} value={r}>{ROLE_LABELS[r]}（{r}）</option>
           ))}
         </select>
-        <input
-          className="input"
-          style={{ width: 220 }}
-          placeholder="手机号 / 昵称"
+        <SearchBar
           value={kwInput}
-          onChange={(e) => setKwInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
-          maxLength={30}
+          onChange={(v) => {
+            setKwInput(v.slice(0, 30));
+            setQuery({ page: 1 });
+            setNotice(null);
+          }}
+          busy={loading && Boolean(kwInput.trim())}
+          placeholder="搜手机号或昵称"
+          width={240}
         />
-        <button className="btn btn-primary btn-sm" onClick={search}>查询</button>
         <button
           className="btn btn-ghost btn-sm"
           onClick={() => { setKwInput(''); setRoleInput(''); setQuery({ page: 1 }); }}
@@ -176,27 +184,12 @@ export const AdminOperatorsPage: React.FC = () => {
             </tbody>
           </table>
 
-          <div className="row-between" style={{ marginTop: 10 }}>
-            <span className="small muted">
-              共 {data?.total ?? 0} 人 · 第 {data?.page ?? 1} / {data?.pageCount ?? 1} 页
-            </span>
-            <div className="row" style={{ gap: 6 }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={(data?.page ?? 1) <= 1}
-                onClick={() => setQuery({ ...query, page: (data?.page ?? 1) - 1 })}
-              >
-                上一页
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={(data?.page ?? 1) >= (data?.pageCount ?? 1)}
-                onClick={() => setQuery({ ...query, page: (data?.page ?? 1) + 1 })}
-              >
-                下一页
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={data?.page ?? 1}
+            pageCount={data?.pageCount ?? 1}
+            total={data?.total ?? 0}
+            onChange={setPage}
+          />
         </div>
       )}
 

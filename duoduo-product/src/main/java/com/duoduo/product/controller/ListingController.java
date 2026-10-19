@@ -125,9 +125,10 @@ public class ListingController {
     public ApiResponse<PageResult<ListingMineView>> mine(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String auditStatus,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(listingService.listMine(status, auditStatus, page, pageSize));
+        return ApiResponse.ok(listingService.listMine(status, auditStatus, keyword, page, pageSize));
     }
 
     /**

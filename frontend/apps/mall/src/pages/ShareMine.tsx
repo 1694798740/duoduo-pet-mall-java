@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { shareApi } from '@duoduo/api-sdk/endpoints';
 import type { ShareView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Modal, Pagination, useToast } from '@duoduo/shared/components/ui';
 import { ShareCard } from '@duoduo/shared/components/share';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useConfirm } from '@duoduo/shared/components/confirm';
@@ -144,12 +144,8 @@ export const ShareMinePage: React.FC = () => {
         ))}
       </div>
 
-      {pages > 1 ? (
-        <div className="row" style={{ gap: 10, justifyContent: 'center', marginTop: 16 }}>
-          <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</button>
-          <span className="small muted">{page} / {pages}</span>
-          <button className="btn btn-ghost btn-sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>下一页</button>
-        </div>
+      {data ? (
+        <Pagination page={page} pageCount={pages} total={total} onChange={setPage} />
       ) : null}
 
       <Modal open={Boolean(editing)} title="编辑分享" onClose={() => setEditing(null)}>

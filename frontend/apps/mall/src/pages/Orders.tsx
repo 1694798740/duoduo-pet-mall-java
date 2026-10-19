@@ -13,8 +13,10 @@ import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/types';
-import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
-import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { useAsync, useDebounced, useLiveRefresh } from '@duoduo/shared/components/hooks';
+import {
+  Alert, Empty, LoadingBlock, Pagination, SearchBar, formatDate, formatPrice, useToast,
+} from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useConfirm } from '@duoduo/shared/components/confirm';
 import { notifyDataChanged } from '@duoduo/shared/lib/dataBus';
@@ -128,20 +130,25 @@ export const OrdersPage: React.FC = () => {
   const status = params.get('status') ?? '';
   const orderType = params.get('type') ?? '';
   const page = num(params.get('page')) ?? 1;
+  /** 搜索词进 URL（可刷新 / 可后退）；请求用防抖值，避免每敲一个字打一次接口 */
+  const rawKeyword = params.get('q') ?? '';
+  const keyword = useDebounced(rawKeyword.trim(), 350);
 
   const fetcher = useCallback(
     () =>
       orderApi.list({
         status: status || undefined,
         orderType: orderType || undefined,
+        keyword: keyword || undefined,
         page,
         pageSize: 10,
       }),
-    [status, orderType, page],
+    [status, orderType, keyword, page],
   );
   const { data, loading, error, reload, reloadSilently } = useAsync<PageResult<OrderView>>(fetcher, true, [
     status,
     orderType,
+    keyword,
     page,
   ]);
 
@@ -210,6 +217,19 @@ export const OrdersPage: React.FC = () => {
     setParams(next);
   };
 
+  /**
+   * 搜索词写 URL 时用 replace：每敲一个字都 push 一条历史，
+   * 用户按一次「后退」只退掉一个字符，体验极差。
+   * 页码一并清掉 —— 换了搜索词还停在原页，多半是空列表。
+   */
+  const setKeyword = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set('q', value);
+    else next.delete('q');
+    next.delete('page');
+    setParams(next, { replace: true });
+  };
+
   /** 从「只看秒杀」退回全部订单 —— 页码必须一起清掉，否则会停在原页看到空列表 */
   const clearType = () => {
     const next = new URLSearchParams(params);
@@ -225,11 +245,12 @@ export const OrdersPage: React.FC = () => {
   };
 
   const emptyHint = useMemo(() => {
+    if (rawKeyword.trim()) return `没有匹配「${rawKeyword.trim()}」的订单`;
     if (orderType === 'SECKILL' && !status) return '还没有抢到过秒杀商品，去秒杀会场看看';
     if (!status) return '还没有订单，去挑一件试试';
     const label = TABS.find((t) => t.value === status)?.label ?? status;
     return `没有「${label}」的订单`;
-  }, [status, orderType]);
+  }, [status, orderType, rawKeyword]);
 
   return (
     <div>
@@ -263,6 +284,19 @@ export const OrdersPage: React.FC = () => {
             {tab.label}
           </button>
         ))}
+      </div>
+
+      <div className="list-toolbar">
+        <SearchBar
+          value={rawKeyword}
+          onChange={setKeyword}
+          busy={loading && Boolean(rawKeyword.trim())}
+          placeholder="搜订单号或商品名称"
+          width={300}
+        />
+        {rawKeyword.trim() ? (
+          <span className="small muted">匹配「{rawKeyword.trim()}」的订单 {data ? data.total : 0} 笔</span>
+        ) : null}
       </div>
 
       {error ? (

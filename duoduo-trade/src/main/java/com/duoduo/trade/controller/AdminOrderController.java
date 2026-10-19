@@ -34,15 +34,21 @@ public class AdminOrderController {
         this.orderService = orderService;
     }
 
-    /** 运营全平台订单列表（按状态 / 订单号前缀过滤） */
+    /**
+     * 运营全平台订单列表。
+     *
+     * @param keyword 订单号或商品标题（包含匹配）；{@code orderNo} 为旧参数名，保留兼容
+     */
     @GetMapping
     public ApiResponse<PageResult<OrderView>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String orderNo,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         OperatorGuard.requireOperator();
-        return ApiResponse.ok(orderService.adminList(status, orderNo, page, pageSize));
+        String kw = (keyword == null || keyword.isBlank()) ? orderNo : keyword;
+        return ApiResponse.ok(orderService.adminList(status, kw, page, pageSize));
     }
 
     /** 运营按订单号查详情（无归属限制） */
