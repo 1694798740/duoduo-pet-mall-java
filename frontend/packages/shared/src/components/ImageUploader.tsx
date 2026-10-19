@@ -53,6 +53,11 @@ export interface ImageUploaderProps {
   addLabel?: string;
   /** 外部地址输入框占位文案 */
   urlPlaceholder?: string;
+  /**
+   * 单图字段（max=1）**已有图**时的编辑提示：悬停缩略图浮现这行字，点击缩略图即重选。
+   * 头像场景传「编辑头像」。单图字段因此只有一个入口：有图=点头像换图，无图=点「上传」方块。
+   */
+  editOverlay?: string;
 }
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
@@ -77,6 +82,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   hint = '本地图片与外部地址都会转存到对象存储，页面展示使用转存后的地址。',
   addLabel,
   urlPlaceholder = '或粘贴图片地址（多张用空格 / 逗号分隔）',
+  editOverlay = '更换图片',
 }) => {
   const { push } = useToast();
   const [busy, setBusy] = useState(false);
@@ -199,10 +205,43 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
 
   return (
     <div className="img-uploader">
+      {/*
+        文件选择框挂在根节点而不是「添加」方块里：单图字段已有图时「添加」方块不渲染，
+        此时**点击缩略图**就是唯一的上传入口，必须仍然能打开选图框。
+      */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept={ACCEPT}
+        multiple={max > 1}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          void pickFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
       <div className="img-uploader-list">
         {value.map((url, index) => (
           <div key={`${url}-${index}`} className="img-uploader-item" style={{ width: size, height: size }}>
-            <img src={url} alt={`已选图片 ${index + 1}`} style={{ borderRadius: radius }} />
+            {max === 1 ? (
+              /* 单图字段：缩略图本身就是编辑入口 —— 点击重选，悬停浮现编辑提示 */
+              <button
+                type="button"
+                className="img-uploader-item-btn"
+                disabled={locked}
+                aria-label={editOverlay}
+                onClick={() => fileRef.current?.click()}
+              >
+                <img src={url} alt={`已选图片 ${index + 1}`} style={{ borderRadius: radius }} />
+                {locked ? null : (
+                  <span className="img-uploader-edit" style={{ borderRadius: radius }}>
+                    {editOverlay}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <img src={url} alt={`已选图片 ${index + 1}`} style={{ borderRadius: radius }} />
+            )}
             {locked ? null : (
               <button
                 type="button"
@@ -216,7 +255,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           </div>
         ))}
 
-        {max === 1 || value.length < max ? (
+        {value.length < max ? (
           <button
             type="button"
             className="img-uploader-add"
@@ -226,17 +265,6 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           >
             {busy ? <span className="img-uploader-busy">…</span> : <span className="img-uploader-plus">+</span>}
             {addLabel ? <span className="img-uploader-add-label">{addLabel}</span> : null}
-            <input
-              ref={fileRef}
-              type="file"
-              accept={ACCEPT}
-              multiple={max > 1}
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                void pickFiles(e.target.files);
-                e.target.value = '';
-              }}
-            />
           </button>
         ) : null}
       </div>

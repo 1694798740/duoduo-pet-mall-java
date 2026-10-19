@@ -261,7 +261,17 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen((v) => !v)}
                 >
-                  👤 <span className="small">{user.nickname}</span>
+                  {/*
+                    右上角显示真实头像（有头像时替换 👤 占位符）。
+                    数据来自 AuthProvider 的 user —— 个人中心改头像后 refreshMe() 会立即
+                    更新这份 user，这里随之重渲染，无需刷新页面（2026-10-19）。
+                  */}
+                  {user.avatar ? (
+                    <img className="nav-avatar" src={user.avatar} alt="我的头像" />
+                  ) : (
+                    <span aria-hidden>👤</span>
+                  )}{' '}
+                  <span className="small">{user.nickname}</span>
                   {/* 全站可见的未读角标（S7）：用户在任何页面都能看到有新消息 —— 这正是本轮的核心诉求 */}
                   {unread.total > 0 ? (
                     <span className="badge-dot">{badgeText(unread.total)}</span>

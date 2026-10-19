@@ -47,6 +47,8 @@ export const MePage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   /** 头像上传/转存中：此时提交会把「旧头像」存下去，必须一起禁用 */
   const [uploading, setUploading] = useState(false);
+  /** 头像自动保存中（选完图立即落库并同步右上角） */
+  const [avatarSaving, setAvatarSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [realName, setRealName] = useState('');
@@ -54,15 +56,40 @@ export const MePage: React.FC = () => {
   const [realBusy, setRealBusy] = useState(false);
   const [realError, setRealError] = useState<string | null>(null);
 
+  const userId = user?.id;
+  // 只在「换了账号」时回填表单：refreshMe 每次都换 user 对象引用，
+  // 若依赖写 [user]，头像自动保存后一次 refreshMe 就会把用户正在编辑的昵称冲掉。
   useEffect(() => {
     if (user) {
       setNickname(user.nickname);
       setAvatar(user.avatar ?? '');
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   if (loading) return <LoadingBlock text="正在加载个人信息…" />;
   if (!user) return null;
+
+  /**
+   * 头像**选完即存**（2026-10-19）：上传/贴地址/点 × 都立即落库并 refreshMe，
+   * 右上角头像随之同步 —— 不要求用户再找一次「保存资料」。
+   * 后端 PATCH /api/users/me 是三态语义：avatar 传 null/缺省=不改、传 ''=清空。
+   */
+  const saveAvatar = async (next: string) => {
+    if (next === (user.avatar ?? '')) return;
+    setAvatar(next);
+    setAvatarSaving(true);
+    try {
+      await userApi.update({ avatar: next });
+      await refreshMe();
+      push(next ? '头像已更新，右上角已同步' : '头像已清除，右上角已恢复默认', 'success');
+    } catch (err) {
+      push(toFriendlyMessage(err), 'error');
+      setAvatar(user.avatar ?? '');
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
 
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,22 +170,30 @@ export const MePage: React.FC = () => {
               />
             </Field>
 
-            <Field label="头像" hint="支持本地图片上传，也可粘贴图片地址；留空则使用默认头像">
+            <Field
+              label="头像"
+              hint="点击头像即可更换（悬停出现「编辑头像」）；点 × 清除后此处变回上传入口；右上角头像即时同步"
+            >
               <ImageUploader
                 value={avatar ? [avatar] : []}
-                onChange={(next) => setAvatar(next[0] ?? '')}
+                onChange={(next) => void saveAvatar(next[0] ?? '')}
                 max={1}
                 size={72}
                 shape="circle"
                 onBusyChange={setUploading}
                 addLabel="上传头像"
+                editOverlay="编辑头像"
                 hint=""
                 urlPlaceholder="或粘贴头像图片地址"
               />
             </Field>
 
-            <button className="btn btn-primary" type="submit" disabled={busy || uploading}>
-              {busy ? '保存中…' : uploading ? '头像上传中…' : '保存资料'}
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={busy || uploading || avatarSaving}
+            >
+              {busy ? '保存中…' : uploading || avatarSaving ? '头像处理中…' : '保存资料'}
             </button>
           </form>
         </div>
