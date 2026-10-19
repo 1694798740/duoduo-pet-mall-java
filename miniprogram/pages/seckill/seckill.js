@@ -17,7 +17,7 @@ function decorate(act) {
     endText: api.shortTime(act.endAt),
     skus: (act.skus || []).map((s) =>
       Object.assign({}, s, {
-        imageSrc: images.skuImage(s.skuId, null, s.image),
+        imageSrc: images.skuImage(s.skuId, s.spuId || null, s.image),
         seckillPriceText: api.fen2yuan(s.seckillPrice),
         originalPriceText: api.fen2yuan(s.originalPrice),
         soldOut: Number(s.availableStock) <= 0,

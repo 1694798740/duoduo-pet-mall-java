@@ -172,7 +172,15 @@ export const SeckillPage: React.FC = () => {
                   const coupon = bestCouponFor(Number(sku.seckillPrice));
                   return (
                     <li key={sku.skuId} className="seckill-sku">
-                      {sku.image && <img src={skuImage(sku.skuId, sku.skuId, sku.image)} alt={sku.spuTitle} className="seckill-img" />}
+                      {/* 图片与全站同一解析层：种子必须是 spuId —— 传 skuId 会从图池选到
+                          另一张图，与首页「每日秒杀」/商品详情的封面对不上（2026-10-19 用户报障） */}
+                      {sku.image && (
+                        <img
+                          src={skuImage(sku.skuId, sku.spuId ?? sku.skuId, sku.image)}
+                          alt={sku.spuTitle}
+                          className="seckill-img"
+                        />
+                      )}
                       <div className="seckill-info">
                         {/*
                           详情页按 SPU 寻址，必须用 spuId 而不是 skuId ——

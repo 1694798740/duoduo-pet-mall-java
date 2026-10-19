@@ -215,7 +215,7 @@ Page({
                 phaseLabel: act.phase === 'ONGOING' ? '抢购中' : '即将开始',
                 priceText: api.fen2yuan(s.seckillPrice),
                 originText: api.fen2yuan(s.originalPrice),
-                imageSrc: images.skuImage(s.skuId, null, s.image),
+                imageSrc: images.skuImage(s.skuId, s.spuId || null, s.image),
               })
             );
           });

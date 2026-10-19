@@ -1981,6 +1981,21 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-19（三十五）· 修复：秒杀活动页封面图与首页「每日秒杀」不一致
+
+**现象**：同一商品（spuId 1001），秒杀活动页显示一张图、首页「每日秒杀」显示另一张图。
+
+**根因**：占位图不是真实文件（`/img/sku/2001.svg` 在仓库里不存在），由前端**按 id 做种子从 12 张本地图池选图**
+（`seedOf(spuId || skuId)`）。秒杀列表页把 `skuId`（2001）当 `spuId` 位传给了 `skuImage`，
+首页栏目传的是真 `spuId`（1001）—— 种子不同 ⇒ `seedOf('2001')`→p09、`seedOf('1001')`→p05，
+同一商品在两个入口选到了图池里不同的图。数据本身没有不一致，是**选图参数不一致**。
+
+**修复**：`Seckill.tsx` 改传 `sku.spuId ?? sku.skuId`；小程序同型问题一并修
+（`miniprogram/pages/seckill/seckill.js`、`pages/index/index.js` 原来传 `null` → 回退 skuId）。
+其余调用点经排查全部用 spuId，无同类问题。
+
+**验证**：浏览器实测首页「每日秒杀」图 = 秒杀活动页图 = 商品详情页主图 = `/img/products/p05.jpg`，三处完全一致。
+
 ### 2026-10-19（三十四）· 全站秒杀标识与价格 ＋ 首页「每日秒杀」栏目
 
 **1. 全站商品卡与详情页统一挂秒杀标识、换秒杀价**
