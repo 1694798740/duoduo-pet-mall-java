@@ -73,12 +73,22 @@ const utcToBj = (iso: string | null | undefined): string => {
   return new Date(t + BJ_OFFSET_MS).toISOString().slice(0, 16);
 };
 
-/** 北京时间 datetime-local 值 → 服务端 UTC 挂钟串（'YYYY-MM-DDTHH:mm:ss'） */
-const bjToUtc = (v: string): string => {
+/**
+ * 北京时间 datetime-local 值 → **带 +08:00 偏移的 ISO 串**（如 `2026-10-19T20:00:00+08:00`）。
+ *
+ * <p>★ 2026-10-19 修：这里以前返回的是**去掉时区的 UTC 挂钟串**（`2026-10-19T12:00:00`），
+ * 但服务端自 `f0e835c` 起把「无时区输入」按**北京时间**解析再转 UTC ——
+ * 于是同一次提交被减了两次 8 小时：运营填 20:00，库里存的是 12:00（北京），
+ * 活动提前 8 小时结束。带上 `+08:00` 后走服务端的「有时区按其时区」分支，只换算一次。</p>
+ *
+ * <p>代价为零：`parseActivityTime` 本来就同时接受两种写法，这里只是把**语义写进报文**，
+ * 不再依赖「谁去猜这个裸串是哪个时区」。</p>
+ */
+const bjToServerIso = (v: string): string => {
   if (!v) return '';
-  const t = Date.parse(`${v.slice(0, 16)}:00Z`);
-  if (Number.isNaN(t)) return '';
-  return new Date(t - BJ_OFFSET_MS).toISOString().slice(0, 19);
+  // datetime-local 给的是 'YYYY-MM-DDTHH:mm'（可能带秒），补秒后直接挂 +08:00
+  const hhmmss = v.length === 16 ? `${v}:00` : v.slice(0, 19);
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(hhmmss) ? `${hhmmss}+08:00` : '';
 };
 
 /** 北京时间的今天，拼上指定时分（默认值用：当天 00:00 / 23:59） */
@@ -193,11 +203,19 @@ export const AdminSeckillPage: React.FC = () => {
    *   运营一不留神就建出「原价 15800 元」的活动。
    */
   const applySku = (sku: SkuView) => {
+    /**
+     * 秒杀价默认值＝现价八折，并夹在「(0.01 元, 原价)」区间内（2026-10-19 新增规则）：
+     * 秒杀价必须**严格低于**原价、且**大于 0.01 元**。默认值直接落在合法区间，
+     * 运营不改也能存；原价极低（≤0.02 元）时无解，给 0.01 让保存时的校验把话说明白。
+     */
+    const originalCents = sku.price;
+    const eighty = Math.round(originalCents * 0.8);
+    const seckillCents = originalCents > 2 ? Math.min(Math.max(eighty, 2), originalCents - 1) : 1;
     updateRow(pickRowIndex, {
       skuId: sku.id,
       skuStock: sku.stock,
       originalPrice: sku.price / 100,
-      seckillPrice: Math.max(0.01, Math.round(sku.price * 0.8) / 100),
+      seckillPrice: seckillCents / 100,
       // 配额默认值收敛到库存范围内（上限先按 99 封顶，保存前还有「不得超过库存」的强校验）
       totalStock: Math.max(1, Math.min(sku.stock, 99)),
     });
@@ -226,11 +244,30 @@ export const AdminSeckillPage: React.FC = () => {
     }
     // 逐行校验（2026-10-19）：配额受库存约束、限购受配额约束 —— 之前两个数字随便填，
     // 「配额 5000、库存 193」这种活动能直接建出来，卖出去就是超卖。
+    // 同日新增价格规则：秒杀价必须**严格低于原售价**、且**大于 0.01 元**（详见下方注释）。
     for (const [i, r] of rows.entries()) {
       if (r.skuId.trim() === '') continue;
-      if (!(r.seckillPrice > 0)) {
-        setActionError(`第 ${i + 1} 个商品：秒杀价必须大于 0`);
+      const who = `第 ${i + 1} 个商品（SKU ${r.skuId.trim()}）`;
+      const priceCents = Math.round(r.seckillPrice * 100);
+      /**
+       * 价格规则（2026-10-19）：
+       *   ① 秒杀价 > 0.01 元 —— 0.01 元本身就是「白送」，且 0 元会让分摊/退款出现 0 金额行；
+       *   ② 秒杀价 < 原售价（**严格**低于）—— 等于原售价的「秒杀」没有任何优惠，
+       *      还会让划线价与售价相同，页面上看起来像配置错误。
+       * 比较一律换成分（整数）做，避免 0.1+0.2 这类浮点误差造成「看着相等、判不相等」。
+       */
+      if (priceCents <= 1) {
+        setActionError(`${who}：秒杀价必须大于 0.01 元（当前 ${(priceCents / 100).toFixed(2)} 元）`);
         return;
+      }
+      if (r.originalPrice != null && r.originalPrice > 0) {
+        const originalCents = Math.round(r.originalPrice * 100);
+        if (priceCents >= originalCents) {
+          setActionError(
+            `${who}：秒杀价（${(priceCents / 100).toFixed(2)} 元）必须低于原售价（${(originalCents / 100).toFixed(2)} 元）`,
+          );
+          return;
+        }
       }
       if (r.skuStock != null && r.totalStock > r.skuStock) {
         setActionError(
@@ -261,8 +298,8 @@ export const AdminSeckillPage: React.FC = () => {
     const body: SeckillActivityCreateRequest = {
       title: form.title.trim(),
       // 输入框是北京时间，提交前换算成服务端 UTC 存储
-      startAt: bjToUtc(form.startAt),
-      endAt: bjToUtc(form.endAt),
+      startAt: bjToServerIso(form.startAt),
+      endAt: bjToServerIso(form.endAt),
       skus,
     };
     setBusy(true);
@@ -316,8 +353,8 @@ export const AdminSeckillPage: React.FC = () => {
     }
     const body: SeckillActivityEditRequest = {
       title: editForm.title.trim(),
-      startAt: bjToUtc(editForm.startAt),
-      endAt: bjToUtc(editForm.endAt),
+      startAt: bjToServerIso(editForm.startAt),
+      endAt: bjToServerIso(editForm.endAt),
     };
     setEditBusy(true);
     try {
@@ -362,7 +399,7 @@ export const AdminSeckillPage: React.FC = () => {
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
-      {actionError ? <Alert kind="error">{actionError}</Alert> : null}
+      {/* 创建弹窗的校验错误渲染在弹窗内部（见下），这里不再重复一份 */}
 
       {items.length === 0 ? (
         <Empty title="还没有秒杀活动" desc="点右上角「新建活动」创建第一场" />
@@ -503,12 +540,20 @@ export const AdminSeckillPage: React.FC = () => {
                   />
                 </Field>
               </div>
-              <div style={{ flex: 1, minWidth: 110 }}>
-                <Field label="秒杀价（元）" required>
+              <div style={{ flex: 1, minWidth: 130 }}>
+                <Field
+                  label="秒杀价（元）"
+                  required
+                  hint={
+                    row.originalPrice != null && row.originalPrice > 0
+                      ? `必须低于原价 ¥${row.originalPrice.toFixed(2)}，且大于 ¥0.01`
+                      : '必须低于原售价，且大于 ¥0.01'
+                  }
+                >
                   <input
                     className="input"
                     type="number"
-                    min={0.01}
+                    min={0.02}
                     step={0.01}
                     value={row.seckillPrice || ''}
                     onChange={(e) => updateRow(index, { seckillPrice: Number(e.target.value) })}
@@ -622,6 +667,13 @@ export const AdminSeckillPage: React.FC = () => {
             )}
           </div>
         ) : null}
+
+        {/*
+         * ★ 校验错误必须显示在**弹窗里**（2026-10-19 修）：
+         * 原来 actionError 渲染在页面顶部，而它被模态遮罩挡着 —— 运营点「创建」只看到
+         * 「什么都没发生」，会以为按钮坏了。错误提示放在创建按钮上方，点到就看到。
+         */}
+        {actionError ? <Alert kind="error">{actionError}</Alert> : null}
       </Modal>
 
       {/* 编辑：只改标题与时间 —— 商品/价格/配额不在这里，理由是「已扣的余量」与「已下单的价格快照」不能改 */}

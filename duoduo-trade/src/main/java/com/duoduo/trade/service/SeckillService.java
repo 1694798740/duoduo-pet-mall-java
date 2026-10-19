@@ -96,6 +96,16 @@ public class SeckillService {
      */
     private static final java.time.ZoneId BUSINESS_ZONE = java.time.ZoneId.of("Asia/Shanghai");
 
+    /**
+     * 分 → 元的展示串（只用于**报错消息**，不参与任何计算）。
+     *
+     * <p>为什么要它：秒杀价在库里是分，直接把 12600 报给运营会读成「一万二千六百元」，
+     * 让人以为系统算错了。错误消息必须用运营输入时的单位。
+     */
+    static String yuan(long cents) {
+        return java.math.BigDecimal.valueOf(cents).movePointLeft(2).stripTrailingZeros().toPlainString() + " 元";
+    }
+
     /** 活动时间解析：带时区按其时区，不带按北京时间；统一转 UTC 存储 */
     static LocalDateTime parseActivityTime(String raw, String field) {
         if (raw == null || raw.isBlank()) {
@@ -460,6 +470,7 @@ public class SeckillService {
         }
         // 配额必须受库存约束（2026-10-19）：秒杀的「货」是活动配额，但配额本质是拿库存去兑现的 ——
         // 「配额 5000、库存 193」的活动建出来就是超卖。限购同理，不能超过配额本身。
+        // 价格必须是一个「真的便宜」的价格（2026-10-19 新增）：见下方两段校验。
         for (CreateActivityRequest.CreateSkuItem s : request.skus()) {
             SkuSnapshot snap = snapshots.get(s.skuId());
             if (s.totalStock() > snap.availableStock()) {
@@ -469,6 +480,24 @@ public class SeckillService {
             int per = s.perLimit() == null ? 1 : s.perLimit();
             if (per > s.totalStock()) {
                 throw BizException.validation("每人限购（" + per + "）不能超过活动配额（" + s.totalStock() + "）");
+            }
+            /*
+             * 价格规则（2026-10-19）：
+             *   ① 秒杀价必须 > 0.01 元：0.01 元等于白送，0 元还会让支付/退款/分摊出现 0 金额行；
+             *   ② 秒杀价必须**严格低于原售价**（不是「不高于」）：等于原价的秒杀没有优惠，
+             *      划线价与售价相同，页面看起来就像配错了。
+             *
+             * 原售价取**将要落库的那个值**（请求给了 originalPrice 就用它，否则用商品服务当前售价）——
+             * 校验与存储必须是同一个数字，否则「校验用的原价」和「页面显示的原价」可以不是一回事。
+             */
+            long originalPrice = s.originalPrice() == null ? snap.price() : s.originalPrice();
+            if (s.seckillPrice() == null || s.seckillPrice() <= 1L) {
+                throw BizException.validation("秒杀价必须大于 0.01 元（SKU " + s.skuId() + " 当前填的是 "
+                        + (s.seckillPrice() == null ? "空" : yuan(s.seckillPrice())) + "）");
+            }
+            if (s.seckillPrice() >= originalPrice) {
+                throw BizException.validation("秒杀价（" + yuan(s.seckillPrice()) + "）必须低于原售价（"
+                        + yuan(originalPrice) + "），SKU " + s.skuId());
             }
         }
 

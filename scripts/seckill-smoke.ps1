@@ -233,17 +233,20 @@ Check "★ 未知订单类型（小写 seckill）→ 400，不静默返回空列
 # ---------- 5.6 秒杀价与优惠券叠加（2026-10-18） ----------
 Write-Host ""
 Write-Host "> 秒杀券叠加：秒杀价 + 优惠券，取消后券必须回到未使用"
-# 单独建一场高价活动：主流程那场是 1 元，达不到任何券的门槛
+# 单独建一场「价格够到券门槛」的活动：主流程那场是 1 元，达不到任何券的门槛。
+# 价格必须同时满足两条硬规则（2026-10-19）：> 0.01 元、且**严格低于该 SKU 现价 129 元** ——
+# 原来用的是 250 元（高于现价），在新规则下会被 400 拒绝；这里改 120 元，仍高于「新客立减 5 元」门槛。
+$COUPON_PRICE = 12000  # 120 元（< SKU 现价 129 元）
 $r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
     title = 'smoke-seckill-coupon'; startAt = $start; endAt = $end
-    skus = @( @{ skuId = $SKU; seckillPrice = 25000; totalStock = 1; perLimit = 1 } ) }
+    skus = @( @{ skuId = $SKU; seckillPrice = $COUPON_PRICE; totalStock = 1; perLimit = 1 } ) }
 Check "新建「券叠加」活动 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 $actCoupon = "$($r.body.data.id)"
 
 $tpls = (Call 'Get' "$Gateway/api/coupons/templates" $null $null).body.data
-$tpl = @($tpls | Where-Object { [long]$_.thresholdAmount -le 25000 -and [long]$_.discountAmount -gt 0 } |
+$tpl = @($tpls | Where-Object { [long]$_.thresholdAmount -le $COUPON_PRICE -and [long]$_.discountAmount -gt 0 } |
     Sort-Object { [long]$_.discountAmount } -Descending | Select-Object -First 1)
-Check "券模板里有可用于 250 元订单的券" ($tpl.Count -eq 1) "templates=$(@($tpls).Count)"
+Check "券模板里有可用于 $($COUPON_PRICE/100) 元订单的券" ($tpl.Count -eq 1) "templates=$(@($tpls).Count)"
 $claim = Call 'Post' "$Gateway/api/coupons/templates/$($tpl[0].id)/claim" $u1.session $null
 Check "买家甲领券成功" ($claim.status -eq 200 -and $claim.body.data.code) "$($claim.status)/$($claim.raw)"
 $couponCode = "$($claim.body.data.code)"
@@ -254,8 +257,8 @@ $r = Call 'Post' "$Gateway/api/seckill/orders" $u1.session @{
     idempotentKey = (NewKey); couponCode = $couponCode }
 Check "★ 秒杀下单可用券（200）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
 $orderNo4 = "$($r.body.data.orderNo)"
-Check "★ 实付 = 秒杀价 - 券抵扣（25000 - $couponDiscount）" (
-    [long]$r.body.data.payAmount -eq (25000 - $couponDiscount)) "pay=$($r.body.data.payAmount)"
+Check "★ 实付 = 秒杀价 - 券抵扣（$COUPON_PRICE - $couponDiscount）" (
+    [long]$r.body.data.payAmount -eq ($COUPON_PRICE - $couponDiscount)) "pay=$($r.body.data.payAmount)"
 Check "★ 订单落库：折扣与券码都在" (
     (Sql 'duoduo_trade' "SELECT CONCAT(discount_amount,'|',IFNULL(coupon_code,'')) FROM t_order WHERE order_no='$orderNo4';") -eq "$couponDiscount|$couponCode")
 
@@ -267,6 +270,40 @@ Check "★ 取消后券立即回到未使用（不等 TTL）" (
 
 $r = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actCoupon" $sessOp $null
 Check "券叠加活动收尾删除 200" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+
+# ---------- 5.6b 秒杀价规则（2026-10-19） ----------
+Write-Host ""
+Write-Host "> 秒杀价规则：必须 > 0.01 元、且严格低于原售价（SKU 现价 129 元）"
+# 四条用例都打同一个创建接口（绕过页面），证明**接口层**就不允许配出「没优惠」或「白送」的价格。
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-price-equal'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 12900; totalStock = 1; perLimit = 1 } ) }
+Check "秒杀价 = 原价（129 元）被拒 400" ($r.status -eq 400) "$($r.status)/$($r.raw)"
+Check "拒绝原因点名「必须低于原售价」" ("$($r.body.message)" -match '必须低于原售价') "$($r.body.message)"
+
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-price-higher'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 12901; totalStock = 1; perLimit = 1 } ) }
+Check "秒杀价 > 原价（129.01 元）被拒 400" ($r.status -eq 400) "$($r.status)/$($r.raw)"
+
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-price-too-low'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 1; totalStock = 1; perLimit = 1 } ) }
+Check "秒杀价 = 0.01 元被拒 400（必须严格大于）" ($r.status -eq 400) "$($r.status)/$($r.raw)"
+Check "拒绝原因点名「必须大于 0.01 元」" ("$($r.body.message)" -match '必须大于 0.01 元') "$($r.body.message)"
+
+# 正对照：0.02 元（下边界之上）必须能建出来 —— 否则上面的拒绝可能只是「一律拒绝」
+$r = Call 'Post' "$Gateway/api/admin/seckill/activities" $sessOp @{
+    title = 'smoke-seckill-price-floor'; startAt = $start; endAt = $end
+    skus = @( @{ skuId = $SKU; seckillPrice = 2; totalStock = 1; perLimit = 1 } ) }
+Check "正对照：秒杀价 0.02 元可创建（200）" ($r.status -eq 200) "$($r.status)/$($r.raw)"
+$actFloor = "$($r.body.data.id)"
+if ($r.status -eq 200) {
+    $null = Call 'Delete' "$Gateway/api/admin/seckill/activities/$actFloor" $sessOp $null
+}
+# 被拒的三次请求不能留下任何活动残行（按标题查，避免「接口 400 但其实写了一半」）
+Check "被拒的价格请求零落库（无 price-equal/higher/too-low 残留）" (
+    [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_seckill_activity WHERE title IN ('smoke-seckill-price-equal','smoke-seckill-price-higher','smoke-seckill-price-too-low');") -eq 0) "残留"
 
 # ---------- 5.7 关单释放限购名额（2026-10-18 修复） ----------
 Write-Host ""
