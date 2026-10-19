@@ -30,6 +30,7 @@ import {
   useToast,
 } from '@duoduo/shared/components/ui';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { ProductPublishModal } from './ProductPublishModal';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -51,7 +52,7 @@ interface EditDraft {
   title: string;
   subtitle: string;
   mainImage: string;
-  imagesText: string;
+  images: string[];
   detail: string;
 }
 
@@ -71,6 +72,10 @@ export const SellerProductsPage: React.FC = () => {
   const [editing, setEditing] = useState<SellerProductView | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
+  /** 图片上传/转存进行中 —— 保存按钮必须一起禁用，否则会存下「图还没进列表」的版本。
+   *  两个上传器按字段名分开记：单个布尔量会被「一个传完、另一个还在传」覆盖掉。 */
+  const [uploadBusy, setUploadBusy] = useState<Record<string, boolean>>({});
+  const uploading = Object.values(uploadBusy).some(Boolean);
 
   const fetcher = useCallback(
     () =>
@@ -148,7 +153,7 @@ export const SellerProductsPage: React.FC = () => {
         title: detail.title ?? '',
         subtitle: detail.subtitle ?? '',
         mainImage: detail.mainImage ?? '',
-        imagesText: (detail.images ?? []).join('\n'),
+        images: detail.images ?? [],
         detail: detail.detail ?? '',
       });
     } catch (err) {
@@ -183,17 +188,13 @@ export const SellerProductsPage: React.FC = () => {
       ? {
           subtitle: detailItem.subtitle ?? '',
           detail: detailItem.detail ?? '',
-          images: (detailItem.images ?? []).join('\n'),
+          images: detailItem.images ?? [],
         }
       : null;
     if (originals) {
       if (draft.subtitle.trim() !== originals.subtitle) body.subtitle = draft.subtitle.trim();
       if (draft.detail.trim() !== originals.detail) body.detail = draft.detail.trim();
-      const images = draft.imagesText
-        .split(/[\n,，]/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      if (images.join('\n') !== originals.images) body.images = images;
+      if (draft.images.join('\n') !== originals.images.join('\n')) body.images = draft.images;
     }
 
     if (Object.keys(body).length === 0) {
@@ -417,8 +418,12 @@ export const SellerProductsPage: React.FC = () => {
             <button className="btn btn-ghost" onClick={closeEdit}>
               取消
             </button>
-            <button className="btn btn-primary" disabled={busyId !== null || !draft} onClick={submitEdit}>
-              {busyId !== null ? '保存中…' : '保存'}
+            <button
+              className="btn btn-primary"
+              disabled={busyId !== null || !draft || uploading}
+              onClick={submitEdit}
+            >
+              {busyId !== null ? '保存中…' : uploading ? '图片上传中…' : '保存'}
             </button>
           </>
         }
@@ -445,21 +450,27 @@ export const SellerProductsPage: React.FC = () => {
                 placeholder="选填"
               />
             </Field>
-            <Field label="主图地址">
-              <input
-                className="input"
-                value={draft.mainImage}
-                maxLength={500}
-                onChange={(e) => setDraft({ ...draft, mainImage: e.target.value })}
-                placeholder="主图是列表页唯一的视觉锚点，不能为空"
+            <Field label="主图" hint="支持本地上传，也可粘贴图片地址；主图是列表页唯一的视觉锚点，不能为空">
+              <ImageUploader
+                value={draft.mainImage ? [draft.mainImage] : []}
+                onChange={(next) => setDraft({ ...draft, mainImage: next[0] ?? '' })}
+                max={1}
+                size={88}
+                onBusyChange={(busy) => setUploadBusy((m) => ({ ...m, main: busy }))}
+                addLabel="上传主图"
+                urlPlaceholder="或粘贴主图地址（如 /img/products/xxx.svg）"
+                hint=""
               />
             </Field>
-            <Field label="详情图（每行一个地址）">
-              <textarea
-                className="input"
-                rows={2}
-                value={draft.imagesText}
-                onChange={(e) => setDraft({ ...draft, imagesText: e.target.value })}
+            <Field label="详情图（可选，最多 9 张）" hint="支持本地多选上传；也可粘贴地址后点「添加地址」">
+              <ImageUploader
+                value={draft.images}
+                onChange={(next) => setDraft({ ...draft, images: next })}
+                max={9}
+                size={72}
+                onBusyChange={(busy) => setUploadBusy((m) => ({ ...m, detail: busy }))}
+                addLabel="上传详情图"
+                hint=""
               />
             </Field>
             <Field label="商品详情">

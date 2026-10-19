@@ -1832,3 +1832,90 @@ button.link:hover {
 .goods-sales {
   font-size: 11px;
 }
+
+/* ---------- 统一图片上传（2026-10-19） ----------
+   评价、头像、售后举证、品牌 logo、商家商品图共用：
+   缩略图列表 + 虚线添加框 + 地址转存行。 */
+.img-uploader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.img-uploader-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+.img-uploader-item {
+  position: relative;
+  flex: none;
+}
+.img-uploader-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: block;
+}
+.img-uploader-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+  padding: 0;
+}
+.img-uploader-remove:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.img-uploader-add {
+  flex: none;
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.img-uploader-add:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+}
+.img-uploader-add:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.img-uploader-plus {
+  font-size: 22px;
+  line-height: 1;
+}
+.img-uploader-busy {
+  font-size: 18px;
+  line-height: 1;
+}
+.img-uploader-add-label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.img-uploader-url {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.img-uploader-hint {
+  line-height: 1.5;
+}

@@ -10,6 +10,7 @@ import type { BrandSaveRequest, BrandView } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, useToast,
 } from '@duoduo/shared/components/ui';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -26,6 +27,7 @@ export const AdminBrandsPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<BrandSaveRequest>(emptyForm);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsync(
@@ -161,7 +163,7 @@ export const AdminBrandsPage: React.FC = () => {
         footer={
           <>
             <button className="btn btn-ghost" onClick={closeModal}>取消</button>
-            <button className="btn btn-primary" disabled={busy || !form.name.trim()} onClick={save}>
+            <button className="btn btn-primary" disabled={busy || uploading || !form.name.trim()} onClick={save}>
               {busy ? '保存中…' : '保存'}
             </button>
           </>
@@ -170,8 +172,17 @@ export const AdminBrandsPage: React.FC = () => {
         <Field label="名称" required>
           <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={50} />
         </Field>
-        <Field label="Logo 图片地址（可空）">
-          <input className="input" value={form.logo ?? ''} onChange={(e) => setForm({ ...form, logo: e.target.value })} placeholder="https://…" maxLength={200} />
+        <Field label="Logo（可空）" hint="支持本地上传，也可粘贴图片地址；不填则只显示品牌名">
+          <ImageUploader
+            value={form.logo ? [form.logo] : []}
+            onChange={(next) => setForm({ ...form, logo: next[0] ?? '' })}
+            max={1}
+            size={64}
+            onBusyChange={setUploading}
+            addLabel="上传 Logo"
+            urlPlaceholder="或粘贴 Logo 图片地址"
+            hint=""
+          />
         </Field>
         <Field label="国家 / 地区（可空）">
           <input className="input" value={form.country ?? ''} onChange={(e) => setForm({ ...form, country: e.target.value })} maxLength={50} />

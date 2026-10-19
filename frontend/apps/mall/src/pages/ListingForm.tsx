@@ -18,10 +18,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { catalogApi, listingApi, uploadApi } from '@duoduo/api-sdk/endpoints';
+import { catalogApi, listingApi } from '@duoduo/api-sdk/endpoints';
 import type { DictItem, ListingPublishRequest } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { useAsync } from '@duoduo/shared/components/hooks';
 
 const MAX_IMAGES = 9;
@@ -79,30 +80,6 @@ export const ListingFormPage: React.FC = () => {
     [dicts.data],
   );
   const speciesOptions: DictItem[] = useMemo(() => dicts.data?.species ?? [], [dicts.data]);
-
-  const onPickImages = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const room = MAX_IMAGES - images.length;
-    if (room <= 0) {
-      push(`最多上传 ${MAX_IMAGES} 张图片`, 'error');
-      return;
-    }
-    setUploading(true);
-    try {
-      const picked = Array.from(files).slice(0, room);
-      const uploaded: string[] = [];
-      for (const f of picked) {
-        const res = await uploadApi.image(f);
-        if (res?.url) uploaded.push(res.url);
-      }
-      setImages((prev) => [...prev, ...uploaded]);
-      push(`已上传 ${uploaded.length} 张`, 'success');
-    } catch (err) {
-      push(toFriendlyMessage(err), 'error');
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const validate = (): string | null => {
     const t = title.trim();
@@ -266,46 +243,18 @@ export const ListingFormPage: React.FC = () => {
           </div>
         </div>
 
-        <Field label={`图片（${images.length}/${MAX_IMAGES}）`} hint="支持 jpg / png / webp / gif，第一张作为封面">
-          <div className="row row-wrap" style={{ gap: 10 }}>
-            {images.map((src, i) => (
-              <div key={src} style={{ position: 'relative', width: 84, height: 84 }}>
-                <img
-                  src={src}
-                  alt=""
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10 }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  style={{ position: 'absolute', top: -6, right: -6, padding: '0 6px', lineHeight: '20px' }}
-                  onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
-                  aria-label={`删除第 ${i + 1} 张`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-
-            {images.length < MAX_IMAGES ? (
-              <label
-                className="btn btn-ghost btn-sm"
-                style={{ width: 84, height: 84, display: 'grid', placeItems: 'center', cursor: 'pointer' }}
-              >
-                {uploading ? '上传中…' : '+ 添加'}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    void onPickImages(e.target.files);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-            ) : null}
-          </div>
+        <Field
+          label={`图片（${images.length}/${MAX_IMAGES}）`}
+          hint="支持本地上传或粘贴图片地址；第一张作为封面"
+        >
+          <ImageUploader
+            value={images}
+            onChange={setImages}
+            max={MAX_IMAGES}
+            size={84}
+            onBusyChange={setUploading}
+            addLabel="添加"
+          />
         </Field>
 
         <div className="row" style={{ gap: 10, marginTop: 6 }}>

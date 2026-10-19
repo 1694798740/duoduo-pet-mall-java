@@ -14,6 +14,7 @@ import { refreshSession, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { userApi } from '@duoduo/api-sdk/endpoints';
 import { formatDate } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { CreditPanel } from '@duoduo/shared/components/CreditBadge';
 import { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -44,6 +45,8 @@ export const MePage: React.FC = () => {
   const [nickname, setNickname] = useState('');
   const [avatar, setAvatar] = useState('');
   const [busy, setBusy] = useState(false);
+  /** 头像上传/转存中：此时提交会把「旧头像」存下去，必须一起禁用 */
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [realName, setRealName] = useState('');
@@ -140,17 +143,22 @@ export const MePage: React.FC = () => {
               />
             </Field>
 
-            <Field label="头像地址" hint="填写图片 URL，留空则使用默认头像">
-              <input
-                className="input"
-                value={avatar}
-                onChange={(e) => setAvatar(e.target.value)}
-                placeholder="https://…"
+            <Field label="头像" hint="支持本地图片上传，也可粘贴图片地址；留空则使用默认头像">
+              <ImageUploader
+                value={avatar ? [avatar] : []}
+                onChange={(next) => setAvatar(next[0] ?? '')}
+                max={1}
+                size={72}
+                shape="circle"
+                onBusyChange={setUploading}
+                addLabel="上传头像"
+                hint=""
+                urlPlaceholder="或粘贴头像图片地址"
               />
             </Field>
 
-            <button className="btn btn-primary" type="submit" disabled={busy}>
-              {busy ? '保存中…' : '保存资料'}
+            <button className="btn btn-primary" type="submit" disabled={busy || uploading}>
+              {busy ? '保存中…' : uploading ? '头像上传中…' : '保存资料'}
             </button>
           </form>
         </div>

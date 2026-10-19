@@ -14,8 +14,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { afterSaleApi, orderApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { AFTER_SALE_MAX_IMAGES, AFTER_SALE_TYPE_OPTIONS, splitImageLines } from '@duoduo/shared/components/afterSale';
+import { AFTER_SALE_MAX_IMAGES, AFTER_SALE_TYPE_OPTIONS } from '@duoduo/shared/components/afterSale';
 import type { AfterSaleType } from '@duoduo/api-sdk/types';
 
 /** 可申请售后的订单状态（与后端 AfterSaleService.ALLOWED_ORDER_STATUS 同口径） */
@@ -29,7 +30,14 @@ export const AfterSaleNewPage: React.FC = () => {
 
   const [type, setType] = useState<AfterSaleType>('REFUND_ONLY');
   const [reason, setReason] = useState('');
-  const [imageText, setImageText] = useState('');
+  /**
+   * 举证图（2026-10-19）：原来只有一个「一行一条直链」的文本框 ——
+   * 普通用户不可能先自己把图传到别处拿直链。现改为统一上传组件：
+   * 本地选择与地址转存两条路，都落到对象存储（服务端只收 http/https 直链，
+   * 组件两条路径返回的都是本站绝对 URL）。
+   */
+  const [images, setImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -40,7 +48,6 @@ export const AfterSaleNewPage: React.FC = () => {
   );
 
   const eligible = order ? ELIGIBLE_STATUS.includes(order.status) : false;
-  const images = splitImageLines(imageText);
 
   const submit = async () => {
     setSubmitError(null);
@@ -151,22 +158,22 @@ export const AfterSaleNewPage: React.FC = () => {
         </Field>
 
         <Field
-          label="举证图片直链（可选）"
-          hint={`一行一条，最多 ${AFTER_SALE_MAX_IMAGES} 张，只接受 http/https 开头的地址`}
+          label={`举证图片（可选，最多 ${AFTER_SALE_MAX_IMAGES} 张）`}
+          hint="支持本地图片上传，也可粘贴图片地址（会转存到本站对象存储）"
         >
-          <textarea
-            className="textarea"
-            rows={3}
-            placeholder={'https://example.com/photo-1.jpg\nhttps://example.com/photo-2.jpg'}
-            value={imageText}
-            onChange={(e) => setImageText(e.target.value)}
+          <ImageUploader
+            value={images}
+            onChange={setImages}
+            max={AFTER_SALE_MAX_IMAGES}
+            onBusyChange={setUploading}
+            addLabel="上传举证图"
           />
         </Field>
 
         {submitError ? <Alert kind="error">{submitError}</Alert> : null}
 
         <div className="row" style={{ gap: 8, marginTop: 14 }}>
-          <button className="btn btn-primary" disabled={busy || !eligible} onClick={submit}>
+          <button className="btn btn-primary" disabled={busy || uploading || !eligible} onClick={submit}>
             {busy ? '提交中…' : '提交售后申请'}
           </button>
           <Link className="btn btn-ghost" to={`/orders/${orderNo}`}>

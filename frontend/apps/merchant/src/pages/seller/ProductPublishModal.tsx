@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { catalogApi, sellerApi } from '@duoduo/api-sdk/endpoints';
 import type { BrandView, CategoryNode, SellerSkuInput } from '@duoduo/api-sdk/types';
 import { Field, Modal, useToast } from '@duoduo/shared/components/ui';
+import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 
 interface Props {
   open: boolean;
@@ -51,7 +52,14 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
   const [categoryId, setCategoryId] = useState('');
   const [brandId, setBrandId] = useState('');
   const [mainImage, setMainImage] = useState('');
-  const [imagesText, setImagesText] = useState('');
+  /** 商品详情图（2026-10-19 起本地/地址双模式，原来只有一行一个地址的文本框） */
+  const [images, setImages] = useState<string[]>([]);
+  /**
+   * 两个上传器各自上报忙闲 —— 用一个布尔量会被「一个传完、另一个还在传」覆盖掉，
+   * 导致提交按钮提前解禁、存下缺图的版本。按字段名分开记，任一在传就算忙。
+   */
+  const [uploadBusy, setUploadBusy] = useState<Record<string, boolean>>({});
+  const uploading = Object.values(uploadBusy).some(Boolean);
   const [detail, setDetail] = useState('');
   const [skus, setSkus] = useState<SkuDraft[]>([emptySku()]);
 
@@ -78,7 +86,8 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
     setCategoryId('');
     setBrandId('');
     setMainImage('');
-    setImagesText('');
+    setImages([]);
+    setUploadBusy({});
     setDetail('');
     setSkus([emptySku()]);
   };
@@ -103,7 +112,7 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
       return;
     }
     if (!mainImage.trim()) {
-      push('请填写商品主图地址', 'error');
+      push('请上传商品主图', 'error');
       return;
     }
 
@@ -132,11 +141,6 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
         image: null,
       });
     }
-
-    const images = imagesText
-      .split(/[\n,，]/)
-      .map((line) => line.trim())
-      .filter(Boolean);
 
     setSubmitting(true);
     try {
@@ -171,8 +175,8 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
           <button className="btn btn-ghost" onClick={close}>
             取消
           </button>
-          <button className="btn btn-primary" disabled={submitting} onClick={submit}>
-            {submitting ? '提交中…' : '提交审核'}
+          <button className="btn btn-primary" disabled={submitting || uploading} onClick={submit}>
+            {submitting ? '提交中…' : uploading ? '图片上传中…' : '提交审核'}
           </button>
         </>
       }
@@ -225,23 +229,28 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
           </div>
         </div>
 
-        <Field label="商品主图（必填）">
-          <input
-            className="input"
-            value={mainImage}
-            maxLength={500}
-            onChange={(e) => setMainImage(e.target.value)}
-            placeholder="图片地址，如 /img/products/xxx.svg"
+        <Field label="商品主图（必填）" hint="支持本地上传，也可粘贴图片地址；主图是列表页唯一的视觉锚点">
+          <ImageUploader
+            value={mainImage ? [mainImage] : []}
+            onChange={(next) => setMainImage(next[0] ?? '')}
+            max={1}
+            size={88}
+            onBusyChange={(busy) => setUploadBusy((m) => ({ ...m, main: busy }))}
+            addLabel="上传主图"
+            urlPlaceholder="或粘贴主图地址（如 /img/products/xxx.svg）"
+            hint=""
           />
         </Field>
 
-        <Field label="详情图（每行一个地址，最多 9 张）">
-          <textarea
-            className="input"
-            rows={2}
-            value={imagesText}
-            onChange={(e) => setImagesText(e.target.value)}
-            placeholder={'/img/products/a.svg\n/img/products/b.svg'}
+        <Field label="详情图（可选，最多 9 张）" hint="支持本地多选上传；也可粘贴地址后点「添加地址」">
+          <ImageUploader
+            value={images}
+            onChange={setImages}
+            max={9}
+            size={72}
+            onBusyChange={(busy) => setUploadBusy((m) => ({ ...m, detail: busy }))}
+            addLabel="上传详情图"
+            hint=""
           />
         </Field>
 

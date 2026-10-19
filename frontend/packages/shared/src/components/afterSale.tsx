@@ -109,15 +109,3 @@ export const AfterSaleSteps: React.FC<{ status: string }> = ({ status }) => {
     </div>
   );
 };
-
-/** 把多行文本域里的图片直链拆成数组（一行一条，去空、去重） */
-export function splitImageLines(text: string): string[] {
-  return Array.from(
-    new Set(
-      text
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0),
-    ),
-  );
-}
