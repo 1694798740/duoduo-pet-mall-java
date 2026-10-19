@@ -1660,15 +1660,17 @@ button.link:hover {
 }
 
 /* 活动统计条（进行中 / 未开始 / 已结束） */
-.seckill-stats {
+/* 后台秒杀页筛选条（可点击的阶段筛选，2026-10-19 修：原来是纯展示 span，点了没反应） */
+.seckill-filters {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
 }
 
-.seckill-stat {
-  display: flex;
+.seckill-filter {
+  display: inline-flex;
   align-items: baseline;
   gap: 6px;
   padding: 6px 12px;
@@ -1677,12 +1679,86 @@ button.link:hover {
   border: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-2);
+  /* 筛选 chip 是按钮：必须看起来能点，且文字不被压扁 */
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 
-.seckill-stat b {
+.seckill-filter:hover {
+  border-color: var(--brand);
+  color: var(--text);
+}
+
+.seckill-filter.is-active,
+.seckill-filter.is-active:hover {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #ffffff;
+}
+
+.seckill-filter b {
   font-size: 15px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+.seckill-filter.is-active b {
+  color: #ffffff;
+}
+
+/* 表格列宽兜底：秒杀表有 6 列且都要可读，固定 720px 会把每列都压扁
+   （表现为标签换行堆叠、商品名折三四行）。给出真实需要的宽度，
+   超出部分由 .table-wrap 的横向滚动承接，而不是把元素挤变形。
+   ★ 选择器必须比全局的 `.table-wrap > .table`（两个类）更具体，
+   否则这条 min-width 会被全局的 720px 静默压掉 —— 页面看起来没报错，
+   只是列又被压扁了。 */
+.table-wrap > table.seckill-admin-table {
+  min-width: 1240px;
+}
+
+.seckill-admin-table th,
+.seckill-admin-table td {
+  vertical-align: middle;
+}
+
+.seckill-admin-table .col-actions {
+  width: 190px;
+}
+
+/* 单元格内的标签组：不换行不堆叠（换行会被看成"重叠在一起"） */
+.sk-cell-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.sk-cell-tags .tag {
+  white-space: nowrap;
+}
+
+/* 时间单元格：前后两段同一个颜色（此前第二段用 .muted，看起来像两套样式） */
+.sk-cell-time {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sk-cell-time .sk-time-sep {
+  color: var(--text-3);
+  padding: 0 2px;
+}
+
+/* 秒杀商品清单：一行一条，超出即省略号，全文在 title 里 */
+
+/* 活动标题：长标题省略号 + title 全文 */
+.sk-activity-title {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 
@@ -2200,4 +2276,16 @@ button.link:hover {
   padding-left: 16px;
   display: grid;
   gap: 2px;
+}
+
+/* 每条商品一行放完，放不下就省略号（完整内容在该行 li 的 title 上），
+   不允许折成三四行把行高撑爆——那是"元素挤在一起"的直接观感来源。 */
+.seckill-admin-skus li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seckill-admin-skus li > span {
+  display: inline;
 }

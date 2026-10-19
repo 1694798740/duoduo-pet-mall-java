@@ -99,6 +99,15 @@ const remainOf = (item: SeckillActivityView): { available: number; total: number
 const PAGE_SIZE = 10;
 
 /**
+ * 阶段筛选的可选值。
+ *
+ * <p>`OFF`（已下架）与三个 phase **不是同一维度**：phase 由时间推出（服务端算），
+ * enabled 是运营的开关，一个「上架 + 已结束」的活动完全正常。所以这里是
+ * 五个并列的筛选口径，不是一个枚举的四选一。</p>
+ */
+type PhaseFilter = 'ALL' | 'ONGOING' | 'UPCOMING' | 'ENDED' | 'OFF';
+
+/**
  * 北京时间 datetime-local 值 → **带 +08:00 偏移的 ISO 串**（如 `2026-10-19T20:00:00+08:00`）。
  *
  * <p>★ 2026-10-19 修：这里以前返回的是**去掉时区的 UTC 挂钟串**（`2026-10-19T12:00:00`），
@@ -137,6 +146,10 @@ export const AdminSeckillPage: React.FC = () => {
   const [keywordInput, setKeywordInput] = useState('');
   const keyword = useDebounced(keywordInput.trim(), 350);
   const [page, setPage] = useState(1);
+  // 阶段筛选：2026-10-19 修。此前这几个数字是**纯展示的 span**，运营当然会当成
+  // 筛选按钮去点，点了没有任何反应——「看起来能点却不能点」比没有更糟。
+  // 现在它是真按钮，且真的过滤列表（与关键字搜索叠加生效）。
+  const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>('ALL');
 
   // ---- 编辑（R74）：只改标题与时间；商品 / 价格 / 配额刻意不开（会让配置与已成交事实对不上） ----
   const [editing, setEditing] = useState<SeckillActivityView | null>(null);
@@ -416,33 +429,52 @@ export const AdminSeckillPage: React.FC = () => {
 
   // ---- 列表侧：搜索 + 分页（接口一次返回全量，故在本地切分） ----
   const kw = keyword.toLowerCase();
-  const filtered = kw ? items.filter((i) => i.title.toLowerCase().includes(kw)) : items;
+  const byKeyword = (i: SeckillActivityView) => !kw || i.title.toLowerCase().includes(kw);
+  const byPhase = (i: SeckillActivityView) =>
+    phaseFilter === 'ALL' ? true
+      : phaseFilter === 'OFF' ? !i.enabled
+        : i.phase === phaseFilter;
+  const filtered = items.filter((i) => byPhase(i) && byKeyword(i));
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, pageCount);
   const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-  const ongoing = items.filter((i) => i.phase === 'ONGOING').length;
-  const upcoming = items.filter((i) => i.phase === 'UPCOMING').length;
-  const ended = items.filter((i) => i.phase === 'ENDED').length;
+  // 筛选条上的计数一律按**未筛选的全量**算：它回答的是「这一档一共有几场」。
+  // 若跟着当前筛选变，点「已结束」后那个数字会自己缩水，看起来像数据错了。
+  const countOf = (f: PhaseFilter) => items.filter((i) =>
+    f === 'ALL' ? true : f === 'OFF' ? !i.enabled : i.phase === f).length;
+  const FILTERS: Array<{ key: PhaseFilter; label: string }> = [
+    { key: 'ALL', label: '全部' },
+    { key: 'ONGOING', label: '进行中' },
+    { key: 'UPCOMING', label: '未开始' },
+    { key: 'ENDED', label: '已结束' },
+    { key: 'OFF', label: '已下架' },
+  ];
 
   return (
     <div>
-      <div className="row-between row-wrap" style={{ gap: 10, marginBottom: 8 }}>
-        <h2 className="section-title" style={{ margin: 0 }}>平台管理后台 · 秒杀活动</h2>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建活动</button>
-      </div>
+      {/*
+       标题行只放标题。「+ 新建活动」**不放在这里** —— 2026-10-19 用户反馈：
+       按钮被挤到页面最顶部、离它要作用的列表老远，还容易和页签挤在一行。
+       现在它和筛选条同行（右侧），正对着下面的表格，抬手就能点到。
+      */}
+      <h2 className="section-title" style={{ margin: '0 0 12px' }}>平台管理后台 · 秒杀活动</h2>
       <AdminTabs />
 
-      {/*
-       * 布局修复（2026-10-19）：原来「共 N 场活动 · 时间均为北京时间（服务端按 UTC 存储…）」
-       * 这行长文案和「+ 新建活动」按钮挤在同一行，窄屏直接重叠。现在拆成
-       * ① 标题行（右侧按钮）② 统计条 ③ 工具栏（左搜索 / 右口径说明），三段各自换行。
-       */}
-      <div className="seckill-stats">
-        <span className="seckill-stat">全部 <b>{items.length}</b></span>
-        <span className="seckill-stat">进行中 <b style={{ color: 'var(--brand-dark)' }}>{ongoing}</b></span>
-        <span className="seckill-stat">未开始 <b>{upcoming}</b></span>
-        <span className="seckill-stat">已结束 <b>{ended}</b></span>
-        <span className="seckill-stat">已下架 <b>{items.filter((i) => !i.enabled).length}</b></span>
+      <div className="seckill-filters">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            className={`seckill-filter${phaseFilter === f.key ? ' is-active' : ''}`}
+            aria-pressed={phaseFilter === f.key}
+            onClick={() => { setPhaseFilter(f.key); setPage(1); }}
+            title={`只看${f.label}的秒杀活动`}
+          >
+            {f.label} <b>{countOf(f.key)}</b>
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建活动</button>
       </div>
 
       <div className="list-toolbar">
@@ -463,13 +495,25 @@ export const AdminSeckillPage: React.FC = () => {
 
       {filtered.length === 0 ? (
         <Empty
-          title={keywordInput.trim() ? `没有匹配「${keywordInput.trim()}」的活动` : '还没有秒杀活动'}
-          desc={keywordInput.trim() ? '换个关键词试试' : '点右上角「新建活动」创建第一场'}
+          title={
+            keywordInput.trim()
+              ? `没有匹配「${keywordInput.trim()}」的活动`
+              : phaseFilter === 'ALL'
+                ? '还没有秒杀活动'
+                : `没有${FILTERS.find((f) => f.key === phaseFilter)?.label ?? ''}的秒杀活动`
+          }
+          desc={
+            keywordInput.trim()
+              ? '换个关键词试试'
+              : phaseFilter === 'ALL'
+                ? '点右侧「+ 新建活动」创建第一场'
+                : '切换到「全部」看看其他阶段的活动'
+          }
         />
       ) : (
         <div className="card card-pad">
           <div className="table-wrap">
-            <table className="table">
+            <table className="table seckill-admin-table">
               <thead>
                 <tr>
                   <th>活动</th>
@@ -482,25 +526,38 @@ export const AdminSeckillPage: React.FC = () => {
                    */}
                   <th title="活动余量 = 本场活动配额的剩余件数（不是商品 SKU 库存）">活动余量</th>
                   <th>秒杀商品</th>
-                  <th style={{ width: 190 }}>操作</th>
+                  <th className="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((item) => {
                   const phase = PHASE_LABELS[item.phase] ?? { text: item.phase, cls: 'tag' };
                   const remain = remainOf(item);
+                  const startText = bjText(item.startAt);
+                  const endText = bjText(item.endAt);
                   return (
                     <tr key={item.id}>
                       <td>
                         {/* 活动 ID 刻意不展示：19 位数字对运营没有任何决策价值，只会挤掉标题 */}
-                        <div style={{ fontWeight: 600 }}>{item.title}</div>
+                        {/* 长标题省略号；完整标题在 title 里，悬停可见 */}
+                        <div className="sk-activity-title" style={{ fontWeight: 600 }} title={item.title}>
+                          {item.title}
+                        </div>
                       </td>
-                      <td className="small">
-                        <div>{bjText(item.startAt)}</div>
-                        <div className="muted">至 {bjText(item.endAt)}</div>
+                      {/*
+                        时间格：前后两段用同一个颜色（此前第二段是 .muted 灰，
+                        看起来像两套样式、还像"后半段不重要"）。放不下就省略号。
+                      */}
+                      <td className="sk-cell-time" title={`${startText} 至 ${endText}`}>
+                        <div>{startText}</div>
+                        <div>
+                          <span className="sk-time-sep">至</span>
+                          {endText}
+                        </div>
                       </td>
                       <td>
-                        <div className="row row-wrap" style={{ gap: 6 }}>
+                        {/* nowrap：换行会被看成"两个标签重叠/堆叠在一起" */}
+                        <div className="sk-cell-tags">
                           <span className={phase.cls}>{phase.text}</span>
                           {item.enabled
                             ? <span className="tag tag-success">已上架</span>
@@ -515,14 +572,22 @@ export const AdminSeckillPage: React.FC = () => {
                           <span className="small muted">无</span>
                         ) : (
                           <ul className="seckill-admin-skus">
-                            {item.skus.map((s) => (
-                              <li key={s.skuId} className="small">
-                                <span>{s.spuTitle}</span>
-                                {s.specText ? <span className="muted">　{s.specText}</span> : null}
-                                <span className="muted">　{formatPrice(s.seckillPrice)}</span>
-                                <span className="muted">　限购 {s.perLimit}</span>
-                              </li>
-                            ))}
+                            {item.skus.map((s) => {
+                              const line = [
+                                s.spuTitle,
+                                s.specText,
+                                formatPrice(s.seckillPrice),
+                                `限购 ${s.perLimit}`,
+                              ].filter(Boolean).join(' · ');
+                              return (
+                                <li key={s.skuId} className="small" title={line}>
+                                  <span>{s.spuTitle}</span>
+                                  {s.specText ? <span className="muted">　{s.specText}</span> : null}
+                                  <span className="muted">　{formatPrice(s.seckillPrice)}</span>
+                                  <span className="muted">　限购 {s.perLimit}</span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         )}
                       </td>

@@ -204,6 +204,53 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-19（三十九）· 秒杀页布局与交互修复（用户截图反馈四项）
+
+**用户原话指向的四个问题**：①「新建活动」按钮位置不合理、被挤到页面顶部；②「全部/进行中/未开始/
+已结束/已下架」这些**筛选按钮**无法点击；③ 时间格样式不统一（前半黑后半灰）；④ 阶段/开关控件全部重叠。
+另附两条通用约定：文字超出容器用省略号 + 悬停提示；内容超出可视区要能横向滚动。
+
+**① 按钮位置**
+- 原来按钮与 `<h2>` 同在标题行（`row-between row-wrap`），窄屏下按钮被挤到页面最顶部、离列表老远。
+  改为：标题行只放标题；「+ 新建活动」移到**筛选行右侧**，正对着下面的表格。
+- 空态文案同步从「点右上角」改为「点右侧」。
+
+**② 筛选从「假按钮」变成真按钮**
+- 根因：那五个数字原来是 `<span className="seckill-stat">`，**纯展示、没有 onClick** ——
+  「看起来能点却不能点」比没有更糟。改为 `<button className="seckill-filter">`，带
+  `aria-pressed` 选中态与 `title` 说明，点击真的过滤列表（与关键字搜索叠加）。
+- 新增 `PhaseFilter` 类型（`ALL/ONGOING/UPCOMING/ENDED/OFF`）。注意 **`OFF`（已下架）与三个 phase
+  不是同一维度**：phase 由时间推出，enabled 是运营开关，「上架 + 已结束」完全正常，所以是五个并列口径。
+- 计数一律按**未筛选的全量**算：跟着当前筛选变的话，点「已结束」后数字自己缩水，看着像数据错了。
+- 空态文案按筛选口径分别给出（「没有未开始的秒杀活动」+「切换到全部看看」），不是空白页。
+
+**③ 时间格同色**：两段统一 `var(--text-2)`，去掉第二段的 `.muted`；`至` 用 `.sk-time-sep` 稍淡但同色系，
+整格 `nowrap` + `title`（`start 至 end`）。
+
+**④ 阶段/开关不堆叠**：`.row row-wrap` 在窄列下会把两个标签换行成上下两行，观感就是「重叠/堆叠」。
+改为 `.sk-cell-tags`（`flex` + `flex-wrap: nowrap` + `gap:6px`）。
+
+**两条通用约定的落地**
+- **省略号 + title**：活动标题 `.sk-activity-title`、秒杀商品每行 `.seckill-admin-skus li`
+  都是 `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`，且元素上带 `title` 全文。
+  商品行由「折成三四行」改为「一行放完 + 省略号」——折行会把行高撑爆，正是"挤在一起"的观感来源。
+- **横向滚动**：`.table-wrap` 本来就有 `overflow-x:auto`，但全局 `.table-wrap > .table`
+  的 `min-width:720px` 把 6 列全压扁了，根本滚不起来。新增
+  `.table-wrap > table.seckill-admin-table { min-width:1240px }`。
+  ★ **选择器必须比全局规则更具体**：第一版写成单类 `.seckill-admin-table`（特异性 0,1,0），
+  被 `.table-wrap > .table`（0,2,0）**静默压掉**，页面不报错、只是列又被压扁 ——
+  是 e2e 的 `scrollWidth > clientWidth` 断言把它揪出来的。
+
+**验证**
+- `seckill-ui-check` 新增「布局与交互」段 **12 条**（65 → **76/0**）：按钮在页签下方的位置关系、
+  筛选点击后 `aria-pressed` / 列表真的只剩该阶段 / 进行中的活动被筛掉 / 空态文案 / 时间两段同色
+  （`getComputedStyle` 比对）、两个标签同一行且不重叠（boundingBox）、标题与商品行的
+  「title + ellipsis」样式契约、`scrollWidth > clientWidth && overflow-x:auto`。
+- `pagination-search-ui-check` 51/0（原 49）：改写了依赖旧 `.seckill-stats` 类名的那条，
+  并补「筛选 chip 是真 button（5 个）」与「按钮在页签之后」两条 DOM 顺序断言。
+- 回归 7 套全绿：秒杀价 18/0、售后 44/0、我的闲置 52/0、商家端 40/0、店员 24/0、审核 SLA 56/0、举报台 32/0。
+- 三端 `tsc` + `vite build` 全绿；admin 镜像重建后 healthy；静态守卫 3/3。
+
 ### 2026-10-19（三十八）· 秒杀页三端重构 ＋ 全站分页/搜索统一
 
 **用户诉求（原话要点）**：秒杀活动页（用户端/商家端/平台后台）修元素重叠、隐藏秒杀活动 ID、时间去掉 `T`、

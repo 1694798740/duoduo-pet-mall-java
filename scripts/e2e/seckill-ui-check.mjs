@@ -225,6 +225,99 @@ step('UI：后台秒杀管理页（运营视角 · 后台独立站点）');
     body.includes('北京时间'), body.slice(0, 400));
   await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_list.png'), fullPage: true });
 
+  // ============================================================
+  // 布局与交互（2026-10-19 用户截图反馈四项 + 两条通用约定）
+  //   ① 「+ 新建活动」被挤到页面最顶部 → 必须落在页签**下方**、贴着列表
+  //   ② 「全部/进行中/未开始/已结束/已下架」看着像筛选按钮却点不动 → 必须能点且真的过滤
+  //   ③ 时间格前半黑后半灰 → 两段必须是同一个颜色
+  //   ④ 阶段/开关两个标签堆叠 → 必须在同一行且不重叠
+  //   ⑤ 文字放不下 → 省略号 + title 全文（不允许把列压扁或折成三四行）
+  //   ⑥ 内容超出可视区 → 表格外层可横向滚动（不允许把元素挤在固定宽度里）
+  // ============================================================
+  step('布局：新建按钮位置 / 筛选可点 / 时间同色 / 标签不堆叠 / 省略号 / 横向滚动');
+  {
+    const newBtn = page.getByRole('button', { name: /新建活动/ }).first();
+    const tabBar = page.getByRole('link', { name: '秒杀活动' }).first();
+    const btnBox = await newBtn.boundingBox();
+    const tabBox = await tabBar.boundingBox();
+    check('① 「+ 新建活动」在页签**下方**（不再被挤到页面最顶部）',
+      Boolean(btnBox && tabBox) && btnBox.y > tabBox.y + tabBox.height - 1,
+      { btn: btnBox, tab: tabBox });
+
+    // ② 筛选 chip 是真按钮：aria-pressed + 点击后列表真的变
+    const chip = (label) => page.getByRole('button', { name: new RegExp(label) }).first();
+    await chip('已结束').click();
+    await page.waitForTimeout(300);
+    check('②a 点「已结束」后该 chip 进入选中态（aria-pressed=true）',
+      await chip('已结束').getAttribute('aria-pressed') === 'true',
+      await chip('已结束').getAttribute('aria-pressed'));
+    const endedRows = await page.locator('tbody tr').count();
+    const endedAllMatch = endedRows > 0
+      && (await page.locator('tbody tr').evaluateAll((els) =>
+        els.every((e) => (e.textContent ?? '').includes('已结束'))));
+    check('②b 点「已结束」后列表只剩已结束的活动', endedRows > 0 && endedAllMatch, { endedRows, endedAllMatch });
+    check('②c 本轮新建的「进行中」活动被筛掉（证明过滤真的生效）',
+      (await page.locator('tr', { hasText: TITLE }).count()) === 0,
+      await page.locator('tr', { hasText: TITLE }).count());
+
+    await chip('未开始').click();
+    await page.waitForTimeout(300);
+    check('②d 没有「未开始」的活动时给出对应空态文案（而不是空白页）',
+      (await page.getByText(/没有未开始的秒杀活动/).count()) >= 1,
+      (await page.locator('body').innerText()).slice(0, 200));
+
+    await chip('全部').click();
+    await page.waitForTimeout(300);
+    check('②e 点「全部」后本轮活动回到列表', (await page.locator('tr', { hasText: TITLE }).count()) === 1,
+      await page.locator('tr', { hasText: TITLE }).count());
+
+    // ③ 时间格两段同色
+    const timeColors = await row.locator('.sk-cell-time > div').evaluateAll((els) =>
+      els.map((e) => getComputedStyle(e).color));
+    check('③ 时间格前后两段是同一个颜色（不再前半黑后半灰）',
+      timeColors.length === 2 && timeColors[0] === timeColors[1], timeColors);
+
+    // ④ 阶段/开关两个标签：同一行 + 不重叠
+    const tagBoxes = await row.locator('.sk-cell-tags .tag').evaluateAll((els) =>
+      els.map((e) => {
+        const r = e.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      }));
+    const sameRow = tagBoxes.length === 2 && Math.abs(tagBoxes[0].y - tagBoxes[1].y) < 2;
+    const noOverlap = sameRow && tagBoxes[1].x >= tagBoxes[0].x + tagBoxes[0].w - 1;
+    check('④ 阶段/开关两个标签在同一行且不重叠（不堆叠）', sameRow && noOverlap, tagBoxes);
+
+    // ⑤ 省略号 + title 全文
+    const titleCell = await page.locator('.sk-activity-title').first().evaluate((e) => ({
+      title: e.getAttribute('title'),
+      textOverflow: getComputedStyle(e).textOverflow,
+      overflow: getComputedStyle(e).overflow,
+      whiteSpace: getComputedStyle(e).whiteSpace,
+      clipped: e.scrollWidth > e.clientWidth,
+    }));
+    check('⑤a 活动标题：有 title 全文，且样式是「省略号截断」',
+      Boolean(titleCell.title) && titleCell.textOverflow === 'ellipsis'
+      && titleCell.overflow === 'hidden' && titleCell.whiteSpace === 'nowrap', titleCell);
+    const skuCell = await page.locator('.seckill-admin-skus li').first().evaluate((e) => ({
+      title: e.getAttribute('title'),
+      textOverflow: getComputedStyle(e).textOverflow,
+      whiteSpace: getComputedStyle(e).whiteSpace,
+    }));
+    check('⑤b 秒杀商品行：有 title 全文，且单行省略号（不折成三四行撑高行）',
+      Boolean(skuCell.title) && skuCell.textOverflow === 'ellipsis' && skuCell.whiteSpace === 'nowrap',
+      skuCell);
+
+    // ⑥ 表格外层可横向滚动
+    const wrapBox = await page.locator('.table-wrap').first().evaluate((e) => ({
+      scrollWidth: e.scrollWidth,
+      clientWidth: e.clientWidth,
+      overflowX: getComputedStyle(e).overflowX,
+    }));
+    check('⑥ 表格内容超出可视区时可横向滚动（scrollWidth > clientWidth 且 overflow-x:auto）',
+      wrapBox.scrollWidth > wrapBox.clientWidth && wrapBox.overflowX === 'auto', wrapBox);
+    await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_layout.png'), fullPage: true });
+  }
+
   // 下架 → 列表仍能列出（「下架不可逆」是本页最容易踩的坑，必须有断言守着）
   await row.getByRole('button', { name: '下架' }).click();
   await page.waitForTimeout(1200);

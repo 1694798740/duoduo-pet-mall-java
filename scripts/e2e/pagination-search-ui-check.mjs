@@ -324,9 +324,22 @@ check('秒杀页：余量有进度条（不是纯文本）',
   (await admin.p.locator('.sk-remain .sk-remain-bar').count()) >= 1);
 check('秒杀页：有搜索框', (await admin.p.getByPlaceholder('搜活动标题').count()) === 1);
 check('秒杀页：有统一分页条', (await admin.p.locator('nav[aria-label="分页"]').count()) === 1);
-check('秒杀页：没有整行挤在一起的重叠（标题行与工具栏分开）',
-  (await admin.p.locator('.seckill-stats').count()) === 1
+// 2026-10-19 二次重构：原「统计条」升级为**可点击的阶段筛选**（此前是纯展示 span，
+// 运营点了没反应）。所以这里除了"三段分开不重叠"，还要断言 chip 真的是 button。
+check('秒杀页：筛选条 / 工具栏分开，不挤成一团',
+  (await admin.p.locator('.seckill-filters').count()) === 1
   && (await admin.p.locator('.list-toolbar .search-bar').count()) === 1);
+check('秒杀页：阶段筛选是真按钮（不是点了没反应的 span）',
+  (await admin.p.locator('.seckill-filters button.seckill-filter').count()) === 5);
+check('秒杀页：「+ 新建活动」按钮在页签下方、贴着列表（不再被挤到页面最顶部）', (() => {
+  // 位置关系在 e2e 里用 DOM 顺序表达：按钮必须出现在 AdminTabs 之后
+  return admin.p.evaluate(() => {
+    const tabs = [...document.querySelectorAll('a.btn')].find((a) => a.textContent?.includes('秒杀活动'));
+    const btn = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('新建活动'));
+    if (!tabs || !btn) return false;
+    return !!(tabs.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+})());
 
 step('平台后台：搜索活动标题 → 空态');
 await admin.p.getByPlaceholder('搜活动标题').fill('zzz-NOT-EXIST-9527');
