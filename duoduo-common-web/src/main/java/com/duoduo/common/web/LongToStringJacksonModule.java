@@ -72,6 +72,9 @@ public class LongToStringJacksonModule extends SimpleModule {
     private static final Set<String> NUMERIC_LONG_FIELDS = Set.copyOf(java.util.Arrays.asList(
             // —— 金额（单位：分）——
             "price", "originalPrice", "minPrice", "maxPrice", "marketPrice",
+            // 2026-10-19：秒杀价。此前漏列 ⇒ 以字符串 "100" 下发，而前端 types 声明为 number：
+            // 全站商品卡要拿它跟原价做比较、算折扣、参与 formatPrice 运算，字符串会静默出错。
+            "seckillPrice",
             "amount", "totalAmount", "payAmount", "unitAmount", "itemAmount",
             "discountAmount", "thresholdAmount", "refundAmount",
             "freight", "freightAmount", "shippingFee",

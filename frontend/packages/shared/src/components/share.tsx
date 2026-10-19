@@ -16,6 +16,8 @@ import { Link } from 'react-router-dom';
 import type { ShareView } from '@duoduo/api-sdk/types';
 import { productImage } from '@duoduo/api-sdk/images';
 import { formatPrice } from '@duoduo/api-sdk/client';
+import { useSpuSeckill } from '../store/seckill';
+import { SeckillPrice, SeckillTag } from './seckill';
 
 /** 相对时间：1 小时内显示「x 分钟前」，当天显示「x 小时前」，其余显示日期 */
 export function relativeTime(iso: string | null | undefined): string {
@@ -43,7 +45,10 @@ export interface ShareCardProps {
   busy?: boolean;
 }
 
-export const ShareCard: React.FC<ShareCardProps> = ({ item, detailed, onLike, onFavorite, onRepost, onComment, busy }) => (
+export const ShareCard: React.FC<ShareCardProps> = ({ item, detailed, onLike, onFavorite, onRepost, onComment, busy }) => {
+  // 分享圈里的商品卡同样是「商品出现的位置」：参与秒杀就挂标并换价
+  const seckill = useSpuSeckill(item.spuId);
+  return (
   <div className="card card-pad">
     <div className="row" style={{ gap: 10, alignItems: 'center' }}>
       <div
@@ -126,7 +131,18 @@ export const ShareCard: React.FC<ShareCardProps> = ({ item, detailed, onLike, on
               fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
               display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
             }}>{item.productTitle}</div>
-            {item.minPrice > 0 ? <div className="price" style={{ marginTop: 2 }}>{formatPrice(item.minPrice)}</div> : null}
+            {seckill ? (
+              <div className="row row-wrap" style={{ gap: 6, marginTop: 3, alignItems: 'center' }}>
+                <SeckillTag phase={seckill.phase} />
+                <SeckillPrice
+                  price={seckill.sku.seckillPrice}
+                  original={seckill.sku.originalPrice}
+                  size="sm"
+                />
+              </div>
+            ) : item.minPrice > 0 ? (
+              <div className="price" style={{ marginTop: 2 }}>{formatPrice(item.minPrice)}</div>
+            ) : null}
           </div>
         </div>
       </Link>
@@ -153,4 +169,5 @@ export const ShareCard: React.FC<ShareCardProps> = ({ item, detailed, onLike, on
       ) : null}
     </div>
   </div>
-);
+  );
+};

@@ -1568,3 +1568,267 @@ button.link:hover {
   color: var(--brand-dark);
   text-decoration: underline;
 }
+
+/* ---------- 全站秒杀标识 / 价格 / 倒计时（2026-10-19） ----------
+   首页卡片、搜索结果、商品详情、秒杀列表共用这一套，
+   任何页面都不再自己写「秒杀」的颜色与字号。 */
+.sk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+.sk-tag-live {
+  color: #fff;
+  background: linear-gradient(135deg, #ff6a3d 0%, #e11d2e 100%);
+  box-shadow: 0 2px 8px rgba(225, 29, 46, 0.28);
+}
+.sk-tag-soon {
+  color: #b45309;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+}
+.sk-tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: sk-pulse 1.4s ease-in-out infinite;
+}
+@keyframes sk-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-tag-dot { animation: none; }
+}
+
+.sk-price {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sk-price-now {
+  color: var(--danger);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.sk-price-sm .sk-price-now { font-size: 15px; }
+.sk-price-md .sk-price-now { font-size: 19px; }
+.sk-price-lg .sk-price-now { font-size: 32px; }
+.sk-price-from {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.sk-price-was {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 400;
+}
+.sk-price-was s {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.sk-price-was-label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.sk-price-lg .sk-price-was { font-size: 13px; }
+
+.sk-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #b42318;
+  background: #fff1f0;
+  border: 1px solid #ffd6d3;
+  white-space: nowrap;
+}
+.sk-countdown-label { color: #b42318; opacity: 0.8; }
+.sk-countdown-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.sk-countdown-compact { padding: 1px 6px; font-size: 11px; }
+.sk-countdown-ended {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.sk-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sk-progress-bar {
+  flex: 1;
+  height: 6px;
+  min-width: 48px;
+  border-radius: 999px;
+  background: #ffe4de;
+  overflow: hidden;
+}
+.sk-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff8a5b 0%, #e11d2e 100%);
+  transition: width 0.4s ease;
+}
+.sk-progress-text {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* ---------- 首页「每日秒杀」栏目 ---------- */
+.daily-seckill {
+  margin-top: 24px;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(120% 140% at 0% 0%, #fff2ea 0%, rgba(255, 242, 234, 0) 55%),
+    linear-gradient(135deg, #fff8f4 0%, #ffffff 60%);
+  border: 1px solid #ffe0d3;
+}
+.daily-seckill-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.daily-seckill-head h2 {
+  margin: 0;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.daily-seckill-sub {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.daily-seckill-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+.daily-seckill-card {
+  flex: 0 0 208px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: transform 0.16s, box-shadow 0.16s, border-color 0.16s;
+}
+.daily-seckill-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: #ffcdb8;
+}
+.daily-seckill-media {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.daily-seckill-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.daily-seckill-media .sk-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+}
+.daily-seckill-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 36px;
+}
+.daily-seckill-time {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.daily-seckill-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: auto;
+}
+.daily-seckill-empty {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+/* 详情页秒杀条 / 规格内小标（2026-10-19） */
+.pd-seckill-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #fff5f2 0%, #fff 70%);
+  border: 1px solid #ffe0d6;
+}
+.pd-seckill-strip .sk-progress {
+  flex: 1;
+  min-width: 120px;
+}
+.pd-seckill-hint {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px dashed #fdba74;
+}
+.sk-tag-mini {
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+.goods-sales {
+  font-size: 11px;
+}

@@ -16,6 +16,7 @@ import type { HomeView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, LoadingBlock, ListingGrid, ProductGrid, SupplyTag } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
+import { DailySeckill } from '../components/DailySeckill';
 
 export const HomePage: React.FC = () => {
   const { user, pet } = useAuth();
@@ -114,6 +115,10 @@ export const HomePage: React.FC = () => {
           </button>
         </form>
       </section>
+
+      {/* 每日秒杀：紧跟首屏 hero，是首页最需要「现在就去抢」的信息。
+          hero 与它之间不留空档 —— 有活动时它是第一块内容，没有活动时整块不渲染。 */}
+      <DailySeckill />
 
       {tree.length ? (
         <section className="section" style={{ marginTop: 24 }}>

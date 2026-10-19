@@ -22,7 +22,15 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { addressApi, couponApi, seckillApi } from '@duoduo/api-sdk/endpoints';
 import type { CouponView, SeckillActivityView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { Alert, Empty, LoadingBlock, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import {
+  Alert,
+  Empty,
+  LoadingBlock,
+  formatPrice,
+  formatServerTime,
+  useToast,
+} from '@duoduo/shared/components/ui';
+import { SeckillCountdown, SeckillPrice, SeckillProgress } from '@duoduo/shared/components/seckill';
 import { useAuth } from '@duoduo/shared/store/auth';
 
 const phaseTone = (phase: string): string => {
@@ -150,7 +158,7 @@ export const SeckillPage: React.FC = () => {
               <h2>{act.title}</h2>
               <span className={phaseTone(act.phase)}>{phaseLabel(act.phase)}</span>
               <span className="muted">
-                {formatDate(act.startAt)} ~ {formatDate(act.endAt)}
+                {formatServerTime(act.startAt)} ~ {formatServerTime(act.endAt)}
               </span>
             </header>
             {act.skus.length === 0 ? (
@@ -183,13 +191,22 @@ export const SeckillPage: React.FC = () => {
                           {sku.specText || '默认规格'} · 限购 {sku.perLimit} 件
                         </span>
                         <div className="seckill-price-row">
-                          <span className="price seckill-price">{formatPrice(sku.seckillPrice)}</span>
-                          <span className="muted seckill-original">
-                            <s>{formatPrice(sku.originalPrice)}</s>
-                          </span>
-                          <span className={soldOut ? 'tag' : 'tag tag-success'}>
-                            {soldOut ? '已抢完' : `仅剩 ${sku.availableStock} 件`}
-                          </span>
+                          {/* 与商品卡、详情页共用同一套价格组件：秒杀价醒目 + 原价划线并标注「原价」 */}
+                          <SeckillPrice
+                            price={sku.seckillPrice}
+                            original={sku.originalPrice}
+                            size="md"
+                          />
+                          <SeckillProgress
+                            available={sku.availableStock}
+                            total={sku.totalStock}
+                          />
+                          <SeckillCountdown
+                            startAt={act.startAt}
+                            endAt={act.endAt}
+                            phase={act.phase}
+                            compact
+                          />
                           {coupon && !soldOut ? (
                             <span className="tag tag-warn" title={coupon.name ?? '优惠券'}>
                               可用券 -{formatPrice(Number(coupon.discountAmount))}

@@ -265,6 +265,38 @@ export function formatDate(iso: string | null | undefined): string {
   )}:${pad(date.getMinutes())}`;
 }
 
+/**
+ * 解析服务端时间戳（毫秒）。
+ *
+ * <h2>为什么不能直接用 new Date(raw)</h2>
+ * 后端的秒杀活动时间字段是 Java `LocalDateTime`，序列化后形如 `2026-10-19T01:48:28`
+ * —— **不带时区后缀**。而 ES 规范规定：这种形式按**运行环境本地时区**解析。
+ * 服务端这个值其实是 **UTC 挂钟**（DB 一律存 UTC），于是浏览器在 +08:00 环境下
+ * 会把它当成「北京时间 01:48」→ 比真实时间**早 8 小时**。
+ *
+ * 对倒计时来说这不是显示瑕疵，而是功能性错误（该结束的活动还在倒计时、已开始的显示未开始）。
+ *
+ * 因此：**带时区后缀（Z / ±HH:mm）的原样解析；不带的按 UTC 解析**。
+ * 这条规则与后端「DB 存 UTC + LocalDateTime 无时区输出」是同一套口径。
+ */
+export function parseServerTime(raw: string | null | undefined): number {
+  if (!raw) return NaN;
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw.trim());
+  return new Date(hasZone ? raw : `${raw}Z`).getTime();
+}
+
+/** 按本地时区格式化服务端时间（口径见 {@link parseServerTime}） */
+export function formatServerTime(raw: string | null | undefined): string {
+  if (!raw) return '—';
+  const ms = parseServerTime(raw);
+  if (Number.isNaN(ms)) return '—';
+  const date = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
 /** 生成幂等键：优先用 crypto.randomUUID，降级到时间戳+随机串 */
 export function newIdempotentKey(): string {
   const c = globalThis.crypto;

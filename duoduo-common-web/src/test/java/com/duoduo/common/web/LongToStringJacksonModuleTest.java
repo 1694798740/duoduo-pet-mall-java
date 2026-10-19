@@ -77,6 +77,11 @@ class LongToStringJacksonModuleTest {
                     using = LongToStringJacksonModule.NumericLongSerializer.class) long payAmount) {
     }
 
+    /** 秒杀视图（2026-10-19 实际事故形态）：seckillPrice 是金额，必须进白名单保持数字。 */
+    public record SeckillSkuView(
+            long seckillPrice, long originalPrice, Long spuId) {
+    }
+
     private static final long AMOUNT = 12900L;
     private static final Long SPU_ID = 361084524781768704L;
 
@@ -144,5 +149,22 @@ class LongToStringJacksonModuleTest {
     void unlistedNameIsStringified() throws Exception {
         String json = mapper().writeValueAsString(new RecordView(AMOUNT, 7L, SPU_ID));
         assertThat(json).contains("\"someNumber\":\"7\"");
+    }
+
+    // ---------- 5. 秒杀价（2026-10-19 真实事故的回归钉） ----------
+
+    /**
+     * seckillPrice 此前漏列白名单 ⇒ 以字符串 "100" 下发，而前端类型声明是 number。
+     * 全站商品卡要拿它与原价做比较、算折扣、参与运算 —— 漏列的后果不再是"看着不对"，
+     * 而是「首页卡片显示 ¥1.00、比较恒 false」这类静默错误。本条钉住：它是数字。
+     */
+    @Test
+    @DisplayName("秒杀价进白名单：JSON 里必须是数字（2026-10-19 漏列事故的回归钉）")
+    void seckillPriceStaysNumeric() throws Exception {
+        String json = mapper().writeValueAsString(new SeckillSkuView(100L, 12900L, SPU_ID));
+        assertThat(json).contains("\"seckillPrice\":100");
+        assertThat(json).doesNotContain("\"seckillPrice\":\"");
+        assertThat(json).contains("\"originalPrice\":12900");
+        assertThat(json).contains("\"spuId\":\"" + SPU_ID + "\"");
     }
 }

@@ -15,12 +15,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { detailImages, gallery } from '@duoduo/api-sdk/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { cartApi, productApi, reviewApi } from '@duoduo/api-sdk/endpoints';
+import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { addressApi, cartApi, productApi, reviewApi, seckillApi } from '@duoduo/api-sdk/endpoints';
 import type { ProductDetail, ReviewSummary } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { CreditBadge } from '@duoduo/shared/components/CreditBadge';
 import { ReviewSection } from '@duoduo/shared/components/ReviewSection';
+import { SeckillCountdown, SeckillPrice, SeckillProgress, SeckillTag } from '@duoduo/shared/components/seckill';
+import { useSpuSeckill } from '@duoduo/shared/store/seckill';
 import {
   Alert,
   LoadingBlock,
@@ -70,6 +72,16 @@ export const ProductDetailPage: React.FC = () => {
   /** 主图轮播的当前下标 + 放大预览开关（第七十三轮：对齐小程序端的「点击看大图」交互） */
   const [imgIndex, setImgIndex] = useState(0);
   const [previewing, setPreviewing] = useState(false);
+  /** 秒杀下单进行中（与加购的 adding 分开：两个动作的禁用条件不同） */
+  const [grabbing, setGrabbing] = useState(false);
+
+  /**
+   * 该 SPU 的秒杀信息（全站唯一数据源）。
+   *
+   * ⚠️ 价格展示与下单链路必须同源：这里显示了秒杀价，购买按钮就必须走**秒杀下单**，
+   * 否则用户看到 ¥1 却按 ¥129 成交 —— 这是比不展示更严重的问题。
+   */
+  const seckill = useSpuSeckill(spuId);
 
   const fetcher = useCallback(() => productApi.detail(spuId), [spuId]);
   const { data, loading, error, reload } = useAsync<ProductDetail>(fetcher, hasSpuId, [spuId]);
@@ -85,15 +97,18 @@ export const ProductDetailPage: React.FC = () => {
 
   const skus = data?.skus ?? [];
 
-  // 默认选中第一个可售 SKU；若全部售罄则选第一个，用于展示价格
+  // 默认选中第一个可售 SKU；若全部售罄则选第一个，用于展示价格。
+  // 秒杀规格优先：用户从「每日秒杀」或商品卡的秒杀价进来，打开就该看到并选中那个规格，
+  // 而不是先展示原价、让用户自己找哪个规格在秒杀。
   useEffect(() => {
     if (!skus.length) return;
     setSkuId((prev) => {
       if (prev !== null && skus.some((s) => s.id === prev && s.sellable)) return prev;
+      if (seckill && skus.some((s) => s.id === seckill.skuId)) return seckill.skuId;
       const firstSellable = skus.find((s) => s.sellable);
       return (firstSellable ?? skus[0] ?? null)?.id ?? null;
     });
-  }, [skus]);
+  }, [skus, seckill]);
 
   const selectedSku = useMemo(
     () => skus.find((s) => s.id === skuId) ?? null,
@@ -137,6 +152,53 @@ export const ProductDetailPage: React.FC = () => {
     : gallery(card.id, card.mainImage);
   const canBuy = selectedSku?.sellable === true;
   const price = selectedSku?.price ?? card.minPrice;
+
+  /**
+   * 当前选中规格是否正在参与秒杀。
+   *
+   * 只有「选中了秒杀规格」才换价：SPU 有秒杀但用户在看别的规格时，
+   * 顶部价格必须是该规格的真实售价，否则会变成虚假宣传。
+   */
+  const skuSeckill = selectedSku ? seckill?.bySku[selectedSku.id] ?? null : null;
+  const liveSeckill =
+    seckill && skuSeckill && seckill.phase !== 'ENDED'
+      ? { meta: seckill, sku: skuSeckill }
+      : null;
+  /** SPU 有秒杀、但当前选中的不是秒杀规格时的「引回」提示 */
+  const otherSeckill =
+    seckill && !liveSeckill && seckill.phase !== 'ENDED' ? seckill : null;
+
+  const grabSeckill = async () => {
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(`/product/${spuId}`)}`);
+      return;
+    }
+    if (!liveSeckill) return;
+    setGrabbing(true);
+    try {
+      const address = await addressApi.defaultAddress();
+      if (!address) {
+        push('还没有收货地址，请先到「我的地址」添加', 'info');
+        navigate('/addresses');
+        return;
+      }
+      const result = await seckillApi.place({
+        activityId: liveSeckill.meta.activityId,
+        skuId: liveSeckill.sku.skuId,
+        addressId: address.id,
+        idempotentKey: newIdempotentKey(),
+      });
+      push(
+        result.replay ? '你已抢到过该商品，已为你打开原订单' : '抢购成功，请尽快付款！',
+        'success',
+      );
+      navigate(`/orders/${result.orderNo}`);
+    } catch (err) {
+      push(toFriendlyMessage(err), 'error');
+    } finally {
+      setGrabbing(false);
+    }
+  };
 
   // 过敏原提示：与宠物档案的记录做交集（档案为空时不做提示）
   const allergyHits = pet?.allergens?.length
@@ -314,16 +376,42 @@ export const ProductDetailPage: React.FC = () => {
             </div>
             <h1 style={{ fontSize: 20, margin: '10px 0 6px' }}>{card.title}</h1>
             {card.subtitle ? <div className="muted-2 small">{card.subtitle}</div> : null}
+
+            {/* 秒杀条：标签 + 倒计时 + 余量进度。三样都在价格上方，
+                让「现在多便宜、还有多久、还剩几件」在一屏内可读。 */}
+            {liveSeckill ? (
+              <div className="pd-seckill-strip">
+                <SeckillTag phase={liveSeckill.meta.phase} />
+                <SeckillCountdown
+                  startAt={liveSeckill.meta.startAt}
+                  endAt={liveSeckill.meta.endAt}
+                  phase={liveSeckill.meta.phase}
+                />
+                <SeckillProgress
+                  available={liveSeckill.sku.availableStock}
+                  total={liveSeckill.sku.totalStock}
+                />
+              </div>
+            ) : null}
+
             <div className="row" style={{ marginTop: 12, alignItems: 'baseline' }}>
-              <span style={{ fontSize: 30, fontWeight: 700, color: 'var(--danger)' }}>
-                ¥{(price / 100).toFixed(2)}
-              </span>
-              {card.maxPrice > card.minPrice ? (
+              {liveSeckill ? (
+                <SeckillPrice
+                  price={liveSeckill.sku.seckillPrice}
+                  original={liveSeckill.sku.originalPrice}
+                  size="lg"
+                />
+              ) : (
+                <span style={{ fontSize: 30, fontWeight: 700, color: 'var(--danger)' }}>
+                  ¥{(price / 100).toFixed(2)}
+                </span>
+              )}
+              {!liveSeckill && card.maxPrice > card.minPrice ? (
                 <span className="small muted">
                   规格不同，最高 ¥{(card.maxPrice / 100).toFixed(2)}
                 </span>
               ) : null}
-              {selectedSku && selectedSku.marketPrice > selectedSku.price ? (
+              {!liveSeckill && selectedSku && selectedSku.marketPrice > selectedSku.price ? (
                 <span className="small muted" style={{ textDecoration: 'line-through' }}>
                   ¥{(selectedSku.marketPrice / 100).toFixed(2)}
                 </span>
@@ -343,6 +431,22 @@ export const ProductDetailPage: React.FC = () => {
                 )}
               </span>
             </div>
+
+            {/* 选中的不是秒杀规格：明确告诉用户「秒杀的是哪个价」，一键切回去 */}
+            {otherSeckill ? (
+              <div className="pd-seckill-hint">
+                另有规格参与秒杀，到手价
+                <b> ¥{(otherSeckill.sku.seckillPrice / 100).toFixed(2)}</b>
+                <button
+                  type="button"
+                  className="link-btn"
+                  style={{ marginLeft: 6, color: 'var(--brand-dark)' }}
+                  onClick={() => setSkuId(otherSeckill.skuId)}
+                >
+                  切到秒杀规格 →
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {allergyHits.length ? (
@@ -371,75 +475,118 @@ export const ProductDetailPage: React.FC = () => {
             <div className="row row-wrap">
               {skus.map((sku) => {
                 const specText = Object.values(sku.spec).join(' / ') || '默认规格';
+                const skuSk = seckill?.bySku[sku.id];
+                const isSeckillSku = Boolean(skuSk && seckill?.phase !== 'ENDED');
                 return (
                   <button
                     key={sku.id}
                     type="button"
                     className={`sku-option${sku.id === skuId ? ' active' : ''}`}
-                    disabled={!sku.sellable}
+                    /* 秒杀规格不按商品库存禁用：秒杀的「货」是活动配额，与 SKU 库存是两套口径 */
+                    disabled={!sku.sellable && !isSeckillSku}
                     onClick={() => setSkuId(sku.id)}
                   >
                     {specText}
-                    <span className="small muted" style={{ marginLeft: 6 }}>
-                      ¥{(sku.price / 100).toFixed(2)}
+                    <span
+                      className="small"
+                      style={{ marginLeft: 6, color: isSeckillSku ? 'var(--danger)' : undefined }}
+                    >
+                      ¥{((isSeckillSku && skuSk ? skuSk.seckillPrice : sku.price) / 100).toFixed(2)}
                     </span>
-                    {!sku.sellable ? <span className="small muted"> · 售罄</span> : null}
+                    {isSeckillSku ? (
+                      <span className="sk-tag sk-tag-live sk-tag-mini">秒杀</span>
+                    ) : null}
+                    {!sku.sellable && !isSeckillSku ? (
+                      <span className="small muted"> · 售罄</span>
+                    ) : null}
                   </button>
                 );
               })}
             </div>
 
-            <div className="row" style={{ marginTop: 16 }}>
-              <span className="field-label" style={{ margin: 0 }}>
-                数量
-              </span>
-              <div className="row">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                >
-                  −
-                </button>
-                <span style={{ minWidth: 36, textAlign: 'center' }}>{quantity}</span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() =>
-                    setQuantity((q) => Math.min(selectedSku?.stock ?? 1, Math.min(99, q + 1)))
-                  }
-                >
-                  +
-                </button>
+            {/* 秒杀按件抢购（下单接口不收数量），不展示数量选择器 —— 让用户以为能买 3 件
+                却在提交时只成交 1 件，比直接不显示更糟 */}
+            {liveSeckill ? null : (
+              <div className="row" style={{ marginTop: 16 }}>
+                <span className="field-label" style={{ margin: 0 }}>
+                  数量
+                </span>
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                  >
+                    −
+                  </button>
+                  <span style={{ minWidth: 36, textAlign: 'center' }}>{quantity}</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() =>
+                      setQuantity((q) => Math.min(selectedSku?.stock ?? 1, Math.min(99, q + 1)))
+                    }
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="small muted">
+                  {selectedSku ? `该规格可售 ${selectedSku.stock}` : ''}
+                </span>
               </div>
-              <span className="small muted">
-                {selectedSku ? `该规格可售 ${selectedSku.stock}` : ''}
-              </span>
-            </div>
+            )}
 
             <div className="row row-wrap" style={{ marginTop: 18 }}>
-              <button
-                className="btn btn-primary"
-                disabled={!canBuy || adding}
-                onClick={() => void addToCart()}
-              >
-                {canBuy ? (adding ? '加入中…' : '加入购物车') : '已售罄'}
-              </button>
-              <button
-                className="btn btn-ghost"
-                disabled={!canBuy || adding}
-                onClick={async () => {
-                  await addToCart();
-                  navigate('/cart');
-                }}
-              >
-                立即购买
-              </button>
+              {liveSeckill ? (
+                <>
+                  <button
+                    className="btn btn-pay"
+                    disabled={
+                      liveSeckill.meta.phase !== 'ONGOING' ||
+                      liveSeckill.sku.availableStock <= 0 ||
+                      grabbing
+                    }
+                    onClick={() => void grabSeckill()}
+                  >
+                    {liveSeckill.meta.phase === 'UPCOMING'
+                      ? '即将开抢'
+                      : liveSeckill.sku.availableStock <= 0
+                        ? '已抢完'
+                        : grabbing
+                          ? '抢购中…'
+                          : '马上抢'}
+                  </button>
+                  <span className="small muted">
+                    秒杀商品按件抢购，不支持加入购物车
+                    {liveSeckill.sku.perLimit ? ` · 每人限购 ${liveSeckill.sku.perLimit} 件` : ''}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="btn btn-primary"
+                    disabled={!canBuy || adding}
+                    onClick={() => void addToCart()}
+                  >
+                    {canBuy ? (adding ? '加入中…' : '加入购物车') : '已售罄'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={!canBuy || adding}
+                    onClick={async () => {
+                      await addToCart();
+                      navigate('/cart');
+                    }}
+                  >
+                    立即购买
+                  </button>
+                </>
+              )}
               {/* 统一入口：位置固定放在购买动作右侧，售罄时同样可用（买不到也需要问） */}
               <SupportEntry />
             </div>
 
-            {!canBuy ? (
+            {!canBuy && !liveSeckill ? (
               <div style={{ marginTop: 12 }}>
                 <Alert kind="warn">该规格暂时售罄。可以看看下方的「同类推荐」。</Alert>
               </div>

@@ -21,7 +21,44 @@ import { ApiError, formatPrice, toFriendlyMessage } from '@duoduo/api-sdk/client
 import { duoduoApi } from '@duoduo/api-sdk/endpoints';
 import type { DuoduoCapability, DuoduoChatTurn, DuoduoRecommendation } from '@duoduo/api-sdk/types';
 import { Alert, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { SeckillPrice, SeckillTag } from '@duoduo/shared/components/seckill';
+import { useSpuSeckill } from '@duoduo/shared/store/seckill';
 import { useAuth } from '@duoduo/shared/store/auth';
+
+/**
+ * AI 推荐卡：单独抽成组件是为了能用 hook 读秒杀信息
+ * —— map 里不能调 hook，而「全站所有出现商品的位置」包括这里。
+ */
+const AiRecommendCard: React.FC<{ rec: DuoduoRecommendation }> = ({ rec }) => {
+  // id 在契约里是 number，这里转字符串只为对齐 useSpuSeckill 的签名
+  const seckill = useSpuSeckill(String(rec.id));
+  return (
+    <Link to={`/product/${rec.id}`} className="card" style={{ padding: 10, display: 'block' }}>
+      {seckill ? <SeckillTag phase={seckill.phase} /> : null}
+      <div style={{ fontWeight: 600, marginTop: seckill ? 6 : 0 }}>{rec.title}</div>
+      {rec.subtitle ? <div className="small muted">{rec.subtitle}</div> : null}
+      <div style={{ marginTop: 4, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {seckill ? (
+          <SeckillPrice
+            price={seckill.sku.seckillPrice}
+            original={seckill.sku.originalPrice}
+            size="sm"
+          />
+        ) : (
+          <span style={{ color: '#e5484d', fontWeight: 600 }}>
+            {formatPrice(rec.minPrice)}
+            {rec.maxPrice > rec.minPrice ? ' 起' : ''}
+          </span>
+        )}
+        {rec.inStock ? (
+          <span className="small muted">有货</span>
+        ) : (
+          <span className="small muted">暂时缺货</span>
+        )}
+      </div>
+    </Link>
+  );
+};
 
 interface Bubble {
   id: number;
@@ -172,26 +209,7 @@ export const AiGuruPage: React.FC = () => {
                 {m.recommendations && m.recommendations.length > 0 ? (
                   <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                     {m.recommendations.map((rec) => (
-                      <Link
-                        key={rec.id}
-                        to={`/product/${rec.id}`}
-                        className="card"
-                        style={{ padding: 10, display: 'block' }}
-                      >
-                        <div style={{ fontWeight: 600 }}>{rec.title}</div>
-                        {rec.subtitle ? <div className="small muted">{rec.subtitle}</div> : null}
-                        <div style={{ marginTop: 4, display: 'flex', gap: 10, alignItems: 'center' }}>
-                          <span style={{ color: '#e5484d', fontWeight: 600 }}>
-                            {formatPrice(rec.minPrice)}
-                            {rec.maxPrice > rec.minPrice ? ' 起' : ''}
-                          </span>
-                          {rec.inStock ? (
-                            <span className="small muted">有货</span>
-                          ) : (
-                            <span className="small muted">暂时缺货</span>
-                          )}
-                        </div>
-                      </Link>
+                      <AiRecommendCard key={rec.id} rec={rec} />
                     ))}
                   </div>
                 ) : null}

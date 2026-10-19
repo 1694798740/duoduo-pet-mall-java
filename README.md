@@ -1981,6 +1981,38 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-19（三十四）· 全站秒杀标识与价格 ＋ 首页「每日秒杀」栏目
+
+**1. 全站商品卡与详情页统一挂秒杀标识、换秒杀价**
+- 新增 `SeckillProvider`（`shared/store/seckill.tsx`）：全站**唯一**秒杀数据源 —— 一次拉 `/api/seckill/activities`，
+  按 SPU 建索引（同 SPU 多 SKU 取最低价、多价带「起」），60s 轮询 + 页面回前台刷新，失败保旧值不报错。
+- 统一组件（`shared/components/seckill.tsx`）：`SeckillTag`（进行中红橙实心 / 即将开始琥珀）、
+  `SeckillPrice`（秒杀价醒目 + **原价划线并标注「原价」二字**）、`SeckillCountdown`（tabular-nums 每秒走字，
+  到点自动触发全站刷新换相位）、`SeckillProgress`（已抢进度 + 仅剩 N 件）。
+- 接入位置：**商品卡** `ProductCardView`（首页推荐/新品/物种精选、搜索结果共用）、**商品详情页**
+  （秒杀条 + 大号秒杀价 + 规格按钮标价换秒杀价 + 默认选中秒杀规格）、**秒杀列表页**（改用同一组件）、
+  **AI 导购推荐卡**、**分享圈商品卡**。admin/merchant 未挂 Provider 时组件安全降级（不挂标、不换价）。
+- 详情页下单链路跟着改：秒杀规格显示「马上抢」（走 `seckillApi.place`，需登录 + 默认地址），
+  **隐藏加购/立即购买与数量选择**（秒杀按件抢、接口不收数量）—— 显示秒杀价却按原价成交比不展示更严重。
+  商品库存与秒杀配额是两套口径：秒杀规格不因 `sellable=false` 被禁选。
+- 新增 `parseServerTime`/`formatServerTime`：服务端 `LocalDateTime` 无时区输出按 **UTC** 解析
+  （浏览器默认按本地时区 → 一律早 8 小时，对倒计时是功能性错误）；秒杀各页时间展示同步修正。
+
+**2. 首页「每日秒杀」栏目**
+- `DailySeckill`：hero 正下方，展示商品图/标题/活动时间段（同日省略重复日期）/秒杀价与划线原价/
+  余量进度/实时倒计时/限购件数；进行中的活动排前、按结束时间升序（最快结束的最先展示）；
+  无活动整块不渲染；「查看全部 →」进秒杀列表页。
+
+**3. 后端配套**
+- `seckillPrice` 补进 `LongToStringJacksonModule` 金额白名单：此前漏列以字符串 `"100"` 下发，
+  与前端 `number` 类型声明不符 —— 全站价格比较/运算会静默出错。补回归测试
+  `seckillPriceStaysNumeric`（`LongToStringJacksonModuleTest`，5/0）。
+
+**验证**：三端 typecheck + mall/vite 构建 0 错；浏览器 18 项断言全过
+（首页栏目/商品卡/搜索卡/详情页/秒杀列表：标签、秒杀价、原价划线、活动时间、**倒计时实测走秒**、
+余量进度、马上抢按钮、无加购入口、时间本地口径）；秒杀冒烟 **82/0**；
+交易单测 **107/0**、白名单回归 **5/0**；前端三守卫全绿（import 487 条 / 产物隔离 / 91 文件 11 处链接全按 SPU 寻址）。
+
 ### 2026-10-19（三十三）· 修复：秒杀商品点开提示「商品不存在」（SKU / SPU 主键混用）
 
 **根因**：秒杀列表的标题链接写的是 `/product/${sku.skuId}`，而商品详情页按 **SPU** 寻址

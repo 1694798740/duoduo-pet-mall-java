@@ -204,6 +204,17 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-19（三十一）· 全站秒杀标识与价格 + 首页「每日秒杀」栏目
+
+- SeckillProvider 全站唯一秒杀数据源（拉 activities 按 SPU 建索引，60s 轮询 + 回前台刷新，失败保旧值）。
+- 统一组件 SeckillTag / SeckillPrice（秒杀价 + 原价划线标注）/ SeckillCountdown（走秒，到点触发刷新）/
+  SeckillProgress；接入商品卡、详情页、秒杀列表、AI 推荐卡、分享圈商品卡。
+- 详情页秒杀规格走「马上抢」（seckill place），隐藏加购与数量（秒杀按件抢）；秒杀规格不因商品库存被禁选。
+- parseServerTime/formatServerTime：无时区服务端时间按 UTC 解析（浏览器默认本地 → 早 8h）。
+- 首页 DailySeckill 栏目：hero 正下方，时间 + 秒杀价/划线原价 + 进度 + 倒计时，无活动不渲染。
+- 后端：seckillPrice 补进金额白名单（此前字符串下发）+ 回归测试 seckillPriceStaysNumeric。
+- 验证：浏览器 18 断言全过（倒计时实测走秒）；seckill-smoke 82/0；trade 107/0；白名单 5/0；前端三守卫绿。
+
 ### 2026-10-19（三十）· 修复秒杀列表「商品不存在」：SKU / SPU 主键混用
 
 - 根因：秒杀标题链接 `/product/${sku.skuId}`，商品详情按 SPU 寻址 ⇒ `/api/products/2001` 404；

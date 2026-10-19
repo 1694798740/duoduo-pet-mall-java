@@ -20,10 +20,12 @@ import React, {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { listingImage, productImage } from '@duoduo/api-sdk/images';
-import { formatDate, formatPrice } from '@duoduo/api-sdk/client';
+import { formatDate, formatPrice, formatServerTime } from '@duoduo/api-sdk/client';
 import type { ListingCard, OrderStatus, ProductCard } from '@duoduo/api-sdk/types';
+import { useSpuSeckill } from '../store/seckill';
+import { SeckillPrice, SeckillTag } from './seckill';
 
-export { formatDate, formatPrice };
+export { formatDate, formatPrice, formatServerTime };
 
 // ---------------- 基础件 ----------------
 
@@ -184,50 +186,71 @@ export const Modal: React.FC<{
 
 // ---------------- 商品卡（SPU） ----------------
 
-export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => (
-  <Link className="goods-card" to={`/product/${item.id}`}>
-    <div className="goods-media">
-      {item.mainImage ? <img src={productImage(item.id, item.mainImage)} alt={item.title} loading="lazy" /> : null}
-      <div className="goods-media-tags">
-        <SupplyTag supplyType={item.supplyType} />
-      </div>
-    </div>
-    <div className="goods-body">
-      <div className="goods-title">{item.title}</div>
-      <div className="goods-meta">
-        {item.brandName ? <span>{item.brandName}</span> : null}
-        {item.categoryName ? <span>{item.categoryName}</span> : null}
-      </div>
-      {item.ratingCount > 0 ? (
-        <div className="goods-meta">
-          <Stars value={item.rating} showValue />
-          <span>{item.ratingCount} 条评价</span>
+/**
+ * 全站商品卡。
+ *
+ * <p>秒杀信息来自全局 `SeckillProvider`（按 SPU 建索引）：参与秒杀的商品
+ * 自动挂「秒杀」标签，价格换成「秒杀价 + 划线原价」。
+ * 这里**不做任何本地推算** —— 首页、搜索、推荐、物种精选必须显示同一个价，
+ * 否则用户会认为秒杀是假的。
+ */
+export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
+  const seckill = useSpuSeckill(item.id);
+  return (
+    <Link className="goods-card" to={`/product/${item.id}`}>
+      <div className="goods-media">
+        {item.mainImage ? <img src={productImage(item.id, item.mainImage)} alt={item.title} loading="lazy" /> : null}
+        <div className="goods-media-tags">
+          {seckill ? <SeckillTag phase={seckill.phase} /> : null}
+          <SupplyTag supplyType={item.supplyType} />
         </div>
-      ) : item.salesCount > 0 ? (
-        <div className="goods-meta">已售 {item.salesCount}</div>
-      ) : null}
-      <div className="goods-footer">
-        <span className="goods-price">
-          {item.minPrice === item.maxPrice ? (
-            <>
-              <small>¥</small>
-              {(item.minPrice / 100).toFixed(2)}
-            </>
-          ) : (
-            <>
-              <small>¥</small>
-              {(item.minPrice / 100).toFixed(2)}
-              <span className="small muted"> 起</span>
-            </>
-          )}
-        </span>
-        <span className="small muted" style={{ marginLeft: 'auto' }}>
-          {item.inStock ? `已售 ${item.salesCount}` : '已售罄'}
-        </span>
       </div>
-    </div>
-  </Link>
-);
+      <div className="goods-body">
+        <div className="goods-title">{item.title}</div>
+        <div className="goods-meta">
+          {item.brandName ? <span>{item.brandName}</span> : null}
+          {item.categoryName ? <span>{item.categoryName}</span> : null}
+        </div>
+        {item.ratingCount > 0 ? (
+          <div className="goods-meta">
+            <Stars value={item.rating} showValue />
+            <span>{item.ratingCount} 条评价</span>
+          </div>
+        ) : item.salesCount > 0 ? (
+          <div className="goods-meta">已售 {item.salesCount}</div>
+        ) : null}
+        <div className="goods-footer">
+          {seckill ? (
+            <SeckillPrice
+              price={seckill.sku.seckillPrice}
+              original={seckill.sku.originalPrice}
+              size="md"
+              from={seckill.multiPrice}
+            />
+          ) : (
+            <span className="goods-price">
+              {item.minPrice === item.maxPrice ? (
+                <>
+                  <small>¥</small>
+                  {(item.minPrice / 100).toFixed(2)}
+                </>
+              ) : (
+                <>
+                  <small>¥</small>
+                  {(item.minPrice / 100).toFixed(2)}
+                  <span className="small muted"> 起</span>
+                </>
+              )}
+            </span>
+          )}
+          <span className="small muted goods-sales" style={{ marginLeft: 'auto' }}>
+            {item.inStock ? `已售 ${item.salesCount}` : '已售罄'}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+};
 
 export const ProductGrid: React.FC<{ items: ProductCard[] }> = ({ items }) => (
   <div className="grid grid-goods">
