@@ -215,6 +215,10 @@ if (-not $SkipFrontendBuild) {
     Record 'import 说明符解析校验' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
     & node (Join-Path $repo 'scripts\lib\check-bundle-isolation.mjs') 2>&1 | Select-Object -Last 6 | Write-Host
     Record '产物隔离校验' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+    # 2026-10-19 线上 bug 固化：商品详情链接必须用 spuId。
+    # 秒杀列表曾写成 `/product/${sku.skuId}` → 404「商品不存在」，而列表里商品看着完全正常。
+    & node (Join-Path $repo 'scripts\lib\check-product-link-spu.mjs') 2>&1 | Select-Object -Last 4 | Write-Host
+    Record '商品详情链接按 SPU 寻址' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 } else {
     Write-Host "`n[1/5] 前端构建：跳过（-SkipFrontendBuild）"
     $results += @{ name = '前端构建'; ok = $true; detail = '跳过' }

@@ -254,6 +254,8 @@ public class SeckillService {
             SkuSnapshot snap = snapshots.get(s.getSkuId());
             views.add(new SkuView(
                     s.getSkuId(),
+                    // 详情页按 SPU 寻址，必须把快照里的 spuId 带出去（不是 skuId）
+                    snap == null ? null : snap.spuId(),
                     snap == null ? "商品 " + s.getSkuId() : snap.spuTitle(),
                     snap == null ? null : snap.specText(),
                     snap == null ? null : snap.image(),

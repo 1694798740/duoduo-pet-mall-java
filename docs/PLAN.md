@@ -204,6 +204,14 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-19（三十）· 修复秒杀列表「商品不存在」：SKU / SPU 主键混用
+
+- 根因：秒杀标题链接 `/product/${sku.skuId}`，商品详情按 SPU 寻址 ⇒ `/api/products/2001` 404；
+  列表数据本身正常（按 skuId 取快照），所以「看得到、点不开」。
+- 修：SkuView 下发 spuId（SkuSnapshot 已有）；前端 types 增 spuId、列表按 spuId 跳转，null 时标题不可点。
+- 守：新增 `scripts/lib/check-product-link-spu.mjs`（禁止用 skuId 拼 /product/ 链接，扫描数 0 判红）并接入 check-all。
+- 验证：404/200 双地址对照；浏览器 5 个链接均 /product/1001 且详情正常；守卫反向注入恰好红 1 处；冒烟 82/0。
+
 ### 2026-10-19（二十九）· 秒杀紧急修复（支付入账 + 时区）
 
 - completePayment 对 SECKILL 跳过冻结台账扣减（秒杀单此前永远无法支付）。

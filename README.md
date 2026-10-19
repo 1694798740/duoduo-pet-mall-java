@@ -1981,6 +1981,33 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-19（三十三）· 修复：秒杀商品点开提示「商品不存在」（SKU / SPU 主键混用）
+
+**根因**：秒杀列表的标题链接写的是 `/product/${sku.skuId}`，而商品详情页按 **SPU** 寻址
+（路由 `/product/:spuId` → `GET /api/products/{spuId}`）。活动配置的是 SKU，两者是不同主键：
+
+```
+活动 370103554343579648 → t_seckill_sku.sku_id = 2001
+t_sku(2001).spu_id = 1001        ← 商品详情真正的地址
+t_spu 存在 id=1001，不存在 id=2001
+```
+
+于是列表里商品标题/图片/价格都正常（那是按 skuId 查的 SKU 快照），
+点开却请求 `/api/products/2001` → `404 {"code":"NOT_FOUND","message":"商品不存在"}`。
+**不是商品被删，也不是活动数据脏了**——是链接拼错了主键。
+
+**修复**：
+1. 后端 `SeckillDtos.SkuView` 增加 `spuId`（`SkuSnapshot` 本来就带，只是没下发）；`SeckillService.toView` 透出。
+2. 前端 `SeckillSkuView` 增 `spuId: string | null`；秒杀列表按 `spuId` 跳转，快照缺失时标题降级为不可点（**不退回**用 skuId）。
+3. 新增静态守卫 `scripts/lib/check-product-link-spu.mjs` 并接入 `check-all.ps1` 前端环节：
+   扫描所有 `/product/${…}` 模板串，表达式含 `skuId` 且不含 `spuId` 即判红并点名行号；
+   扫描数为 0 同样判红（「没扫到」与「扫了且干净」不可区分）。
+
+**验证**：接口实测新旧地址 `404 vs 200`（2001 / 1001）；
+浏览器实测秒杀列表 5 个标题链接均为 `/product/1001`，点开 H1 = 商品标题、无「商品不存在」；
+守卫正向 **88 文件 / 9 处链接全绿**，反向注入 `skuId` **恰好 1 处红并点名 Seckill.tsx:176**，还原后绿；
+秒杀冒烟 **82/0**。
+
 ### 2026-10-19（三十二）· 秒杀紧急修复：秒杀单无法支付 ＋ 活动时间时区错位
 
 **1. 秒杀订单无法支付（"订单没有可扣减的库存冻结记录"）**

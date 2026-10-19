@@ -166,9 +166,19 @@ export const SeckillPage: React.FC = () => {
                     <li key={sku.skuId} className="seckill-sku">
                       {sku.image && <img src={skuImage(sku.skuId, sku.skuId, sku.image)} alt={sku.spuTitle} className="seckill-img" />}
                       <div className="seckill-info">
-                        <Link to={`/product/${sku.skuId}`} className="seckill-title">
-                          {sku.spuTitle}
-                        </Link>
+                        {/*
+                          详情页按 SPU 寻址，必须用 spuId 而不是 skuId ——
+                          秒杀活动里配的是 SKU，两者是不同的主键；用 skuId 拼详情路由
+                          会 404「商品不存在」（列表里却看得到商品，很迷惑）。
+                          快照缺失（spuId 为 null）时降级为纯文本，不做错误跳转。
+                        */}
+                        {sku.spuId ? (
+                          <Link to={`/product/${sku.spuId}`} className="seckill-title">
+                            {sku.spuTitle}
+                          </Link>
+                        ) : (
+                          <span className="seckill-title">{sku.spuTitle}</span>
+                        )}
                         <span className="muted">
                           {sku.specText || '默认规格'} · 限购 {sku.perLimit} 件
                         </span>

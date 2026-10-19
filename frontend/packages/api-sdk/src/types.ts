@@ -1246,6 +1246,14 @@ export interface PageResult<T> {
 /** 秒杀 SKU 视图：金额单位为分 */
 export interface SeckillSkuView {
   skuId: string;
+  /**
+   * 所属 SPU id（商品详情按 SPU 寻址）。
+   *
+   * ⚠️ 不能拿 skuId 当 spuId 去拼 `/product/{id}`：两者是不同的主键，
+   * 用 skuId 请求详情接口会 404「商品不存在」。可能为 null（商品服务查不到该 SKU），
+   * 此时标题应降级为不可点，不要退回用 skuId。
+   */
+  spuId: string | null;
   spuTitle: string;
   specText: string | null;
   image: string | null;

@@ -38,6 +38,18 @@ public final class SeckillDtos {
 
     public record SkuView(
             Long skuId,
+            /**
+             * 所属 SPU 主键 —— <b>C 端商品详情按 SPU 寻址</b>（{@code GET /api/products/{spuId}}），
+             * 而秒杀活动里配置的是 SKU，两者不是同一个 id。
+             *
+             * <p>必须下发：不下发时前端只能拿 {@code skuId} 去拼详情路由，
+             * 而商品库中不存在 id 等于该 skuId 的 SPU，接口返回 404「商品不存在」
+             * —— 表现为「列表里看得到商品，点开却说商品不存在」（2026-10-19 线上复现）。
+             *
+             * <p>可空：商品服务查不到该 SKU 时快照为 null，前端应降级为「标题不可点」，
+             * 而不是退回用 skuId 拼链接。
+             */
+            Long spuId,
             String spuTitle,
             String specText,
             String image,
