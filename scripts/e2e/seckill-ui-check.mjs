@@ -70,6 +70,20 @@ function check(name, ok, got) {
 }
 const step = (t) => console.log(`\n> ${t}`);
 
+/**
+ * 轮询等待条件成立。本脚本统一走 check 口径（不用 expect），
+ * 但异步请求驱动的列表必须等 —— 固定 sleep 要么假绿（没等到就断言）要么拖慢整套。
+ */
+async function waitFor(fn, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > deadline) return v;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 // ---------------- HTTP 辅助 ----------------
 async function call(method, p, body, jar) {
   const headers = {};
@@ -316,6 +330,146 @@ step('UI：后台秒杀管理页（运营视角 · 后台独立站点）');
     check('⑥ 表格内容超出可视区时可横向滚动（scrollWidth > clientWidth 且 overflow-x:auto）',
       wrapBox.scrollWidth > wrapBox.clientWidth && wrapBox.overflowX === 'auto', wrapBox);
     await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_layout.png'), fullPage: true });
+  }
+
+  // ============================================================
+  // 选商品助手：搜索状态污染（2026-10-19 用户反馈 bug 的回归守卫）
+  //   现象：搜「犬」返回多个 → 选一个 → 再搜「犬」只剩已选商品；换「猫」也不变
+  //   根因：渲染分支看「钻取数组空不空」，而搜索只更新搜索结果、不清钻取态
+  //         → 一次「看规格」之后，任何后续搜索都渲染上一个商品的规格列表
+  //   修复：显式 pickStage 两态 + 搜索前清钻取 + 开面板/换行整体复位（resetPicker）
+  // 顺带守住两条用户要求：
+  //   · 手输 SKU ID 的能力已移除（唯一入口：搜索 → 看规格 → 用这个）
+  //   · 表单网格对齐、错误提示在弹窗内可见
+  // ============================================================
+  step('选商品助手：首次搜索 / 选后重搜 / 切换关键词 / 无手输 SKU ID');
+  {
+    await page.getByRole('button', { name: /新建活动/ }).first().click();
+    const modal = page.locator('.modal').first();
+    await waitFor(() => modal.count().then((n) => n === 1));
+    check('a 新建活动弹窗已打开', (await modal.count()) === 1, await modal.count());
+
+    // 手输 SKU ID 已移除：既不能有「SKU ID」标签的输入框，也不能有「19 位 ID」提示的输入框
+    const skuLabelCount = await modal.locator('label.field-label', { hasText: 'SKU ID' }).count();
+    const skuLikeInputs = await modal.locator('input').evaluateAll((els) =>
+      els.filter((e) => /19\s*位|SKU\s*ID/i.test(e.getAttribute('placeholder') ?? '')).length);
+    check('b 手动输入 SKU ID 的能力已移除（无 SKU ID 标签框、无 19 位 ID 提示框）',
+      skuLabelCount === 0 && skuLikeInputs === 0, { skuLabelCount, skuLikeInputs });
+    check('c 未选商品时给出「尚未选择商品」空态引导（而不是让运营手背 19 位 ID）',
+      (await modal.locator('.sk-picked.is-empty').count()) === 1
+      && (await modal.locator('.sk-picked').first().innerText()).includes('尚未选择商品'),
+      (await modal.locator('.sk-picked').first().innerText()).slice(0, 120));
+
+    // 打开选商品面板
+    await modal.getByRole('button', { name: '选商品', exact: true }).click();
+    await waitFor(() => modal.locator('.sk-picker').count().then((n) => n === 1));
+    const searchInput = modal.locator('.sk-picker-search input');
+    check('d 选商品面板带无障碍搜索框（aria-label 可读，不靠 placeholder 猜）',
+      (await searchInput.getAttribute('aria-label')) === '搜商品名',
+      await searchInput.getAttribute('aria-label'));
+
+    // ① 首次搜索「犬」：必须返回多个商品（用户原话「可正常返回多个结果」）
+    await searchInput.fill('犬');
+    await modal.getByRole('button', { name: '搜索', exact: true }).click();
+    await waitFor(() => modal.locator('.sk-picker-item').count().then((n) => n >= 2));
+    const firstResults = await modal.locator('.sk-picker-item-title').allInnerTexts();
+    check('① 首次搜「犬」返回多个商品（≥2，与用户预期一致）', firstResults.length >= 2, firstResults);
+    check('①b 搜索结果是商品卡片形态（带「看规格」入口，不直接甩 SKU）',
+      (await modal.getByRole('button', { name: '看规格' }).count()) >= 2);
+    await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_picker.png'), fullPage: true });
+
+    // ② 看规格 → 用这个
+    await modal.locator('.sk-picker-item').first().getByRole('button', { name: '看规格' }).click();
+    await waitFor(() => modal.locator('.sk-picker-back').count().then((n) => n === 1));
+    check('②a 点「看规格」进入规格阶段（出现「← 返回搜索结果」）',
+      (await modal.locator('.sk-picker-back').count()) === 1);
+    const pickedTitle = (await modal.locator('.sk-picker-item-title').first().innerText()).trim();
+    await modal.locator('.sk-picker-item').first().getByRole('button', { name: '用这个' }).click();
+    await waitFor(() => modal.locator('.sk-picked-title').first().innerText().then((t) => t.includes(pickedTitle)));
+    check('②b 点「用这个」后回显已选商品名', true, pickedTitle);
+    check('②c 已选卡片带出可售库存与现价（运营不必自己去库里查）',
+      /可售库存/.test(await modal.locator('.sk-picked-meta').first().innerText()),
+      (await modal.locator('.sk-picked-meta').first().innerText()).slice(0, 120));
+
+    // ③ 重新打开面板再搜「犬」——bug 现场：原来只剩已选商品的规格列表
+    await modal.getByRole('button', { name: '重新选择' }).click();
+    await waitFor(() => modal.locator('.sk-picker').count().then((n) => n === 1));
+    await searchInput.fill('犬');
+    await modal.getByRole('button', { name: '搜索', exact: true }).click();
+    await waitFor(() => modal.locator('.sk-picker-item').count().then((n) => n >= 2));
+    const againResults = await modal.locator('.sk-picker-item-title').allInnerTexts();
+    check('③a ★ 选完商品后再搜「犬」仍返回多个商品（不再只剩已选那个）',
+      againResults.length >= 2, againResults);
+    check('③b ★ 再搜后停在搜索结果态（没残留上一个商品的规格列表）',
+      (await modal.locator('.sk-picker-back').count()) === 0);
+
+    // ④ 切换关键词「猫」：必须返回新一批商品。
+    // ⚠️ 不能只等「≥2 条」——搜索请求在飞时上一批「犬」的结果还挂在 DOM 里，
+    // 那样会拿到旧数据下结论（假绿/假红）。必须等到标题里真的出现「猫」。
+    await searchInput.fill('猫');
+    await modal.getByRole('button', { name: '搜索', exact: true }).click();
+    await waitFor(async () => {
+      const texts = await modal.locator('.sk-picker-item-title').allInnerTexts();
+      return texts.length >= 2 && texts.some((t) => /猫/.test(t)) ? texts : false;
+    });
+    const catResults = await modal.locator('.sk-picker-item-title').allInnerTexts();
+    check('④a ★ 切换关键词「猫」返回新结果（不是原来那批犬商品）',
+      catResults.length >= 2 && !catResults.includes(pickedTitle), { catResults, pickedTitle });
+    check('④b 「猫」的搜索结果确实与猫相关（关键词真的传给了接口）',
+      catResults.some((t) => /猫/.test(t)), catResults);
+
+    // 表单布局：秒杀价/原价/配额/限购四个数字字段走同一套网格轨道。
+    // ⚠️ 弹窗里有**两个** .sk-row（时间字段行 + 商品数字字段行），必须精确定位到
+    // 含「活动配额」的那一行，否则会把时间字段也数进来（宽度自然不一致）。
+    const numRow = modal.locator('.sk-row').filter({ hasText: '活动配额' });
+    check('e0 数字字段行定位唯一（含「活动配额」的 .sk-row 只有一个）',
+      (await numRow.count()) === 1, await numRow.count());
+    const gridCols = (await numRow.first()
+      .evaluate((e) => getComputedStyle(e).gridTemplateColumns)).trim().split(/\s+/);
+    check('e 秒杀价/原价/配额/限购走同一套网格轨道（跨行对齐，窄屏自动收敛）',
+      gridCols.length >= 2, gridCols);
+    const fieldBoxes = await numRow.first().locator('.field').evaluateAll((els) => els.map((e) => {
+      const label = e.querySelector('.field-label');
+      const input = e.querySelector('input');
+      const lr = label.getBoundingClientRect();
+      const ir = input.getBoundingClientRect();
+      return {
+        labelX: Math.round(lr.x), inputX: Math.round(ir.x), w: Math.round(ir.width),
+        labelAbove: lr.bottom <= ir.top + 1,
+      };
+    }));
+    check('f 每个字段的标签与输入框左边缘对齐、标签在上（不错位）',
+      fieldBoxes.length === 4 && fieldBoxes.every((b) => Math.abs(b.labelX - b.inputX) <= 1 && b.labelAbove),
+      fieldBoxes);
+    check('g 四个输入框等宽（同一轨道，不会一大一小）',
+      fieldBoxes.length === 4 && fieldBoxes.every((b) => b.w === fieldBoxes[0].w), fieldBoxes.map((b) => b.w));
+
+    // 错误提示必须在弹窗内可见（原来渲染在页面顶部，被模态遮罩挡着，运营以为按钮坏了）。
+    // ⚠️ 这里必须**关掉再重开一个新弹窗**：当前弹窗在 ② 已经选过商品，表单是合法的，
+    // 直接点「创建」会真的把活动建出来（第一版就踩了这个坑，库里多出两条自测活动）。
+    // 重开同时验证另一条修复：openCreate 会 resetPicker，不会把上次选中的商品带回来。
+    await modal.getByRole('button', { name: '取消' }).click();
+    await waitFor(() => page.locator('.modal').count().then((n) => n === 0));
+    await page.getByRole('button', { name: /新建活动/ }).first().click();
+    await waitFor(() => modal.count().then((n) => n === 1));
+    check('h0 ★ 重开新建弹窗时选商品状态已重置（不会带出上一次选中的商品）',
+      (await modal.locator('.sk-picked.is-empty').count()) === 1
+      && (await modal.locator('.sk-picked').first().innerText()).includes('尚未选择商品'),
+      (await modal.locator('.sk-picked').first().innerText()).slice(0, 80));
+    await modal.locator('input').first().fill('【UI自测】选商品助手 ' + Date.now());
+    await modal.getByRole('button', { name: '创建', exact: true }).click();
+    await waitFor(() => modal.locator('.alert-error').count().then((n) => n >= 1));
+    const errText = await modal.locator('.alert-error').first().innerText();
+    check('h 未选商品就创建时，错误提示显示在弹窗内且把路指清楚（选商品）',
+      errText.includes('选商品'), errText);
+    check('i 错误提示只出现在弹窗里（没有残留一份在被遮罩挡住的页面顶部）',
+      (await page.locator('.alert-error').count()) === (await modal.locator('.alert-error').count()),
+      { page: await page.locator('.alert-error').count(), modal: await modal.locator('.alert-error').count() });
+
+    await modal.getByRole('button', { name: '取消' }).click();
+    await waitFor(() => page.locator('.modal').count().then((n) => n === 0));
+    check('j 关闭弹窗后回到列表页（不残留遮罩）', (await page.locator('.modal').count()) === 0);
+    await page.screenshot({ path: path.join(SHOTS, 'seckill_admin_create_form.png'), fullPage: true });
   }
 
   // 下架 → 列表仍能列出（「下架不可逆」是本页最容易踩的坑，必须有断言守着）

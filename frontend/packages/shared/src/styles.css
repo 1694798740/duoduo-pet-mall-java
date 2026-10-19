@@ -962,6 +962,12 @@ button.link:hover {
   box-shadow: var(--shadow-lg);
   animation: modal-in 0.2s ease;
 }
+
+/* 宽弹窗：字段多的表单（如秒杀「新建活动」）用 520px 会把输入框挤成锯齿、
+   标签对不齐。窄屏时仍回落到 100% 宽，不破坏小屏可用性。 */
+.modal-wide {
+  max-width: 860px;
+}
 @keyframes modal-in {
   from {
     opacity: 0;
@@ -2288,4 +2294,139 @@ button.link:hover {
 
 .seckill-admin-skus li > span {
   display: inline;
+}
+
+/* ---------- 新建/编辑秒杀活动：商品行网格对齐 ---------- */
+/* 原来用 `row row-wrap` + 各字段 `flex:1/2 + minWidth` 拼宽度，结果是
+   行与行之间错位、窄屏折行后标签高低不齐。改成网格：同一容器宽度下
+   所有行共用同一套列轨道，标签与输入框自然对齐；列数随宽度自动收敛
+   （auto-fit + minmax），不写死断点也能适配常见分辨率。 */
+.sk-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0 14px;
+  align-items: start;
+}
+
+/* 跨整行的元素（已选商品卡、操作按钮行） */
+.sk-row > .sk-span-all {
+  grid-column: 1 / -1;
+}
+
+/* 已选商品卡：取代原来的「SKU ID 手输框」（2026-10-19 移除手输，改为只能搜索选择） */
+.sk-picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.sk-picked.is-empty {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
+.sk-picked-main {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.sk-picked-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-picked-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-picked-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* ---------- 选商品面板 ---------- */
+.sk-picker {
+  margin: 4px 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.sk-picker-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sk-picker-search .input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.sk-picker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.sk-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.sk-picker-item-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.sk-picker-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-picker-item-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-picker-empty {
+  padding: 14px 4px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.sk-picker-back {
+  margin-bottom: 8px;
 }

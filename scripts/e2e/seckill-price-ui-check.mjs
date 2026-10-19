@@ -2,7 +2,7 @@
  * 秒杀价规则 · 真实浏览器 UI 自测（2026-10-19）
  *
  * 被验证的不变式：
- *   ① 选商品回填后，默认秒杀价**落在合法区间**（> 0.01 元 且 < 原价）——运营不改也能存；
+ *   ① 选商品后，默认秒杀价**落在合法区间**（> 0.01 元 且 < 原价）——运营不改也能存；
  *   ② 秒杀价 = 原价 → **在弹窗里**给出明确中文提示（不是"点了没反应"）；
  *   ③ 秒杀价 = 0.01 元 → 同上，提示「必须大于 0.01 元」；
  *   ④ 合法价格可创建，且 **时间只被换算一次**（运营填 20:00 北京时间 → 库里 12:00 UTC）——
@@ -110,14 +110,16 @@ await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 20000 })
 await page.goto(`${ADMIN_UI}/admin/seckill`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(1000);
 
-step('弹窗：填标题 → 选商品回填');
+step('弹窗：填标题 → 选商品（搜索 → 看规格 → 用这个）');
 await page.getByRole('button', { name: '+ 新建活动' }).click();
 await page.getByPlaceholder('如：周末猫粮狂欢').fill(TITLE);
 
-await page.getByRole('button', { name: '选商品回填' }).first().click();
-await page.getByRole('button', { name: '搜索' }).click();
+// 2026-10-19：手输 SKU ID 已移除，唯一入口是「选商品」面板（原「选商品回填」按钮随之删除）
+await page.getByRole('button', { name: '选商品', exact: true }).click();
+await page.getByPlaceholder('搜商品名（如：犬 / 猫 / 洁齿骨）').fill('猫');
+await page.getByRole('button', { name: '搜索', exact: true }).click();
 await page.waitForTimeout(1500);
-// 结果可能是 SPU 卡片（需先「看规格」）也可能直接是 SKU 列表
+// 搜索结果是 SPU 卡片，需先「看规格」下钻到 SKU 列表
 if ((await page.getByRole('button', { name: '用这个' }).count()) === 0) {
   await page.getByRole('button', { name: '看规格' }).first().click();
   await page.waitForTimeout(1200);

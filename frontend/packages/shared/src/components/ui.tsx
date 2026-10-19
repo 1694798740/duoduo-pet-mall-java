@@ -157,7 +157,9 @@ export const Modal: React.FC<{
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-}> = ({ open, title, onClose, children, footer }) => {
+  /** 宽形态（860px）：字段多的表单用，避免 520px 把输入框挤成锯齿 */
+  wide?: boolean;
+}> = ({ open, title, onClose, children, footer, wide }) => {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e: KeyboardEvent) => {
@@ -170,7 +172,12 @@ export const Modal: React.FC<{
   if (!open) return null;
   return (
     <div className="modal-mask" onClick={onClose} role="presentation">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        className={`modal${wide ? ' modal-wide' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="modal-head">
           <h3 className="modal-title">{title}</h3>
           <button className="icon-btn" onClick={onClose} aria-label="关闭">

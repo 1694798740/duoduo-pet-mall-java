@@ -32,7 +32,7 @@ import type {
   SkuView,
 } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, priceRangeText, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { SeckillRemainStat } from '@duoduo/shared/components/seckill';
@@ -49,8 +49,14 @@ const PHASE_LABELS: Record<string, { text: string; cls: string }> = {
 
 type SkuRow = SeckillActivityCreateRequest['skus'][number];
 
-/** 行状态 = 请求体字段 + 「选商品回填」带回来的现场信息（用于配额校验与提示） */
-type RowState = SkuRow & { /** 该 SKU 当前可售库存（选商品回填时带出；手填 SKU 时为 null） */ skuStock: number | null };
+/** 行状态 = 请求体字段 + 「选商品」带回来的现场信息（用于配额校验与提示） */
+type RowState = SkuRow & {
+  /** 该 SKU 当前可售库存（选商品时带出；未选商品时为 null） */
+  skuStock: number | null;
+  /** 选中商品的展示信息：手输 SKU ID 已移除，这两个字段只用于回显 */
+  skuTitle?: string;
+  skuSpec?: string;
+};
 
 const emptyRow = (): RowState => ({
   skuId: '',
@@ -169,12 +175,33 @@ export const AdminSeckillPage: React.FC = () => {
   // ---- 选商品助手：关键词 → SPU → SKU（运营不可能手背 19 位 skuId） ----
   const [pickKeyword, setPickKeyword] = useState('');
   const [pickResults, setPickResults] = useState<ProductCard[]>([]);
-  const [pickSpus, setPickSpus] = useState<ProductCard[]>([]);
   const [pickSkus, setPickSkus] = useState<Array<SkuView & { spuTitle: string }>>([]);
   const [pickBusy, setPickBusy] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const [pickRowIndex, setPickRowIndex] = useState(0);
   const [picking, setPicking] = useState(false);
+  /**
+   * 选商品面板的两个阶段（2026-10-19 修 bug 的关键）。
+   *
+   * <p>原来用"当前钻取的 SPU 数组空不空"判断该显示搜索结果还是某个商品的规格列表，
+   * 而 {@link searchProducts} 只更新 `pickResults`、**不清那个数组** ——
+   * 于是一次「看规格」之后，再搜索任何关键词，面板仍停在**上一个商品的规格列表**，
+   * 用户看到的就是「选了商品后再搜，只剩已选那个；换关键词也不变」。</p>
+   *
+   * <p>改成显式的两态：`search`（搜商品）/ `sku`（看某个商品的规格）。
+   * 每次搜索都显式回到 `search` 并清掉钻取状态，不再靠"某个数组空不空"推断。</p>
+   */
+  const [pickStage, setPickStage] = useState<'search' | 'sku'>('search');
+
+  /** 选商品面板整体复位：开弹窗 / 换一行 / 重新打开时都必须调 */
+  const resetPicker = useCallback(() => {
+    setPickKeyword('');
+    setPickResults([]);
+    setPickSkus([]);
+    setPickError(null);
+    setPickBusy(false);
+    setPickStage('search');
+  }, []);
 
   const { data, loading, error, reload } = useAsync(
     useCallback(() => adminApi.seckillActivities(), []),
@@ -192,25 +219,41 @@ export const AdminSeckillPage: React.FC = () => {
     setForm({ title: '', startAt: bjToday('00:00'), endAt: bjToday('23:59') });
     setRows([emptyRow()]);
     setActionError(null);
-    setPickSkus([]);
-    setPickSpus([]);
-    setPickResults([]);
+    // 选商品面板必须整体复位：否则上一次留下的关键词/搜索结果/钻取状态
+    // 会让这一轮的搜索显示上一轮的商品（2026-10-19 用户实际遇到的 bug）
+    resetPicker();
   };
   const closeModal = () => {
     setCreating(false);
     setActionError(null);
     setPicking(false);
+    resetPicker();
   };
 
   const updateRow = (index: number, patch: Partial<RowState>) =>
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((prev) => [...prev, emptyRow()]);
+  const addRow = () => {
+    setRows((prev) => [...prev, emptyRow()]);
+    setPicking(false);
+  };
   const removeRow = (index: number) =>
     setRows((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
+
+  /** 打开选商品面板（为第 index 行选）：永远从干净的搜索态开始 */
+  const openPicker = (index: number) => {
+    setPickRowIndex(index);
+    resetPicker();
+    setPicking(true);
+  };
 
   const searchProducts = async () => {
     setPickError(null);
     setPickBusy(true);
+    // ★ 关键修复：搜索前先退出「看规格」的钻取态。
+    // 之前只更新 pickResults，而渲染分支看的是"钻取数组空不空" ——
+    // 于是搜索后面板仍显示上一个商品的规格，表现为"换了关键词还返回同一个商品"。
+    setPickStage('search');
+    setPickSkus([]);
     try {
       const page = await productApi.search({ keyword: pickKeyword.trim(), page: 1, pageSize: 8 });
       setPickResults(page.items ?? []);
@@ -227,8 +270,8 @@ export const AdminSeckillPage: React.FC = () => {
     setPickBusy(true);
     try {
       const detail = await productApi.detail(card.id);
-      setPickSpus([card]);
       setPickSkus((detail.skus ?? []).map((s) => ({ ...s, spuTitle: card.title })));
+      setPickStage('sku');
       if ((detail.skus ?? []).length === 0) setPickError('该商品没有可售规格');
     } catch (err) {
       setPickError(toFriendlyMessage(err));
@@ -238,12 +281,12 @@ export const AdminSeckillPage: React.FC = () => {
   };
 
   /**
-   * 选中 SKU：回填 skuId / 当前可售库存，并把商品现价当作原价默认值。
+   * 选中 SKU：回填 skuId / 当前可售库存 / 商品名（回显用），并把商品现价当作原价默认值。
    * ★ 单位换算（2026-10-19 修复）：`sku.price` 是**分**（服务端金额字段一律数字分），
    *   而这两个输入框按**元**录入、提交时才 ×100 —— 之前直接把 15800（分）填进「元」框，
    *   运营一不留神就建出「原价 15800 元」的活动。
    */
-  const applySku = (sku: SkuView) => {
+  const applySku = (sku: SkuView & { spuTitle: string }) => {
     /**
      * 秒杀价默认值＝现价八折，并夹在「(0.01 元, 原价)」区间内（2026-10-19 新增规则）：
      * 秒杀价必须**严格低于**原价、且**大于 0.01 元**。默认值直接落在合法区间，
@@ -255,13 +298,19 @@ export const AdminSeckillPage: React.FC = () => {
     updateRow(pickRowIndex, {
       skuId: sku.id,
       skuStock: sku.stock,
+      // 回显用：手输 SKU ID 已移除，选中后要把商品名/规格显示出来
+      skuTitle: sku.spuTitle,
+      skuSpec: Object.values(sku.spec ?? {}).join(' / '),
       originalPrice: sku.price / 100,
       seckillPrice: seckillCents / 100,
       // 配额默认值收敛到库存范围内（上限先按 99 封顶，保存前还有「不得超过库存」的强校验）
       totalStock: Math.max(1, Math.min(sku.stock, 99)),
     });
     setPicking(false);
-    push(`已回填 SKU（当前可售库存 ${sku.stock}）`, 'success');
+    // 面板回到搜索态并清掉钻取结果：下次打开不会是上一个商品的规格
+    setPickStage('search');
+    setPickSkus([]);
+    push(`已选商品「${sku.spuTitle}」（当前可售库存 ${sku.stock}）`, 'success');
   };
 
   const save = async () => {
@@ -280,7 +329,7 @@ export const AdminSeckillPage: React.FC = () => {
     }
     const filled = rows.filter((r) => r.skuId.trim() !== '');
     if (filled.length === 0) {
-      setActionError('至少配置一个秒杀商品');
+      setActionError('请先通过「选商品」添加至少一个秒杀商品');
       return;
     }
     // 逐行校验（2026-10-19）：配额受库存约束、限购受配额约束 —— 之前两个数字随便填，
@@ -288,7 +337,8 @@ export const AdminSeckillPage: React.FC = () => {
     // 同日新增价格规则：秒杀价必须**严格低于原售价**、且**大于 0.01 元**（详见下方注释）。
     for (const [i, r] of rows.entries()) {
       if (r.skuId.trim() === '') continue;
-      const who = `第 ${i + 1} 个商品（SKU ${r.skuId.trim()}）`;
+      // 手输 SKU ID 已移除，报错时点名商品名比 19 位 ID 有用得多
+      const who = `第 ${i + 1} 个商品（${r.skuTitle ?? r.skuId.trim()}）`;
       const priceCents = Math.round(r.seckillPrice * 100);
       /**
        * 价格规则（2026-10-19）：
@@ -618,6 +668,7 @@ export const AdminSeckillPage: React.FC = () => {
         open={creating}
         title="新建秒杀活动"
         onClose={closeModal}
+        wide
         footer={
           <>
             <button className="btn btn-ghost" onClick={closeModal}>取消</button>
@@ -636,29 +687,26 @@ export const AdminSeckillPage: React.FC = () => {
             placeholder="如：周末猫粮狂欢"
           />
         </Field>
-        <div className="row row-wrap" style={{ gap: 12 }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <Field label="开始时间（北京时间）" required>
-              <input
-                className="input"
-                type="datetime-local"
-                value={form.startAt}
-                onChange={(e) => setForm({ ...form, startAt: e.target.value })}
-              />
-            </Field>
-          </div>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <Field label="结束时间（北京时间）" required>
-              <input
-                className="input"
-                type="datetime-local"
-                value={form.endAt}
-                onChange={(e) => setForm({ ...form, endAt: e.target.value })}
-              />
-            </Field>
-          </div>
+        {/* 两个时间字段也走同一套网格轨道：标签顶端对齐，窄屏自动堆叠 */}
+        <div className="sk-row">
+          <Field label="开始时间（北京时间）" required>
+            <input
+              className="input"
+              type="datetime-local"
+              value={form.startAt}
+              onChange={(e) => setForm({ ...form, startAt: e.target.value })}
+            />
+          </Field>
+          <Field label="结束时间（北京时间）" required>
+            <input
+              className="input"
+              type="datetime-local"
+              value={form.endAt}
+              onChange={(e) => setForm({ ...form, endAt: e.target.value })}
+            />
+          </Field>
         </div>
-        <p className="small muted">
+        <p className="small muted" style={{ marginTop: -6 }}>
           按北京时间填写，默认<b>当天 00:00–23:59</b>，可自行调整；提交时自动换算成服务端 UTC 存储。
           想让 20:00 开抢就直接填 20:00。
         </p>
@@ -668,139 +716,174 @@ export const AdminSeckillPage: React.FC = () => {
           <button className="btn btn-ghost btn-sm" onClick={addRow}>+ 加一个商品</button>
         </div>
         {rows.map((row, index) => (
-          <div key={index} className="card card-pad" style={{ marginBottom: 8 }}>
-            <div className="row row-wrap" style={{ gap: 8 }}>
-              <div style={{ flex: 2, minWidth: 220 }}>
-                <Field label="SKU ID" required>
-                  <input
-                    className="input mono"
-                    value={row.skuId}
-                    onChange={(e) => updateRow(index, { skuId: e.target.value })}
-                    placeholder="19 位 ID，可用右侧「选商品」回填"
-                  />
-                </Field>
+          <div key={index} className="card card-pad" style={{ marginBottom: 10 }}>
+            {/*
+              已选商品（2026-10-19：手输 SKU ID 的能力已移除）。
+              19 位 ID 不该由人手输入 —— 背不出来、抄还容易错，错了要到保存时才报错。
+              现在唯一入口是「选商品」：搜索 → 看规格 → 用这个，选中后在这里回显。
+            */}
+            <div className={`sk-picked${row.skuId ? '' : ' is-empty'}`}>
+              <div className="sk-picked-main">
+                {row.skuId ? (
+                  <>
+                    <div className="sk-picked-title" title={row.skuTitle ?? ''}>
+                      {row.skuTitle ?? '已选商品'}
+                    </div>
+                    <div className="sk-picked-meta">
+                      {row.skuSpec ? `${row.skuSpec} · ` : ''}
+                      可售库存 {row.skuStock ?? '—'} · 现价 ¥{(row.originalPrice ?? 0).toFixed(2)}
+                      <span className="mono"> · SKU {row.skuId}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="sk-picked-title">尚未选择商品</div>
+                    <div className="sk-picked-meta">点右侧「选商品」，搜索后从规格里挑一个</div>
+                  </>
+                )}
               </div>
-              <div style={{ flex: 1, minWidth: 130 }}>
-                <Field
-                  label="秒杀价（元）"
-                  required
-                  hint={
-                    row.originalPrice != null && row.originalPrice > 0
-                      ? `必须低于原价 ¥${row.originalPrice.toFixed(2)}，且大于 ¥0.01`
-                      : '必须低于原售价，且大于 ¥0.01'
-                  }
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={0.02}
-                    step={0.01}
-                    value={row.seckillPrice || ''}
-                    onChange={(e) => updateRow(index, { seckillPrice: Number(e.target.value) })}
-                  />
-                </Field>
-              </div>
-              <div style={{ flex: 1, minWidth: 110 }}>
-                <Field label="原价（元，可空）">
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={row.originalPrice ?? ''}
-                    onChange={(e) =>
-                      updateRow(index, { originalPrice: e.target.value === '' ? null : Number(e.target.value) })}
-                    placeholder="留空取现价"
-                  />
-                </Field>
-              </div>
-              <div style={{ flex: 1, minWidth: 90 }}>
-                <Field
-                  label="活动配额"
-                  required
-                  hint={row.skuStock != null ? `该规格当前可售库存 ${row.skuStock}，不能超过它` : '先用「选商品回填」带出库存'}
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    max={row.skuStock ?? undefined}
-                    step={1}
-                    value={row.totalStock}
-                    onChange={(e) => updateRow(index, { totalStock: Number(e.target.value) })}
-                  />
-                </Field>
-              </div>
-              <div style={{ flex: 1, minWidth: 90 }}>
-                <Field
-                  label="每人限购"
-                  hint={`1 ~ ${Math.max(1, Math.min(10, row.totalStock || 10))} 件（不超过活动配额，全场最多 10）`}
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, Math.min(10, row.totalStock || 10))}
-                    step={1}
-                    value={row.perLimit ?? 1}
-                    onChange={(e) => updateRow(index, { perLimit: Number(e.target.value) })}
-                  />
-                </Field>
+              <div className="sk-picked-actions">
+                <button className="btn btn-ghost btn-sm" onClick={() => openPicker(index)}>
+                  {row.skuId ? '重新选择' : '选商品'}
+                </button>
               </div>
             </div>
-            <div className="row row-wrap" style={{ gap: 6 }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => { setPickRowIndex(index); setPicking(true); }}
+
+            {/* 四个数字字段走同一套网格轨道：标签、输入框、提示跨行对齐，
+                窄屏自动收敛列数（不会把输入框压成一条缝） */}
+            <div className="sk-row">
+              <Field
+                label="秒杀价（元）"
+                required
+                hint={
+                  row.originalPrice != null && row.originalPrice > 0
+                    ? `必须低于原价 ¥${row.originalPrice.toFixed(2)}，且大于 ¥0.01`
+                    : '必须低于原售价，且大于 ¥0.01'
+                }
               >
-                选商品回填
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={rows.length === 1}
-                onClick={() => removeRow(index)}
+                <input
+                  className="input"
+                  type="number"
+                  min={0.02}
+                  step={0.01}
+                  value={row.seckillPrice || ''}
+                  onChange={(e) => updateRow(index, { seckillPrice: Number(e.target.value) })}
+                />
+              </Field>
+              <Field label="原价（元，可空）">
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={row.originalPrice ?? ''}
+                  onChange={(e) =>
+                    updateRow(index, { originalPrice: e.target.value === '' ? null : Number(e.target.value) })}
+                  placeholder="留空取现价"
+                />
+              </Field>
+              <Field
+                label="活动配额"
+                required
+                hint={row.skuStock != null ? `不超过可售库存 ${row.skuStock}` : '选商品后自动带出库存'}
               >
-                移除
-              </button>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={row.skuStock ?? undefined}
+                  step={1}
+                  value={row.totalStock}
+                  onChange={(e) => updateRow(index, { totalStock: Number(e.target.value) })}
+                />
+              </Field>
+              <Field
+                label="每人限购"
+                hint={`1 ~ ${Math.max(1, Math.min(10, row.totalStock || 10))} 件（不超过配额，全场最多 10）`}
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={Math.max(1, Math.min(10, row.totalStock || 10))}
+                  step={1}
+                  value={row.perLimit ?? 1}
+                  onChange={(e) => updateRow(index, { perLimit: Number(e.target.value) })}
+                />
+              </Field>
+              <div className="sk-span-all" style={{ textAlign: 'right' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={rows.length === 1}
+                  onClick={() => removeRow(index)}
+                >
+                  移除这个商品
+                </button>
+              </div>
             </div>
           </div>
         ))}
 
         {picking ? (
-          <div className="card card-pad" style={{ marginTop: 6 }}>
-            <div className="row" style={{ gap: 6, marginBottom: 8 }}>
+          <div className="sk-picker">
+            <div className="sk-picker-search">
               <input
                 className="input"
                 value={pickKeyword}
                 onChange={(e) => setPickKeyword(e.target.value)}
-                placeholder="搜商品名"
+                onKeyDown={(e) => { if (e.key === 'Enter') void searchProducts(); }}
+                placeholder="搜商品名（如：犬 / 猫 / 洁齿骨）"
+                aria-label="搜商品名"
               />
-              <button className="btn btn-ghost btn-sm" disabled={pickBusy} onClick={searchProducts}>
+              <button className="btn btn-primary btn-sm" disabled={pickBusy} onClick={searchProducts}>
                 {pickBusy ? '搜索中…' : '搜索'}
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setPicking(false)}>收起</button>
             </div>
             {pickError ? <Alert kind="error">{pickError}</Alert> : null}
-            {pickSpus.length === 0 ? (
-              <ul style={{ margin: 0, paddingLeft: 16 }}>
-                {pickResults.map((card) => (
-                  <li key={card.id} className="row-between row-wrap" style={{ gap: 8 }}>
-                    <span className="small">{card.title}</span>
-                    <button className="btn btn-ghost btn-sm" onClick={() => loadSkus(card)}>看规格</button>
-                  </li>
-                ))}
-              </ul>
+            {/*
+              渲染分支改为看显式的 pickStage，不再看 pickSpus 空不空 ——
+              后者就是「选完商品再搜索，面板停在上一个商品的规格列表」这个 bug 的根因。
+            */}
+            {pickStage === 'sku' ? (
+              <>
+                <button className="btn btn-ghost btn-sm sk-picker-back" onClick={() => setPickStage('search')}>
+                  ← 返回搜索结果
+                </button>
+                <ul className="sk-picker-list">
+                  {pickSkus.map((sku) => (
+                    <li key={sku.id} className="sk-picker-item">
+                      <span className="sk-picker-item-main">
+                        <span className="sk-picker-item-title" style={{ display: 'block' }}>
+                          {sku.spuTitle}
+                        </span>
+                        <span className="sk-picker-item-meta" style={{ display: 'block' }}>
+                          {Object.values(sku.spec ?? {}).join(' / ')} · {formatPrice(sku.price)} · 库存 {sku.stock}
+                          <span className="mono"> · SKU {sku.id}</span>
+                        </span>
+                      </span>
+                      <button className="btn btn-primary btn-sm" onClick={() => applySku(sku)}>用这个</button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : pickResults.length === 0 ? (
+              <div className="sk-picker-empty">
+                {pickBusy ? '正在搜索…' : '输入关键词后点「搜索」，从结果里挑一个商品'}
+              </div>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16 }}>
-                {pickSkus.map((sku) => (
-                  <li key={sku.id} className="row-between row-wrap" style={{ gap: 8 }}>
-                    <span className="small">
-                      {sku.spuTitle}　<span className="muted">{Object.values(sku.spec ?? {}).join(' / ')}</span>
-                      　<span className="muted">{formatPrice(sku.price)}</span>
-                      　<span className="muted">库存 {sku.stock}</span>
-                      　<span className="mono muted">{sku.id}</span>
+              <ul className="sk-picker-list">
+                {pickResults.map((card) => (
+                  <li key={card.id} className="sk-picker-item">
+                    <span className="sk-picker-item-main">
+                      <span className="sk-picker-item-title" style={{ display: 'block' }} title={card.title}>
+                        {card.title}
+                      </span>
+                      <span className="sk-picker-item-meta" style={{ display: 'block' }}>
+                        {priceRangeText(card.minPrice, card.maxPrice)}
+                      </span>
                     </span>
-                    <button className="btn btn-ghost btn-sm" onClick={() => applySku(sku)}>用这个</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => loadSkus(card)}>看规格</button>
                   </li>
                 ))}
               </ul>
