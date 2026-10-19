@@ -34,6 +34,7 @@ import type { AddressView, CartView, PlaceOrderResult, UsableCouponResult } from
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Field, LoadingBlock, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
+import { notifyDataChanged } from '@duoduo/shared/lib/dataBus';
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
@@ -203,6 +204,8 @@ export const CheckoutPage: React.FC = () => {
       await refreshCart();
       // 下单会生成「订单已提交」通知：与购物车角标同一口径，立刻刷新，不等轮询
       await refreshUnread();
+      // 广播（2026-10-19）：下单冻结库存，商品详情的可售量/秒杀余量立即重拉
+      notifyDataChanged();
 
       if (placed.idempotentReplay) {
         push('该笔订单已提交过，为你展示已有订单', 'info');

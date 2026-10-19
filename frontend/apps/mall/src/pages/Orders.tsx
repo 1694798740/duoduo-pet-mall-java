@@ -17,6 +17,7 @@ import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, Pagination, formatDate, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useConfirm } from '@duoduo/shared/components/confirm';
+import { notifyDataChanged } from '@duoduo/shared/lib/dataBus';
 import { SupportEntry } from '../components/SupportEntry';
 
 const TABS: { value: string; label: string }[] = [
@@ -184,6 +185,8 @@ export const OrdersPage: React.FC = () => {
         await orderApi.cancel(orderNo, '买家在订单列表取消');
         push('订单已取消', 'success');
         reload();
+        // 广播：取消释放库存与秒杀配额，首页/详情/秒杀页立即重拉
+        notifyDataChanged();
       } catch (err) {
         push(toFriendlyMessage(err), 'error');
       } finally {

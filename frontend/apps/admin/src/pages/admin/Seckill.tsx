@@ -46,23 +46,44 @@ const PHASE_LABELS: Record<string, { text: string; cls: string }> = {
 
 type SkuRow = SeckillActivityCreateRequest['skus'][number];
 
-const emptyRow = (): SkuRow => ({
+/** 行状态 = 请求体字段 + 「选商品回填」带回来的现场信息（用于配额校验与提示） */
+type RowState = SkuRow & { /** 该 SKU 当前可售库存（选商品回填时带出；手填 SKU 时为 null） */ skuStock: number | null };
+
+const emptyRow = (): RowState => ({
   skuId: '',
   seckillPrice: 0,
   originalPrice: null,
   totalStock: 1,
   perLimit: 1,
+  skuStock: null,
 });
 
-/** ISO 本地串（无时区后缀）→ <input type="datetime-local"> 需要的 'YYYY-MM-DDTHH:mm' */
-const toLocalInput = (iso: string | null | undefined): string => (iso ? iso.slice(0, 16) : '');
+// ---------------- 时间口径：页面一律用「北京时间」，提交前换算成服务端 UTC ----------------
+// 服务端存 UTC 挂钟（容器时区全 UTC）。此前页面让运营直接填 UTC（填 20:00 实际 12:00 开抢），
+// 且默认值是「UTC 现在 +5 分钟」—— 看起来就是一堆随机时间。现在输入框与列表都显示北京时间，
+// 默认值为北京时间当天 00:00–23:59，提交时自动 -8h 换算成 UTC。
 
-/** 反向：输入框值 → 服务端 LocalDateTime 需要的 'YYYY-MM-DDTHH:mm:00' */
-const fromLocalInput = (v: string): string => (v.length === 16 ? `${v}:00` : v);
+const BJ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-/** 当前 UTC 挂钟（容器时区全 UTC，不能用 toLocaleString 那套本地时间） */
-const utcInputNow = (plusMinutes: number): string =>
-  new Date(Date.now() + plusMinutes * 60_000).toISOString().slice(0, 16);
+/** 服务端 UTC 挂钟串 → 北京时间 datetime-local 值（'YYYY-MM-DDTHH:mm'） */
+const utcToBj = (iso: string | null | undefined): string => {
+  if (!iso) return '';
+  const t = Date.parse(`${iso.slice(0, 19)}Z`);
+  if (Number.isNaN(t)) return '';
+  return new Date(t + BJ_OFFSET_MS).toISOString().slice(0, 16);
+};
+
+/** 北京时间 datetime-local 值 → 服务端 UTC 挂钟串（'YYYY-MM-DDTHH:mm:ss'） */
+const bjToUtc = (v: string): string => {
+  if (!v) return '';
+  const t = Date.parse(`${v.slice(0, 16)}:00Z`);
+  if (Number.isNaN(t)) return '';
+  return new Date(t - BJ_OFFSET_MS).toISOString().slice(0, 19);
+};
+
+/** 北京时间的今天，拼上指定时分（默认值用：当天 00:00 / 23:59） */
+const bjToday = (hhmm: string): string =>
+  `${new Date(Date.now() + BJ_OFFSET_MS).toISOString().slice(0, 10)}T${hhmm}`;
 
 export const AdminSeckillPage: React.FC = () => {
   const { user } = useAuth();
@@ -72,10 +93,10 @@ export const AdminSeckillPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<{ title: string; startAt: string; endAt: string }>({
     title: '',
-    startAt: utcInputNow(5),
-    endAt: utcInputNow(125),
+    startAt: bjToday('00:00'),
+    endAt: bjToday('23:59'),
   });
-  const [rows, setRows] = useState<SkuRow[]>([emptyRow()]);
+  const [rows, setRows] = useState<RowState[]>([emptyRow()]);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -117,7 +138,7 @@ export const AdminSeckillPage: React.FC = () => {
 
   const openCreate = () => {
     setCreating(true);
-    setForm({ title: '', startAt: utcInputNow(5), endAt: utcInputNow(125) });
+    setForm({ title: '', startAt: bjToday('00:00'), endAt: bjToday('23:59') });
     setRows([emptyRow()]);
     setActionError(null);
     setPickSkus([]);
@@ -130,7 +151,7 @@ export const AdminSeckillPage: React.FC = () => {
     setPicking(false);
   };
 
-  const updateRow = (index: number, patch: Partial<SkuRow>) =>
+  const updateRow = (index: number, patch: Partial<RowState>) =>
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
   const addRow = () => setRows((prev) => [...prev, emptyRow()]);
   const removeRow = (index: number) =>
@@ -165,51 +186,83 @@ export const AdminSeckillPage: React.FC = () => {
     }
   };
 
-  /** 选中 SKU：回填 skuId，并把商品现价当作原价默认值（运营仍可改） */
+  /**
+   * 选中 SKU：回填 skuId / 当前可售库存，并把商品现价当作原价默认值。
+   * ★ 单位换算（2026-10-19 修复）：`sku.price` 是**分**（服务端金额字段一律数字分），
+   *   而这两个输入框按**元**录入、提交时才 ×100 —— 之前直接把 15800（分）填进「元」框，
+   *   运营一不留神就建出「原价 15800 元」的活动。
+   */
   const applySku = (sku: SkuView) => {
     updateRow(pickRowIndex, {
       skuId: sku.id,
-      originalPrice: sku.price,
-      seckillPrice: Math.max(1, Math.round(sku.price * 0.8)),
+      skuStock: sku.stock,
+      originalPrice: sku.price / 100,
+      seckillPrice: Math.max(0.01, Math.round(sku.price * 0.8) / 100),
+      // 配额默认值收敛到库存范围内（上限先按 99 封顶，保存前还有「不得超过库存」的强校验）
+      totalStock: Math.max(1, Math.min(sku.stock, 99)),
     });
     setPicking(false);
-    push('已回填 SKU', 'success');
+    push(`已回填 SKU（当前可售库存 ${sku.stock}）`, 'success');
   };
 
   const save = async () => {
     setActionError(null);
-    const skus = rows
-      .filter((r) => r.skuId.trim() !== '')
-      .map((r) => ({
-        skuId: r.skuId.trim(),
-        // 金额单位：页面按元录入，服务端按分
-        seckillPrice: Math.round(r.seckillPrice * 100),
-        originalPrice: r.originalPrice == null || r.originalPrice === 0
-          ? null
-          : Math.round(r.originalPrice * 100),
-        totalStock: r.totalStock,
-        perLimit: r.perLimit ?? 1,
-      }));
     if (!form.title.trim()) {
       setActionError('请填写活动标题');
-      return;
-    }
-    if (skus.length === 0) {
-      setActionError('至少配置一个秒杀商品');
       return;
     }
     if (!form.startAt || !form.endAt) {
       setActionError('请填写开始与结束时间');
       return;
     }
-    if (fromLocalInput(form.endAt) <= fromLocalInput(form.startAt)) {
+    if (form.endAt <= form.startAt) {
       setActionError('结束时间必须晚于开始时间');
       return;
     }
+    const filled = rows.filter((r) => r.skuId.trim() !== '');
+    if (filled.length === 0) {
+      setActionError('至少配置一个秒杀商品');
+      return;
+    }
+    // 逐行校验（2026-10-19）：配额受库存约束、限购受配额约束 —— 之前两个数字随便填，
+    // 「配额 5000、库存 193」这种活动能直接建出来，卖出去就是超卖。
+    for (const [i, r] of rows.entries()) {
+      if (r.skuId.trim() === '') continue;
+      if (!(r.seckillPrice > 0)) {
+        setActionError(`第 ${i + 1} 个商品：秒杀价必须大于 0`);
+        return;
+      }
+      if (r.skuStock != null && r.totalStock > r.skuStock) {
+        setActionError(
+          `第 ${i + 1} 个商品：活动配额（${r.totalStock}）不能超过该规格当前可售库存（${r.skuStock}）`,
+        );
+        return;
+      }
+      const per = r.perLimit ?? 1;
+      if (per < 1) {
+        setActionError(`第 ${i + 1} 个商品：每人限购至少 1 件`);
+        return;
+      }
+      if (per > r.totalStock) {
+        setActionError(`第 ${i + 1} 个商品：每人限购（${per}）不能超过活动配额（${r.totalStock}）`);
+        return;
+      }
+    }
+    const skus = filled.map((r) => ({
+      skuId: r.skuId.trim(),
+      // 金额单位：页面按元录入，服务端按分
+      seckillPrice: Math.round(r.seckillPrice * 100),
+      originalPrice: r.originalPrice == null || r.originalPrice === 0
+        ? null
+        : Math.round(r.originalPrice * 100),
+      totalStock: r.totalStock,
+      perLimit: r.perLimit ?? 1,
+    }));
     const body: SeckillActivityCreateRequest = {
       title: form.title.trim(),
-      startAt: fromLocalInput(form.startAt),
-      endAt: fromLocalInput(form.endAt),
+      // 输入框是北京时间，提交前换算成服务端 UTC 存储
+      startAt: bjToUtc(form.startAt),
+      endAt: bjToUtc(form.endAt),
       skus,
     };
     setBusy(true);
@@ -241,8 +294,8 @@ export const AdminSeckillPage: React.FC = () => {
     setEditError(null);
     setEditForm({
       title: item.title,
-      startAt: toLocalInput(item.startAt),
-      endAt: toLocalInput(item.endAt),
+      startAt: utcToBj(item.startAt),
+      endAt: utcToBj(item.endAt),
     });
   };
 
@@ -257,14 +310,14 @@ export const AdminSeckillPage: React.FC = () => {
       setEditError('请填写开始与结束时间');
       return;
     }
-    if (fromLocalInput(editForm.endAt) <= fromLocalInput(editForm.startAt)) {
+    if (editForm.endAt <= editForm.startAt) {
       setEditError('结束时间必须晚于开始时间');
       return;
     }
     const body: SeckillActivityEditRequest = {
       title: editForm.title.trim(),
-      startAt: fromLocalInput(editForm.startAt),
-      endAt: fromLocalInput(editForm.endAt),
+      startAt: bjToUtc(editForm.startAt),
+      endAt: bjToUtc(editForm.endAt),
     };
     setEditBusy(true);
     try {
@@ -303,7 +356,7 @@ export const AdminSeckillPage: React.FC = () => {
 
       <div className="row-between row-wrap" style={{ marginBottom: 14 }}>
         <span className="small muted">
-          共 {items.length} 场活动（含已下架）　·　时间均为 <b>UTC</b>，不是北京时间
+          共 {items.length} 场活动（含已下架）　·　时间均为 <b>北京时间</b>（服务端按 UTC 存储，页面已自动换算）
         </span>
         <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建活动</button>
       </div>
@@ -319,7 +372,7 @@ export const AdminSeckillPage: React.FC = () => {
             <thead>
               <tr>
                 <th>活动</th>
-                <th>时间（UTC）</th>
+                <th>时间（北京时间）</th>
                 <th>阶段</th>
                 <th>开关</th>
                 <th>秒杀商品与余量</th>
@@ -336,8 +389,8 @@ export const AdminSeckillPage: React.FC = () => {
                       <div className="small muted mono">{item.id}</div>
                     </td>
                     <td className="small">
-                      <div>{toLocalInput(item.startAt)}</div>
-                      <div className="muted">至 {toLocalInput(item.endAt)}</div>
+                      <div>{utcToBj(item.startAt)}</div>
+                      <div className="muted">至 {utcToBj(item.endAt)}</div>
                     </td>
                     <td><span className={phase.cls}>{phase.text}</span></td>
                     <td>
@@ -408,7 +461,7 @@ export const AdminSeckillPage: React.FC = () => {
         </Field>
         <div className="row row-wrap" style={{ gap: 12 }}>
           <div style={{ flex: 1, minWidth: 200 }}>
-            <Field label="开始时间（UTC）" required>
+            <Field label="开始时间（北京时间）" required>
               <input
                 className="input"
                 type="datetime-local"
@@ -418,7 +471,7 @@ export const AdminSeckillPage: React.FC = () => {
             </Field>
           </div>
           <div style={{ flex: 1, minWidth: 200 }}>
-            <Field label="结束时间（UTC）" required>
+            <Field label="结束时间（北京时间）" required>
               <input
                 className="input"
                 type="datetime-local"
@@ -429,8 +482,8 @@ export const AdminSeckillPage: React.FC = () => {
           </div>
         </div>
         <p className="small muted">
-          服务端与容器时区均为 UTC，上面填的是什么时刻就是 UTC 的什么时刻。
-          想让北京时间的 20:00 开抢，这里要填 <b>12:00</b>。
+          按北京时间填写，默认<b>当天 00:00–23:59</b>，可自行调整；提交时自动换算成服务端 UTC 存储。
+          想让 20:00 开抢就直接填 20:00。
         </p>
 
         <div className="row-between row-wrap" style={{ marginTop: 8, marginBottom: 6 }}>
@@ -477,11 +530,16 @@ export const AdminSeckillPage: React.FC = () => {
                 </Field>
               </div>
               <div style={{ flex: 1, minWidth: 90 }}>
-                <Field label="活动配额" required>
+                <Field
+                  label="活动配额"
+                  required
+                  hint={row.skuStock != null ? `该规格当前可售库存 ${row.skuStock}，不能超过它` : '先用「选商品回填」带出库存'}
+                >
                   <input
                     className="input"
                     type="number"
                     min={1}
+                    max={row.skuStock ?? undefined}
                     step={1}
                     value={row.totalStock}
                     onChange={(e) => updateRow(index, { totalStock: Number(e.target.value) })}
@@ -489,12 +547,15 @@ export const AdminSeckillPage: React.FC = () => {
                 </Field>
               </div>
               <div style={{ flex: 1, minWidth: 90 }}>
-                <Field label="每人限购">
+                <Field
+                  label="每人限购"
+                  hint={`1 ~ ${Math.max(1, Math.min(10, row.totalStock || 10))} 件（不超过活动配额，全场最多 10）`}
+                >
                   <input
                     className="input"
                     type="number"
                     min={1}
-                    max={10}
+                    max={Math.max(1, Math.min(10, row.totalStock || 10))}
                     step={1}
                     value={row.perLimit ?? 1}
                     onChange={(e) => updateRow(index, { perLimit: Number(e.target.value) })}
@@ -551,6 +612,7 @@ export const AdminSeckillPage: React.FC = () => {
                     <span className="small">
                       {sku.spuTitle}　<span className="muted">{Object.values(sku.spec ?? {}).join(' / ')}</span>
                       　<span className="muted">{formatPrice(sku.price)}</span>
+                      　<span className="muted">库存 {sku.stock}</span>
                       　<span className="mono muted">{sku.id}</span>
                     </span>
                     <button className="btn btn-ghost btn-sm" onClick={() => applySku(sku)}>用这个</button>
@@ -589,7 +651,7 @@ export const AdminSeckillPage: React.FC = () => {
             </Field>
             <div className="row row-wrap" style={{ gap: 12 }}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <Field label="开始时间（UTC）" required>
+                <Field label="开始时间（北京时间）" required>
                   <input
                     className="input"
                     type="datetime-local"
@@ -599,7 +661,7 @@ export const AdminSeckillPage: React.FC = () => {
                 </Field>
               </div>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <Field label="结束时间（UTC）" required>
+                <Field label="结束时间（北京时间）" required>
                   <input
                     className="input"
                     type="datetime-local"
@@ -609,6 +671,9 @@ export const AdminSeckillPage: React.FC = () => {
                 </Field>
               </div>
             </div>
+            <p className="small muted">
+              按北京时间填写，提交时自动换算成服务端 UTC 存储。
+            </p>
             <p className="small muted">
               商品、秒杀价与配额<b>不可改</b>：余量已经扣过、订单里也已存了价格快照，改了会让配置与既成事实对不上。
               要换商品请<b>新建</b>一场活动，再把这一场下架。

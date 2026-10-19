@@ -41,6 +41,7 @@ import {
 import { QRCode } from '@duoduo/shared/components/QRCode';
 import { LogisticsTimeline } from '@duoduo/shared/components/LogisticsTimeline';
 import { SupportEntry } from '../components/SupportEntry';
+import { notifyDataChanged } from '@duoduo/shared/lib/dataBus';
 import { useApp } from '@duoduo/shared/store/app';
 
 /** 轮询间隔（毫秒）——与真实扫码支付的体验对齐 */
@@ -118,6 +119,8 @@ export const OrderDetailPage: React.FC = () => {
           await reloadOrder();
           await reloadSettlement();
           await refreshUnread();
+          // 广播：支付改变库存/销量，商品详情与秒杀余量立即重拉
+          notifyDataChanged();
           setPayOpen(false);
         } else if (latest.payStatus === 'EXPIRED' || latest.payStatus === 'CLOSED') {
           push(latest.payStatus === 'EXPIRED' ? '支付单已过期，请重新下单' : '支付单已关闭', 'error');
@@ -190,6 +193,8 @@ export const OrderDetailPage: React.FC = () => {
         await reloadOrder();
         await reloadSettlement();
         await refreshUnread();
+        // 广播：支付改变库存/销量，商品详情与秒杀余量立即重拉
+        notifyDataChanged();
         setPayOpen(false);
       }
     } catch (err) {
@@ -207,6 +212,9 @@ export const OrderDetailPage: React.FC = () => {
       setOrder(updated);
       push('订单已取消', 'success');
       await reloadSettlement();
+      // 广播（2026-10-19）：取消会释放库存与秒杀配额 —— 首页/详情/秒杀页立即重拉，
+      // 不再出现「取消后还显示已抢完、要手动刷新才恢复」
+      notifyDataChanged();
     } catch (err) {
       setActionError(toFriendlyMessage(err));
     } finally {

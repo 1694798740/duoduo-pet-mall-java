@@ -34,6 +34,7 @@ import React, {
 } from 'react';
 import { seckillApi } from '@duoduo/api-sdk/endpoints';
 import { parseServerTime } from '@duoduo/api-sdk/client';
+import { subscribeDataChanged } from '../lib/dataBus';
 import type { SeckillActivityView, SeckillSkuView } from '@duoduo/api-sdk/types';
 
 export type SeckillPhase = 'ONGOING' | 'UPCOMING' | 'ENDED';
@@ -159,11 +160,15 @@ export const SeckillProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (document.visibilityState === 'visible') load();
     };
     document.addEventListener('visibilitychange', onVisible);
+    // 全站数据变更广播（2026-10-19）：取消秒杀订单 / 抢购成功等写操作会改变余量，
+    // 写方 notifyDataChanged() 喊一嗓子，这里听到立刻重拉 —— 不用等 60s 轮询或用户手动刷新。
+    const offDataChanged = subscribeDataChanged(load);
 
     return () => {
       alive.current = false;
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
+      offDataChanged();
     };
   }, [tick]);
 

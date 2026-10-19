@@ -34,6 +34,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
+import { notifyDataChanged, subscribeDataChanged } from '@duoduo/shared/lib/dataBus';
 import { SupportEntry } from '../components/SupportEntry';
 
 const SPECIES_LABEL: Record<string, string> = {
@@ -71,6 +72,8 @@ export const ProductDetailPage: React.FC = () => {
   const [adding, setAdding] = useState(false);
   /** 主图轮播的当前下标 + 放大预览开关（第七十三轮：对齐小程序端的「点击看大图」交互） */
   const [imgIndex, setImgIndex] = useState(0);
+  /** 用户本人的秒杀限额是否已用完（抢购被「限购」拦下时置位 → 退回原价购买路径） */
+  const [quotaReached, setQuotaReached] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   /** 秒杀下单进行中（与加购的 adding 分开：两个动作的禁用条件不同） */
   const [grabbing, setGrabbing] = useState(false);
@@ -85,6 +88,13 @@ export const ProductDetailPage: React.FC = () => {
 
   const fetcher = useCallback(() => productApi.detail(spuId), [spuId]);
   const { data, loading, error, reload } = useAsync<ProductDetail>(fetcher, hasSpuId, [spuId]);
+
+  // 全站数据变更广播（2026-10-19）：别处发生写操作（下单/取消/支付）影响本页的
+  // 库存与可售状态时立刻重拉 —— 不再等用户离开再回来或手动刷新。
+  useEffect(() => {
+    if (!hasSpuId) return undefined;
+    return subscribeDataChanged(() => reload());
+  }, [hasSpuId, reload]);
 
   // 头部评分改由评价域实时聚合驱动（第七十三轮）：t_spu.rating 原是种子假数据，
   // 与「商品评价」区的真实列表互相矛盾（头部 4.7 分、评价区「暂无评价」）。
@@ -164,6 +174,18 @@ export const ProductDetailPage: React.FC = () => {
     seckill && skuSeckill && seckill.phase !== 'ENDED'
       ? { meta: seckill, sku: skuSeckill }
       : null;
+  /**
+   * 秒杀**售罄 / 限额用尽**后必须退回原价购买路径（2026-10-19）：
+   * 秒杀的「货」是活动配额，与 SKU 库存是两套口径 —— 配额抢完不代表商品卖完了。
+   * 此前配额一抢完，详情页只剩一个灰的「已抢完」按钮，原价加购/立即购买整个消失，
+   * 剩下的库存只能干看着。现改为：秒杀条保留（如实显示已抢完），
+   * 价格与购买按钮退回原价口径；用户抢购时被「限购」拦下也同等处理。
+   */
+  const seckillOver = Boolean(
+    liveSeckill && (liveSeckill.sku.availableStock <= 0 || quotaReached),
+  );
+  /** 价格与购买按钮看到的秒杀：售罄/限购后视为没有秒杀，回到原价口径 */
+  const buySeckill = seckillOver ? null : liveSeckill;
   /** SPU 有秒杀、但当前选中的不是秒杀规格时的「引回」提示 */
   const otherSeckill =
     seckill && !liveSeckill && seckill.phase !== 'ENDED' ? seckill : null;
@@ -192,9 +214,13 @@ export const ProductDetailPage: React.FC = () => {
         result.replay ? '你已抢到过该商品，已为你打开原订单' : '抢购成功，请尽快付款！',
         'success',
       );
+      // 余量变了：广播一次，首页/列表/其它详情实例立即重拉，不用等 60s 轮询
+      notifyDataChanged();
       navigate(`/orders/${result.orderNo}`);
     } catch (err) {
-      push(toFriendlyMessage(err), 'error');
+      const msg = toFriendlyMessage(err);
+      if (/限购/.test(msg)) setQuotaReached(true);
+      push(msg, 'error');
     } finally {
       setGrabbing(false);
     }
@@ -378,7 +404,8 @@ export const ProductDetailPage: React.FC = () => {
             {card.subtitle ? <div className="muted-2 small">{card.subtitle}</div> : null}
 
             {/* 秒杀条：标签 + 倒计时 + 余量进度。三样都在价格上方，
-                让「现在多便宜、还有多久、还剩几件」在一屏内可读。 */}
+                让「现在多便宜、还有多久、还剩几件」在一屏内可读。
+                配额抢完也保留（如实显示已抢完），但购买退回原价口径 —— 见 seckillOver。 */}
             {liveSeckill ? (
               <div className="pd-seckill-strip">
                 <SeckillTag phase={liveSeckill.meta.phase} />
@@ -391,14 +418,20 @@ export const ProductDetailPage: React.FC = () => {
                   available={liveSeckill.sku.availableStock}
                   total={liveSeckill.sku.totalStock}
                 />
+                {seckillOver ? (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    本场秒杀已抢完{quotaReached ? '（你的限购额度已用完）' : ''}，
+                    可按原价正常购买 ↓
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
             <div className="row" style={{ marginTop: 12, alignItems: 'baseline' }}>
-              {liveSeckill ? (
+              {buySeckill ? (
                 <SeckillPrice
-                  price={liveSeckill.sku.seckillPrice}
-                  original={liveSeckill.sku.originalPrice}
+                  price={buySeckill.sku.seckillPrice}
+                  original={buySeckill.sku.originalPrice}
                   size="lg"
                 />
               ) : (
@@ -406,12 +439,12 @@ export const ProductDetailPage: React.FC = () => {
                   ¥{(price / 100).toFixed(2)}
                 </span>
               )}
-              {!liveSeckill && card.maxPrice > card.minPrice ? (
+              {!buySeckill && card.maxPrice > card.minPrice ? (
                 <span className="small muted">
                   规格不同，最高 ¥{(card.maxPrice / 100).toFixed(2)}
                 </span>
               ) : null}
-              {!liveSeckill && selectedSku && selectedSku.marketPrice > selectedSku.price ? (
+              {!buySeckill && selectedSku && selectedSku.marketPrice > selectedSku.price ? (
                 <span className="small muted" style={{ textDecoration: 'line-through' }}>
                   ¥{(selectedSku.marketPrice / 100).toFixed(2)}
                 </span>
@@ -476,7 +509,11 @@ export const ProductDetailPage: React.FC = () => {
               {skus.map((sku) => {
                 const specText = Object.values(sku.spec).join(' / ') || '默认规格';
                 const skuSk = seckill?.bySku[sku.id];
-                const isSeckillSku = Boolean(skuSk && seckill?.phase !== 'ENDED');
+                /* 该规格的秒杀**还有货**才算「秒杀规格」：配额抢完后按原价展示，
+                   否则规格按钮挂着「秒杀 ¥10」却只能按 ¥158 买 —— 自相矛盾 */
+                const isSeckillSku = Boolean(
+                  skuSk && seckill?.phase !== 'ENDED' && skuSk.availableStock > 0,
+                );
                 return (
                   <button
                     key={sku.id}
@@ -505,8 +542,8 @@ export const ProductDetailPage: React.FC = () => {
             </div>
 
             {/* 秒杀按件抢购（下单接口不收数量），不展示数量选择器 —— 让用户以为能买 3 件
-                却在提交时只成交 1 件，比直接不显示更糟 */}
-            {liveSeckill ? null : (
+                却在提交时只成交 1 件，比直接不显示更糟。秒杀抢完后回到原价口径，数量选择恢复。 */}
+            {buySeckill ? null : (
               <div className="row" style={{ marginTop: 16 }}>
                 <span className="field-label" style={{ margin: 0 }}>
                   数量
@@ -537,20 +574,20 @@ export const ProductDetailPage: React.FC = () => {
             )}
 
             <div className="row row-wrap" style={{ marginTop: 18 }}>
-              {liveSeckill ? (
+              {buySeckill ? (
                 <>
                   <button
                     className="btn btn-pay"
                     disabled={
-                      liveSeckill.meta.phase !== 'ONGOING' ||
-                      liveSeckill.sku.availableStock <= 0 ||
+                      buySeckill.meta.phase !== 'ONGOING' ||
+                      buySeckill.sku.availableStock <= 0 ||
                       grabbing
                     }
                     onClick={() => void grabSeckill()}
                   >
-                    {liveSeckill.meta.phase === 'UPCOMING'
+                    {buySeckill.meta.phase === 'UPCOMING'
                       ? '即将开抢'
-                      : liveSeckill.sku.availableStock <= 0
+                      : buySeckill.sku.availableStock <= 0
                         ? '已抢完'
                         : grabbing
                           ? '抢购中…'
@@ -558,7 +595,7 @@ export const ProductDetailPage: React.FC = () => {
                   </button>
                   <span className="small muted">
                     秒杀商品按件抢购，不支持加入购物车
-                    {liveSeckill.sku.perLimit ? ` · 每人限购 ${liveSeckill.sku.perLimit} 件` : ''}
+                    {buySeckill.sku.perLimit ? ` · 每人限购 ${buySeckill.sku.perLimit} 件` : ''}
                   </span>
                 </>
               ) : (
@@ -586,7 +623,7 @@ export const ProductDetailPage: React.FC = () => {
               <SupportEntry />
             </div>
 
-            {!canBuy && !liveSeckill ? (
+            {!canBuy && !buySeckill ? (
               <div style={{ marginTop: 12 }}>
                 <Alert kind="warn">该规格暂时售罄。可以看看下方的「同类推荐」。</Alert>
               </div>

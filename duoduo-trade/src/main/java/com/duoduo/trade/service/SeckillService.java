@@ -458,6 +458,19 @@ public class SeckillService {
                 throw BizException.notFound("商品规格（SKU " + skuId + "）");
             }
         }
+        // 配额必须受库存约束（2026-10-19）：秒杀的「货」是活动配额，但配额本质是拿库存去兑现的 ——
+        // 「配额 5000、库存 193」的活动建出来就是超卖。限购同理，不能超过配额本身。
+        for (CreateActivityRequest.CreateSkuItem s : request.skus()) {
+            SkuSnapshot snap = snapshots.get(s.skuId());
+            if (s.totalStock() > snap.availableStock()) {
+                throw BizException.validation("活动配额（" + s.totalStock()
+                        + "）不能超过 SKU " + s.skuId() + " 的当前可售库存（" + snap.availableStock() + "）");
+            }
+            int per = s.perLimit() == null ? 1 : s.perLimit();
+            if (per > s.totalStock()) {
+                throw BizException.validation("每人限购（" + per + "）不能超过活动配额（" + s.totalStock() + "）");
+            }
+        }
 
         LocalDateTime now = nowUtc();
         SeckillActivityEntity activity = new SeckillActivityEntity();
