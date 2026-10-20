@@ -20,7 +20,12 @@ target/
 *.log.err
 *.log.txt
 logs/
+# data/ 忽略的是运行期数据目录（挂载卷、导出文件等）。
+# ★ 例外：前端内置的行政区划数据是**源码资产**（构建期打包、随代码走），不能被忽略，
+#   否则 clone 下来 `tsc` 直接找不到模块。
 data/
+!frontend/packages/shared/src/data/
+!frontend/packages/shared/src/data/**
 *.db
 
 # 临时中间产物（构建/冒烟/调试的一次性输出）

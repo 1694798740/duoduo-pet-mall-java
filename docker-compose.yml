@@ -139,6 +139,9 @@ services:
       # 本地/CI 开 mock 通道跑冒烟（生产必须去掉或置 false）。
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
+      # A1 · 地址「定位回填」用的高德「Web 服务」Key（不是 JS API Key）。
+      #   留空则 /api/geo/regeo 返回 configured=false，前端自动降级为手选下拉。
+      AMAP_WEB_KEY: ${AMAP_WEB_KEY:-}
       # OPS-SWITCH 默认 true —— mock 通道仅供本地/CI；生产接真实微信必须显式置 false
       DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
       # E17 · 权限版本的感知副本写通道（角色变更时广播给网关）

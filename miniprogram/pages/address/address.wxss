@@ -145,3 +145,43 @@
   height: 80rpx;
   flex: none;
 }
+
+/* ---------- A1：省市区选择器 + 定位按钮（2026-10-20） ---------- */
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10rpx;
+}
+.field-head .field-label {
+  margin-bottom: 0;
+}
+.locate-btn {
+  font-size: 24rpx;
+  color: var(--brand);
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  background: var(--brand-weak);
+}
+.locate-btn-busy {
+  color: var(--text-3);
+  background: var(--bg);
+}
+/* picker 内部的 view 不会继承 input 的排版，高度/行高要再写一遍 */
+.picker-value {
+  display: flex;
+  align-items: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.picker-placeholder {
+  color: var(--text-3);
+}
+.locate-hint {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: var(--text-3);
+}

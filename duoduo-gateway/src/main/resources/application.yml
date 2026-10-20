@@ -68,7 +68,10 @@ spring:
             # /api/admin/audit-logs = 后台操作审计（E18）：审计表在用户库，
             #   同样必须显式列出。★ 两段都要写：Ant 模式下 `/**` **不匹配无尾斜杠的集合端点**，
             #   只写 `/api/admin/audit-logs/**` 会让列表接口 404（本项目已踩过一次）。
-            - Path=/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
+            # /api/geo/** = 逆地理编码代理（A1 地址改造）：用登录态换一次地图查询，
+            #   按次计费 ⇒ 不进白名单，必须登录（匿名开放等于把账单交给公网）。
+            #   同样显式列举：本路由不是 /api/** 兜底，漏了只会 404。
+            - Path=/api/geo/**,/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product

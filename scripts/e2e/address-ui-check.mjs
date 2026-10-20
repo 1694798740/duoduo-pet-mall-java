@@ -149,6 +149,21 @@ const textNow = () => page.locator('body').innerText();
 /** 地址卡片：页面上有多张卡，断言必须限定在卡片内，否则「默认」二字会串卡 */
 const addrCard = (name) => page.locator('.card', { hasText: name }).first();
 
+/**
+ * 填写地址表单（A1 起省市区是**三级联动下拉**，不能再按占位符 fill）。
+ * 必须逐级选：上一级没选时下一级是 disabled，直接 selectOption 会超时。
+ */
+const fillAddress = async (addr) => {
+  await page.getByPlaceholder('例如 张小三').fill(addr.receiverName);
+  await page.getByPlaceholder('11 位手机号').fill(addr.receiverPhone);
+  await page.getByLabel('省 / 直辖市', { exact: true }).selectOption(addr.province);
+  await page.waitForTimeout(150);
+  await page.getByLabel('市', { exact: true }).selectOption(addr.city);
+  await page.waitForTimeout(150);
+  await page.getByLabel('区 / 县', { exact: true }).selectOption(addr.district);
+  await page.getByPlaceholder('例如 文三路 99 号 3 幢 501 室').fill(addr.detail);
+};
+
 const ADDR_1 = {
   receiverName: 'UI张三',
   receiverPhone: '13900001111',
@@ -232,12 +247,7 @@ check('新增弹窗打开', (await textNow()).includes('新增收货地址'), (a
 const defaultBox = page.locator('#address-form input[type=checkbox]');
 check('★ 空地址簿新增时「设为默认地址」已预勾选', await defaultBox.isChecked(), await defaultBox.isChecked());
 
-await page.getByPlaceholder('例如 张小三').fill(ADDR_1.receiverName);
-await page.getByPlaceholder('11 位手机号').fill(ADDR_1.receiverPhone);
-await page.getByPlaceholder('例如 浙江省').fill(ADDR_1.province);
-await page.getByPlaceholder('例如 杭州市').fill(ADDR_1.city);
-await page.getByPlaceholder('例如 西湖区').fill(ADDR_1.district);
-await page.getByPlaceholder('例如 文三路 99 号 3 幢 501 室').fill(ADDR_1.detail);
+await fillAddress(ADDR_1);
 await page.locator('#address-form').getByRole('button', { name: '家' }).click();
 await page.getByRole('button', { name: '保存' }).click();
 await page.waitForTimeout(1500);
@@ -262,12 +272,7 @@ step('UI：新增第二条地址（不应抢默认）');
 await page.getByRole('button', { name: '+ 新增地址' }).click();
 await page.waitForTimeout(500);
 check('★ 已有地址后新增时「设为默认」不再预勾选', !(await defaultBox.isChecked()), await defaultBox.isChecked());
-await page.getByPlaceholder('例如 张小三').fill(ADDR_2.receiverName);
-await page.getByPlaceholder('11 位手机号').fill(ADDR_2.receiverPhone);
-await page.getByPlaceholder('例如 浙江省').fill(ADDR_2.province);
-await page.getByPlaceholder('例如 杭州市').fill(ADDR_2.city);
-await page.getByPlaceholder('例如 西湖区').fill(ADDR_2.district);
-await page.getByPlaceholder('例如 文三路 99 号 3 幢 501 室').fill(ADDR_2.detail);
+await fillAddress(ADDR_2);
 await page.locator('#address-form').getByRole('button', { name: '公司' }).click();
 await page.getByRole('button', { name: '保存' }).click();
 await page.waitForTimeout(1500);

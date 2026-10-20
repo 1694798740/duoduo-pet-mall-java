@@ -81,20 +81,19 @@
       />
     </view>
 
-    <view class="field-row">
-      <view class="field field-half">
-        <text class="field-label">省份</text>
-        <input class="field-input" maxlength="30" placeholder="如 广东省" value="{{form.province}}" data-field="province" bindinput="onInput" />
-      </view>
-      <view class="field field-half">
-        <text class="field-label">城市</text>
-        <input class="field-input" maxlength="30" placeholder="如 深圳市" value="{{form.city}}" data-field="city" bindinput="onInput" />
-      </view>
-    </view>
-
     <view class="field">
-      <text class="field-label">区 / 县</text>
-      <input class="field-input" maxlength="30" placeholder="如 南山区" value="{{form.district}}" data-field="district" bindinput="onInput" />
+      <view class="field-head">
+        <text class="field-label">省 / 市 / 区</text>
+        <view class="locate-btn {{locating ? 'locate-btn-busy' : ''}}" bindtap="locate">
+          {{locating ? '定位中…' : '📍 定位当前地址'}}
+        </view>
+      </view>
+      <picker mode="region" value="{{region}}" bindchange="onRegionChange">
+        <view class="field-input picker-value {{form.province ? '' : 'picker-placeholder'}}">
+          {{form.province ? form.province + ' / ' + form.city + ' / ' + form.district : '请选择省 / 市 / 区'}}
+        </view>
+      </picker>
+      <text wx:if="{{locateHint}}" class="locate-hint">{{locateHint}}</text>
     </view>
 
     <view class="field">

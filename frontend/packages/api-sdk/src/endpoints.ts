@@ -129,6 +129,7 @@ import type {
   AuditSampleView,
   TenantHealthLimits,
   TenantHealthPanel,
+  RegeoView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -1152,4 +1153,18 @@ export const shareCommentApi = {
   create: (shareId: string, content: string, parentCommentId?: string | null) =>
     api.post<ShareCommentView>(`/api/shares/${shareId}/comments`, { content, parentCommentId: parentCommentId ?? null }),
   toggleLike: (commentId: string) => api.post<EngagementState>(`/api/shares/comments/${commentId}/like`),
+};
+
+// ---------- 地理（/api/geo，服务端代理地图服务商，Key 不下发） ----------
+
+/**
+ * 逆地理编码：把浏览器/小程序拿到的经纬度换成省市区 + 详细地址。
+ *
+ * ★ 必须走后端：地图服务商的 Key 只配在服务端环境变量里。
+ * ★ 服务端未配置 Key 时不报错，而是返回 `configured:false` 的空结果 ——
+ *   调用方据此提示「可手动选择」，不阻断填地址。
+ */
+export const geoApi = {
+  regeo: (lng: number, lat: number) =>
+    api.get<RegeoView>('/api/geo/regeo', { query: { lng, lat } }),
 };

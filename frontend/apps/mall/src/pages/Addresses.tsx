@@ -21,15 +21,47 @@
  *    后端不做脱敏 —— 与订单列表给第三方看的场景不同。
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { addressApi } from '@duoduo/api-sdk/endpoints';
+import { addressApi, geoApi } from '@duoduo/api-sdk/endpoints';
 import type { AddressUpsertRequest, AddressView } from '@duoduo/api-sdk/types';
+import { loadRegions } from '@duoduo/shared/data/regions';
+import type { RegionData } from '@duoduo/shared/data/regions';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, Field, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
 
 /** 常用标签；自由填写也允许（后端只限制 20 字） */
 const LABEL_PRESETS = ['家', '公司', '学校'] as const;
+
+/** 名称归一：去掉空白与常见行政后缀，用于把地图返回的名称匹配到区划表里 */
+function normRegionName(raw: string): string {
+  return raw
+    .replace(/\s/gu, '')
+    .replace(/(特别行政区|维吾尔自治区|回族自治区|壮族自治区|自治区|自治州|地区|省|市|盟|区|县)$/u, '');
+}
+
+/**
+ * 在候选列表里找匹配项：精确 → 归一后相等 → 归一后前缀包含。
+ * 地图服务商返回的名称常与区划表有细微差异（如「北京市」对「北京」、
+ * 「恩施土家族苗族自治州」对「恩施州」），直接用 === 会大量匹配失败。
+ */
+function matchRegion<T extends { n: string }>(list: T[], raw: string | null | undefined): T | undefined {
+  if (!raw) return undefined;
+  const exact = list.find((x) => x.n === raw);
+  if (exact) return exact;
+  const t = normRegionName(raw);
+  if (!t) return undefined;
+  return (
+    list.find((x) => normRegionName(x.n) === t) ??
+    list.find((x) => normRegionName(x.n).startsWith(t) || t.startsWith(normRegionName(x.n)))
+  );
+}
+
+/** 下拉选项：把「当前值」补进去 —— 历史地址可能不在内置数据里（如港澳台），不能被清空 */
+function withCurrent(options: { n: string }[], current: string): { n: string }[] {
+  if (!current || options.some((o) => o.n === current)) return options;
+  return [...options, { n: current }];
+}
 
 interface FormState {
   receiverName: string;
@@ -93,6 +125,108 @@ export const AddressesPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   /** 待确认删除的地址；非空时弹确认框 */
   const [confirmDelete, setConfirmDelete] = useState<AddressView | null>(null);
+
+  /**
+   * 省市区数据按需加载：动态 import 单独切块，只有打开地址弹窗才拉。
+   * 失败不阻断填写 —— 下拉会退化成「只有当前值」的状态，用户仍可提交。
+   */
+  const [regions, setRegions] = useState<RegionData | null>(null);
+  const [regionsError, setRegionsError] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locateHint, setLocateHint] = useState<string | null>(null);
+  const [locateError, setLocateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen || regions) return undefined;
+    let alive = true;
+    loadRegions()
+      .then((d) => {
+        if (alive) setRegions(d);
+      })
+      .catch(() => {
+        if (alive) setRegionsError('省市区数据加载失败，请刷新页面重试');
+      });
+    return () => {
+      alive = false;
+    };
+  }, [modalOpen, regions]);
+
+  const provinceOpts = useMemo(
+    () => (regions ? withCurrent(regions.list, form.province) : []),
+    [regions, form.province],
+  );
+  const provinceNode = regions?.list.find((p) => p.n === form.province);
+  const cityOpts = useMemo(
+    () => (provinceNode ? withCurrent(provinceNode.ch, form.city) : []),
+    [provinceNode, form.city],
+  );
+  const cityNode = provinceNode?.ch.find((c) => c.n === form.city);
+  const districtOpts = useMemo(
+    () => (cityNode ? withCurrent(cityNode.ch, form.district) : []),
+    [cityNode, form.district],
+  );
+
+  /**
+   * 定位并回填（A1）。
+   *
+   * 三条失败路径都必须给出**可继续操作**的出口，不能只弹一句错误：
+   *  · 浏览器不支持 / 拒绝授权 → 提示去手动选（下拉本来就是可用的）；
+   *  · 服务端未配置地图 Key → 明确说「尚未配置」，而不是让用户以为定位坏了；
+   *  · 接口失败 → 同样回到手选。
+   */
+  const locate = async () => {
+    setLocateError(null);
+    setLocateHint(null);
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocateError('当前浏览器不支持定位，请手动选择省市区');
+      return;
+    }
+    setLocating(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 60_000,
+        });
+      });
+      const geo = await geoApi.regeo(pos.coords.longitude, pos.coords.latitude);
+      if (!geo.configured) {
+        setLocateHint('地图服务尚未配置（服务端缺 Key），请手动选择省市区');
+        return;
+      }
+      if (!regions) {
+        setLocateHint('省市区数据还没加载好，请稍后再试一次');
+        return;
+      }
+      const p = matchRegion(regions.list, geo.province);
+      const c = p ? matchRegion(p.ch, geo.city ?? geo.province) : undefined;
+      const d = c ? matchRegion(c.ch, geo.district) : undefined;
+      if (!p) {
+        setLocateHint('已定位，但没有匹配到可选的省市区，请手动选择');
+        return;
+      }
+      setForm((f) => ({
+        ...f,
+        province: p.n,
+        city: c?.n ?? '',
+        district: d?.n ?? '',
+        detail: geo.detail?.trim() ? geo.detail.trim() : f.detail,
+      }));
+      setLocateHint(`已按定位填入「${[p.n, c?.n, d?.n].filter(Boolean).join(' / ')}」，请核对门牌号`);
+    } catch (err) {
+      const geoErr = err as GeolocationPositionError | undefined;
+      if (geoErr && geoErr.code === 1) {
+        setLocateError('定位权限被拒绝，请在浏览器地址栏允许定位，或手动选择');
+      } else if (geoErr && typeof geoErr.code === 'number' && [2, 3].includes(geoErr.code)) {
+        setLocateError('定位超时或不可用，请手动选择省市区');
+      } else {
+        setLocateError('定位服务调用失败，请手动选择省市区');
+      }
+    } finally {
+      setLocating(false);
+    }
+  };
 
   const fetcher = useCallback(() => addressApi.list(), []);
   const { data, loading, error, reload } = useAsync<AddressView[]>(fetcher);
@@ -311,33 +445,78 @@ export const AddressesPage: React.FC = () => {
             </Field>
           </div>
 
+          {/* 省 / 市 / 区：三级联动下拉（A1）。省变了清空市区、市变了清空区，
+              避免出现「浙江省 / 深圳市 / 南山区」这种跨省组合。 */}
+          <div className="row-between" style={{ marginBottom: 6 }}>
+            <span className="small" style={{ color: 'var(--text-3)' }}>
+              {regions ? `共 ${regions.list.length} 个省级行政区，选省后自动列出该省城市` : '省市区数据加载中…'}
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => void locate()}
+              disabled={locating}
+            >
+              {locating ? '定位中…' : '📍 定位当前地址'}
+            </button>
+          </div>
+          {regionsError ? (
+            <div style={{ marginBottom: 10 }}>
+              <Alert kind="warn">{regionsError}</Alert>
+            </div>
+          ) : null}
+          {locateError ? (
+            <div style={{ marginBottom: 10 }}>
+              <Alert kind="error">{locateError}</Alert>
+            </div>
+          ) : null}
+          {locateHint ? (
+            <div style={{ marginBottom: 10 }}>
+              <Alert kind="info">{locateHint}</Alert>
+            </div>
+          ) : null}
+
           <div className="grid grid-3">
             <Field label="省 / 直辖市" required>
-              <input
+              <select
                 className="input"
+                aria-label="省 / 直辖市"
                 value={form.province}
-                onChange={(e) => setForm({ ...form, province: e.target.value })}
-                placeholder="例如 浙江省"
-                maxLength={30}
-              />
+                onChange={(e) => setForm({ ...form, province: e.target.value, city: '', district: '' })}
+              >
+                <option value="">请选择省份</option>
+                {provinceOpts.map((p) => (
+                  <option key={p.n} value={p.n}>{p.n}</option>
+                ))}
+              </select>
             </Field>
-            <Field label="市" required hint="直辖市可与省相同">
-              <input
+            <Field label="市" required>
+              <select
                 className="input"
+                aria-label="市"
                 value={form.city}
-                onChange={(e) => setForm({ ...form, city: e.target.value })}
-                placeholder="例如 杭州市"
-                maxLength={30}
-              />
+                disabled={!provinceNode}
+                onChange={(e) => setForm({ ...form, city: e.target.value, district: '' })}
+              >
+                <option value="">{provinceNode ? '请选择城市' : '请先选择省份'}</option>
+                {cityOpts.map((c) => (
+                  <option key={c.n} value={c.n}>{c.n}</option>
+                ))}
+              </select>
             </Field>
             <Field label="区 / 县" required>
-              <input
+              <select
                 className="input"
+                aria-label="区 / 县"
                 value={form.district}
+                disabled={!cityNode}
                 onChange={(e) => setForm({ ...form, district: e.target.value })}
-                placeholder="例如 西湖区"
-                maxLength={30}
-              />
+              >
+                <option value="">{cityNode ? '请选择区县' : '请先选择城市'}</option>
+                {districtOpts.map((d) => (
+                  <option key={d.n} value={d.n}>{d.n}</option>
+                ))}
+              </select>
             </Field>
           </div>
 

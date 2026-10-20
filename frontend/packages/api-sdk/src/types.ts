@@ -2023,3 +2023,23 @@ export interface TenantHealthLimits {
   { type: 'OPERATION_COMMITMENT', label: '经营承诺书' },
   { type: 'INDUSTRY_PERMIT', label: '行业经营许可证' },
 ] as const;
+
+/**
+ * 逆地理编码结果（A1 地址改造：地图定位回填）。
+ *
+ * 由后端代理高德「Web 服务」获取 —— 前端永远拿不到地图 Key。
+ * `configured=false` 表示服务端尚未配置 Key（此时 province/city/district 均为空），
+ * 前端必须走「手选」兜底，而不是报错卡住用户。
+ */
+export interface RegeoView {
+  configured: boolean;
+  province: string | null;
+  city: string | null;
+  district: string | null;
+  /** 街道门牌等详细地址（对应表单的「详细地址」） */
+  detail: string | null;
+  /** 行政区划代码（区县级） */
+  adcode: string | null;
+  lng: number | null;
+  lat: number | null;
+}

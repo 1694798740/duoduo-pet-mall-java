@@ -70,6 +70,11 @@ duoduo:
   id:
     datacenter-id: ${ID_DATACENTER:1}
     worker-id: ${ID_WORKER:1}
+  geo:
+    # A1 · 逆地理编码代理用的高德「Web 服务」Key。
+    #   ★ 必须是「Web 服务」类型，不是 JS API Key（两者用途不同，混用会 401）。
+    #   留空时 /api/geo/regeo 返回 configured=false，前端降级为手选，不报错。
+    amap-key: ${AMAP_WEB_KEY:}
   internal:
     # 服务间调用共享密钥。用户域的内部接口只有「批量取昵称/头像」这类只读能力，
     # 但仍然必须凭据保护：昵称头像同样是用户数据，不能因为「不敏感」就裸奔。

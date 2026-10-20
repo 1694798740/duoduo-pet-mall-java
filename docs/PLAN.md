@@ -204,6 +204,17 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-20（四十五）· A1 地址改造：三级联动 + 定位回填
+
+| 项 | 实现 |
+| --- | --- |
+| 数据 | `shared/src/data/regions.json` 三级区划（31/342/2978，111KB），裁自公开 pcas 并**直辖市归一**（无「市辖区」）；`regions.ts` 动态 import 单列 chunk（gzip 26.5KB，按需） |
+| 网页 | `Addresses.tsx` 三个 `<select>`：换省清市/区、换市清区；历史值不在数据内时自动补选项（编辑不清空） |
+| 小程序 | 原生 `picker mode="region"`（**零数据包**，解决 2MB 主包顾虑）+ `wx.getLocation` |
+| 定位 | 后端 `GeoController` 代理高德（Key 只在 `AMAP_WEB_KEY`）；网关 `/api/geo/**` 需登录、不进白名单；未配 Key 返回 `configured:false`（200），三条失败路径都不阻断填表 |
+| 测试 | 新增 `address-cascade-ui-check` 22 项（含**懒加载**与**换省清空**断言）；`address-ui-check` 改 `selectOption` 逐级填，65 项；反向验证无效 Key → 200 + 字段 null；未登录 → 401 |
+| 回归 | header-layout 109 / home 9 全绿；首屏 JS 235.4→239.3KB |
+
 ### 2026-10-20（四十四）· 修复：头像面板缩放动画从未生效
 
 | 项 | 实现 |

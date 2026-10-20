@@ -5,10 +5,15 @@
 // 这里补上 UI 即可闭环。
 //
 // 技术选型与约束（重要）：
-//  * **不做省/市/区级联选择器**：省市区三级数据包约 900KB+，主包当前已含 352KB 图片，
-//    2MB 上限下再塞数据包会挤爆包体 → 改为「省/市/区 三个文本输入 + 常用标签」，
-//    长度与格式在本地做**与后端一致的校验**（@Size(30) / 手机号正则 / 详细地址 ≤200）。
-//  * 字段与后端 AddressUpsertRequest 一一对应，不新增任何端点。
+//  * **省/市/区改用微信原生 `picker mode="region"`**（A1，2026-10-20）：
+//    此前担心"三级数据包 900KB 会挤爆 2MB 主包"而改成了三个文本输入框 ——
+//    原生 region 选择器**由微信客户端自带数据**，一个字节都不用打进包体，
+//    还顺带解决了"广东 / 广东省"这类写法不一致、以及直辖市重复的问题。
+//    （同一轮里网页端用的是内置 110KB 数据 + 三个联动下拉，两端选出来的名称一致。）
+//  * **定位回填走后端代理**：`wx.getLocation` 只拿经纬度，省市区由 `/api/geo/regeo`
+//    解析（地图 Key 在服务端，小程序不必为地图服务商单独申请 request 合法域名）。
+//    定位失败/被拒绝时**不阻断**，用户仍可用下拉手选。
+//  * 字段与后端 AddressUpsertRequest 一一对应，不新增任何地址端点。
 const api = require('../../utils/api');
 
 const PHONE_REGEX = /^1[3-9]\d{9}$/;
@@ -39,6 +44,10 @@ Page({
     form: emptyForm(),
     saving: false,
     labels: LABELS,
+    /** 原生省市区选择器的值：[省, 市, 区]；与 form 的三个字段保持同步 */
+    region: [],
+    locating: false,
+    locateHint: '',
   },
 
   onLoad(query) {
@@ -94,7 +103,7 @@ Page({
 
   // ── 表单 ─────────────────────────────────────────────────
   openCreate() {
-    this.setData({ mode: 'form', editingId: '', form: emptyForm() });
+    this.setData({ mode: 'form', editingId: '', form: emptyForm(), region: [], locateHint: '' });
   },
 
   openEdit(e) {
@@ -112,11 +121,79 @@ Page({
         detail: item.detail || '',
         label: item.label || '',
       },
+      // 历史地址可能只有省市区文本（没有被选择器规范化过），照样回显到选择器上
+      region: [item.province || '', item.city || '', item.district || ''],
+      locateHint: '',
     });
   },
 
   closeForm() {
-    this.setData({ mode: 'list', editingId: '', form: emptyForm() });
+    this.setData({ mode: 'list', editingId: '', form: emptyForm(), region: [], locateHint: '' });
+  },
+
+  /** 省市区选择器（A1）：一次选完三级，同时清掉可能残留的定位提示 */
+  onRegionChange(e) {
+    const value = e.detail.value || [];
+    this.setData({
+      region: value,
+      'form.province': value[0] || '',
+      'form.city': value[1] || '',
+      'form.district': value[2] || '',
+      locateHint: '',
+    });
+  },
+
+  /**
+   * 定位并回填（A1）。
+   *
+   * 失败路径必须都能继续填表：
+   *  · 用户拒绝授权 → 引导去设置页开权限，或直接用下拉；
+   *  · 服务端未配置地图 Key → 明确告知「尚未配置」，不要说成定位坏了；
+   *  · 省市区没匹配上 → 只回填详细地址，其余仍由用户选。
+   */
+  locate() {
+    if (this.data.locating) return;
+    this.setData({ locating: true, locateHint: '' });
+    wx.getLocation({
+      type: 'gcj02',
+      success: (pos) => {
+        api.address
+          .regeo(pos.longitude, pos.latitude)
+          .then((geo) => {
+            this.setData({ locating: false });
+            if (!geo || geo.configured === false) {
+              this.setData({ locateHint: '地图服务尚未配置，请手动选择省市区' });
+              return;
+            }
+            const region = [geo.province || '', geo.city || geo.province || '', geo.district || ''];
+            this.setData({
+              region,
+              'form.province': region[0],
+              'form.city': region[1],
+              'form.district': region[2],
+              'form.detail': geo.detail || this.data.form.detail,
+              locateHint: region[0]
+                ? '已按定位填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号'
+                : '已定位，但没有匹配到可选的省市区，请手动选择',
+            });
+          })
+          .catch((err) => {
+            this.setData({
+              locating: false,
+              locateHint: (err && err.message) || '定位服务调用失败，请手动选择省市区',
+            });
+          });
+      },
+      fail: (err) => {
+        this.setData({ locating: false });
+        const denied = err && /auth|deny|denied/i.test(err.errMsg || '');
+        this.setData({
+          locateHint: denied
+            ? '定位权限被拒绝，可在右上角「…」→ 设置里开启，或手动选择省市区'
+            : '定位失败（可能未开启定位服务），请手动选择省市区',
+        });
+      },
+    });
   },
 
   onInput(e) {
@@ -137,9 +214,9 @@ Page({
     if (!f.receiverName.trim()) return '请填写收货人';
     if (f.receiverName.trim().length > 50) return '收货人最多 50 个字符';
     if (!PHONE_REGEX.test(f.receiverPhone.trim())) return '请填写正确的 11 位手机号';
-    if (!f.province.trim()) return '请填写省份';
-    if (!f.city.trim()) return '请填写城市';
-    if (!f.district.trim()) return '请填写区 / 县';
+    if (!f.province.trim()) return '请选择省份';
+    if (!f.city.trim()) return '请选择城市';
+    if (!f.district.trim()) return '请选择区 / 县';
     if (f.detail.trim().length > 200) return '详细地址最多 200 个字符';
     if (f.label && f.label.length > 20) return '标签最多 20 个字符';
     return '';

@@ -1,0 +1,250 @@
+/**
+ * A1 · 地址省市区级联 + 定位降级 · 真实浏览器 UI 自测
+ *
+ * 为什么单开一套：
+ *   地址页原有 65 项测的是「增删改查 + 快照语义」，它们只用一条路径把地址存进去，
+ *   测不出这轮改造真正会坏的地方 ——
+ *     · 三级联动是否**真的级联**（选了省，市的选项是不是只属于这个省）；
+ *     · 换省后**上一级的市/区有没有被清空**（不清就会存出「浙江省 / 深圳市」这种跨省地址）；
+ *     · 直辖市（北京市/上海市）在数据里是否被归一（不能出现「市辖区」）；
+ *     · 区划数据是否**懒加载**（100KB 体积不该进首屏包）；
+ *     · 地图 Key 未配置时，定位按钮是否**体面降级**而不是把填地址卡死。
+ *
+ * 前置：9 容器在跑（网关 8080）+ 商城前端 8088 已构建。
+ * 用法：UI_BASE=http://localhost:8088 node scripts/e2e/address-cascade-ui-check.mjs
+ */
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
+const UI = process.env.UI_BASE ?? 'http://localhost:8088';
+const here = path.dirname(fileURLToPath(import.meta.url));
+const PW_CORE =
+  process.env.PW_CORE ??
+  `file:///${path.join(here, 'node_modules/playwright-core/index.mjs').replace(/\\/g, '/')}`;
+
+const PWD = 'duoduo12345';
+const { chromium } = await import(PW_CORE);
+
+let pass = 0;
+const failures = [];
+function check(name, ok, got) {
+  if (ok) {
+    pass++;
+    console.log(`  [PASS] ${name}`);
+  } else {
+    failures.push(name);
+    console.log(`  [FAIL] ${name}  实际=${JSON.stringify(got)}`);
+  }
+}
+const step = (t) => console.log(`\n> ${t}`);
+
+async function call(method, p, body, jar) {
+  const headers = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (jar && jar.size) headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+  const res = await fetch((p.startsWith('http') ? '' : GW) + p, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (jar) {
+    for (const c of res.headers.getSetCookie?.() ?? []) {
+      const pair = c.split(';')[0];
+      const i = pair.indexOf('=');
+      if (i > 0) jar.set(pair.slice(0, i), pair.slice(i + 1));
+    }
+  }
+  const raw = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    /* ignore */
+  }
+  return { status: res.status, data: json?.data, raw };
+}
+
+step('夹具：买家账号');
+const phone = `137${String(Math.floor(1e7 + Math.random() * 8e7))}`;
+const jar = new Map();
+const reg = await call('POST', '/api/auth/register', { phone, password: PWD, nickname: '地址级联测试' }, jar);
+check('买家注册成功', reg.status === 200, reg.status);
+
+// 授权定位并伪造一个杭州坐标：让「定位成功 → 服务端未配 Key」这条降级路径可被确定性地测到
+const browser = await chromium.launch({ args: ['--no-sandbox'] });
+const ctx = await browser.newContext({
+  viewport: { width: 1440, height: 960 },
+  locale: 'zh-CN',
+  permissions: ['geolocation'],
+  geolocation: { latitude: 30.2741, longitude: 120.1551 },
+});
+const page = await ctx.newPage();
+const consoleErrors = [];
+page.on('console', (m) => {
+  if (m.type() === 'error') consoleErrors.push(m.text());
+});
+page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
+
+/** 记录资源请求，用于证明区划数据是懒加载 */
+const regionChunkRequests = [];
+page.on('request', (r) => {
+  if (/\/assets\/regions-.*\.js/.test(r.url())) regionChunkRequests.push(r.url());
+});
+
+const selProvince = () => page.getByLabel('省 / 直辖市', { exact: true });
+const selCity = () => page.getByLabel('市', { exact: true });
+const selDistrict = () => page.getByLabel('区 / 县', { exact: true });
+const opts = async (sel) => sel.locator('option').evaluateAll((nodes) => nodes.map((n) => n.value));
+const textNow = () => page.locator('body').innerText();
+
+step('UI：登录并进入地址页');
+await page.goto(`${UI}/login`, { waitUntil: 'networkidle' });
+await page.getByPlaceholder('11 位手机号').fill(phone);
+await page.getByPlaceholder('请输入密码').fill(PWD);
+await page.getByRole('button', { name: /^登录$/ }).click();
+await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 });
+await page.goto(`${UI}/addresses`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+
+check('★ 进入地址页时**还没有**加载区划数据（懒加载，不进首屏）',
+  regionChunkRequests.length === 0, regionChunkRequests);
+
+step('UI：打开新增弹窗');
+await page.getByRole('button', { name: '+ 新增地址' }).click();
+await page.waitForTimeout(800);
+await page.waitForFunction(() => document.querySelectorAll('select').length >= 3, { timeout: 8000 });
+
+check('★ 打开弹窗后才把区划数据切块拉下来（体积不进首屏）',
+  regionChunkRequests.length >= 1, regionChunkRequests);
+check('省 / 市 / 区 三个字段都是**下拉**（不是输入框）',
+  (await selProvince().count()) === 1 && (await selCity().count()) === 1 && (await selDistrict().count()) === 1,
+  {
+    provinceTag: await selProvince().evaluate((el) => el.tagName),
+    cityTag: await selCity().evaluate((el) => el.tagName),
+    districtTag: await selDistrict().evaluate((el) => el.tagName),
+  });
+
+const provinceOpts = await opts(selProvince());
+check('★ 省份下拉覆盖 31 个省级行政区（+1 个「请选择」占位）',
+  provinceOpts.length === 32, provinceOpts.length);
+check('省份里含直辖市与自治区（北京市 / 上海市 / 新疆维吾尔自治区）',
+  ['北京市', '上海市', '新疆维吾尔自治区'].every((n) => provinceOpts.includes(n)),
+  provinceOpts.filter((n) => /北京|上海|新疆/.test(n)));
+
+check('未选省时「市」与「区」不可选（避免跨省脏组合）',
+  (await selCity().isDisabled()) && (await selDistrict().isDisabled()),
+  { city: await selCity().isDisabled(), district: await selDistrict().isDisabled() });
+
+step('UI：浙江省 → 杭州市 → 西湖区（三级联动）');
+await selProvince().selectOption('浙江省');
+await page.waitForTimeout(200);
+const zjCities = await opts(selCity());
+check('★ 选省后「市」解锁，且选项属于该省（含杭州市、不含深圳）',
+  !(await selCity().isDisabled()) && zjCities.includes('杭州市') && !zjCities.includes('深圳市'),
+  zjCities.slice(0, 12));
+check('选省后「区」仍不可选（必须先选市）', await selDistrict().isDisabled());
+
+await selCity().selectOption('杭州市');
+await page.waitForTimeout(200);
+const hzDistricts = await opts(selDistrict());
+check('★ 选市后「区」解锁，且选项属于该市（含西湖区、不含浦东新区）',
+  !(await selDistrict().isDisabled()) && hzDistricts.includes('西湖区') && !hzDistricts.includes('浦东新区'),
+  hzDistricts.slice(0, 12));
+
+await selDistrict().selectOption('西湖区');
+check('三级都选中后值正确',
+  (await selProvince().inputValue()) === '浙江省'
+  && (await selCity().inputValue()) === '杭州市'
+  && (await selDistrict().inputValue()) === '西湖区');
+
+step('UI：换省必须清空市与区（防跨省脏地址）');
+await selProvince().selectOption('广东省');
+await page.waitForTimeout(200);
+check('★ 换省后「市」被清空且区回到不可选',
+  (await selCity().inputValue()) === '' && (await selDistrict().inputValue()) === '' && (await selDistrict().isDisabled()),
+  { city: await selCity().inputValue(), district: await selDistrict().inputValue() });
+check('换省后「市」选项变成广东的城市（含深圳市、不含杭州市）',
+  (await opts(selCity())).includes('深圳市') && !(await opts(selCity())).includes('杭州市'),
+  (await opts(selCity())).slice(0, 10));
+
+step('UI：直辖市归一（上海市 → 只有一个「市」，不出现「市辖区」）');
+await selProvince().selectOption('上海市');
+await page.waitForTimeout(200);
+const shCities = await opts(selCity());
+check('★ 直辖市只列出一个市（上海市），且不含「市辖区」这种非地名',
+  shCities.filter(Boolean).length === 1 && shCities.includes('上海市') && !shCities.includes('市辖区'),
+  shCities);
+await selCity().selectOption('上海市');
+await page.waitForTimeout(200);
+check('上海市的区县含浦东新区、不含西湖区',
+  (await opts(selDistrict())).includes('浦东新区') && !(await opts(selDistrict())).includes('西湖区'),
+  (await opts(selDistrict())).slice(0, 10));
+
+step('UI：定位按钮（地图 Key 未配置时应体面降级，而不是卡死）');
+check('弹窗里有「定位当前地址」按钮',
+  (await page.getByRole('button', { name: /定位当前地址|定位中/ }).count()) === 1);
+await page.getByRole('button', { name: /定位当前地址|定位中/ }).click();
+await page.waitForTimeout(1500);
+const afterLocate = await textNow();
+const geoNotConfigured = /地图服务尚未配置/.test(afterLocate);
+const geoDenied = /定位权限被拒绝|定位失败|定位超时/.test(afterLocate);
+check('★ 定位后给出明确提示（未配置 Key 说"尚未配置"，不是笼统报错）',
+  geoNotConfigured || geoDenied, afterLocate.slice(0, 300));
+check('★ 定位失败/未配置时表单仍可继续填（省市区下拉未被禁用）',
+  !(await selProvince().isDisabled()), await selProvince().isDisabled());
+
+step('UI：提交一条真实地址，验证级联选出的值能存进去');
+await page.getByPlaceholder('例如 张小三').fill('级联测试');
+await page.getByPlaceholder('11 位手机号').fill('13900009999');
+await selProvince().selectOption('浙江省');
+await page.waitForTimeout(150);
+await selCity().selectOption('杭州市');
+await page.waitForTimeout(150);
+await selDistrict().selectOption('西湖区');
+await page.getByPlaceholder('例如 文三路 99 号 3 幢 501 室').fill('文三路 100 号 1 幢 101 室');
+await page.getByRole('button', { name: '保存' }).click();
+await page.waitForTimeout(1600);
+
+const listText = await textNow();
+check('★ 保存成功，列表出现「浙江省杭州市西湖区」完整地址',
+  listText.includes('级联测试') && listText.includes('浙江省杭州市西湖区文三路 100 号 1 幢 101 室'),
+  listText.slice(0, 400));
+
+step('UI：编辑回显（下拉要能还原已有的省市区）');
+await page.locator('.card', { hasText: '级联测试' }).first().getByRole('button', { name: '编辑' }).click();
+await page.waitForTimeout(900);
+await page.waitForFunction(() => document.querySelectorAll('select').length >= 3, { timeout: 8000 });
+check('★ 编辑时三个下拉回显为原地址的省 / 市 / 区',
+  (await selProvince().inputValue()) === '浙江省'
+  && (await selCity().inputValue()) === '杭州市'
+  && (await selDistrict().inputValue()) === '西湖区',
+  {
+    province: await selProvince().inputValue(),
+    city: await selCity().inputValue(),
+    district: await selDistrict().inputValue(),
+  });
+
+step('清理：删掉本轮建的地址');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
+const delOk = await call('DELETE', `/api/addresses/${(await call('GET', '/api/addresses', undefined, jar)).data?.[0]?.id}`, undefined, jar);
+check('（清理）测试地址已删除', delOk.status === 200, delOk.status);
+
+// 401 是**设计内状态**（未登录时 /api/users/me、/api/cart/count 必然 401），
+// 口径与其它套件一致：只过滤 401 与 favicon，pageerror 一律不放过。
+check('全流程无 console 报错 / pageerror',
+  consoleErrors.filter((e) => !/favicon|status of 401/i.test(e)).length === 0,
+  consoleErrors.filter((e) => !/favicon|status of 401/i.test(e)).slice(0, 3));
+
+await ctx.close();
+await browser.close();
+
+console.log(`\n=== 地址级联 UI 断言：通过 ${pass} 项，失败 ${failures.length} 项 ===`);
+if (failures.length) {
+  console.log('失败项：');
+  for (const f of failures) console.log(`  - ${f}`);
+  process.exit(1);
+}
+process.exit(0);
