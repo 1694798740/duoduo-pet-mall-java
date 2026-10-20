@@ -327,6 +327,63 @@ Page({
   },
 
 
+  /**
+   * 附近位置快选（wx.choosePoi，2026-10-20 新增的第三个入口）。
+   *
+   * 为什么加它：自动定位有偏差、地图选点要拖地标，而很多场景用户只是想
+   * "选旁边那个小区/写字楼/商圈"。wx.choosePoi 打开微信原生的「所在位置」
+   * 列表（首项为所在城市，其余为附近 POI），点一下就带入名称与详细地址，
+   * 是三个入口里最快的路径。
+   *
+   * ★ 它是**并列入口，不替代**地图选点：POI 列表只能选到"已存在的地标"，
+   *   精确到门牌号仍然要 chooseLocation 拖地标。所以三个入口并存：
+   *   定位当前地址 / 地图选点 / 附近位置。
+   * ★ 回调两种形态，必须分开处理：
+   *   type=2 选了精确位置 → 经纬度有效（gcj02），走与地图选点同一条逆地理通道；
+   *   type=1 只选了"城市"（模糊定位）→ **经纬度不可用**，只填市，
+   *   省与区交给用户手动选，否则会把表单写成空省空区。
+   */
+  chooseNearbyPoi() {
+    ensureLocationAuth()
+      .then(() => {
+        wx.choosePoi({
+          success: (res) => {
+            const lng = res && res.longitude;
+            const lat = res && res.latitude;
+            if (res && res.type === 2 && lng && lat) {
+              this.setData({ locating: true, locateHint: '' });
+              this.regeoViaBackend(lng, lat, (res.address || res.name || '').trim() || null);
+              return;
+            }
+            // type=1（或坐标缺失）：只选到城市，不能拿坐标反查省市区
+            const city = (res && res.city) || '';
+            this.setData({
+              locating: false,
+              region: ['', city, ''],
+              'form.province': '',
+              'form.city': city,
+              'form.district': '',
+              'form.detail': (res && res.address) || this.data.form.detail,
+              locateHint: city
+                ? '已选到「' + city + '」，省与区请手动选择；需要更精确请用「地图选点」'
+                : '没有取到位置，请重试或用下方「省 / 市 / 区」选择',
+            });
+          },
+          fail: (err) => {
+            const code = classifyLocationError(err && err.errMsg);
+            // 用户主动取消不算错误，静默即可
+            if (code === 'CANCELLED') return;
+            this.onLocateBlocked(code, '附近位置', () => this.chooseNearbyPoi());
+          },
+        });
+      })
+      .catch((err) => {
+        const code = (err && err.code) || classifyLocationError(err && err.errMsg);
+        this.onLocateBlocked(code, '附近位置', () => this.chooseNearbyPoi());
+      });
+  },
+
+
   /** 兜底通道：后端用「Web 服务」Key 调高德（小程序 Key 不能用于这条） */
   regeoViaBackend(lng, lat, overrideDetail) {
     api.address

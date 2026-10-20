@@ -91,6 +91,8 @@
           </view>
           <!-- 外卖式选点：打开微信原生地图，可拖动地标（无需高德 Key） -->
           <view class="locate-btn locate-btn-plain" bindtap="chooseOnMap">🗺️ 地图选点</view>
+          <!-- 附近位置快选：微信原生 POI 列表，点一下即带入（wx.choosePoi，需单独申请） -->
+          <view class="locate-btn locate-btn-plain" bindtap="chooseNearbyPoi">📋 附近位置</view>
         </view>
       </view>
       <picker mode="region" value="{{region}}" bindchange="onRegionChange">

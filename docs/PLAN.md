@@ -215,6 +215,17 @@
 | 测试 | 新增 `address-cascade-ui-check` 22 项（含**懒加载**与**换省清空**断言）；`address-ui-check` 改 `selectOption` 逐级填，65 项；反向验证无效 Key → 200 + 字段 null；未登录 → 401 |
 | 回归 | header-layout 109 / home 9 全绿；首屏 JS 235.4→239.3KB |
 
+### 2026-10-20（五十一）· 新增「附近位置」快选入口（wx.choosePoi）
+
+| 项 | 实现 |
+| --- | --- |
+| 动机 | 自动定位有偏差、地图选点要拖地标；`wx.choosePoi` 打开微信原生「所在位置」列表，点一下即带入，是三个入口里最快的 |
+| 接口核实 | 官方文档确认 `wx.choosePoi` **未废弃**；与 `getLocation`/`chooseLocation` 同在 2022-04-18 起准入开通清单，需在「接口设置」单独申请，且 2022-07-14 后须在 `requiredPrivateInfos` 声明 |
+| 定位 | **并列入口不替换**：POI 只能选"已存在的地标"，门牌号精度仍需 `chooseLocation` 拖地标 → 三个入口并存（定位 / 选点 / 附近位置） |
+| 回调分支 | `type=2`（精确位置，经纬度有效）→ 走逆地理通道；`type=1`（仅城市，**经纬度不可用**）→ 只填市，省/区手动选，避免写成空省空区 |
+| 改动 | `app.json` 加 `choosePoi` 声明；`address.js` 新增 `chooseNearbyPoi()`（预检 + `onLocateBlocked('附近位置')` + 取消静默）；`address.wxml` 加第三个按钮 |
+| 守卫 | `check-miniprogram-location.mjs` 24 → **32/0**（新增 6 条 POI 断言）；反向验证：改坏 `res.type === 2` → 恰好 1 红 31 绿，恢复后 32/0 |
+
 ### 2026-10-20（五十）· 修复：小程序定位 / 地图选点失败（隐私接口未声明）
 
 | 项 | 实现 |

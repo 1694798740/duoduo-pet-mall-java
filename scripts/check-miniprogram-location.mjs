@@ -8,11 +8,13 @@
  *   跑真机才能发现，代价很高 —— 这里用静态检查把它挡住。
  *
  * 覆盖：
- *   1) app.json 声明了 getLocation / chooseLocation；
+ *   1) app.json 声明了 getLocation / chooseLocation / choosePoi；
  *   2) 声明了 permission.scope.userLocation.desc（授权弹窗需要它）；
  *   3) 地址页确实走"先预检授权、失败统一收口"的路径（防止有人绕过）；
  *   4) classifyLocationError 对真实 errMsg 的分类正确（含最容易混淆的两种）；
- *   5) 所有失败文案都提到"省 / 市 / 区"（兜底必须指向手动选择）。
+ *   5) 所有失败文案都提到"省 / 市 / 区"（兜底必须指向手动选择）；
+ *   6) wx.choosePoi 的三条硬约束：已声明、type=1/type=2 分开处理、
+ *      且**没有拿它替换掉地图选点**（POI 选不到门牌号）。
  *
  * 用法：node scripts/check-miniprogram-location.mjs
  * 退出码：0 全过；1 有失败。
@@ -44,6 +46,7 @@ const declared = Array.isArray(appJson.requiredPrivateInfos) ? appJson.requiredP
 check('app.json 声明了 requiredPrivateInfos', Array.isArray(appJson.requiredPrivateInfos), declared);
 check('声明包含 getLocation（定位当前地址）', declared.includes('getLocation'), declared);
 check('声明包含 chooseLocation（地图选点）', declared.includes('chooseLocation'), declared);
+check('声明包含 choosePoi（附近位置快选）', declared.includes('choosePoi'), declared);
 // ★ 微信 app.json 的键名本身就带点：permission["scope.userLocation"]，不是嵌套对象
 const desc = appJson.permission?.['scope.userLocation']?.desc ?? '';
 check('permission.scope.userLocation.desc 已填写（授权弹窗展示用）', desc.trim().length >= 8, desc);
@@ -62,6 +65,8 @@ const cases = [
   ['chooseLocation:fail the api need to be declared in the requiredPrivateInfos field in app.json', 'NOT_DECLARED'],
   ['getLocation:fail auth deny', 'DENIED'],
   ['chooseLocation:fail auth deny', 'DENIED'],
+  ['choosePoi:fail auth deny', 'DENIED'],
+  ['choosePoi:fail the api need to be declared in the requiredPrivateInfos field in app.json', 'NOT_DECLARED'],
   ['getLocation:fail:system permission denied', 'SYSTEM'],
   ['chooseLocation:fail cancel', 'CANCELLED'],
   ['getLocation:fail timeout', 'TIMEOUT'],
@@ -76,6 +81,23 @@ for (const [msg, want] of cases) {
 // "声明缺失"绝不能落到"权限被拒"，否则会误导用户去翻手机设置
 check('声明缺失与权限拒绝是两个不同分类（防误导）',
   loc.classifyLocationError('getLocation:fail the api need to be declared in the requiredPrivateInfos field in app.json') !== 'DENIED');
+
+// ---------- 3.5) wx.choosePoi 的硬约束 ----------
+// ① POI 回调有两种形态：type=2 有经纬度（可反查省市区），type=1 只选到城市
+//    （经纬度不可用）。混在一起处理会把表单写成"空省空区"。
+check('POI 分支区分了 type=2（有经纬度）与 type=1（仅城市）',
+  pageJs.includes('res.type === 2'), /res\.type\s*===?\s*2/.exec(pageJs)?.[0]);
+check('POI 的 type=1 分支不拿坐标反查（防止空省空区）',
+  /type === 1|只选到城市/.test(pageJs));
+check('POI 失败同样走统一收口（onLocateBlocked + 附近位置）',
+  pageJs.includes("'附近位置'") && pageJs.includes('wx.choosePoi('));
+check('POI 没有替换掉地图选点（三个入口并存）',
+  pageJs.includes('chooseOnMap()') && pageJs.includes('chooseNearbyPoi()'));
+check('wxml 上有三个定位入口（定位/选点/附近位置）',
+  (() => {
+    const wxml = fs.readFileSync(path.join(root, 'miniprogram/pages/address/address.wxml'), 'utf8');
+    return wxml.includes('bindtap="locate"') && wxml.includes('bindtap="chooseOnMap"') && wxml.includes('bindtap="chooseNearbyPoi"');
+  })());
 
 // ---------- 4) 文案必须指向手动兜底 ----------
 const codes = ['NOT_DECLARED', 'DENIED', 'SYSTEM', 'SERVICE_OFF', 'TIMEOUT', 'UNKNOWN'];
