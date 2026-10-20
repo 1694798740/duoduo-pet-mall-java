@@ -2064,3 +2064,16 @@ export interface RegeoView {
   /** 周边候选：让用户在多个位置里挑，避免单一位置错了就全错 */
   candidates: RegeoCandidate[];
 }
+
+/**
+ * 网页地图组件配置（高德 JSAPI 2.0）。
+ *
+ * ★ 这两个值**必须交给浏览器**（地图 SDK 在浏览器里跑），高德机制决定的；
+ *   但我们是按登录态从服务端取，不打进前端产物 —— Key 不进仓库、换 Key 不用重新构建。
+ * `configured=false` 表示服务端未配置，前端应提示"地图选点未配置"并保留候选/手选路径。
+ */
+export interface JsApiConfig {
+  configured: boolean;
+  key: string | null;
+  securityCode: string | null;
+}

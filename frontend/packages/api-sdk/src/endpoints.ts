@@ -130,6 +130,7 @@ import type {
   TenantHealthLimits,
   TenantHealthPanel,
   RegeoView,
+  JsApiConfig,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -1165,6 +1166,8 @@ export const shareCommentApi = {
  *   调用方据此提示「可手动选择」，不阻断填地址。
  */
 export const geoApi = {
+  /** 网页地图组件的 Key 与安全密钥（登录态下发，不进前端产物） */
+  jsapiConfig: () => api.get<JsApiConfig>('/api/geo/jsapi-config'),
   /**
    * 逆地理编码（含周边候选）。
    *

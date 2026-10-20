@@ -21,7 +21,7 @@
  *    后端不做脱敏 —— 与订单列表给第三方看的场景不同。
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { addressApi, geoApi } from '@duoduo/api-sdk/endpoints';
 import type { AddressUpsertRequest, AddressView, RegeoCandidate } from '@duoduo/api-sdk/types';
@@ -29,6 +29,7 @@ import { loadRegions } from '@duoduo/shared/data/regions';
 import type { RegionData } from '@duoduo/shared/data/regions';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, Field, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
+import { MapPicker } from '../components/MapPicker';
 
 /** 常用标签；自由填写也允许（后端只限制 20 字） */
 const LABEL_PRESETS = ['家', '公司', '学校'] as const;
@@ -139,6 +140,14 @@ export const AddressesPage: React.FC = () => {
   const [candidates, setCandidates] = useState<RegeoCandidate[]>([]);
   /** 浏览器定位精度（米），用来解释「为什么门牌可能不准」 */
   const [accuracy, setAccuracy] = useState<number | null>(null);
+  /** 地图选点弹窗 */
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number } | null>(null);
+  /**
+   * 最近一次拿到的 GCJ-02 坐标（地图初始中心点）。
+   * 用 ref 而非 state：openMapPicker 在 await 之后要立刻读它，state 更新是异步的。
+   */
+  const lastGcjRef = useRef<{ lng: number; lat: number } | null>(null);
 
   useEffect(() => {
     if (!modalOpen || regions) return undefined;
@@ -178,6 +187,49 @@ export const AddressesPage: React.FC = () => {
    *  · 服务端未配置地图 Key → 明确说「尚未配置」，而不是让用户以为定位坏了；
    *  · 接口失败 → 同样回到手选。
    */
+  /**
+   * 把逆地理结果写进表单（定位与地图选点共用，保证两条路径行为一致）。
+   */
+  const fillFromGeo = (
+    geo: {
+      province: string | null; city: string | null; district: string | null;
+      detail: string | null; lng: number | null; lat: number | null;
+      candidates: RegeoCandidate[];
+    },
+    opts: { source: 'locate' | 'map'; accuracy?: number | null } = { source: 'locate' },
+  ) => {
+    if (!regions) {
+      setLocateHint('省市区数据还没加载好，请稍后再试一次');
+      return;
+    }
+    if (geo.lng != null && geo.lat != null) {
+      lastGcjRef.current = { lng: geo.lng, lat: geo.lat };
+    }
+    const p = matchRegion(regions.list, geo.province);
+    const c = p ? matchRegion(p.ch, geo.city ?? geo.province) : undefined;
+    const d = c ? matchRegion(c.ch, geo.district) : undefined;
+    if (!p) {
+      setLocateHint('已定位，但没有匹配到可选的省市区，请手动选择');
+      return;
+    }
+    setForm((f) => ({
+      ...f,
+      province: p.n,
+      city: c?.n ?? '',
+      district: d?.n ?? '',
+      detail: geo.detail?.trim() ? geo.detail.trim() : f.detail,
+    }));
+    setCandidates(geo.candidates ?? []);
+    const acc = opts.accuracy ?? null;
+    setAccuracy(acc);
+    const where = [p.n, c?.n, d?.n].filter(Boolean).join(' / ');
+    setLocateHint(
+      (opts.source === 'map' ? `已按地图选点填入「${where}」` : `已按定位填入「${where}」`)
+      + (acc != null && acc > 0 ? `（定位精度约 ${acc} 米）` : '')
+      + (geo.candidates?.length ? '，可点下方附近位置改选' : '，请核对门牌号'),
+    );
+  };
+
   const locate = async () => {
     setLocateError(null);
     setLocateHint(null);
@@ -202,32 +254,8 @@ export const AddressesPage: React.FC = () => {
         setLocateHint('地图服务尚未配置（服务端缺 Key），请手动选择省市区');
         return;
       }
-      if (!regions) {
-        setLocateHint('省市区数据还没加载好，请稍后再试一次');
-        return;
-      }
-      const p = matchRegion(regions.list, geo.province);
-      const c = p ? matchRegion(p.ch, geo.city ?? geo.province) : undefined;
-      const d = c ? matchRegion(c.ch, geo.district) : undefined;
-      if (!p) {
-        setLocateHint('已定位，但没有匹配到可选的省市区，请手动选择');
-        return;
-      }
-      setForm((f) => ({
-        ...f,
-        province: p.n,
-        city: c?.n ?? '',
-        district: d?.n ?? '',
-        detail: geo.detail?.trim() ? geo.detail.trim() : f.detail,
-      }));
-      setCandidates(geo.candidates ?? []);
       const acc = Math.round(pos.coords.accuracy);
-      setAccuracy(Number.isFinite(acc) && acc > 0 ? acc : null);
-      setLocateHint(
-        `已按定位填入「${[p.n, c?.n, d?.n].filter(Boolean).join(' / ')}」`
-        + (Number.isFinite(acc) && acc > 0 ? `（定位精度约 ${acc} 米）` : '')
-        + (geo.candidates?.length ? '，可点下方附近位置改选' : '，请核对门牌号'),
-      );
+      fillFromGeo(geo, { source: 'locate', accuracy: Number.isFinite(acc) && acc > 0 ? acc : null });
     } catch (err) {
       const geoErr = err as GeolocationPositionError | undefined;
       if (geoErr && geoErr.code === 1) {
@@ -239,6 +267,41 @@ export const AddressesPage: React.FC = () => {
       }
     } finally {
       setLocating(false);
+    }
+  };
+
+  /**
+   * 打开地图选点。地图需要初始中心点：优先用刚才定位的结果；还没有就先定位一次
+   * （用户点「地图选点」的意图就是"给我定位"，不该让他先去点另一个按钮）。
+   */
+  const openMapPicker = async () => {
+    setLocateError(null);
+    if (lastGcjRef.current) {
+      setMapCenter(lastGcjRef.current);
+      setMapOpen(true);
+      return;
+    }
+    await locate();
+    if (lastGcjRef.current) {
+      setMapCenter(lastGcjRef.current);
+      setMapOpen(true);
+    } else {
+      setLocateError('还不能打开地图：没有拿到初始位置。请允许定位，或直接手动选择省市区');
+    }
+  };
+
+  /** 地图确认选点：坐标已是 GCJ-02，必须按 gcj02 调逆地理（再转会二次偏移） */
+  const onMapPick = async (lng: number, lat: number) => {
+    setMapOpen(false);
+    try {
+      const geo = await geoApi.regeo(lng, lat, 'gcj02');
+      if (!geo.configured) {
+        setLocateHint('地图服务尚未配置（服务端缺 Key），请手动选择省市区');
+        return;
+      }
+      fillFromGeo(geo, { source: 'map' });
+    } catch (err) {
+      setLocateError(toFriendlyMessage(err));
     }
   };
 
@@ -465,14 +528,24 @@ export const AddressesPage: React.FC = () => {
             <span className="small" style={{ color: 'var(--text-3)' }}>
               {regions ? `共 ${regions.list.length} 个省级行政区，选省后自动列出该省城市` : '省市区数据加载中…'}
             </span>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => void locate()}
-              disabled={locating}
-            >
-              {locating ? '定位中…' : '📍 定位当前地址'}
-            </button>
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => void locate()}
+                disabled={locating}
+              >
+                {locating ? '定位中…' : '📍 定位当前地址'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => void openMapPicker()}
+                disabled={locating}
+              >
+                🗺️ 地图选点
+              </button>
+            </div>
           </div>
           {regionsError ? (
             <div style={{ marginBottom: 10 }}>
@@ -611,6 +684,13 @@ export const AddressesPage: React.FC = () => {
           </label>
         </form>
       </Modal>
+
+      <MapPicker
+        open={mapOpen}
+        center={mapCenter}
+        onClose={() => setMapOpen(false)}
+        onPick={(lng, lat) => void onMapPick(lng, lat)}
+      />
 
       <Modal
         open={confirmDelete !== null}

@@ -75,6 +75,12 @@ duoduo:
     #   ★ 必须是「Web 服务」类型，不是 JS API Key（两者用途不同，混用会 401）。
     #   留空时 /api/geo/regeo 返回 configured=false，前端降级为手选，不报错。
     amap-key: ${AMAP_WEB_KEY:}
+    # Web 端 JS API（地图选点组件用）：与上面的「Web 服务」Key 不是同一把。
+    # 这两个值按高德 JSAPI 2.0 的机制**必须下发到浏览器**，因此：
+    #   · 不进代码、不进 Git（只在本机 .env）；
+    #   · 由 /api/geo/jsapi-config 在登录态下下发，而不是打进前端 bundle。
+    js-key: ${AMAP_JS_KEY:}
+    js-security-code: ${AMAP_JS_SECURITY_CODE:}
   internal:
     # 服务间调用共享密钥。用户域的内部接口只有「批量取昵称/头像」这类只读能力，
     # 但仍然必须凭据保护：昵称头像同样是用户数据，不能因为「不敏感」就裸奔。

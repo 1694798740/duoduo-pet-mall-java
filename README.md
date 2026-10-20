@@ -2059,6 +2059,44 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（四十八）· 网页端地图选点（高德 JSAPI 2.0）
+
+**需求**：网页端也要像外卖 App 那样——点定位弹地图、拖动地标选位置。
+
+**实现（`apps/mall/src/components/MapPicker.tsx`）**
+
+- 动态注入高德 JSAPI 2.0，**首次打开弹窗才加载**（单例 promise，不进首屏）；
+  容器 360px 高（高度为 0 会渲染成空白，高德按容器尺寸初始化）；
+  `Marker` `draggable: true`，`dragend` 更新坐标；**点地图任意位置地标也跟随**。
+- 确认后按 **gcj02** 调 `/api/geo/regeo`（地图坐标已是 GCJ-02，不能转换），
+  回填省市区 + 详细地址，并刷新附近候选。
+- 无初始中心点时先自动定位一次（用户点「地图选点」的意图就是"给我定位"）。
+- 降级：无 Key / 超时 / 加载失败 → 给出具体原因并置灰「使用这个位置」，
+  用户可继续用附近候选或手选下拉。
+
+**Key 的分发方式（比打进产物更稳）**
+
+- 新增 `GET /api/geo/jsapi-config`：登录态下返回 `{configured, key, securityCode}`。
+  **Key 不打进前端包**——换 Key 只需改环境变量并重启用户服务，不必重新构建前端；
+  未登录拿不到（该路由不在网关白名单，实测 401）。
+- 服务端读 `AMAP_JS_KEY` / `AMAP_JS_SECURITY_CODE`（仓库根 `.env`，gitignored）。
+- 产物检索验证：`dist` 中三个 Key 命中数均为 **0**（服务端两把 + JS 这一把都不在包里）。
+
+**验证（2026-10-20 实测）**
+
+| 项 | 结果 |
+| --- | --- |
+| `jsapi-config`（登录） | `configured=true`，key/security 各 32 位 |
+| `jsapi-config`（未登录） | HTTP **401** |
+| 地图渲染 | `window.AMap.version=2.0`，容器 5 个子节点且生成 `canvas`，无 console 错误 |
+| 确认回填 | 点「使用这个位置」→ 广东省 / 深圳市 / 龙岗区 / 花园坪C区一巷8号 |
+| e2e | `address-cascade` **30 项 0 失败**（真实地图分支） |
+
+**一处必须记录的自查**：最初我把 Key 写成 31 位（少一个字符），JSAPI 返回
+`<AMap JSAPI> Error key!`、REST 返回 `INVALID_USER_KEY`，我据此误判为"Key 未授权域名"。
+实际把 32 位的 Key 换上即正常 —— **排障时先校验凭据本身的字面量长度/字符集，
+再去怀疑平台配置**。
+
 ### 2026-10-20（四十七）· 修复定位偏差 500 米：坐标系用错了；并增加「附近候选 / 地图选点」
 
 **用户反馈**：① 回填地址与实际位置偏差超过 50 米；② 只能点按钮定位，不能像外卖那样在地图上拖地标选点。

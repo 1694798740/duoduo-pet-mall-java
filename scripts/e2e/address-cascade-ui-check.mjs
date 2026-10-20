@@ -233,6 +233,68 @@ if (geoConfigured) {
   console.log('  [SKIP] 服务端未配置地图 Key，候选断言跳过');
 }
 
+step('UI：地图选点（有 JS Key 则用真实地图，否则验证降级 + 用桩验证集成逻辑）');
+{
+  await page.getByRole('button', { name: '🗺️ 地图选点' }).click();
+  await page.waitForTimeout(6000);
+  const mapState = await page.evaluate(() => ({
+    dialogOpen: document.body.innerText.includes('在地图上选点'),
+    amapLoaded: Boolean(window.AMap),
+    failedHint: /地图加载失败|未配置网页地图 Key|地图加载超时/.test(document.body.innerText),
+  }));
+  check('★ 点「地图选点」会弹出地图弹窗', mapState.dialogOpen, mapState);
+  // 两种合法结果：真实地图可用，或给出明确降级原因（Key 域名白名单/网络）
+  check('★ 地图要么真的加载出来，要么给出明确降级原因（不静默失败）',
+    mapState.amapLoaded || mapState.failedHint, mapState);
+
+  if (mapState.amapLoaded) {
+    const confirm = page.getByRole('button', { name: '使用这个位置' });
+    check('地图加载成功时「使用这个位置」可点', await confirm.isEnabled());
+    await confirm.click();
+    await page.waitForTimeout(2500);
+    check('★ 地图确认后回填了省市区',
+      (await selProvince().inputValue()).length > 0 && (await selCity().inputValue()).length > 0,
+      { province: await selProvince().inputValue(), city: await selCity().inputValue() });
+  } else {
+    // Key 未授权域名时也能证明集成逻辑正确：用桩替换 window.AMap 后重开弹窗
+    check('地图加载失败时「使用这个位置」禁用（不误导用户）',
+      !(await page.getByRole('button', { name: '使用这个位置' }).isEnabled()));
+    await page.getByRole('button', { name: '取消' }).last().click();
+    await page.waitForTimeout(400);
+    await page.evaluate(() => {
+      window.__amapStubUsed = false;
+      window.AMap = {
+        Map: function (el, opts) {
+          window.__amapStubUsed = true;
+          this.opts = opts;
+          this.on = () => {};
+          this.destroy = () => {};
+          el.innerHTML = '<div class="stub-map"></div>';
+        },
+        Marker: function (opts) {
+          this.opts = opts;
+          this.on = () => {};
+          this.setPosition = () => {};
+          this.getPosition = () => ({ getLng: () => 114.231199, getLat: () => 22.706634 });
+        },
+      };
+    });
+    await page.getByRole('button', { name: '🗺️ 地图选点' }).click();
+    await page.waitForTimeout(1500);
+    const stubUsed = await page.evaluate(() => Boolean(window.__amapStubUsed));
+    check('★ 集成逻辑：拿到 AMap 后会用初始坐标创建地图与可拖地标', stubUsed, stubUsed);
+    const confirm = page.getByRole('button', { name: '使用这个位置' });
+    check('桩就绪后「使用这个位置」可点', await confirm.isEnabled());
+    await confirm.click();
+    await page.waitForTimeout(2500);
+    check('★ 地图确认后回填了省市区（复用后端逆地理）',
+      (await selProvince().inputValue()).length > 0 && (await selCity().inputValue()).length > 0,
+      { province: await selProvince().inputValue(), city: await selCity().inputValue() });
+    // 清掉桩，避免影响后续步骤
+    await page.evaluate(() => { delete window.AMap; });
+  }
+}
+
 step('UI：提交一条真实地址，验证级联选出的值能存进去');
 await page.getByPlaceholder('例如 张小三').fill('级联测试');
 await page.getByPlaceholder('11 位手机号').fill('13900009999');

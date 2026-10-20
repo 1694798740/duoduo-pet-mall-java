@@ -142,6 +142,9 @@ services:
       # A1 · 地址「定位回填」用的高德「Web 服务」Key（不是 JS API Key）。
       #   留空则 /api/geo/regeo 返回 configured=false，前端自动降级为手选下拉。
       AMAP_WEB_KEY: ${AMAP_WEB_KEY:-}
+      # Web 端 JS API（地图组件）：Key + 安全密钥，由 /api/geo/jsapi-config 按登录态下发
+      AMAP_JS_KEY: ${AMAP_JS_KEY:-}
+      AMAP_JS_SECURITY_CODE: ${AMAP_JS_SECURITY_CODE:-}
       # OPS-SWITCH 默认 true —— mock 通道仅供本地/CI；生产接真实微信必须显式置 false
       DUODUO_WECHAT_MOCK_ENABLED: ${DUODUO_WECHAT_MOCK_ENABLED:-true}
       # E17 · 权限版本的感知副本写通道（角色变更时广播给网关）

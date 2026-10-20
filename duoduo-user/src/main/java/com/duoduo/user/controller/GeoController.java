@@ -62,6 +62,9 @@ public class GeoController {
     private final ObjectMapper objectMapper;
     /** 高德「Web 服务」Key；为空表示未配置，接口走降级分支 */
     private final String amapKey;
+    /** 高德「Web 端（JS API）」Key 与安全密钥：地图组件在浏览器里需要它们 */
+    private final String jsKey;
+    private final String jsSecurityCode;
 
     /**
      * 超时必须给短：用户在填地址，定位只是「省点打字」的辅助，
@@ -72,9 +75,35 @@ public class GeoController {
             .build();
 
     public GeoController(ObjectMapper objectMapper,
-                         @Value("${duoduo.geo.amap-key:}") String amapKey) {
+                         @Value("${duoduo.geo.amap-key:}") String amapKey,
+                         @Value("${duoduo.geo.js-key:}") String jsKey,
+                         @Value("${duoduo.geo.js-security-code:}") String jsSecurityCode) {
         this.objectMapper = objectMapper;
         this.amapKey = amapKey == null ? "" : amapKey.trim();
+        this.jsKey = jsKey == null ? "" : jsKey.trim();
+        this.jsSecurityCode = jsSecurityCode == null ? "" : jsSecurityCode.trim();
+    }
+
+    /**
+     * 下发 Web 端地图组件所需的 Key 与安全密钥（高德 JSAPI 2.0 的机制要求把它们
+     * 交给浏览器，无法只在服务端使用）。
+     *
+     * <p>那为什么还要经过这个接口，而不是直接写进前端 bundle：
+     * <ul>
+     *   <li>不进代码、不进 Git 仓库（本机 .env 才有），泄露面从"仓库历史"缩到"运行时"；</li>
+     *   <li>按登录态下发（本路由不在网关白名单），未登录拿不到；</li>
+     *   <li>换 Key 只需改环境变量重启，不必重新构建前端。</li>
+     * </ul>
+     *
+     * <p>未配置时返回 {@code configured=false}（200），前端据此提示"地图选点未配置"，
+     * 不影响"附近候选"这条已经可用的路径。
+     */
+    @GetMapping("/jsapi-config")
+    public ApiResponse<JsApiConfig> jsapiConfig() {
+        if (jsKey.isEmpty() || jsSecurityCode.isEmpty()) {
+            return ApiResponse.ok(new JsApiConfig(false, null, null));
+        }
+        return ApiResponse.ok(new JsApiConfig(true, jsKey, jsSecurityCode));
     }
 
     /**
@@ -275,6 +304,10 @@ public class GeoController {
         }
         String s = node.asText("").trim();
         return s.isEmpty() ? null : s;
+    }
+
+    /** Web 端地图组件的配置（高德机制要求下发到浏览器，故不能只留服务端） */
+    public record JsApiConfig(boolean configured, String key, String securityCode) {
     }
 
     /** 周边候选地址（让用户在多个位置里挑，而不是被动接受单一位置） */
