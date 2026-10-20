@@ -81,7 +81,8 @@
       />
     </view>
 
-    <view class="field">
+    <!-- addr-region-field：定位失败时 pageScrollTo 的锚点，把用户带到"手动选择"这个兜底上 -->
+    <view class="field addr-region-field">
       <view class="field-head">
         <text class="field-label">省 / 市 / 区</text>
         <view class="locate-actions">

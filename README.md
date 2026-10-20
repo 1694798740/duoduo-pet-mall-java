@@ -2059,6 +2059,52 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（五十）· 修复：小程序定位与地图选点双双失败（隐私接口未声明）
+
+**现象**：① 点「定位当前地址」提示「定位失败（可能未开启定位服务）」；② 点「地图选点」提示「请检查定位权限」。
+
+**根因（两处同一原因）**
+
+`wx.getLocation` 与 `wx.chooseLocation` 自 2022 年起属于**隐私接口**。`miniprogram/app.json`
+里**既没有 `requiredPrivateInfos`，也没有 `permission.scope.userLocation.desc`** ——
+未声明时调用会**直接失败**，与用户是否授权、手机是否开定位都无关。
+而旧代码把所有非 cancel 的失败都猜成"权限问题"，于是给出了指向错误的提示。
+
+**修复**
+
+1. `app.json` 补声明：
+   - `requiredPrivateInfos: ["getLocation", "chooseLocation"]`；
+   - `permission["scope.userLocation"].desc`（授权弹窗展示用，键名本身带点，不是嵌套对象）。
+2. 新增 `miniprogram/utils/location.js`：
+   - `ensureLocationAuth()`：`wx.getSetting` 三态处理（已授权 / 曾拒绝 / 从未询问 → `wx.authorize`）；
+   - `classifyLocationError(errMsg)`：**纯函数**分类（`NOT_DECLARED` / `DENIED` / `SYSTEM` /
+     `CANCELLED` / `TIMEOUT` / `SERVICE_OFF` / `UNKNOWN`）；
+   - `describeLocationError()`：每类给准确文案，且**每一条都写"可直接用下方省市区选择"**；
+   - `canOpenSetting()`：只有「拒绝授权 / 系统关闭」才值得弹「去设置」。
+3. 地址页：定位与地图选点先预检授权，失败统一走 `onLocateBlocked()` ——
+   给准确原因 + 可弹「去设置」（回来后自动重试一次）+ **自动滚到省市区选择**（`.addr-region-field` 锚点）。
+
+**兜底设计（用户问的重点）**
+
+- 省 / 市 / 区是原生 `picker mode="region"`，**不依赖任何定位能力**，任何失败下都能用；
+- 失败文案结尾统一是「可直接用下方「省 / 市 / 区」选择，不影响下单」；
+- 失败时自动把页面滚到该控件，用户不需要自己找；
+- 用户点「去设置」并授权后，自动重试一次，不用再点按钮。
+
+**测试**
+
+- 新增 `scripts/check-miniprogram-location.mjs`：**24 项 0 失败** ——
+  校验 app.json 两处声明、页面走预检+统一收口、9 组真实 errMsg 的分类、
+  以及"每条文案都提到省市区兜底"。
+- 顺带修掉守卫自身一个错误：`permission["scope.userLocation"]` 是**带点的键**，
+  不是 `permission.scope.userLocation` 嵌套对象。
+
+**仍需你在微信公众平台完成（真机/正式版必需）**
+
+1. 开发管理 → 接口设置 → 申请开通「获取当前的地理位置」与「打开地图选择位置」；
+2. 设置 → 服务内容声明 → 用户隐私保护指引：声明「位置信息」的用途。
+未开通时，开发者工具可能可用、真机会失败 —— 这一步无法用代码替代。
+
 ### 2026-10-20（四十九）· 修复：小程序「一绑定微信就退出登录」
 
 **现象**：手机号登录后绑定微信，绑定失败的同时被退出登录；注册后再绑定也失败。

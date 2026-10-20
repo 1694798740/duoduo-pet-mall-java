@@ -38,6 +38,15 @@
     "navigationBarTitleText": "多多宠物商店",
     "backgroundColor": "#f5f6fa"
   },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于自动填写收货地址的省市区与门牌号（仅在你点击“定位当前地址”或“地图选点”时使用）"
+    }
+  },
+  "requiredPrivateInfos": [
+    "getLocation",
+    "chooseLocation"
+  ],
   "usingComponents": {
     "nav-bar": "/components/nav-bar/nav-bar",
     "notice-toast": "/components/notice-toast/notice-toast"

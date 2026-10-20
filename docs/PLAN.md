@@ -215,6 +215,17 @@
 | 测试 | 新增 `address-cascade-ui-check` 22 项（含**懒加载**与**换省清空**断言）；`address-ui-check` 改 `selectOption` 逐级填，65 项；反向验证无效 Key → 200 + 字段 null；未登录 → 401 |
 | 回归 | header-layout 109 / home 9 全绿；首屏 JS 235.4→239.3KB |
 
+### 2026-10-20（五十）· 修复：小程序定位 / 地图选点失败（隐私接口未声明）
+
+| 项 | 实现 |
+| --- | --- |
+| 根因 | `app.json` 缺 `requiredPrivateInfos` 与 `permission["scope.userLocation"].desc`；未声明时 `wx.getLocation`/`wx.chooseLocation` 直接失败，与授权无关 |
+| 声明 | 补 `requiredPrivateInfos: ["getLocation","chooseLocation"]` + `permission` 描述（注意键名带点） |
+| 权限层 | `utils/location.js`：`ensureLocationAuth()` 三态预检、`classifyLocationError()` 纯函数 7 类、`describeLocationError()` 文案、`canOpenSetting()` |
+| 兜底 | 失败统一 `onLocateBlocked()`：准确原因 + 必要时「去设置」并自动重试 + `pageScrollTo` 到 `.addr-region-field`；省市区 picker 不依赖定位，永远可用 |
+| 守卫 | 新增 `scripts/check-miniprogram-location.mjs` **24/0**（声明/预检/收口/9 组 errMsg 分类/文案兜底） |
+| 待你操作 | 公众平台申请「地理位置」接口权限 + 配置用户隐私保护指引（位置信息），真机必需 |
+
 ### 2026-10-20（四十九）· 修复：小程序绑定微信即被登出
 
 | 项 | 实现 |

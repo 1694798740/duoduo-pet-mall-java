@@ -16,6 +16,13 @@
 //  * 字段与后端 AddressUpsertRequest 一一对应，不新增任何地址端点。
 const api = require('../../utils/api');
 const amapConfig = require('../../config/amap');
+const {
+  classifyLocationError,
+  describeLocationError,
+  canOpenSetting,
+  ensureLocationAuth,
+  openLocationSetting,
+} = require('../../utils/location');
 
 /**
  * 高德小程序 SDK 懒初始化。
@@ -181,9 +188,25 @@ Page({
    *
    * 失败路径一律给"可继续填表"的出口：拒绝授权、定位超时、Key 未配置、解析失败。
    */
+  /**
+   * 定位当前地址。
+   *
+   * 先做**授权预检**再调接口：未授权时 wx.getLocation 只会返回一句模糊的 errMsg，
+   * 用户根本不知道该点哪里；预检能把"从没问过 / 曾拒绝 / 系统关掉"分开处理。
+   */
   locate() {
     if (this.data.locating) return;
     this.setData({ locating: true, locateHint: '' });
+    ensureLocationAuth()
+      .then(() => this.doLocate())
+      .catch((err) => {
+        const code = (err && err.code) || classifyLocationError(err && err.errMsg);
+        this.onLocateBlocked(code, '定位', () => this.locate());
+      });
+  },
+
+  /** 真正调用 wx.getLocation（此时授权已就绪） */
+  doLocate() {
     wx.getLocation({
       type: 'gcj02',
       success: (pos) => {
@@ -222,16 +245,51 @@ Page({
         });
       },
       fail: (err) => {
-        this.setData({ locating: false });
-        const denied = err && /auth|deny|denied/i.test(err.errMsg || '');
-        this.setData({
-          locateHint: denied
-            ? '定位权限被拒绝，可在右上角「…」→ 设置里开启，或手动选择省市区'
-            : '定位失败（可能未开启定位服务），请手动选择省市区',
+        // 这里是"接口调得动但失败"（如系统定位关闭、超时）；
+        // 声明缺失/未授权在 ensureLocationAuth 阶段就被拦下了。
+        this.onLocateBlocked(classifyLocationError(err && err.errMsg), '定位', () => this.locate());
+      },
+    });
+  },
+
+  /**
+   * 定位/地图选点失败的**统一出口**。
+   *
+   * 三件事一起做：
+   *   ① 给出**准确**原因（区分"接口没声明"与"没授权"）——
+   *      这正是此前"明明是配置问题却提示去开手机定位"的修复点；
+   *   ② 只有用户自己能解决的原因（拒绝授权 / 系统关闭）才弹「去设置」，
+   *      其余不弹无意义弹窗；
+   *   ③ 无论哪种失败，都把页面滚到下方省市区选择 —— 那是永远可用的兜底，
+   *      并且文案明确写"可直接用下方选择，不影响下单"。
+   */
+  onLocateBlocked(code, action, retry) {
+    this.setData({ locating: false, locateHint: describeLocationError(code, action) });
+    try {
+      // 把用户视线带到兜底控件（picker 无法用代码聚焦，滚动是可行且不打扰的方式）
+      wx.pageScrollTo({ selector: '.addr-region-field', offsetTop: -60, duration: 200 });
+    } catch (e) {
+      /* 低版本基础库不支持 selector，忽略即可：文案已经指明要去哪选 */
+    }
+    if (!canOpenSetting(code)) return;
+    wx.showModal({
+      title: `${action}不可用`,
+      content: describeLocationError(code, action),
+      confirmText: '去设置',
+      cancelText: '手动选择',
+      success: (res) => {
+        if (!res.confirm) return;
+        openLocationSetting().then((granted) => {
+          if (granted && typeof retry === 'function') {
+            retry(); // 用户回来已授权：自动重试一次，不用再点一遍
+          } else if (!granted) {
+            this.setData({ locateHint: '仍未获得定位权限。可直接用下方「省 / 市 / 区」选择，不影响下单。' });
+          }
         });
       },
     });
   },
+
 
   /**
    * 在地图上选点（A1 增强，2026-10-20）。
@@ -241,24 +299,33 @@ Page({
    * ★ 它是微信原生能力，**不需要高德 Key**，也不占高德配额。
    */
   chooseOnMap() {
-    wx.chooseLocation({
-      success: (res) => {
-        if (!res || !res.latitude) {
-          this.setData({ locateHint: '没有取到位置，请重试或手动选择省市区' });
-          return;
-        }
-        this.setData({ locating: true, locateHint: '' });
-        // 选点返回的是 GCJ-02（微信地图与高德同坐标系），并带上用户看到的地点名
-        const picked = (res.name || '').trim();
-        this.regeoViaBackend(res.longitude, res.latitude, picked || null);
-      },
-      fail: (err) => {
-        // 用户主动取消不算错误
-        if (err && /cancel/i.test(err.errMsg || '')) return;
-        this.setData({ locateHint: '地图选点打不开，请检查定位权限，或手动选择省市区' });
-      },
-    });
+    ensureLocationAuth()
+      .then(() => {
+        wx.chooseLocation({
+          success: (res) => {
+            if (!res || !res.latitude) {
+              this.setData({ locateHint: '没有取到位置，请重试或直接用下方「省 / 市 / 区」选择。' });
+              return;
+            }
+            this.setData({ locating: true, locateHint: '' });
+            // 选点返回的是 GCJ-02（微信地图与高德同坐标系），并带上用户看到的地点名
+            const picked = (res.name || '').trim();
+            this.regeoViaBackend(res.longitude, res.latitude, picked || null);
+          },
+          fail: (err) => {
+            const code = classifyLocationError(err && err.errMsg);
+            // 用户主动取消不算错误，静默即可
+            if (code === 'CANCELLED') return;
+            this.onLocateBlocked(code, '地图选点', () => this.chooseOnMap());
+          },
+        });
+      })
+      .catch((err) => {
+        const code = (err && err.code) || classifyLocationError(err && err.errMsg);
+        this.onLocateBlocked(code, '地图选点', () => this.chooseOnMap());
+      });
   },
+
 
   /** 兜底通道：后端用「Web 服务」Key 调高德（小程序 Key 不能用于这条） */
   regeoViaBackend(lng, lat, overrideDetail) {
