@@ -14,7 +14,9 @@
  *   4) classifyLocationError 对真实 errMsg 的分类正确（含最容易混淆的两种）；
  *   5) 所有失败文案都提到"省 / 市 / 区"（兜底必须指向手动选择）；
  *   6) wx.choosePoi 的三条硬约束：已声明、type=1/type=2 分开处理、
- *      且**没有拿它替换掉地图选点**（POI 选不到门牌号）。
+ *      且**没有拿它替换掉地图选点**（POI 选不到门牌号）；
+ *   7) wx.chooseMedia（售后凭证选图）也已声明 —— 它同属隐私接口，
+ *      漏声明时定位类功能正常、唯独上传图片真机失败，最容易被忽略。
  *
  * 用法：node scripts/check-miniprogram-location.mjs
  * 退出码：0 全过；1 有失败。
@@ -47,6 +49,8 @@ check('app.json 声明了 requiredPrivateInfos', Array.isArray(appJson.requiredP
 check('声明包含 getLocation（定位当前地址）', declared.includes('getLocation'), declared);
 check('声明包含 chooseLocation（地图选点）', declared.includes('chooseLocation'), declared);
 check('声明包含 choosePoi（附近位置快选）', declared.includes('choosePoi'), declared);
+// 售后凭证上传用 wx.chooseMedia 选图，同样属隐私接口（相册/摄像头），漏声明真机直接失败
+check('声明包含 chooseMedia（售后凭证选图）', declared.includes('chooseMedia'), declared);
 // ★ 微信 app.json 的键名本身就带点：permission["scope.userLocation"]，不是嵌套对象
 const desc = appJson.permission?.['scope.userLocation']?.desc ?? '';
 check('permission.scope.userLocation.desc 已填写（授权弹窗展示用）', desc.trim().length >= 8, desc);
@@ -93,6 +97,8 @@ check('POI 失败同样走统一收口（onLocateBlocked + 附近位置）',
   pageJs.includes("'附近位置'") && pageJs.includes('wx.choosePoi('));
 check('POI 没有替换掉地图选点（三个入口并存）',
   pageJs.includes('chooseOnMap()') && pageJs.includes('chooseNearbyPoi()'));
+check('售后页确实在用 chooseMedia 选图（凭证上传）',
+  fs.readFileSync(path.join(root, 'miniprogram/pages/after-sale/after-sale.js'), 'utf8').includes('wx.chooseMedia('));
 check('wxml 上有三个定位入口（定位/选点/附近位置）',
   (() => {
     const wxml = fs.readFileSync(path.join(root, 'miniprogram/pages/address/address.wxml'), 'utf8');
