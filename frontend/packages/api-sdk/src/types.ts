@@ -2031,8 +2031,26 @@ export interface TenantHealthLimits {
  * `configured=false` 表示服务端尚未配置 Key（此时 province/city/district 均为空），
  * 前端必须走「手选」兜底，而不是报错卡住用户。
  */
+/** 周边候选位置（逆地理 extensions=all 带回的 POI，按距离升序） */
+export interface RegeoCandidate {
+  /** POI 名称，如「花园坪C区」「龙城公园」 */
+  name: string;
+  /** POI 地址（可能为 null） */
+  address: string | null;
+  /** 距定位点的直线距离（米） */
+  distance: number | null;
+  lng: number | null;
+  lat: number | null;
+}
+
 export interface RegeoView {
   configured: boolean;
+  /**
+   * 本次实际使用的坐标系。
+   * 网页端浏览器给的是 wgs84（服务端会先转成 gcj02 再查高德）；
+   * 小程序 wx.getLocation({type:'gcj02'}) 已是 gcj02，不能再转。
+   */
+  coord: 'gcj02' | 'wgs84';
   province: string | null;
   city: string | null;
   district: string | null;
@@ -2040,6 +2058,9 @@ export interface RegeoView {
   detail: string | null;
   /** 行政区划代码（区县级） */
   adcode: string | null;
+  /** 实际查询用的 GCJ-02 经度（已转换后的值） */
   lng: number | null;
   lat: number | null;
+  /** 周边候选：让用户在多个位置里挑，避免单一位置错了就全错 */
+  candidates: RegeoCandidate[];
 }

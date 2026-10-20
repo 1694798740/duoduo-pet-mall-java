@@ -24,7 +24,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { addressApi, geoApi } from '@duoduo/api-sdk/endpoints';
-import type { AddressUpsertRequest, AddressView } from '@duoduo/api-sdk/types';
+import type { AddressUpsertRequest, AddressView, RegeoCandidate } from '@duoduo/api-sdk/types';
 import { loadRegions } from '@duoduo/shared/data/regions';
 import type { RegionData } from '@duoduo/shared/data/regions';
 import { useAsync } from '@duoduo/shared/components/hooks';
@@ -135,6 +135,10 @@ export const AddressesPage: React.FC = () => {
   const [locating, setLocating] = useState(false);
   const [locateHint, setLocateHint] = useState<string | null>(null);
   const [locateError, setLocateError] = useState<string | null>(null);
+  /** 周边候选位置：单一回填可能落到隔壁路，让用户在附近挑 */
+  const [candidates, setCandidates] = useState<RegeoCandidate[]>([]);
+  /** 浏览器定位精度（米），用来解释「为什么门牌可能不准」 */
+  const [accuracy, setAccuracy] = useState<number | null>(null);
 
   useEffect(() => {
     if (!modalOpen || regions) return undefined;
@@ -190,7 +194,10 @@ export const AddressesPage: React.FC = () => {
           maximumAge: 60_000,
         });
       });
-      const geo = await geoApi.regeo(pos.coords.longitude, pos.coords.latitude);
+      // ★ 必须声明 wgs84：浏览器给的是 GPS 原始坐标，高德只认 GCJ-02。
+      //   不转换的后果是地址落到 500 米开外（实测深圳花园坪 → 龙城公园），
+      //   而不是报错 —— 这正是「偏差超过 50 米」的根因。
+      const geo = await geoApi.regeo(pos.coords.longitude, pos.coords.latitude, 'wgs84');
       if (!geo.configured) {
         setLocateHint('地图服务尚未配置（服务端缺 Key），请手动选择省市区');
         return;
@@ -213,7 +220,14 @@ export const AddressesPage: React.FC = () => {
         district: d?.n ?? '',
         detail: geo.detail?.trim() ? geo.detail.trim() : f.detail,
       }));
-      setLocateHint(`已按定位填入「${[p.n, c?.n, d?.n].filter(Boolean).join(' / ')}」，请核对门牌号`);
+      setCandidates(geo.candidates ?? []);
+      const acc = Math.round(pos.coords.accuracy);
+      setAccuracy(Number.isFinite(acc) && acc > 0 ? acc : null);
+      setLocateHint(
+        `已按定位填入「${[p.n, c?.n, d?.n].filter(Boolean).join(' / ')}」`
+        + (Number.isFinite(acc) && acc > 0 ? `（定位精度约 ${acc} 米）` : '')
+        + (geo.candidates?.length ? '，可点下方附近位置改选' : '，请核对门牌号'),
+      );
     } catch (err) {
       const geoErr = err as GeolocationPositionError | undefined;
       if (geoErr && geoErr.code === 1) {
@@ -473,6 +487,36 @@ export const AddressesPage: React.FC = () => {
           {locateHint ? (
             <div style={{ marginBottom: 10 }}>
               <Alert kind="info">{locateHint}</Alert>
+            </div>
+          ) : null}
+          {/* 附近候选：解决「只回填一个位置、错了只能自己重打」的问题。
+              数据来自逆地理 extensions=all 带回的周边 POI，不额外消耗配额。 */}
+          {candidates.length > 0 ? (
+            <div style={{ marginBottom: 12 }}>
+              <div className="small" style={{ marginBottom: 6, color: 'var(--text-3)' }}>
+                附近位置（点一条填入详细地址{accuracy != null ? `，定位精度约 ${accuracy} 米` : ''}）
+              </div>
+              <div className="row row-wrap" style={{ gap: 8 }}>
+                {candidates.map((cd) => (
+                  <button
+                    key={`${cd.name}-${cd.lng}-${cd.lat}`}
+                    type="button"
+                    className={`btn btn-sm ${form.detail === cd.name ? 'btn-primary' : 'btn-ghost'}`}
+                    title={cd.address ?? cd.name}
+                    onClick={() => {
+                      setForm((f) => ({ ...f, detail: cd.name }));
+                      setLocateHint(
+                        `已选「${cd.name}」`
+                        + (cd.distance != null ? `（距定位点 ${cd.distance} 米）` : '')
+                        + '，可再补充门牌号',
+                      );
+                    }}
+                  >
+                    {cd.name}
+                    {cd.distance != null ? ` · ${cd.distance}米` : ''}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 

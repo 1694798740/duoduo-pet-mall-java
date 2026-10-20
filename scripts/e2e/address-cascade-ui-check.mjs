@@ -208,6 +208,31 @@ check('★ 服务端已配 Key 时必须真回填（不是只弹提示）；未�
 check('★ 定位之后表单仍可继续填（省市区下拉未被禁用，失败也不阻断）',
   !(await selProvince().isDisabled()), await selProvince().isDisabled());
 
+step('UI：附近候选（外卖式挑选，避免单一位置错误）');
+// 候选按钮形如「花园坪C区一巷8号 · 73米」；只有配了 Key 才会出现，未配置时跳过。
+if (geoConfigured) {
+  const candButtons = page.locator('button').filter({ hasText: /\d+\s*米/ });
+  const candCount = await candButtons.count();
+  check('★ 定位后给出多个附近候选（不是只回填一个位置）', candCount >= 2, candCount);
+  const candTexts = await candButtons.allInnerTexts();
+  const distances = candTexts
+    .map((t) => Number((t.match(/(\d+)\s*米/) || [])[1]))
+    .filter((n) => Number.isFinite(n));
+  check('★ 候选按距离升序排列（最近的在最前）',
+    distances.length >= 2 && distances.every((v, i) => i === 0 || v >= distances[i - 1]),
+    distances);
+  // 点第二条：详细地址应变成该候选的地点名
+  await candButtons.nth(1).click();
+  await page.waitForTimeout(300);
+  const pickedText = candTexts[1];
+  const detailValue = await page.getByPlaceholder('例如 文三路 99 号 3 幢 501 室').inputValue();
+  check('★ 点选候选后详细地址被填入该地点名',
+    detailValue.length > 0 && pickedText.startsWith(detailValue),
+    { pickedText, detailValue });
+} else {
+  console.log('  [SKIP] 服务端未配置地图 Key，候选断言跳过');
+}
+
 step('UI：提交一条真实地址，验证级联选出的值能存进去');
 await page.getByPlaceholder('例如 张小三').fill('级联测试');
 await page.getByPlaceholder('11 位手机号').fill('13900009999');

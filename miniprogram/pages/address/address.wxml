@@ -84,8 +84,12 @@
     <view class="field">
       <view class="field-head">
         <text class="field-label">省 / 市 / 区</text>
-        <view class="locate-btn {{locating ? 'locate-btn-busy' : ''}}" bindtap="locate">
-          {{locating ? '定位中…' : '📍 定位当前地址'}}
+        <view class="locate-actions">
+          <view class="locate-btn {{locating ? 'locate-btn-busy' : ''}}" bindtap="locate">
+            {{locating ? '定位中…' : '📍 定位当前地址'}}
+          </view>
+          <!-- 外卖式选点：打开微信原生地图，可拖动地标（无需高德 Key） -->
+          <view class="locate-btn locate-btn-plain" bindtap="chooseOnMap">🗺️ 地图选点</view>
         </view>
       </view>
       <picker mode="region" value="{{region}}" bindchange="onRegionChange">
@@ -94,6 +98,21 @@
         </view>
       </picker>
       <text wx:if="{{locateHint}}" class="locate-hint">{{locateHint}}</text>
+      <!-- 附近候选：单一回填可能落到隔壁路，让用户在附近挑一个 -->
+      <view wx:if="{{candidates.length}}" class="candidate-box">
+        <text class="candidate-title">附近位置（点一条填入详细地址）</text>
+        <view class="candidate-list">
+          <view
+            wx:for="{{candidates}}"
+            wx:key="name"
+            class="candidate-chip {{form.detail === item.name ? 'candidate-chip-on' : ''}}"
+            data-index="{{index}}"
+            bindtap="pickCandidate"
+          >
+            {{item.name}}{{item.distance !== null ? ' · ' + item.distance + '米' : ''}}
+          </view>
+        </view>
+      </view>
     </view>
 
     <view class="field">

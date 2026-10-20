@@ -73,6 +73,8 @@ Page({
     region: [],
     locating: false,
     locateHint: '',
+    /** 周边候选位置（逆地理 extensions=all 带回，按距离升序） */
+    candidates: [],
   },
 
   onLoad(query) {
@@ -231,16 +233,43 @@ Page({
     });
   },
 
+  /**
+   * 在地图上选点（A1 增强，2026-10-20）。
+   *
+   * 这就是「外卖式」体验：`wx.chooseLocation` 打开微信原生地图，用户可以
+   * **拖动地标**、搜索、缩放，确认后返回精确的经纬度与地点名。
+   * ★ 它是微信原生能力，**不需要高德 Key**，也不占高德配额。
+   */
+  chooseOnMap() {
+    wx.chooseLocation({
+      success: (res) => {
+        if (!res || !res.latitude) {
+          this.setData({ locateHint: '没有取到位置，请重试或手动选择省市区' });
+          return;
+        }
+        this.setData({ locating: true, locateHint: '' });
+        // 选点返回的是 GCJ-02（微信地图与高德同坐标系），并带上用户看到的地点名
+        const picked = (res.name || '').trim();
+        this.regeoViaBackend(res.longitude, res.latitude, picked || null);
+      },
+      fail: (err) => {
+        // 用户主动取消不算错误
+        if (err && /cancel/i.test(err.errMsg || '')) return;
+        this.setData({ locateHint: '地图选点打不开，请检查定位权限，或手动选择省市区' });
+      },
+    });
+  },
+
   /** 兜底通道：后端用「Web 服务」Key 调高德（小程序 Key 不能用于这条） */
-  regeoViaBackend(lng, lat) {
+  regeoViaBackend(lng, lat, overrideDetail) {
     api.address
-      .regeo(lng, lat)
+      .regeo(lng, lat, 'gcj02')
       .then((geo) => {
         if (!geo || geo.configured === false) {
           this.setData({ locating: false, locateHint: '地图服务尚未配置，请手动选择省市区' });
           return;
         }
-        this.applyGeo(geo);
+        this.applyGeo(geo, overrideDetail);
       })
       .catch((err) => {
         this.setData({
@@ -250,19 +279,35 @@ Page({
       });
   },
 
-  /** 把归一化后的省市区写回表单（两条通道共用，保证行为一致） */
-  applyGeo(geo) {
+  /** 把归一化后的省市区写回表单（三条通道共用，保证行为一致） */
+  applyGeo(geo, overrideDetail) {
     const region = [geo.province || '', geo.city || geo.province || '', geo.district || ''];
+    // 地图选点时，用户看到并确认过的地点名优先于逆地理推出来的街道门牌
+    const detail = (overrideDetail || '').trim() || geo.detail || this.data.form.detail;
     this.setData({
       locating: false,
       region,
+      candidates: (geo.candidates || []).slice(0, 8),
       'form.province': region[0],
       'form.city': region[1],
       'form.district': region[2],
-      'form.detail': geo.detail || this.data.form.detail,
+      'form.detail': detail,
       locateHint: region[0]
-        ? '已按定位填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号'
+        ? (overrideDetail
+            ? '已按地图选点填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号'
+            : '已按定位填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号')
         : '已定位，但没有匹配到可选的省市区，请手动选择',
+    });
+  },
+
+  /** 选中周边候选（与网页端同一套逻辑，避免两端行为不一致） */
+  pickCandidate(e) {
+    const idx = Number(e.currentTarget.dataset.index);
+    const cd = (this.data.candidates || [])[idx];
+    if (!cd) return;
+    this.setData({
+      'form.detail': cd.name,
+      locateHint: '已选「' + cd.name + '」' + (cd.distance != null ? '（距定位点 ' + cd.distance + ' 米）' : '') + '，可再补充门牌号',
     });
   },
 

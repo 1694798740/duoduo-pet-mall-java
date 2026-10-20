@@ -376,8 +376,10 @@ const address = {
    * ★ 必须走我们自己的后端：地图 Key 只在服务端，且小程序无需为地图服务商
    *   单独申请 request 合法域名。
    */
-  regeo(lng, lat) {
-    return req.get('/api/geo/regeo?lng=' + lng + '&lat=' + lat);
+  regeo(lng, lat, coord) {
+    // ★ coord 必须如实声明：小程序 wx.getLocation({type:'gcj02'}) 已经是 GCJ-02，
+    //   再让服务端转一次会二次偏移（往反方向再偏 500 米）。
+    return req.get('/api/geo/regeo?lng=' + lng + '&lat=' + lat + '&coord=' + (coord || 'gcj02'));
   },
   default() {
     return req.get('/api/addresses/default');

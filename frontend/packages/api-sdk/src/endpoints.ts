@@ -1165,6 +1165,14 @@ export const shareCommentApi = {
  *   调用方据此提示「可手动选择」，不阻断填地址。
  */
 export const geoApi = {
-  regeo: (lng: number, lat: number) =>
-    api.get<RegeoView>('/api/geo/regeo', { query: { lng, lat } }),
+  /**
+   * 逆地理编码（含周边候选）。
+   *
+   * ★ `coord` 必须如实声明：
+   *   · 网页端 `navigator.geolocation` → **wgs84**（服务端转 GCJ-02 再查高德）；
+   *   · 小程序 `wx.getLocation({type:'gcj02'})` → **gcj02**（再转就会二次偏移）。
+   * 声明错的后果是地址落到 500 米开外，而不是报错 —— 所以这里是必填参数。
+   */
+  regeo: (lng: number, lat: number, coord: 'gcj02' | 'wgs84') =>
+    api.get<RegeoView>('/api/geo/regeo', { query: { lng, lat, coord } }),
 };
