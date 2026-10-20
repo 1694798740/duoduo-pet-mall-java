@@ -182,7 +182,7 @@ check('上海市的区县含浦东新区、不含西湖区',
   (await opts(selDistrict())).includes('浦东新区') && !(await opts(selDistrict())).includes('西湖区'),
   (await opts(selDistrict())).slice(0, 10));
 
-step('UI：定位按钮（地图 Key 未配置时应体面降级，而不是卡死）');
+step('UI：定位按钮（配了 Key 要真回填；没配 Key 要体面降级，都不能卡死）');
 check('弹窗里有「定位当前地址」按钮',
   (await page.getByRole('button', { name: /定位当前地址|定位中/ }).count()) === 1);
 await page.getByRole('button', { name: /定位当前地址|定位中/ }).click();
@@ -205,7 +205,7 @@ const geoConfigured = Boolean(probe?.data?.configured);
 check('★ 服务端已配 Key 时必须真回填（不是只弹提示）；未配置则跳过该要求',
   geoConfigured ? locateFilled : true,
   { geoConfigured, locateFilled, text: afterLocate.slice(0, 200) });
-check('★ 定位失败/未配置时表单仍可继续填（省市区下拉未被禁用）',
+check('★ 定位之后表单仍可继续填（省市区下拉未被禁用，失败也不阻断）',
   !(await selProvince().isDisabled()), await selProvince().isDisabled());
 
 step('UI：提交一条真实地址，验证级联选出的值能存进去');
