@@ -128,9 +128,9 @@ export const HomePage: React.FC = () => {
               全部分类 →
             </Link>
           </div>
-          <div className="grid grid-4">
+          <div className="grid grid-4 stagger">
             {tree.slice(0, 8).map((cat) => (
-              <Link key={cat.id} className="card card-pad" to={`/search?categoryId=${cat.id}`}>
+              <Link key={cat.id} className="card card-pad card-hover" to={`/search?categoryId=${cat.id}`}>
                 <div className="row-between">
                   <strong>
                     {cat.name}

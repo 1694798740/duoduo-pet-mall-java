@@ -95,6 +95,17 @@ async function call(method, p, body, jar) {
 
 const randPhone = () => '138' + String(Math.floor(1e7 + Math.random() * 8e7));
 
+/**
+ * 本轮跑批的唯一标记。
+ *
+ * ★ 为什么必须：昵称原来是**固定字符串**，而每跑一次就新注册一批账号，
+ *   于是「账号管理-目标用户」在库里会越攒越多 —— 搜索该昵称时列表里同时出现多行，
+ *   `row.count() === 1` 恒不成立，改角色按钮的点击还会撞 strict mode violation。
+ *   表现是「第一次跑通过、之后每次都红」，极易被误判成功能坏了。
+ *   夹具昵称带跑批标记后，每次只看得到本轮自己建的账号。
+ */
+const RUN_TAG = String(Date.now()).slice(-6);
+
 /** 建一个**指定角色**的账号：注册 → 提权重试走库 → 重新登录（角色是令牌里的快照）。
  *  返回 id，便于后续回表核对与收尾自毁。 */
 async function newAccount(role, nickname) {
@@ -127,6 +138,33 @@ async function newOperator(nickname) {
   // 角色是访问令牌里的快照 —— 提权后必须重新登录，否则前端拿到的还是 USER
   const login = await call('POST', '/api/auth/login', { phone, password: PWD }, jar);
   return { jar, phone, nickname, role, regStatus: reg.status, loginRole: login.data?.role };
+}
+
+/**
+ * 上一轮跑批遗留夹具的自愈清理。
+ *
+ * ★ 为什么必须有这一段：本脚本的夹具昵称是**固定前缀**（「账号管理-管理员甲/乙」），
+ *   而每次跑批都会新注册一批 —— 早先**跑崩**的批次（比如崩在 S5a）会把账号留在库里，
+ *   于是 ADMIN 越攒越多：S5d 里「并发前库里恰有 2 名 ADMIN」恒不成立，
+ *   「最后一个 ADMIN 不可降级」这条分支**根本走不到**，两条并发请求会一起成功。
+ *   表现是「第一次跑通过、之后每次都红」，极易被误判成后端功能坏了。
+ *
+ * 只删**本脚本自己命名的夹具**（昵称前缀限定 + 排除本轮 id），绝不碰真实账号。
+ */
+async function purgeLeftoverAdminFixtures(keepIds) {
+  const ids = (
+    await mysql(
+      'duoduo_user',
+      `SELECT id FROM t_user WHERE nickname LIKE '账号管理-管理员%' AND id NOT IN (${keepIds.join(',')});`,
+    )
+  ).trim();
+  const list = ids ? ids.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+  if (!list.length) return 0;
+  const inIds = list.join(',');
+  await mysql('duoduo_user', `DELETE FROM t_refresh_token WHERE user_id IN (${inIds});`);
+  await mysql('duoduo_user', `DELETE FROM t_audit_log WHERE target_id IN (${inIds}) OR actor_id IN (${inIds});`);
+  await mysql('duoduo_user', `DELETE FROM t_user WHERE id IN (${inIds});`);
+  return list.length;
 }
 
 // ---------------- 浏览器辅助 ----------------
@@ -188,13 +226,13 @@ const ADMIN_TITLE = '平台管理后台 · 运营概览';
 
 // ================= 夹具 =================
 step('夹具：运营账号 + 普通买家账号');
-const op = await newOperator('后台入口-运营');
+const op = await newOperator(`后台入口-运营-${RUN_TAG}`);
 check('运营账号提权成功（否则后面全是 403，排查方向整个跑偏）', op.role === 'OPERATOR', op.role);
 check('提权后重新登录，令牌里的角色已是 OPERATOR（角色是令牌快照）', op.loginRole === 'OPERATOR', op.loginRole);
 
 const buyerJar = new Map();
 const buyerPhone = randPhone();
-const buyerReg = await call('POST', '/api/auth/register', { phone: buyerPhone, password: PWD, nickname: '后台入口-买家' }, buyerJar);
+const buyerReg = await call('POST', '/api/auth/register', { phone: buyerPhone, password: PWD, nickname: `后台入口-买家-${RUN_TAG}` }, buyerJar);
 check('普通买家账号注册成功', buyerReg.status === 200, buyerReg.status);
 
 // ================= S1 未登录 =================
@@ -421,14 +459,19 @@ console.log('\n> 平台管理后台独立入口');
  */
 step('S5 · 账号管理页「改角色」：仅 ADMIN 可改（UI 正/反向 + 接口层 + 审计 + 并发不变式）');
 
-const adminA = await newAccount('ADMIN', '账号管理-管理员甲');
-const adminB = await newAccount('ADMIN', '账号管理-管理员乙');
-const targetU = await newAccount('USER', '账号管理-目标用户');
+const adminA = await newAccount('ADMIN', `账号管理-管理员甲-${RUN_TAG}`);
+const adminB = await newAccount('ADMIN', `账号管理-管理员乙-${RUN_TAG}`);
+const targetU = await newAccount('USER', `账号管理-目标用户-${RUN_TAG}`);
 check('夹具：管理员甲为 ADMIN（建不起则后面全 403，排查方向整个跑偏）', adminA.role === 'ADMIN', adminA.role);
 check('夹具：管理员乙为 ADMIN', adminB.role === 'ADMIN', adminB.role);
 check('夹具：目标用户为 USER', targetU.role === 'USER', targetU.role);
 check('夹具：三个账号都拿到了 id（回表核对的前提）',
   Boolean(adminA.id && adminB.id && targetU.id), `${adminA.id}/${adminB.id}/${targetU.id}`);
+
+// 清掉历次跑崩留下的 ADMIN 夹具：S5d 的并发不变式要求「库里恰有 2 名 ADMIN」，
+// 历史残留会让它恒不成立（详见 purgeLeftoverAdminFixtures 的注释）。
+const purgedAdmins = await purgeLeftoverAdminFixtures([adminA.id, adminB.id]);
+console.log(`  [信息] 清理历史遗留的「账号管理-管理员」夹具 ${purgedAdmins} 个`);
 
 /** 在**后台独立站点**登录（与商城会话完全隔离，走自有登录页） */
 async function loginAdminSite(page, phone) {
@@ -445,9 +488,11 @@ async function openOperatorsRow(page, nickname) {
   await page.getByRole('link', { name: '运营账号', exact: true }).click();
   await page.waitForURL((u) => u.pathname === '/admin/operators', { timeout: 15000 });
   await page.waitForTimeout(400);
-  await page.getByPlaceholder('手机号 / 昵称').fill(nickname);
-  await page.getByRole('button', { name: '查询' }).click();
-  await page.waitForTimeout(700);
+  // 「全站分页/搜索统一」之后：搜索框换成统一 SearchBar，**输入即搜**，
+  // 没有「查询」按钮了，占位符也由「手机号 / 昵称」改成「搜手机号或昵称」。
+  // 页面内部有 350ms 防抖，填完必须等到防抖 + 请求都走完再看结果。
+  await page.getByPlaceholder('搜手机号或昵称').fill(nickname);
+  await page.waitForTimeout(1200);
   return page.locator('table.table tbody tr').filter({ hasText: nickname });
 }
 

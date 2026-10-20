@@ -287,6 +287,8 @@ export const ProductDetailPage: React.FC = () => {
                     cursor: 'pointer',
                   }}
                   onClick={() => setImgIndex(index)}
+                  loading="lazy"
+                  decoding="async"
                 />
               ))}
             </div>
@@ -311,6 +313,8 @@ export const ProductDetailPage: React.FC = () => {
                     marginTop: index === 0 ? 12 : 10,
                     display: 'block',
                   }}
+                  loading="lazy"
+                  decoding="async"
                 />
               ))}
             </div>
@@ -664,6 +668,8 @@ export const ProductDetailPage: React.FC = () => {
               src={images[imgIndex]}
               alt={`${card.title} 放大图`}
               style={{ maxWidth: '100%', maxHeight: '70vh', borderRadius: 12 }}
+              loading="lazy"
+              decoding="async"
             />
           ) : null}
           {images.length > 1 ? (

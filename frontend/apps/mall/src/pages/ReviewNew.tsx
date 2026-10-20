@@ -187,6 +187,8 @@ export const ReviewNewPage: React.FC = () => {
                     src={productImage(draft.spuId, draft.mainImage)}
                     alt=""
                     style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }}
+                    loading="lazy"
+                    decoding="async"
                   />
                 ) : null}
                 <div style={{ minWidth: 0 }}>

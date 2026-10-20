@@ -206,7 +206,7 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
   return (
     <Link className="goods-card" to={`/product/${item.id}`}>
       <div className="goods-media">
-        {item.mainImage ? <img src={productImage(item.id, item.mainImage)} alt={item.title} loading="lazy" /> : null}
+        {item.mainImage ? <img src={productImage(item.id, item.mainImage)} alt={item.title} loading="lazy" decoding="async" /> : null}
         <div className="goods-media-tags">
           {seckill ? <SeckillTag phase={seckill.phase} /> : null}
           <SupplyTag supplyType={item.supplyType} />
@@ -259,8 +259,14 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
   );
 };
 
+/**
+ * 商品网格（自营）。
+ *
+ * `stagger` 让卡片依次错峰淡入（前 8 张每张差 28ms，第 9 张起统一封顶 224ms）——
+ * 一次性刷出整屏卡片时，眼睛需要一个落点；齐刷刷一起亮反而像"闪了一下"。
+ */
 export const ProductGrid: React.FC<{ items: ProductCard[] }> = ({ items }) => (
-  <div className="grid grid-goods">
+  <div className="grid grid-goods stagger">
     {items.map((item) => (
       <ProductCardView key={item.id} item={item} />
     ))}
@@ -276,7 +282,7 @@ export const ListingCardView: React.FC<{ item: ListingCard; conditionLabel?: str
   <Link className="goods-card" to={`/listing/${item.id}`}>
     <div className="goods-media">
       {/* 与小程序一致：任何闲置都有图 —— cover 为空时按 id 稳定取池图，不出现「无图灰块」 */}
-      <img src={listingImage(item.id, item.cover)} alt={item.title} loading="lazy" />
+      <img src={listingImage(item.id, item.cover)} alt={item.title} loading="lazy" decoding="async" />
       <div className="goods-media-tags">
         <span className="tag tag-second">个人闲置</span>
       </div>
@@ -322,7 +328,7 @@ export function conditionLabelOf(code: string | null | undefined): string {
 }
 
 export const ListingGrid: React.FC<{ items: ListingCard[] }> = ({ items }) => (
-  <div className="grid grid-goods">
+  <div className="grid grid-goods stagger">
     {items.map((item) => (
       <ListingCardView key={item.id} item={item} />
     ))}

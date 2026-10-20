@@ -158,7 +158,7 @@ export const AdminBrandsPage: React.FC = () => {
                   <td className="mono">{item.id}</td>
                   <td>
                     <div className="row" style={{ gap: 8 }}>
-                      {item.logo ? <img src={item.logo} alt={item.name} style={{ width: 28, height: 28, objectFit: 'contain' }} /> : null}
+                      {item.logo ? <img src={item.logo} alt={item.name} style={{ width: 28, height: 28, objectFit: 'contain' }} loading="lazy" decoding="async" /> : null}
                       <span>{item.name}</span>
                     </div>
                   </td>

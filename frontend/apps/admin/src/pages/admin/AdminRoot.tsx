@@ -13,7 +13,7 @@
  * <p>与商城入口的关系：**后端判定仍是唯一权威**（非运营一律 403）；
  * 这里只负责"入口级"的体验（非运营看到可读提示，而不是一屏 403）。
  */
-import { Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 import { AdminLoginPage } from './AdminLogin';
@@ -38,6 +38,7 @@ import { AdminShareReportsPage } from './ShareReports';
 const AdminShell: React.FC = () => {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   // 「返回商城」是**跨站点**跳转（不同主机名），必须用绝对地址；地址由部署时注入，默认本机 8088。
   const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
 
@@ -79,7 +80,13 @@ const AdminShell: React.FC = () => {
           </div>
         </div>
       </header>
-      <Outlet />
+      {/*
+        路由切换入场动画。★ 只包 <Outlet />：外层 container 里有 position:sticky 的顶栏，
+        一旦给外层加 transform，sticky 会退化成相对定位、顶栏跟着滚走。
+      */}
+      <div className="route-enter" key={location.pathname}>
+        <Outlet />
+      </div>
     </div>
   );
 };

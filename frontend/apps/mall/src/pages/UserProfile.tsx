@@ -76,7 +76,7 @@ export const UserProfilePage: React.FC = () => {
             }}
           >
             {data.avatar ? (
-              <img src={data.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={data.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" decoding="async" />
             ) : (
               <span style={{ fontSize: 26 }}>🐾</span>
             )}

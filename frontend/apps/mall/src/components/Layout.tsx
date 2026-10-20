@@ -402,7 +402,17 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       </header>
 
       <main className="app-main">
-        <div className="container">{children}</div>
+        {/*
+          路由切换入场动画（2026-10-19 动效统一）。
+          key 取 location.pathname：路径一变 React 就重挂这棵子树，CSS 动画随之重新播放。
+
+          ★ 动画只能挂在这一层（页面内容容器），绝不能挂到 .app-shell 或 <main> 上：
+            祖先元素只要带 transform，就会成为固定/粘性定位的包含块，
+            顶栏的 position:sticky 会退化成相对定位、整个头部跟着页面一起滚走。
+        */}
+        <div className="container route-enter" key={location.pathname}>
+          {children}
+        </div>
       </main>
 
       <footer

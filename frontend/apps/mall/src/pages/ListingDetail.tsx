@@ -67,7 +67,7 @@ export const ListingDetailPage: React.FC = () => {
       <div className="pd-layout">
         <div>
           <div className="pd-gallery-main">
-            {images[0] ? <img src={images[0]} alt={card.title} /> : null}
+            {images[0] ? <img src={images[0]} alt={card.title} loading="lazy" decoding="async" /> : null}
           </div>
           {images.length > 1 ? (
             <div className="row row-wrap" style={{ marginTop: 10 }}>
@@ -83,6 +83,8 @@ export const ListingDetailPage: React.FC = () => {
                     borderRadius: 10,
                     border: '1px solid var(--border)',
                   }}
+                  loading="lazy"
+                  decoding="async"
                 />
               ))}
             </div>

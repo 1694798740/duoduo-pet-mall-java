@@ -87,6 +87,8 @@ export const MyReviewsPage: React.FC = () => {
                     src={rv.productImage}
                     alt=""
                     style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6 }}
+                    loading="lazy"
+                    decoding="async"
                   />
                 ) : null}
                 <span className="small" style={{ minWidth: 0 }}>{rv.productTitle}</span>
@@ -102,6 +104,8 @@ export const MyReviewsPage: React.FC = () => {
                       src={url}
                       alt="评价图片"
                       style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6 }}
+                      loading="lazy"
+                      decoding="async"
                     />
                   ))}
                 </div>

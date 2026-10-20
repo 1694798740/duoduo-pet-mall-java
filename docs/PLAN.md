@@ -204,6 +204,47 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-20（四十一）· 三端动效与渲染性能统一
+
+**评估基线**（改造前实测）：2432 行样式表仅 14 处 transition / 6 处 keyframes；
+时长散落 0.15/0.16/0.18/0.2 四种；`.btn` 是 `transition: all`（每帧重排的反模式）；
+`prefers-reduced-motion` 全仓仅 1 处；27 个 `<img>` 仅 1 处 `loading="lazy"`。
+
+**改动清单**
+
+| 层 | 内容 | 文件 |
+| --- | --- | --- |
+| 令牌 | 时长 5 档 / 缓动 3 曲线 / 组合过渡 9 条（含 `--t-press`） | `packages/shared/src/styles.css` `:root` |
+| 替换 | 14 处裸 transition → 令牌；消灭 `transition: all` | 同上 |
+| 微交互 | 按压回弹（80ms）、纯色按钮按压压暗、卡片图片缓推、表格行过渡、`.card-hover`、`.route-enter`、`.stagger`（前 8 张错峰、封顶 224ms） | 同上 + 三端入口组件 |
+| 降级 | 全局 `prefers-reduced-motion` 收口：压到 0.01ms（非 `none`）+ 位移归零 | 同上 |
+| 渲染 | 25 处 img 补 `loading="lazy"`+`decoding="async"`（顶栏头像/详情主图保持 eager）；`.goods-card` `contain: layout style`；`will-change` 0 处；预留 `.virt-list` | 三端 + `shared/components/ui.tsx` |
+
+**两条硬约束（写进代码注释，违反即坏）**
+
+- `.route-enter` 只能包页面内容容器；包到带 `position: sticky` 顶栏的外层会让 sticky 退化。
+- 入场动画填充模式必须 `backwards`；`both` 会把 transform 钉死，`:hover` 从此失效。
+
+**体积 A/B（同构建、vite 口径）**：mall JS 233.68→234.37KB、CSS 32.57→35.88KB；
+admin 123.11→123.28KB；merchant 85.03→85.20KB。
+
+**回归与验证**
+
+- 新增 `scripts/e2e/motion-ui-check.mjs`（22 项）：令牌齐全 / 引用令牌 / 全站 `transition:all`=0 /
+  悬浮与图片缓推实测 / route-in 填充模式 backwards / 懒加载占比 / containment /
+  表格行过渡 / **reduced-motion 下时长 <5ms 且位移归零**。
+  反向验证：容器内把 `--dur-fast` 改 0.19s → 恰好 1 红 21 绿、总数不减。
+- 三端 tsc + build 全绿 → 镜像重建重启 healthy → 13 个受影响 e2e EXIT=0
+  （home / header / pagination-search / seckill 97 / seckill-price / product-detail /
+  my-listings / aftersale / review / seller / admin-charts / live-refresh / admin-entry 74）。
+- 静态守卫 13 项全绿；1440/1180/900 截图复核布局无破坏。
+- **与本轮无关的历史失败**（基线复现确认）：`share-circle`（删除后列表消失）、
+  `product-audit`（发布后无「正在等待平台审核」）→ 记入待查；`coupon` 缺夹具前置。
+
+**顺手修的历史遗留**：`admin-entry-ui-check.mjs` ① 仍点已删除的「查询」按钮、用旧占位符
+（上轮搜索统一后输入即搜）→ 已适配；② 夹具昵称固定导致同名账号越攒越多（搜索恒多行、
+ADMIN 恒超 2 个、并发不变式走不到）→ 昵称带跑批标记 + 启动自愈清理（清了 4 个遗留 ADMIN）。
+
 ### 2026-10-19（四十）· 秒杀添加商品功能修复（搜索污染根因 ＋ 移除手输 SKU ID ＋ 表单布局）
 
 **用户反馈**：首次用「犬」搜索商品可正常返回多个结果；选择其中一个作为秒杀商品后，再用「犬」搜索

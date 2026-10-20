@@ -163,7 +163,7 @@ export const MyListingsPage: React.FC = () => {
                   }}
                 >
                   {/* 与小程序一致：任何闲置都有图（无图时按 id 稳定取池图） */}
-                  <img src={listingImage(it.id, it.cover)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={listingImage(it.id, it.cover)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" decoding="async" />
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>

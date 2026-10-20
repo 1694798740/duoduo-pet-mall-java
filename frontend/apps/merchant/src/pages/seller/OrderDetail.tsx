@@ -204,6 +204,8 @@ export const SellerOrderDetailPage: React.FC = () => {
                       borderRadius: 8,
                       flex: '0 0 auto',
                     }}
+                    loading="lazy"
+                    decoding="async"
                   />
                 ) : null}
                 <div style={{ minWidth: 0, flex: 1 }}>

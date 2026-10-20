@@ -312,6 +312,8 @@ export const SellerProductsPage: React.FC = () => {
                             src={item.mainImage}
                             alt={item.title}
                             style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+                            loading="lazy"
+                            decoding="async"
                           />
                         ) : (
                           <span style={{ fontSize: 22 }}>🐾</span>

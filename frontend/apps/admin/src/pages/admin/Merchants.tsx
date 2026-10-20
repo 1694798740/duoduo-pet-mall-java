@@ -390,6 +390,8 @@ export const AdminMerchantsPage: React.FC = () => {
                           src={url}
                           alt={t.label}
                           style={{ width: 150, height: 100, objectFit: 'cover', border: '1px solid var(--border, #ddd)', borderRadius: 6 }}
+                          loading="lazy"
+                          decoding="async"
                         />
                       </a>
                     )

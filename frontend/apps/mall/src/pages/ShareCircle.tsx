@@ -199,6 +199,8 @@ export const ShareCirclePage: React.FC = () => {
                 <img
                   src={productImage(picked.id, picked.mainImage)}
                   alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover' }}
+                  loading="lazy"
+                  decoding="async"
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="small">{picked.title}</div>
@@ -230,6 +232,8 @@ export const ShareCirclePage: React.FC = () => {
                         <img
                           src={productImage(p.id, p.mainImage)}
                           alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'cover' }}
+                          loading="lazy"
+                          decoding="async"
                         />
                         <span className="small" style={{ flex: 1, minWidth: 0 }}>{p.title}</span>
                         <span className="price small">{formatPrice(p.minPrice)}</span>

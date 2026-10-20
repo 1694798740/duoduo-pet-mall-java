@@ -2059,6 +2059,71 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（四十一）· 三端动效与渲染性能统一（令牌化 + 微交互 + 降级守卫 + 懒加载）
+
+**需求**：对商店端 / 商家端 / 平台运营端做系统评估，统一规划过渡动画、微交互与渲染效果，
+给出并落地性能改进。
+
+**评估结论（改造前的实测基线）**
+
+- 全站共用一份 2432 行样式表，只有 14 处 `transition`、6 处 `@keyframes`；
+  时长散落着 `0.15s / 0.16s / 0.18s / 0.2s` 四种写法 —— 同一类交互在不同页面快慢不一；
+- **377 行是 `transition: all 0.15s`**（`.btn`）：`all` 会把 width/height/top 这类 layout 属性
+  也拖进过渡，浏览器每帧都要重排，无法走合成层，是「看起来卡」的头号元凶；
+- `prefers-reduced-motion` 全仓只有 **1 处**（只覆盖秒杀小红点）：系统开了「减少动态效果」的用户
+  要承受全站 99% 的动画；
+- 27 个 `<img>` 只有 1 处 `loading="lazy"`；商城端 246KB 单入口无路由分包。
+
+**落地（全部在 `packages/shared/src/styles.css` + 三端入口组件）**
+
+1. **动效令牌**：`--dur-instant/fast/base/slow/enter`（80/150/200/400/240ms 五档）、
+   `--ease-out/in-out/spring` 三条曲线、按「什么东西在变」划分的组合令牌
+   `--t-colors / --t-outline / --t-chip / --t-field / --t-lift / --t-button / --t-fade / --t-progress / --t-press`。
+   14 处裸 transition 全部改为令牌引用；**377 行的 `transition: all` 一并消灭**。
+2. **微交互原语**：按钮/图标按钮/分页/筛选 chip 的**按压回弹**（80ms，超了会觉得黏）；
+   纯色块按钮按压同步压暗（`filter: brightness`）；商品卡悬浮**图片缓推**；
+   表格行悬浮底色加过渡；新增 `.card-hover`（首页分类卡用上，原先点了没有任何反馈）；
+   **路由切换入场**（`.route-enter`，三端都接）与**列表错峰入场**（`.stagger`，商品/闲置网格用上，
+   前 8 张每张差 28ms、第 9 张起封顶 224ms —— 不封顶的话 40 条列表最后一张要等 1.2s）。
+3. **两个必须写下来的坑**：
+   - `.route-enter` 只能包页面内容，**不能包 `.app-shell` 或带 sticky 顶栏的容器** ——
+     祖先一旦有 transform，`position: sticky` 退化成相对定位，顶栏跟着滚走；
+   - 入场动画填充模式必须 `backwards` 不能 `both`：`both` 会在动画结束后继续以 100% 关键帧
+     参与层叠，把 transform 永久钉死，元素此后的 `:hover` 位移全部失效。
+4. **降级守卫**：全局 `@media (prefers-reduced-motion: reduce)` 收口 —— 动画/过渡压到 0.01ms
+   （不是 `none`：`none` 会让依赖 `animationend` 的逻辑收不到事件），并把位移类显式归零。
+5. **渲染性能**：25 处 `<img>` 补 `loading="lazy"` + `decoding="async"`（顶栏头像与详情页主图
+   保持 eager）；商品卡加 `contain: layout style`（刻意不用 `contain: paint` —— 部分浏览器会连
+   自身 box-shadow 一起裁掉）；`will-change` 全文 0 处（常驻提层的显存开销比收益大）；
+   长列表预留 `.virt-list`（`content-visibility: auto` + 占位高度）。
+6. **体积 A/B（同一套构建，vite 口径）**：mall JS 233.68 → 234.37 KB、CSS 32.57 → 35.88 KB；
+   admin JS 123.11 → 123.28 KB；merchant JS 85.03 → 85.20 KB。CSS +3.3KB 是令牌与原语的代价，
+   JS 只 +0.2~0.7KB。
+
+**新增永久回归 `scripts/e2e/motion-ui-check.mjs`（22 项断言，反向验证过）**
+
+把「手感」钉成计算样式断言：17 个令牌齐全、按钮/输入框/商品卡引用令牌、
+**全站 `transition: all` 数量为 0**、悬浮抬升与图片缓推真的发生、路由入场填充模式是 backwards、
+图片懒加载占比、卡片 containment、**减少动态效果下过渡时长 < 5ms 且悬浮位移被归零**。
+反向验证：故意把容器里 `--dur-fast` 改成 0.19s → 恰好「时长档位」1 项红、其余 21 项绿、总数不减。
+
+**顺手修的两个历史遗留（与本轮无关，但在跑回归时暴露）**
+
+- `admin-entry-ui-check.mjs` 挂在「运营账号」搜索：上一轮全站搜索统一后占位符已改成
+  「搜手机号或昵称」且**没有「查询」按钮**（输入即搜 + 350ms 防抖），脚本还在点旧按钮 → 已适配；
+- 同一脚本的夹具昵称是固定字符串，每跑一次就多一批同名账号：搜索结果恒多行、
+  ADMIN 越攒越多导致「并发前恰有 2 名 ADMIN」恒不成立、`最后一个 ADMIN 不可降级` 分支走不到。
+  改为昵称带跑批唯一标记 + 启动时自愈清理历史遗留的「账号管理-管理员」夹具（本次清了 4 个）。
+
+**回归**：三端 `tsc` + `vite build` 全绿 → 三端镜像重建并重启 healthy →
+`motion-ui-check` 22/0、`home` / `header-layout` / `pagination-search` / `seckill(97)` /
+`seckill-price` / `product-detail` / `my-listings` / `aftersale` / `review` / `seller` /
+`admin-charts` / `live-refresh` / `admin-entry(74)` 全部 EXIT=0 → 静态守卫 13 项全绿 →
+1440/1180/900 三视口截图复核布局无破坏。
+两个与本轮无关的历史失败（基线复现确认）：`share-circle`（删除后列表消失）、
+`product-audit`（发布后未出现「正在等待平台审核」）—— 已记录待查；`coupon` 缺夹具前置
+（需先跑 `coupon-ui-fixture.ps1 -Action create`）。
+
 ### 2026-10-19（四十）· 秒杀价规则（必须低于原价、且大于 0.01 元）＋ 修掉一处双重换算
 
 **需求**：秒杀价必须**严格低于**该商品原售价（原价 159 元时不得 ≥159），且必须**大于 0.01 元**；

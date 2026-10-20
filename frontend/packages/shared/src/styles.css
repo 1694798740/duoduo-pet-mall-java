@@ -29,6 +29,45 @@
   --shadow-lg: 0 16px 48px rgba(16, 20, 32, 0.14);
   --header-h: 64px;
   --max-w: 1200px;
+
+  /* ---------- 动效令牌（2026-10-19 统一） ----------
+     纪律一：全站 transition / animation 只准引用本组令牌，不要再写裸时长、裸缓动。
+        —— 散落的 0.15s/0.16s/0.18s/0.2s 会让同一类交互（悬浮、聚焦、入场）在不同页面快慢不一。
+     纪律二：禁止 `transition: all`。
+        —— `all` 会把 width/height/top 等 layout 属性也拖进过渡，浏览器每帧都要重排，
+           无法走合成层，是"看起来卡"的头号元凶。要变什么就列什么。
+     纪律三：只过渡 transform / opacity / color / box-shadow / border-color。
+        —— 前两个走合成层（不触发重排重绘），后面几个是纯绘制属性，代价可控。 */
+
+  /* 时长：四档够用，不要再加第五档 */
+  --dur-instant: 0.08s; /* 按压回弹，必须"跟手"，超过 100ms 就会觉得黏 */
+  --dur-fast: 0.15s; /* 颜色 / 边框 / 阴影：轻量，不打断操作节奏 */
+  --dur-base: 0.2s; /* transform 位移与抬升：可感知但不拖沓 */
+  --dur-slow: 0.4s; /* 进度条填充、大面积展开：需要被眼睛跟上的慢过程 */
+  --dur-enter: 0.24s; /* 入场动画（弹窗 / Toast / 路由 / 列表） */
+
+  /* 缓动：两条曲线打天下 */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1); /* 默认：快出慢收，最像"被推了一下" */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); /* 对称：用于来回切换（展开/收起） */
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1); /* 轻微过冲：仅用于入场与抬升，做"活"感 */
+
+  /* 组合令牌：按"什么东西在变"划分，不按组件划分，避免每个组件各写一套 */
+  --t-colors: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  --t-outline: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+  --t-chip: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+  --t-field: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+  --t-lift: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+  --t-button: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
+  --t-fade: opacity var(--dur-fast) var(--ease-out);
+  --t-progress: width var(--dur-slow) var(--ease-out);
+  /* 按压反馈单独成条：只有它需要「跟手」的极短时长 */
+  --t-press: transform var(--dur-instant) var(--ease-out);
 }
 
 * {
@@ -163,7 +202,7 @@ h4 {
   font-weight: 500;
   white-space: nowrap;
   flex: none;
-  transition: background 0.15s, color 0.15s;
+  transition: var(--t-colors);
 }
 .nav-link:hover {
   background: var(--surface-2);
@@ -223,7 +262,7 @@ h4 {
      （表现为按钮里出现「平台运／营」这种两行错位）。
      与小程序端「按钮文字禁止折行」是同一条纪律，Web 侧同样必须显式声明。 */
   flex: none;
-  transition: border-color 0.15s, color 0.15s;
+  transition: var(--t-outline), var(--t-press);
 }
 .icon-btn:hover {
   border-color: var(--brand);
@@ -374,7 +413,7 @@ h4 {
   background: var(--surface);
   color: var(--text);
   font-weight: 500;
-  transition: all 0.15s;
+  transition: var(--t-button);
   white-space: nowrap;
 }
 .btn:disabled {
@@ -508,7 +547,7 @@ h4 {
   border: 1px solid var(--border);
   background: var(--surface);
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: var(--t-field);
 }
 .textarea {
   height: auto;
@@ -585,7 +624,7 @@ h4 {
 button.tag {
   cursor: pointer;
   font-family: inherit;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: var(--t-chip), var(--t-press);
 }
 button.tag:hover:not(:disabled) {
   border-color: var(--brand);
@@ -665,7 +704,7 @@ button.link:hover {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  transition: var(--t-lift);
 }
 .goods-card:hover {
   transform: translateY(-3px);
@@ -921,7 +960,7 @@ button.link:hover {
   color: #fff;
   font-size: 13px;
   box-shadow: var(--shadow-lg);
-  animation: toast-in 0.2s ease;
+  animation: toast-in var(--dur-enter) var(--ease-spring);
 }
 .toast-success {
   background: #10894c;
@@ -945,7 +984,7 @@ button.link:hover {
   place-items: center;
   z-index: 150;
   padding: 20px;
-  animation: fade-in 0.15s ease;
+  animation: fade-in var(--dur-fast) var(--ease-out);
 }
 @keyframes fade-in {
   from {
@@ -960,7 +999,7 @@ button.link:hover {
   background: var(--surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  animation: modal-in 0.2s ease;
+  animation: modal-in var(--dur-enter) var(--ease-out);
 }
 
 /* 宽弹窗：字段多的表单（如秒杀「新建活动」）用 520px 会把输入框挤成锯齿、
@@ -1482,7 +1521,7 @@ button.link:hover {
   color: var(--text-2);
   font-size: 13px;
   line-height: 1;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: var(--t-chip), var(--t-press);
 }
 
 .page-btn:hover:not(:disabled):not(.is-active) {
@@ -1532,7 +1571,7 @@ button.link:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: var(--t-field);
 }
 
 .search-bar:focus-within {
@@ -1637,7 +1676,7 @@ button.link:hover {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #ff9f6b 0%, #ff7a45 100%);
-  transition: width 0.4s ease;
+  transition: var(--t-progress);
 }
 
 .sk-remain-sm .sk-remain-num {
@@ -1688,7 +1727,7 @@ button.link:hover {
   /* 筛选 chip 是按钮：必须看起来能点，且文字不被压扁 */
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: var(--t-chip), var(--t-press);
 }
 
 .seckill-filter:hover {
@@ -2000,7 +2039,7 @@ button.link:hover {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #ff8a5b 0%, #e11d2e 100%);
-  transition: width 0.4s ease;
+  transition: var(--t-progress);
 }
 .sk-progress-text {
   font-size: 11px;
@@ -2052,7 +2091,7 @@ button.link:hover {
   border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--border);
-  transition: transform 0.16s, box-shadow 0.16s, border-color 0.16s;
+  transition: var(--t-lift);
 }
 .daily-seckill-card:hover {
   transform: translateY(-2px);
@@ -2196,7 +2235,7 @@ button.link:hover {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: var(--t-chip), var(--t-press);
 }
 .img-uploader-add:hover:not(:disabled) {
   border-color: var(--brand);
@@ -2260,7 +2299,7 @@ button.link:hover {
   color: #fff;
   font-size: 12px;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: var(--t-fade);
 }
 .img-uploader-item-btn:hover:not(:disabled) .img-uploader-edit,
 .img-uploader-item-btn:focus-visible .img-uploader-edit {
@@ -2429,4 +2468,155 @@ button.link:hover {
 
 .sk-picker-back {
   margin-bottom: 8px;
+}
+
+/* ============================================================
+   动效：微交互原语 / 渲染性能 / 降级守卫
+   2026-10-19 统一规划。三端（商城 / 商家 / 平台运营）共用这一份样式表，
+   所以动效只在这里定义一次，任何页面都不许再自己写 transition 时长。
+   ============================================================ */
+
+/* ---------- 焦点可见环 ----------
+   键盘可达性的最低要求。输入框/下拉/多行文本不在此列：它们已有 :focus 的
+   3px 品牌色光晕（见 .input:focus），再叠一圈 outline 会变成双环。 */
+:where(a, button, [role='button'], [tabindex]):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* ---------- 按压反馈 ----------
+   为什么要有：悬浮态解决"能不能点"，按压态解决"点了没有"。缺了后者，
+   点击会像打在棉花上，这是"交互生硬"最常被感知到的一处。
+   时长用 --dur-instant（80ms）：超过 100ms 手指已经抬起、动画还没走完，
+   反而变成拖影。 */
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.page-btn:active:not(:disabled),
+button.tag:active:not(:disabled),
+.seckill-filter:active,
+.img-uploader-add:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* 纯色块按钮（品牌色/危险色/支付）只靠缩放没有"被按下去"的手感，
+   同步压一点亮度。filter 只作用于该按钮自身的小面积，代价可忽略。 */
+.btn-primary:active:not(:disabled),
+.btn-accent:active:not(:disabled),
+.btn-danger:active:not(:disabled),
+.btn-danger-solid:active:not(:disabled),
+.btn-pay:active:not(:disabled) {
+  filter: brightness(0.93);
+}
+
+/* ---------- 卡片悬浮：抬升 + 图片缓推 ----------
+   .card-hover 是给通用 .card 的可选增强类（默认 .card 不带位移，
+   因为统计卡/表单卡动了会显得整页在飘）。 */
+.card-hover {
+  transition: var(--t-lift);
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: var(--border-strong);
+}
+.goods-media img {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.goods-card:hover .goods-media img,
+.daily-seckill-card:hover .goods-media img {
+  transform: scale(1.04);
+}
+
+/* ---------- 表格行悬浮 ----------
+   原来只有 :hover 变色没有过渡，鼠标扫过列表时是一排硬切的色块。 */
+.table tbody tr {
+  transition: var(--t-colors);
+}
+
+/* ---------- 入场：路由切换 / 列表错峰 ----------
+   关键坑：填充模式必须用 backwards，不能用 both。
+   `both` 会在动画结束后继续以 100% 关键帧的值参与层叠，而 100% 是从元素
+   自身计算值合成的 —— 结果就是把 transform 永久钉死，元素此后的 :hover
+   位移全部失效。backwards 只在延迟期间生效，动画结束即交还控制权。 */
+.route-enter {
+  animation: route-in var(--dur-enter) var(--ease-out) backwards;
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.stagger > * {
+  animation: list-in var(--dur-enter) var(--ease-out) backwards;
+}
+/* 错峰只对前 8 项递增，第 9 项起统一封顶：
+   否则 40 条的列表最后一条要等到 1.2s 才出现，看起来像加载失败。 */
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 28ms; }
+.stagger > *:nth-child(3) { animation-delay: 56ms; }
+.stagger > *:nth-child(4) { animation-delay: 84ms; }
+.stagger > *:nth-child(5) { animation-delay: 112ms; }
+.stagger > *:nth-child(6) { animation-delay: 140ms; }
+.stagger > *:nth-child(7) { animation-delay: 168ms; }
+.stagger > *:nth-child(8) { animation-delay: 196ms; }
+.stagger > *:nth-child(n + 9) { animation-delay: 224ms; }
+@keyframes list-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* ---------- 渲染性能 ----------
+   1) 卡片做 layout/style  containment：网格里几十张卡时，某张卡内部高度变化
+      不会把整页拖进重排。这里刻意不写 contain: paint —— 部分浏览器会连元素
+      自身的 box-shadow 一起裁掉，悬浮阴影会消失。
+   2) will-change 不常驻：常驻会让浏览器为大量元素提前建合成层，显存与层树
+      开销反而拖慢首屏。悬浮/入场这种短动画由浏览器自行按需提层即可，
+      本文件因此一条 will-change 都不写。 */
+.goods-card,
+.daily-seckill-card {
+  contain: layout style;
+}
+
+/* 长列表虚拟化（需要时给容器加 .virt-list）：
+   视口外的子项跳过布局与绘制，滚动到附近才计算。
+   必须配 contain-intrinsic-size 给占位高度，否则滚动条长度会随滚动不断跳变。
+   注意：表格行（<tr>）不能套用，表格布局依赖整表计算，会导致列宽错乱。 */
+.virt-list > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+/* ---------- 降级守卫 ----------
+   前庭功能敏感人群在系统里开了「减少动态效果」。原来的实现只覆盖了
+   .sk-tag-dot 一个类，等于全站 99% 的动画对这类用户照旧播放。
+   这里做全局收口：把所有动画和过渡压到 0.01ms（不是 none —— none 会让
+   依赖 animationend 的逻辑收不到事件，压到极短时长更稳），
+   并把"位移类"显式归零，只保留颜色/透明度的即时切换。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .goods-card:hover,
+  .daily-seckill-card:hover,
+  .card-hover:hover,
+  .goods-card:hover .goods-media img,
+  .daily-seckill-card:hover .goods-media img,
+  .btn:active:not(:disabled),
+  .icon-btn:active:not(:disabled),
+  .page-btn:active:not(:disabled),
+  button.tag:active:not(:disabled),
+  .seckill-filter:active,
+  .img-uploader-add:active:not(:disabled) {
+    transform: none;
+  }
 }

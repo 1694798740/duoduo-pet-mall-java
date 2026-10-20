@@ -81,6 +81,7 @@ export const DailySeckill: React.FC = () => {
                 src={skuImage(sku.skuId, sku.spuId, sku.image)}
                 alt={sku.spuTitle}
                 loading="lazy"
+                decoding="async"
               />
               <SeckillTag phase={activity.phase} />
             </div>

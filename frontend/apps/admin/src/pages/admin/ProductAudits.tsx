@@ -215,6 +215,8 @@ export const AdminProductAuditsPage: React.FC = () => {
                         width: 92, height: 92, objectFit: 'cover',
                         borderRadius: 8, border: '1px solid var(--border, #e5e7eb)', flex: 'none',
                       }}
+                      loading="lazy"
+                      decoding="async"
                     />
                   ) : (
                     <div

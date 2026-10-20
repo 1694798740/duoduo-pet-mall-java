@@ -199,6 +199,8 @@ export const SeckillPage: React.FC = () => {
                           src={skuImage(sku.skuId, sku.spuId ?? sku.skuId, sku.image)}
                           alt={sku.spuTitle}
                           className="seckill-img"
+                          loading="lazy"
+                          decoding="async"
                         />
                       )}
                       <div className="seckill-info">

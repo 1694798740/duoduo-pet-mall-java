@@ -10,7 +10,7 @@
  *
  * <p>页面之间的跳转：商家各页内部用的是站内链接（`/seller/...`），在本商家应用内依然成立。
  */
-import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { MerchantLoginPage } from './MerchantLogin';
@@ -57,6 +57,7 @@ const BackToMall: React.FC = () => {
 const MerchantShell: React.FC = () => {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -118,7 +119,13 @@ const MerchantShell: React.FC = () => {
         ))}
       </nav>
 
-      <Outlet />
+      {/*
+        路由切换入场动画。★ 只包 <Outlet />：外层 container 里有 position:sticky 的顶栏，
+        一旦给外层加 transform，sticky 会退化成相对定位、顶栏跟着滚走。
+      */}
+      <div className="route-enter" key={location.pathname}>
+        <Outlet />
+      </div>
     </div>
   );
 };
