@@ -15,8 +15,12 @@
  *   5) 所有失败文案都提到"省 / 市 / 区"（兜底必须指向手动选择）；
  *   6) wx.choosePoi 的三条硬约束：已声明、type=1/type=2 分开处理、
  *      且**没有拿它替换掉地图选点**（POI 选不到门牌号）；
- *   7) wx.chooseMedia（售后凭证选图）也已声明 —— 它同属隐私接口，
- *      漏声明时定位类功能正常、唯独上传图片真机失败，最容易被忽略。
+ *   7) requiredPrivateInfos 里**不能出现合法枚举之外的值** ——
+ *      该字段只接受 8 个位置类枚举（见下方 REQUIRED_PRIVATE_ENUM）；
+ *      wx.chooseMedia 这类"媒体/相册"隐私接口**不走这个字段**，
+ *      它的合规出口是后台《用户隐私保护指引》里声明对应信息类型。
+ *      误写进去不会报"无效值"警告，而是**整个模拟器启动失败**
+ *      （2026-10-20 实测：chooseMedia 写进去 → requiredPrivateInfos[3] 字段需为…）。
  *
  * 用法：node scripts/check-miniprogram-location.mjs
  * 退出码：0 全过；1 有失败。
@@ -49,8 +53,20 @@ check('app.json 声明了 requiredPrivateInfos', Array.isArray(appJson.requiredP
 check('声明包含 getLocation（定位当前地址）', declared.includes('getLocation'), declared);
 check('声明包含 chooseLocation（地图选点）', declared.includes('chooseLocation'), declared);
 check('声明包含 choosePoi（附近位置快选）', declared.includes('choosePoi'), declared);
-// 售后凭证上传用 wx.chooseMedia 选图，同样属隐私接口（相册/摄像头），漏声明真机直接失败
-check('声明包含 chooseMedia（售后凭证选图）', declared.includes('chooseMedia'), declared);
+// requiredPrivateInfos 的合法值只有这 8 个（来源：开发者工具启动报错给出的枚举，
+// 与官方文档一致）。写进任何其它值 —— 哪怕它确实是隐私接口 —— 都会让模拟器
+// 直接启动失败，而不是给一条温和的警告。
+const REQUIRED_PRIVATE_ENUM = [
+  'chooseAddress', 'chooseLocation', 'choosePoi', 'getFuzzyLocation',
+  'getLocation', 'onLocationChange', 'startLocationUpdate', 'startLocationUpdateBackground',
+];
+const illegal = declared.filter((x) => !REQUIRED_PRIVATE_ENUM.includes(x));
+check('requiredPrivateInfos 不含枚举之外的值（否则模拟器启动失败）',
+  illegal.length === 0, JSON.stringify(illegal));
+// chooseMedia 的合规出口在后台《用户隐私保护指引》声明「摄像头、选中的照片或视频信息」，
+// 绝不写进 requiredPrivateInfos —— 双保险：显式断言它不在里面。
+check('chooseMedia 未被误写入 requiredPrivateInfos（其合规走隐私指引）',
+  !declared.includes('chooseMedia'), declared);
 // ★ 微信 app.json 的键名本身就带点：permission["scope.userLocation"]，不是嵌套对象
 const desc = appJson.permission?.['scope.userLocation']?.desc ?? '';
 check('permission.scope.userLocation.desc 已填写（授权弹窗展示用）', desc.trim().length >= 8, desc);

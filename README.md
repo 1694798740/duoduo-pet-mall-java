@@ -2099,11 +2099,23 @@ type 分支区分、type=1 不反查、失败走统一收口、未替换地图�
 choosePoi 的 errMsg 分类）。反向验证：把 `res.type === 2` 改成 `=== 1`，
 守卫恰好 **1 红 31 绿**，恢复后 32/0 —— 证明断言会红。
 
-**同轮补漏（2026-10-20 20:00）**：排查隐私指引时发现售后凭证上传用的
-`wx.chooseMedia` 同样属隐私接口（相册 / 摄像头），此前漏声明 ——
-**这类漏项的狡猾之处在于定位功能全部正常，唯独上传图片在真机失败**。
-已补 `requiredPrivateInfos` 声明与守卫断言，守卫 32 → **34/0**；
-反向验证（合法 JSON 移除该声明）恰好 **1 红 33 绿**，恢复后 34/0。
+**⚠️ 20:00 那条"补漏"是误判，21:00 已回滚并订正（2026-10-20 23:55）**
+
+当时把 `chooseMedia` 写进了 `requiredPrivateInfos`，结果**模拟器直接启动失败**
+（`requiredPrivateInfos[3] 字段需为 chooseAddress,chooseLocation,choosePoi,
+getFuzzyLocation,getLocation,onLocationChange,startLocationUpdate,
+startLocationUpdateBackground`）。事实是：
+
+- `requiredPrivateInfos` **只接受 8 个位置类枚举**，`chooseMedia` 虽是隐私接口
+  （相册/摄像头），但**不走这个字段**；
+- 它的合规出口是后台《用户隐私保护指引》里声明「摄像头、选中的照片或视频信息」
+  —— 这一步已做（见 20:37 的指引终稿），所以**售后上传的合规是齐的，无需再动**。
+
+处理：从 `requiredPrivateInfos` 移除 `chooseMedia`；守卫改为**负向断言**
+（枚举之外不得出现任何值 + 显式断言 chooseMedia 不在里面），35 项 0 失败；
+反向验证（把 chooseMedia 加回去）恰好 **2 红 33 绿**，恢复后 35/0。
+这条教训已入铁律：**字段枚举以报错信息/官方文档为准，"它也是隐私接口"推不出
+"它也走这个字段"。**
 
 ### 2026-10-20（五十）· 修复：小程序定位与地图选点双双失败（隐私接口未声明）
 

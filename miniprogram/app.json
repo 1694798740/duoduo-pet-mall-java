@@ -47,8 +47,7 @@
   "requiredPrivateInfos": [
     "getLocation",
     "chooseLocation",
-    "choosePoi",
-    "chooseMedia"
+    "choosePoi"
   ],
   "usingComponents": {
     "nav-bar": "/components/nav-bar/nav-bar",
