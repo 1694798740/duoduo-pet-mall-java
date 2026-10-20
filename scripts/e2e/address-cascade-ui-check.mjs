@@ -188,10 +188,23 @@ check('弹窗里有「定位当前地址」按钮',
 await page.getByRole('button', { name: /定位当前地址|定位中/ }).click();
 await page.waitForTimeout(1500);
 const afterLocate = await textNow();
-const geoNotConfigured = /地图服务尚未配置/.test(afterLocate);
-const geoDenied = /定位权限被拒绝|定位失败|定位超时/.test(afterLocate);
-check('★ 定位后给出明确提示（未配置 Key 说"尚未配置"，不是笼统报错）',
-  geoNotConfigured || geoDenied, afterLocate.slice(0, 300));
+// 有两种合法结果，二者都算通过（取决于服务端是否配了 Web 服务 Key）：
+//   ① 已配置 → 用伪造的杭州坐标应真回填「浙江省 / 杭州市 / 某区」；
+//   ② 未配置 → 必须给出明确降级提示，而不是笼统报错。
+const locateFilled = (await selProvince().inputValue()) === '浙江省'
+  && (await selCity().inputValue()) === '杭州市'
+  && (await selDistrict().inputValue()) !== '';
+const locateDegraded = /地图服务尚未配置|定位权限被拒绝|定位失败|定位超时|定位服务调用失败/.test(afterLocate);
+check('★ 定位后要么真回填（杭州坐标 → 浙江省/杭州市/某区），要么给明确降级提示',
+  locateFilled || locateDegraded,
+  { locateFilled, locateDegraded, province: await selProvince().inputValue(), city: await selCity().inputValue(), district: await selDistrict().inputValue() });
+// 这条只在「服务端确实配了 Web 服务 Key」时才要求真回填 —— 否则会在没有 .env 的
+// 环境（CI / 别人 clone）里无条件变红，属于把环境差异当成功能缺陷。
+const probe = await call('GET', '/api/geo/regeo?lng=120.1551&lat=30.2741', undefined, jar);
+const geoConfigured = Boolean(probe?.data?.configured);
+check('★ 服务端已配 Key 时必须真回填（不是只弹提示）；未配置则跳过该要求',
+  geoConfigured ? locateFilled : true,
+  { geoConfigured, locateFilled, text: afterLocate.slice(0, 200) });
 check('★ 定位失败/未配置时表单仍可继续填（省市区下拉未被禁用）',
   !(await selProvince().isDisabled()), await selProvince().isDisabled());
 

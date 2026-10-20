@@ -215,6 +215,17 @@
 | 测试 | 新增 `address-cascade-ui-check` 22 项（含**懒加载**与**换省清空**断言）；`address-ui-check` 改 `selectOption` 逐级填，65 项；反向验证无效 Key → 200 + 字段 null；未登录 → 401 |
 | 回归 | header-layout 109 / home 9 全绿；首屏 JS 235.4→239.3KB |
 
+### 2026-10-20（四十六）· 高德双 Key 落位（Web 服务 / 微信小程序）
+
+| 项 | 实现 |
+| --- | --- |
+| 服务端 | `AMAP_WEB_KEY`（Web 服务类型）→ `.env` → compose → `duoduo.geo.amap-key`；仅 `GeoController` 使用，网页端「定位当前地址」生效 |
+| 小程序 | `AMAP_MINI_KEY`（小程序类型）→ `scripts/miniprogram-amap-key.mjs` 生成 `miniprogram/config/amap.js`（gitignored）→ `libs/amap-wx.js`（官方 SDK 1.2.0）→ `pages/address` 逆地理 |
+| 不混用 | 实测：Web Key + REST = 200；**Mini Key 裸调 REST = `USERKEY_PLAT_NOMATCH`(10009)**；Mini Key + SDK 平台参数 = 200 |
+| 不硬编码 | 两个 Key 都只在 `.env`；代码无字面量；仓库只提交 `config/amap.example.js`；`--check` 模式可校验配置与 `.env` 一致 |
+| 降级 | 小程序 SDK 失败（域名未加白名单等）自动回落 `GET /api/geo/regeo`（后端 Web Key），定位不中断 |
+| 待你操作 | 微信公众平台 → 服务器域名 → request 合法域名 加 `https://restapi.amap.com` |
+
 ### 2026-10-20（四十四）· 修复：头像面板缩放动画从未生效
 
 | 项 | 实现 |

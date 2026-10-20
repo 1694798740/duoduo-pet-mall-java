@@ -2091,6 +2091,35 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
   未登录访问 `/api/geo/regeo` → 401（确认未进白名单）。
 - 体积：首屏 JS 235.4→239.3KB；区划 chunk 73.4KB / gzip 26.5KB（按需）。
 
+**高德 Key 配置（2026-10-20 补齐，两个 Key 类型不同、不可互换）**
+
+| Key | 类型（高德控制台） | 落在哪 | 生效范围 | 谁在用 |
+| --- | --- | --- | --- | --- |
+| `AMAP_WEB_KEY` | **Web 服务** | 仓库根 `.env` → docker-compose → 用户服务环境变量 → `duoduo.geo.amap-key` | **服务端** REST 逆地理（`GET /api/geo/regeo`），即**网页端**「定位当前地址」 | `GeoController` |
+| `AMAP_MINI_KEY` | **微信小程序** | `.env` → `scripts/miniprogram-amap-key.mjs` 生成 `miniprogram/config/amap.js`（**该文件不进 Git**） | **小程序端**官方 SDK（`libs/amap-wx.js`）调用逆地理 | `pages/address` |
+
+**为什么不能混用（实测证据，不是推测）**
+
+- Web 服务 Key ↔ REST：`status=1`，返回 浙江省/杭州市/拱墅区 ✅
+- **小程序 Key ↔ 裸调 REST**：`status=0`、`info=USERKEY_PLAT_NOMATCH`、`infocode=10009` ❌
+  （高德按平台校验 Key，SDK 会自动带 `s=rsx / platform=WXJS / sdkversion / logversion` 才放行）
+- 小程序 Key + SDK 标识参数 ↔ REST：`status=1` ✅
+
+**避免硬编码暴露的三条约定**
+
+1. Web 服务 Key **只出现在 `.env`**（gitignored），前端包与小程序包里都没有；
+   `GeoController` 从环境变量读取，代码里没有字面量。
+2. 小程序 Key **不写进业务代码**：真值只在 `.env`，由
+   `node scripts/miniprogram-amap-key.mjs` 生成到 `miniprogram/config/amap.js`（gitignored），
+   仓库里只有 `config/amap.example.js` 模板。换 Key 改 `.env` 再跑一次脚本即可。
+   注意：小程序包（`.wxapkg`）可被解包，**Key 必然随包下发**——这一层靠高德控制台的
+   「微信小程序」绑定 AppID 限制来源，不能靠"藏"。
+3. 小程序端优先用 SDK（小程序 Key），**失败自动回落**后端代理（Web 服务 Key）——
+   即使忘了在微信公众平台把 `https://restapi.amap.com` 加入 request 合法域名，定位仍可用。
+
+**小程序端需要你在微信公众平台做的一件事**：开发管理 → 服务器域名 → request 合法域名
+加入 `https://restapi.amap.com`（否则 SDK 那条通道会被拦，自动回落后端）。
+
 ### 2026-10-20（四十四）· 修复：头像面板缩放动画从未生效（条件渲染导致无起始样式）
 
 **用户反馈**：鼠标移到头像上，面板瞬间就是完整大小，没有从小到大的缩放过渡。

@@ -15,6 +15,31 @@
 //    定位失败/被拒绝时**不阻断**，用户仍可用下拉手选。
 //  * 字段与后端 AddressUpsertRequest 一一对应，不新增任何地址端点。
 const api = require('../../utils/api');
+const amapConfig = require('../../config/amap');
+
+/**
+ * 高德小程序 SDK 懒初始化。
+ *
+ * ★ 只在 Key 有值时才 require SDK 并建实例：
+ *   · 没配 Key（例如别人 clone 后没跑生成脚本）→ 直接走后端代理，不报错；
+ *   · SDK 加载失败（文件缺失/被裁剪）→ 同样回退后端，不让定位整条挂掉。
+ */
+let amapClient = null;
+let amapBroken = false;
+function getAmapClient() {
+  if (amapBroken) return null;
+  const key = (amapConfig && amapConfig.key) || '';
+  if (!key) return null;
+  if (amapClient) return amapClient;
+  try {
+    const AMapWX = require('../../libs/amap-wx').AMapWX;
+    amapClient = new AMapWX({ key });
+    return amapClient;
+  } catch (e) {
+    amapBroken = true;
+    return null;
+  }
+}
 
 const PHONE_REGEX = /^1[3-9]\d{9}$/;
 const LABELS = ['家', '公司', '学校', '父母家'];
@@ -146,10 +171,13 @@ Page({
   /**
    * 定位并回填（A1）。
    *
-   * 失败路径必须都能继续填表：
-   *  · 用户拒绝授权 → 引导去设置页开权限，或直接用下拉；
-   *  · 服务端未配置地图 Key → 明确告知「尚未配置」，不要说成定位坏了；
-   *  · 省市区没匹配上 → 只回填详细地址，其余仍由用户选。
+   * 两条通道，各用各的 Key：
+   *   ① **小程序 SDK + 小程序 Key**（优先）：SDK 会带平台标识参数，才能通过
+   *      高德对「微信小程序」类型 Key 的平台校验；同时也顺带拿到街道门牌。
+   *   ② **后端代理 + Web 服务 Key**（兜底）：SDK 不可用、或小程序后台没配
+   *      `restapi.amap.com` 合法域名时走这条 —— 功能不因此中断。
+   *
+   * 失败路径一律给"可继续填表"的出口：拒绝授权、定位超时、Key 未配置、解析失败。
    */
   locate() {
     if (this.data.locating) return;
@@ -157,32 +185,39 @@ Page({
     wx.getLocation({
       type: 'gcj02',
       success: (pos) => {
-        api.address
-          .regeo(pos.longitude, pos.latitude)
-          .then((geo) => {
-            this.setData({ locating: false });
-            if (!geo || geo.configured === false) {
-              this.setData({ locateHint: '地图服务尚未配置，请手动选择省市区' });
-              return;
-            }
-            const region = [geo.province || '', geo.city || geo.province || '', geo.district || ''];
-            this.setData({
-              region,
-              'form.province': region[0],
-              'form.city': region[1],
-              'form.district': region[2],
-              'form.detail': geo.detail || this.data.form.detail,
-              locateHint: region[0]
-                ? '已按定位填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号'
-                : '已定位，但没有匹配到可选的省市区，请手动选择',
+        const lng = pos.longitude;
+        const lat = pos.latitude;
+        const client = getAmapClient();
+        if (!client) {
+          this.regeoViaBackend(lng, lat);
+          return;
+        }
+        client.getRegeo({
+          location: lng + ',' + lat,
+          success: (data) => {
+            // ★ SDK 1.2.0 的返回结构是 [{ name, regeocodeData }]：
+            //   name 是拼好的整段地址，结构化字段在 regeocodeData 里（不是 regeocode）。
+            //   另注：SDK 内部把 province 写成了 provice（官方历史拼写错误），
+            //   所以我们自己从 addressComponent.province 取，不依赖它的拼串。
+            const item = (data && data[0]) || {};
+            const ac = (item.regeocodeData && item.regeocodeData.addressComponent) || {};
+            const sn = ac.streetNumber || {};
+            const roads = (item.regeocodeData && item.regeocodeData.roads) || [];
+            const detail =
+              ((sn.street || '') + (sn.number || '')).trim()
+              || (roads[0] && roads[0].name ? roads[0].name + '附近' : '')
+              || '';
+            this.applyGeo({
+              configured: true,
+              province: ac.province || '',
+              city: ac.city || '',
+              district: ac.district || '',
+              detail,
             });
-          })
-          .catch((err) => {
-            this.setData({
-              locating: false,
-              locateHint: (err && err.message) || '定位服务调用失败，请手动选择省市区',
-            });
-          });
+          },
+          // SDK 失败（域名未加白名单 / Key 类型不对 / 额度用尽）→ 静默回落后端代理
+          fail: () => this.regeoViaBackend(lng, lat),
+        });
       },
       fail: (err) => {
         this.setData({ locating: false });
@@ -196,64 +231,39 @@ Page({
     });
   },
 
-  onInput(e) {
-    const field = e.currentTarget.dataset.field;
-    if (!field) return;
-    this.setData({ ['form.' + field]: e.detail.value });
-  },
-
-  pickLabel(e) {
-    const label = e.currentTarget.dataset.label;
-    // 再点一次可取消标签
-    this.setData({ 'form.label': this.data.form.label === label ? '' : label });
-  },
-
-  /** 本地校验与后端约束保持一致，避免"本地过了、后端 400" */
-  validate() {
-    const f = this.data.form;
-    if (!f.receiverName.trim()) return '请填写收货人';
-    if (f.receiverName.trim().length > 50) return '收货人最多 50 个字符';
-    if (!PHONE_REGEX.test(f.receiverPhone.trim())) return '请填写正确的 11 位手机号';
-    if (!f.province.trim()) return '请选择省份';
-    if (!f.city.trim()) return '请选择城市';
-    if (!f.district.trim()) return '请选择区 / 县';
-    if (f.detail.trim().length > 200) return '详细地址最多 200 个字符';
-    if (f.label && f.label.length > 20) return '标签最多 20 个字符';
-    return '';
-  },
-
-  save() {
-    if (this.data.saving) return;
-    const msg = this.validate();
-    if (msg) {
-      wx.showToast({ title: msg, icon: 'none' });
-      return;
-    }
-    const f = this.data.form;
-    const payload = {
-      receiverName: f.receiverName.trim(),
-      receiverPhone: f.receiverPhone.trim(),
-      province: f.province.trim(),
-      city: f.city.trim(),
-      district: f.district.trim(),
-      detail: f.detail.trim(),
-      label: f.label || undefined,
-    };
-    this.setData({ saving: true });
-    const action = this.data.editingId
-      ? api.address.update(this.data.editingId, payload)
-      : api.address.create(payload);
-    action
-      .then(() => {
-        this.setData({ saving: false });
-        wx.showToast({ title: this.data.editingId ? '已保存' : '已新增', icon: 'success' });
-        this.closeForm();
-        this.fetchList();
+  /** 兜底通道：后端用「Web 服务」Key 调高德（小程序 Key 不能用于这条） */
+  regeoViaBackend(lng, lat) {
+    api.address
+      .regeo(lng, lat)
+      .then((geo) => {
+        if (!geo || geo.configured === false) {
+          this.setData({ locating: false, locateHint: '地图服务尚未配置，请手动选择省市区' });
+          return;
+        }
+        this.applyGeo(geo);
       })
       .catch((err) => {
-        this.setData({ saving: false });
-        wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none' });
+        this.setData({
+          locating: false,
+          locateHint: (err && err.message) || '定位服务调用失败，请手动选择省市区',
+        });
       });
+  },
+
+  /** 把归一化后的省市区写回表单（两条通道共用，保证行为一致） */
+  applyGeo(geo) {
+    const region = [geo.province || '', geo.city || geo.province || '', geo.district || ''];
+    this.setData({
+      locating: false,
+      region,
+      'form.province': region[0],
+      'form.city': region[1],
+      'form.district': region[2],
+      'form.detail': geo.detail || this.data.form.detail,
+      locateHint: region[0]
+        ? '已按定位填入「' + region.filter(Boolean).join(' / ') + '」，请核对门牌号'
+        : '已定位，但没有匹配到可选的省市区，请手动选择',
+    });
   },
 
   // ── 列表操作 ─────────────────────────────────────────────
