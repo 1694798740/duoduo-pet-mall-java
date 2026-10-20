@@ -204,6 +204,27 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-20（四十二）· 顶栏头像改版：B 站式悬浮个人面板
+
+| 项 | 实现 |
+| --- | --- |
+| 触发 | `button.icon-btn.avatar-btn` 42px 正圆只放头像；昵称移到 `aria-label`（读屏与 e2e 定位不回退） |
+| 状态机 | `closed/open/closing` 三态：悬浮 80ms 意图延迟展开；离开 200ms 淡出（`closing`）再卸载，期间回来即取消；定时器挂 ref。点击＝打开（幂等）非 toggle —— 悬停已展开时再 toggle 会立即误关 |
+| 桥接 | `.user-entry::after` 12px 透明判定区盖住 10px 视觉间隙（左右外扩 8px），穿越不闪断 |
+| 动画 | opacity + translateY/scale + visibility 过渡，全部走动效令牌（`--dur-base`/`--ease-out`）；visibility 延迟生效实现「淡出完才不可交互」 |
+| 内容 | 大头像 64px + 昵称 + 身份/手机掩码 + 四组条目（图标+文案+角标+箭头）+ 退出登录 |
+| 定位 | 面板锚宿主右缘向左展开（贴右边缘不溢出）+ max-width 兜底；z-index 90 |
+| ARIA | 刻意不用 role=menu/menuitem（会覆盖 link 角色，既有 getByRole('link') 全失效） |
+
+**e2e**：`header-layout` 88 → **100 项**（新增 ⑤b 12 项：圆形无昵称 / 悬停展开 / 桥接穿越 /
+内容完整 / 先淡出再卸载 / 快速进出终态正确；「昵称不折行」→「头像按钮正圆」）。
+适配三处旧断言：`admin-entry` 登录证据改 aria-label；`my-listings` 关闭改 Esc；
+`notice-chat-follow` 的 `/私信（\d+）/` 为 2026-10-18 角标化时漏改的旧正则，改结构化断言。
+
+**回归**：header-layout 100/0、admin-entry、home、address、my-listings、live-refresh、
+notice-chat-follow、motion、seckill 97、pagination-search 全绿；
+share-circle「删除后列表消失」为基线已复现的历史失败（记待查）。
+
 ### 2026-10-20（四十一）· 三端动效与渲染性能统一
 
 **评估基线**（改造前实测）：2432 行样式表仅 14 处 transition / 6 处 keyframes；

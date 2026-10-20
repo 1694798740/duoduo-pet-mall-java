@@ -373,8 +373,15 @@ step('S3b · 只带 dd_rt 的全新上下文（模拟关闭浏览器后重开）
 
   await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1800); // 等 401 → 单飞刷新 dd_at → 重放 /api/users/me
-  const body = await page.locator('body').innerText();
-  check('只带 dd_rt 时仍被识别为已登录（页面出现昵称）', body.includes(op.nickname), body.slice(0, 120));
+  // 2026-10-20 起右上角只放**圆形头像**，昵称收进悬浮面板（平时不渲染在 DOM 里）——
+  // 「已登录」的页面证据从「body 出现昵称」改为「头像按钮的 aria-label 带昵称」：
+  // 两者同源（都来自 GET /api/users/me 回填的 user），断言性质不变。
+  const loginEvidence = await page.evaluate(() => {
+    const btn = document.querySelector('.app-header button.icon-btn.avatar-btn');
+    return btn ? (btn.getAttribute('aria-label') ?? '') : '';
+  });
+  check('只带 dd_rt 时仍被识别为已登录（头像按钮读屏名出现昵称）',
+    loginEvidence.includes(op.nickname), loginEvidence);
   check('★ 「关闭浏览器再打开」后，顶栏入口依然可见', (await navAdminLink(page).count()) === 1);
 
   await navAdminLink(page).click();

@@ -2620,3 +2620,178 @@ button.tag:active:not(:disabled),
     transform: none;
   }
 }
+
+/* ============================================================
+   顶栏用户悬浮面板（2026-10-20 · 仿 B 站头像面板）
+   结构：右上角只放圆形头像（不放昵称文字）→ 悬浮/点击弹出
+   「大头像 + 昵称 + 身份」+ 分组入口列表。视觉沿用本站亮色令牌，
+   布局节奏参照 B 站（居中头部 / 分组条目 / 右侧箭头 / 底部退出）。
+   ============================================================ */
+
+/* ---------- 触发按钮：圆形头像，42px 适中偏大 ----------
+   双类选择器（0,2,0）压过 .icon-btn（0,1,0）的药丸造型；
+   药丸的 min-width/padding 对纯头像按钮没意义，全部显式重置。 */
+.icon-btn.avatar-btn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0;
+  border-radius: 50%;
+  position: relative;
+}
+.icon-btn.avatar-btn .nav-avatar {
+  width: 100%;
+  height: 100%;
+  border: none;
+  vertical-align: top;
+}
+/* 没传头像时的占位符撑满按钮 */
+.icon-btn.avatar-btn .avatar-fallback {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* ---------- 悬浮宿主 ----------
+   ::after 是「透明桥接」：面板与头像之间留了 10px 视觉间隙，
+   但这块间隙属于宿主的悬浮判定区 —— 鼠标从头像移到面板要穿过它，
+   没有桥接就会「离开按钮 → 面板开始收起 → 还没走到面板就被关掉」，
+   表现为面板闪烁。左右各外扩 8px，斜向移动也不容易脱靶。 */
+.user-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.user-entry::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: -8px;
+  right: -8px;
+  height: 12px;
+}
+
+/* ---------- 面板 ----------
+   常态用 visibility:hidden + opacity:0 + 位移缩放：
+   visibility 参与过渡（延迟到淡出结束才生效），这样
+   ① 收起有淡出动画（display:none 做不到）；
+   ② 收起后彻底不可交互、不可聚焦、读屏器读不到（单用 opacity:0 做不到）。
+   定位：锚在宿主右缘 —— 面板向左展开，贴屏幕右边缘也不会溢出；
+   再配一层 max-width 兜底极窄视口。z-index 90：高于顶栏(60)，
+   低于弹窗(150) 与 Toast(200)。 */
+.user-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -6px;
+  z-index: 90;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: visible;
+  transform-origin: top right;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px) scale(0.97);
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out), visibility 0s linear var(--dur-base);
+}
+/* is-open 挂在宿主上而不是面板上：关闭是宿主级别的判定（离开按钮+面板整体） */
+.user-entry.is-open .user-panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  /* 展开时 visibility 不延迟（立即可交互）；收起时延迟到淡出结束（上面那条） */
+  transition: opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out), visibility 0s;
+}
+
+/* ---------- 面板头部：居中头像 + 昵称 + 身份/手机掩码 ---------- */
+.user-panel-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.user-panel-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.user-panel-name {
+  font-size: 15px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-panel-meta {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* ---------- 分组条目 ---------- */
+.user-panel-group {
+  padding: 6px 0;
+}
+.user-panel-group + .user-panel-group {
+  border-top: 1px solid var(--border);
+}
+.user-panel-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 16px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: var(--t-colors);
+}
+.user-panel-item:hover {
+  background: var(--surface-2);
+  color: var(--brand);
+}
+.user-panel-icon {
+  width: 20px;
+  flex: none;
+  text-align: center;
+}
+.user-panel-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-panel-arrow {
+  flex: none;
+  color: var(--text-3);
+  transition: var(--t-colors);
+}
+.user-panel-item:hover .user-panel-arrow {
+  color: var(--brand);
+}
+.user-panel-logout:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}

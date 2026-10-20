@@ -2059,6 +2059,46 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（四十二）· 顶栏头像改版：B 站式悬浮个人面板
+
+**需求**：右上角只显示头像（不显示用户名），悬浮/点击弹出个人面板，移出延迟收起；
+面板与头像之间的间隙可穿透（不闪烁不误关）；弹出/收起 150–250ms 自然缓动，
+快速反复进出不堆积动画队列；面板内容与布局参照 B 站；沿用现有技术栈不引新依赖。
+
+**实现（`apps/mall/src/components/Layout.tsx` + `packages/shared/src/styles.css`）**
+
+- **触发区**：`button.icon-btn.avatar-btn`，42px 正圆、只放头像；昵称从按钮移除，
+  但保留在 `aria-label`（读屏器与 `getByRole('button', { name: /昵称/ })` 定位不回退）。
+- **三态状态机** `closed / open / closing`（布尔做不到「收起也有动画」）：
+  悬浮进入 80ms 意图延迟后展开（扫过顶栏不误弹）；离开转 `closing` 走 200ms 淡出再卸载，
+  期间鼠标回来会取消收起；定时器全挂 ref。点击＝**打开（幂等）而非开关** ——
+  自动化点击与真人「悬停后点击」都会先触发悬浮展开，此刻再 toggle 会立即把面板关掉。
+- **桥接**：`.user-entry::after` 在按钮与面板之间铺一块 12px 透明判定区（左右各外扩 8px），
+  鼠标穿过 10px 视觉间隙不会把面板收走。
+- **动画**：`opacity + translateY(8px) scale(0.97) + visibility` 过渡，时长/缓动全部引用
+  动效令牌（`--dur-base` + `--ease-out`）；收起靠 `visibility` 延迟生效实现「淡出完才不可交互」
+  （`display:none` 没有退出动画，单用 `opacity:0` 关掉后仍可聚焦、读屏器仍可读）。
+- **面板内容**（B 站同构）：大头像 64px + 昵称 + 身份/手机掩码 → 四组条目
+  （个人中心/订单/售后/券包 ｜ 宠物/地址/闲置 ｜ 分享圈/我的分享/关注/通知/私信 ｜
+  角色工作台）→ 退出登录；条目为「图标 + 文案 + 未读角标 + 右侧箭头」，
+  通知/私信角标沿用 `.badge-inline`。
+- **定位与层级**：面板锚宿主右缘向左展开（贴屏幕右边不溢出）+ `max-width` 兜底窄视口；
+  z-index 90（高于顶栏 60，低于弹窗 150 / Toast 200）。
+- **刻意不加** `role="menu"/"menuitem"`：menuitem 会覆盖 `<a>` 原生 link 角色，
+  既有 `getByRole('link', …)` 全部失效；menu 容器混用普通链接也是无效 ARIA。
+
+**e2e**：`header-layout-ui-check` 新增 ⑤b 段 12 项（触发区圆形且无昵称文字 / 悬停展开 /
+**桥接穿越不误关** / 内容完整 / 移出先淡出再卸载 / 快速反复进出 4 次终态正确），
+原「昵称不折行」改为「头像按钮为正圆」；全套件 88 → **100 项全过**。
+适配三处旧断言：`admin-entry` 的「页面出现昵称」→「头像按钮 aria-label 出现昵称」；
+`my-listings` 双击关闭 → Esc；`notice-chat-follow` 的 `/私信（\d+）/` 正则 ——
+该正则在 2026-10-18 括号文本改成角标组件时就该改，一直漏改（近期未跑此套件所以未暴露），
+改为结构化断言「私信行内 .badge-inline 数字 = 未读数」。
+
+**回归**：`header-layout` 100/0、`admin-entry` 74 项、`home` / `address` / `my-listings` /
+`live-refresh` / `notice-chat-follow` / `motion` / `seckill` 97 / `pagination-search` 全 EXIT=0。
+`share-circle` 的「删除后列表消失」为**基线已复现的历史失败**（与本轮无关，已记待查）。
+
 ### 2026-10-20（四十一）· 三端动效与渲染性能统一（令牌化 + 微交互 + 降级守卫 + 懒加载）
 
 **需求**：对商店端 / 商家端 / 平台运营端做系统评估，统一规划过渡动画、微交互与渲染效果，

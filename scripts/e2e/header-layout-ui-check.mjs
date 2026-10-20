@@ -137,17 +137,19 @@ const MEASURE = () => {
     })
     .map((a) => a.textContent.trim());
   const userBtn = document.querySelector('.app-header button.icon-btn');
-  const nick = userBtn ? userBtn.querySelector('.small') : null;
-  const nickRect = nick ? nick.getBoundingClientRect() : null;
+  const btnRect = userBtn ? userBtn.getBoundingClientRect() : null;
   return {
     navOverflow: nav.scrollWidth > nav.clientWidth + 1,
     navNeed: nav.scrollWidth,
     navHave: nav.clientWidth,
     labels: items.map((a) => a.textContent.trim()),
     clipped,
-    nickWrapped: nickRect ? nickRect.height > 22 : null,
-    nickH: nickRect ? Math.round(nickRect.height) : null,
-    btnH: userBtn ? Math.round(userBtn.getBoundingClientRect().height) : null,
+    // 2026-10-20 起右上角只放**圆形头像**（昵称收进悬浮面板）——
+    // 原来量「昵称不折行」改成量「头像按钮是正圆且没有变形」：
+    // 宽高差超过 2px 说明圆形被压扁/撑长，等价于旧断言「按钮不被内容撑变形」。
+    btnW: btnRect ? Math.round(btnRect.width) : null,
+    btnH: btnRect ? Math.round(btnRect.height) : null,
+    avatarRound: btnRect ? Math.abs(btnRect.width - btnRect.height) <= 2 : null,
   };
 };
 
@@ -174,7 +176,7 @@ contexts['未登录'] = { ctx: anonCtx, page: anonPage, consoleErrors: anonError
 
 // ---------------- ① 宽度矩阵：任何角色、任何宽度都不得截断 ----------------
 for (const [role, { page }] of Object.entries(contexts)) {
-  step(`① ${role}：${WIDTHS.length} 档宽度逐项检查（导航不得被截断 / 昵称不得折行）`);
+  step(`① ${role}：${WIDTHS.length} 档宽度逐项检查（导航不得被截断 / 头像按钮不得变形）`);
   const expectExtra = role === '运营' || role === '长昵称运营' ? ['商家端', '管理后台'] : [];
   for (const w of WIDTHS) {
     await page.setViewportSize({ width: w, height: 900 });
@@ -183,8 +185,8 @@ for (const [role, { page }] of Object.entries(contexts)) {
     check(`${role} @${w}px：顶栏无任何标签被截断（需要 ${m.navNeed}px / 可用 ${m.navHave}px）`,
       m.clipped.length === 0, m.clipped);
     if (role !== '未登录') {
-      check(`${role} @${w}px：昵称不折行（高度 ${m.nickH}px，不撑出 ${m.btnH}px 的按钮）`,
-        m.nickWrapped === false, { nickH: m.nickH, btnH: m.btnH });
+      check(`${role} @${w}px：头像按钮为正圆（${m.btnW}×${m.btnH}）`,
+        m.avatarRound === true, { btnW: m.btnW, btnH: m.btnH });
     }
     const missing = [...NAV_CORE, ...expectExtra].filter((l) => !m.labels.includes(l));
     check(`${role} @${w}px：应有的导航项一个不少（缺 ${missing.join('·') || '无'}）`,
@@ -252,9 +254,10 @@ step('③ 工作台入口不回归（商家端 / 管理后台）');
     && (await menu.getByRole('link', { name: '商家端', exact: true }).count()) === 1,
     { admin: await menu.getByRole('link', { name: '进入管理后台', exact: true }).count(),
       seller: await menu.getByRole('link', { name: '商家端', exact: true }).count() });
-  // 菜单没有 Esc 关闭行为，再点一次头像收起它（避免浮层盖住后续要点的元素）
-  await page.locator('.app-header button.icon-btn').first().click();
-  await page.waitForTimeout(200);
+  // 2026-10-20 起点击头像＝打开（幂等，悬浮也会打开），收起走 Esc ——
+  // 用 Esc 收起，避免浮层盖住本页后续要点的元素
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
 
   const { page: buyerPage } = contexts['买家'];
   await buyerPage.goto(`${UI}/`, { waitUntil: 'networkidle' });
@@ -317,6 +320,105 @@ step('⑤ 头像下拉：Esc 可关、点外部可关（此前只能靠「切换
   await page.waitForTimeout(300);
   check('★ 点菜单内部条目照常跳转（内部点击不被当成外部点击）',
     new URL(page.url()).pathname === '/me' && (await menu.count()) === 0, page.url());
+}
+
+// ---------------- ⑤b B 站式悬浮面板（2026-10-20 改版） ----------------
+step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收起（仿 B 站）');
+{
+  const { page } = contexts['买家'];
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+
+  const panel = page.locator('.app-header .user-menu.user-panel');
+  const trigger = page.locator('.app-header button.icon-btn.avatar-btn');
+
+  // ---- ① 触发区只放头像，不放昵称文字 ----
+  const triggerInfo = await page.evaluate(() => {
+    const btn = document.querySelector('.app-header button.icon-btn.avatar-btn');
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    return {
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      hasNickText: Boolean(btn.querySelector('.small')),
+      hasAvatar: Boolean(btn.querySelector('.nav-avatar, .avatar-fallback')),
+      label: btn.getAttribute('aria-label') ?? '',
+    };
+  });
+  check('★ 触发按钮存在且是圆形（42px 上下）', Boolean(triggerInfo) && triggerInfo.w === triggerInfo.h && triggerInfo.w >= 38,
+    triggerInfo);
+  check('★ 触发按钮里没有昵称文字（右上角只显示头像）',
+    Boolean(triggerInfo) && triggerInfo.hasAvatar && !triggerInfo.hasNickText, triggerInfo);
+  check('★ 读屏名仍带昵称（无障碍与既有定位不回退）',
+    Boolean(triggerInfo) && triggerInfo.label.includes('账号菜单'), triggerInfo?.label);
+
+  // ---- ② 悬浮触发：面板弹出且带动画态 ----
+  const box = await trigger.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(350); // 80ms 意图延迟 + 200ms 淡入
+  const opened = await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    if (!p) return null;
+    const s = getComputedStyle(p);
+    const btn = document.querySelector('.app-header button.icon-btn.avatar-btn');
+    return { opacity: Number(s.opacity), visible: s.visibility === 'visible',
+      expanded: btn.getAttribute('aria-expanded'), transform: s.transform };
+  });
+  check('★ 悬停头像后面板展开（opacity=1、aria-expanded=true）',
+    Boolean(opened) && opened.opacity === 1 && opened.visible && opened.expanded === 'true', opened);
+
+  // ---- ③ 桥接：鼠标穿过头像与面板之间的间隙，面板不得收起 ----
+  const panelBox = await panel.boundingBox();
+  check('前置：面板在触发按钮下方（间隙 ≤14px，桥接覆盖）',
+    panelBox.y - (box.y + box.height) <= 14 && panelBox.y - (box.y + box.height) >= 0,
+    { gap: Math.round(panelBox.y - (box.y + box.height)) });
+  // 从按钮底缘匀速移到面板顶缘（穿过桥接区），停一下再确认还开着
+  for (let i = 0; i <= 6; i++) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height + ((panelBox.y - box.y - box.height) * i) / 6);
+    await page.waitForTimeout(30);
+  }
+  await page.waitForTimeout(250);
+  const stillOpen = await panel.count();
+  check('★ 鼠标穿过头像与面板的间隙后面板仍开着（桥接生效，不闪烁不误关）', stillOpen === 1, stillOpen);
+
+  // ---- ④ 面板内容：大头像 + 昵称 + 分组入口 + 退出 ----
+  const content = await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    if (!p) return null;
+    return {
+      avatar: Boolean(p.querySelector('.user-panel-avatar')),
+      name: p.querySelector('.user-panel-name')?.textContent?.trim() ?? '',
+      items: [...p.querySelectorAll('.user-panel-item')].length,
+      hasLogout: Boolean(p.querySelector('.user-panel-logout')),
+      overflowX: p.scrollWidth > p.clientWidth + 1,
+    };
+  });
+  check('面板头部有大头像与昵称', Boolean(content?.avatar) && content.name.length > 0, content);
+  check('面板入口条目 ≥ 8 且有退出登录', content.items >= 8 && content.hasLogout, content);
+  check('面板自身无横向溢出', content.overflowX === false, content);
+
+  // ---- ⑤ 移出面板：延迟淡出后收起（不是瞬间消失，也不能永远赖着） ----
+  await page.mouse.move(400, 500); // 移到页面中部空白处
+  await page.waitForTimeout(120);
+  const fading = await panel.count(); // 淡出期（200ms）内仍在 DOM
+  await page.waitForTimeout(400);
+  const gone = await panel.count();
+  check('★ 移出后先淡出再卸载（120ms 时还在、520ms 后已移除）', fading === 1 && gone === 0,
+    { fading, gone });
+  check('★ 收起后 aria-expanded 复位 false',
+    (await trigger.getAttribute('aria-expanded')) === 'false');
+
+  // ---- ⑥ 快速反复进出不抖动：最终状态正确、无 console 报错（④ 段统一断言） ----
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(60);
+    await page.mouse.move(400, 500);
+    await page.waitForTimeout(60);
+  }
+  await page.waitForTimeout(500);
+  check('★ 快速反复进出 4 次后面板处于收起态（动画队列不堆积）', (await panel.count()) === 0,
+    await panel.count());
 }
 
 // ---------------- ④ console ----------------

@@ -188,8 +188,9 @@ step('② 登录后：空态与发布入口');
   await page.waitForTimeout(250);
   check('头像下拉里有「我的闲置」入口',
     (await page.locator('.app-header .user-menu').getByRole('link', { name: '我的闲置', exact: true }).count()) === 1);
-  await page.locator('.app-header button.icon-btn').first().click();
-  await page.waitForTimeout(200);
+  // 2026-10-20 起点击头像＝打开（幂等），收起走 Esc
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
   check('② 无 console 报错', consoleNoise(consoleErrors).length === 0, consoleNoise(consoleErrors).slice(0, 3));
   await ctx.close();
 }

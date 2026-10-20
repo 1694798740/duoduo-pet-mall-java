@@ -234,7 +234,15 @@ step('② 私信：列表 / 会话 / 发送 / 非互关限一条');
   await page.waitForTimeout(600);
   const menuText = await page.locator('.app-header .user-menu').innerText();
   check('★ 头像菜单里有「私信」入口（Web 端此前完全没有私信页面）', menuText.includes('私信'), menuText.slice(0, 200));
-  check('私信入口带未读数（甲方未读 1 条）', /私信（\d+）/.test(menuText), menuText.slice(0, 200));
+  // 2026-10-18 起「私信（N）」的括号文本改成了**数字角标组件**（.badge-inline），
+  // 本行当时漏改、一直拿旧正则去匹配新 DOM —— 适配为结构化断言：
+  // 「私信」那一行里必须带角标，且数字就是未读数（有未读才出现，没有就什么都不显示）。
+  const dmBadge = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.app-header .user-menu .user-panel-item')]
+      .find((el) => el.textContent.includes('私信'));
+    return row ? (row.querySelector('.badge-inline')?.textContent?.trim() ?? null) : null;
+  });
+  check('私信入口带未读数（甲方未读 1 条）', dmBadge === '1', dmBadge);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 

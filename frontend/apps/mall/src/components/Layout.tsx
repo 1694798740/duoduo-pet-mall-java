@@ -80,6 +80,39 @@ const NAV: NavItem[] = [
 /** 角标文案：>99 统一成「99+」（三位数在这个尺寸下会被裁切） */
 const badgeText = (n: number) => (n > 99 ? '99+' : String(n));
 
+/** 面板 meta 行的角色展示名。仅用于展示；权限判定一律走 lib/roles.ts 的判定函数。 */
+const ROLE_LABELS: Record<string, string> = {
+  USER: '买家',
+  SELLER: '卖家',
+  OPERATOR: '运营',
+  ADMIN: '管理员',
+};
+
+/**
+ * 面板条目：图标 + 文案 +（可选未读角标）+ 右侧箭头，B 站面板同构。
+ *
+ * 刻意**不加** `role="menuitem"`：加了会覆盖 <a> 原生的 link 角色，
+ * 既有的 `getByRole('link', { name: '个人中心' })` 就全找不到了；
+ * 容器同样不用 role="menu"（menu 语义要求子项必须是 menuitem，混用反而是无效 ARIA）。
+ */
+const MenuLink: React.FC<{ to: string; icon: string; label: string; badge?: number }> = ({
+  to,
+  icon,
+  label,
+  badge,
+}) => (
+  <Link className="user-panel-item" to={to}>
+    <span className="user-panel-icon" aria-hidden>
+      {icon}
+    </span>
+    <span className="user-panel-label">{label}</span>
+    {badge && badge > 0 ? <span className="badge-inline">{badgeText(badge)}</span> : null}
+    <span className="user-panel-arrow" aria-hidden>
+      ›
+    </span>
+  </Link>
+);
+
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const {
@@ -92,7 +125,50 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     stopUnreadPolling,
   } = useApp();
   const [keyword, setKeyword] = useState('');
-  const [menuOpen, setMenuOpen] = useState(false);
+
+  /**
+   * 头像悬浮面板（2026-10-20 仿 B 站）的三态。
+   *
+   * 为什么不用布尔：面板**收起要走 200ms 淡出**，不能在 onMouseLeave 里直接卸载 ——
+   * 卸载就没有退出动画了。'closing' 表示「正在淡出、还没卸载」，期间鼠标再进来会
+   * 取消收起（clearTimer + 回到 'open'），快速反复进出不会堆积动画队列。
+   * 定时器都挂在 ref 上：React 并发渲染下 setState 不能当存储用，重渲染会重建闭包。
+   */
+  type MenuState = 'closed' | 'open' | 'closing';
+  const [menuState, setMenuState] = useState<MenuState>('closed');
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const clearMenuTimers = () => {
+    if (openTimer.current !== null) {
+      clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  /** 立即展开（点击 / 键盘 Enter），并取消任何在途的收起 */
+  const openUserMenu = () => {
+    clearMenuTimers();
+    setMenuState('open');
+  };
+  /** 悬浮进入：留 80ms 意图延迟 —— 鼠标扫过顶栏去点别的按钮时不该误弹面板 */
+  const scheduleOpenUserMenu = () => {
+    clearMenuTimers();
+    openTimer.current = window.setTimeout(() => setMenuState('open'), 80);
+  };
+  /** 悬浮离开：走 200ms 淡出再卸载；这期间鼠标回来就取消收起 */
+  const scheduleCloseUserMenu = () => {
+    clearMenuTimers();
+    setMenuState((s) => (s === 'closed' ? s : 'closing'));
+    closeTimer.current = window.setTimeout(() => setMenuState('closed'), 200);
+  };
+  /** 无动画直关（路由切换 / 登出）：注意力已经走了，没必要再演一遍淡出 */
+  const closeUserMenuNow = () => {
+    clearMenuTimers();
+    setMenuState('closed');
+  };
   // 头像下拉的容器与触发按钮（R74-2：Esc / 点外部关闭、关掉后把焦点还给按钮）
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -105,7 +181,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   }, [user, refreshCart]);
 
   useEffect(() => {
-    setMenuOpen(false);
+    // 路由变化＝注意力已切走，直关（不需要淡出）
+    closeUserMenuNow();
   }, [location.pathname]);
 
   /**
@@ -120,6 +197,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     if (!loggedIn) {
       stopUnreadPolling();
       clearUnread();
+      closeUserMenuNow();
       return undefined;
     }
     void refreshUnread();
@@ -137,11 +215,11 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loggedIn, refreshUnread]);
 
-  // 打开头像菜单时也刷一次 —— 用户正要看这个数字，不该是 10 秒前那个
+  // 打开头像面板时也刷一次 —— 用户正要看这个数字，不该是 10 秒前那个
   useEffect(() => {
-    if (!menuOpen || !loggedIn) return;
+    if (menuState !== 'open' || !loggedIn) return;
     void refreshUnread();
-  }, [menuOpen, loggedIn, refreshUnread]);
+  }, [menuState, loggedIn, refreshUnread]);
 
   // 站内切换页面时刷一次（2026-10-18）：用户下单/支付后通常会跳到订单详情，
   // 跳转本身就是一个明确的"可能产生了新通知"的信号，没必要等下一次轮询。
@@ -165,17 +243,18 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
    *     表现为「点一下没反应」。
    */
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (menuState === 'closed') return undefined;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setMenuOpen(false);
+        // Esc 走淡出（与悬浮离开同一条路径），焦点还给按钮
+        scheduleCloseUserMenu();
         menuButtonRef.current?.focus();
       }
     };
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as Node | null;
       if (target && menuRef.current && !menuRef.current.contains(target)) {
-        setMenuOpen(false);
+        scheduleCloseUserMenu();
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -184,7 +263,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', onMouseDown);
     };
-  }, [menuOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuState]);
 
   // 商家端入口只在「真的是卖家」时出现；角色判定与后端同源（忽略大小写）
   // 管理后台入口同理：只对运营 / 管理员显示（M10）
@@ -253,136 +333,109 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             </Link>
 
             {user ? (
-              <div ref={menuRef} style={{ position: 'relative' }}>
+              <div
+                ref={menuRef}
+                className={`user-entry${menuState !== 'closed' ? ' is-open' : ''}`}
+                onMouseEnter={scheduleOpenUserMenu}
+                onMouseLeave={scheduleCloseUserMenu}
+              >
+                {/*
+                  触发按钮：仿 B 站 —— 右上角**只放头像**（不放昵称文字），圆形、稍大（42px）。
+                  accessible name 仍带昵称（aria-label）：读屏器与既有 e2e 的
+                  `getByRole('button', { name: /昵称/ })` 都靠它定位。
+                  ★ 点击是「打开」不是「开关」：悬浮已经把面板打开了，此刻再点若执行
+                  toggle 会立即把面板关掉 —— 自动化点击与真人「悬停后点击」都会踩中。
+                */}
                 <button
                   ref={menuButtonRef}
-                  className="icon-btn"
+                  className="icon-btn avatar-btn"
                   aria-haspopup="menu"
-                  aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-expanded={menuState === 'open'}
+                  aria-label={`账号菜单：${user.nickname}`}
+                  onClick={openUserMenu}
                 >
-                  {/*
-                    右上角显示真实头像（有头像时替换 👤 占位符）。
-                    数据来自 AuthProvider 的 user —— 个人中心改头像后 refreshMe() 会立即
-                    更新这份 user，这里随之重渲染，无需刷新页面（2026-10-19）。
-                  */}
                   {user.avatar ? (
-                    <img className="nav-avatar" src={user.avatar} alt="我的头像" />
+                    <img className="nav-avatar" src={user.avatar} alt="" />
                   ) : (
-                    <span aria-hidden>👤</span>
-                  )}{' '}
-                  <span className="small">{user.nickname}</span>
-                  {/* 全站可见的未读角标（S7）：用户在任何页面都能看到有新消息 —— 这正是本轮的核心诉求 */}
+                    <span className="avatar-fallback" aria-hidden>👤</span>
+                  )}
+                  {/* 全站可见的未读角标（S7）：用户在任何页面都能看到有新消息 */}
                   {unread.total > 0 ? (
                     <span className="badge-dot">{badgeText(unread.total)}</span>
                   ) : null}
                 </button>
-                {menuOpen ? (
-                  <div
-                    className="card user-menu"
-                    style={{ position: 'absolute', right: 0, top: 46, width: 176, padding: 8, zIndex: 80 }}
-                  >
-                    <Link className="nav-link" to="/me" style={{ display: 'block' }}>
-                      个人中心
-                    </Link>
-                    <Link className="nav-link" to="/orders" style={{ display: 'block' }}>
-                      我的订单
-                    </Link>
-                    {/* 我的售后（2026-10-18）：原先菜单里没有入口，用户提交售后后只能靠
-                        「订单卡片 → 申请售后」或记住 /after-sales 路径才能找回记录；
-                        收进头像菜单（紧跟我的订单）后，售后记录与订单一样随时可达。 */}
-                    <Link className="nav-link" to="/after-sales" style={{ display: 'block' }}>
-                      我的售后
-                    </Link>
-                    <Link className="nav-link" to="/coupons" style={{ display: 'block' }}>
-                      我的券包
-                    </Link>
-                    <Link className="nav-link" to="/pets" style={{ display: 'block' }}>
-                      我的宠物
-                    </Link>
-                    <Link className="nav-link" to="/addresses" style={{ display: 'block' }}>
-                      收货地址
-                    </Link>
-                    {/* 「我的闲置」放在个人事务里而不是顶栏：顶栏只放「逛 / 买」一级动线
-                        （见上面 NAV 的注释），而这是「我要卖」的个人事务入口。
-                        ★ 刻意不加角色判断 —— 发布与管理闲置只要求「登录 + 实名」，
-                        与「卖家身份」（自营店铺）是两条线，普通用户就是闲置卖家本人。 */}
-                    <Link className="nav-link" to="/listings/mine" style={{ display: 'block' }}>
-                      我的闲置
-                    </Link>
-                    {/* 「分享圈」进下拉而不进顶栏：顶栏 6 项是 R64 实测的截断红线
-                        （运营账号 6+2 项 ≈ 584px 已贴近 594px 上限），再加一项运营必截断 */}
-                    <Link className="nav-link" to="/share" style={{ display: 'block' }}>
-                      分享圈
-                    </Link>
-                    <Link className="nav-link" to="/share/mine" style={{ display: 'block' }}>
-                      我的分享
-                    </Link>
-                    {/* 未读数字来自 store 的**合并口径**（通知 + 私信一次取回）。
-                        2026-10-18 二次调整：不再显示 🔔 / 💬 图标，只保留**数字角标**——
-                        入口本身就是文字，图标只是噪音；有未读才出现数字，没有就什么都不显示。 */}
-                    <Link
-                      className="nav-link"
-                      to="/notifications"
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    >
-                      通知中心
-                      {unread.notice > 0 ? (
-                        <span className="badge-inline">{badgeText(unread.notice)}</span>
-                      ) : null}
-                    </Link>
-                    <Link
-                      className="nav-link"
-                      to="/messages"
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    >
-                      私信
-                      {unread.message > 0 ? (
-                        <span className="badge-inline">{badgeText(unread.message)}</span>
-                      ) : null}
-                    </Link>
-                    <Link className="nav-link" to="/follow" style={{ display: 'block' }}>
-                      关注与粉丝
-                    </Link>
-                    {/* 工作台入口单独排在个人事务之后 —— 它们是「另一重身份」的入口，
-                        不是个人资料，混在中间会让菜单读起来没有层次。 */}
-                    {canAccessSellerConsole(user.role) ? (
-                      <Link className="nav-link" to="/seller" style={{ display: 'block' }}>
-                        商家端
-                      </Link>
+
+                {menuState !== 'closed' ? (
+                  <div className="user-menu user-panel" aria-label="账号菜单">
+                    {/* 头部：头像 + 昵称 + 身份/手机掩码（B 站面板同构：居中、上头像下名字） */}
+                    <div className="user-panel-head">
+                      {user.avatar ? (
+                        <img className="user-panel-avatar" src={user.avatar} alt="" />
+                      ) : (
+                        <span className="user-panel-avatar" aria-hidden>👤</span>
+                      )}
+                      <strong className="user-panel-name">{user.nickname}</strong>
+                      <span className="user-panel-meta">
+                        {ROLE_LABELS[user.role] ?? user.role}
+                        {user.phoneMasked ? ` · ${user.phoneMasked}` : ''}
+                      </span>
+                    </div>
+
+                    <div className="user-panel-group">
+                      <MenuLink to="/me" icon="👤" label="个人中心" />
+                      <MenuLink to="/orders" icon="🧾" label="我的订单" />
+                      <MenuLink to="/after-sales" icon="🛡️" label="我的售后" />
+                      <MenuLink to="/coupons" icon="🎟️" label="我的券包" />
+                    </div>
+
+                    <div className="user-panel-group">
+                      <MenuLink to="/pets" icon="🐾" label="我的宠物" />
+                      <MenuLink to="/addresses" icon="📍" label="收货地址" />
+                      {/* 「我的闲置」放这里而不是顶栏：顶栏只放「逛 / 买」一级动线（见 NAV 注释）。
+                          ★ 刻意不加角色判断 —— 发布与管理闲置只要求「登录 + 实名」，
+                          与「卖家身份」（自营店铺）是两条线，普通用户就是闲置卖家本人。 */}
+                      <MenuLink to="/listings/mine" icon="🏷️" label="我的闲置" />
+                    </div>
+
+                    <div className="user-panel-group">
+                      <MenuLink to="/share" icon="🌏" label="分享圈" />
+                      <MenuLink to="/share/mine" icon="✍️" label="我的分享" />
+                      <MenuLink to="/follow" icon="❤️" label="关注与粉丝" />
+                      <MenuLink to="/notifications" icon="🔔" label="通知中心" badge={unread.notice} />
+                      <MenuLink to="/messages" icon="💬" label="私信" badge={unread.message} />
+                    </div>
+
+                    {/* 工作台入口单独成组 —— 它们是「另一重身份」的入口，不是个人资料。
+                        判定与后端同源：商家端用 canAccessSellerConsole，后台用 isOperator()
+                        （auth store 的 isAdmin 已在 R74-3 删除，重新加回会编译失败）。 */}
+                    {canAccessSellerConsole(user.role) || isOperator(user.role) ? (
+                      <div className="user-panel-group">
+                        {canAccessSellerConsole(user.role) ? (
+                          <MenuLink to="/seller" icon="🏪" label="商家端" />
+                        ) : null}
+                        {isOperator(user.role) ? (
+                          <a className="user-panel-item" href={ADMIN_URL}>
+                            <span className="user-panel-icon" aria-hidden>🛠️</span>
+                            <span className="user-panel-label">进入管理后台</span>
+                            <span className="user-panel-arrow" aria-hidden>›</span>
+                          </a>
+                        ) : null}
+                      </div>
                     ) : null}
-                    {/* 平台管理后台入口（与顶栏那条同源同判）——
-                        只对运营 / 管理员显示，与后端 OperatorGuard 同口径。
-                        ★ 必须用 isOperator()：判定**只有这一处权威实现**（src/lib/roles.ts，中立模块）。
-                        auth store 里曾经有个 `isAdmin` 走了全小写比较（user.role === 'admin'），
-                        而库内是大写存储，它**永远返回 false** —— 入口静默不出现且不报任何错。
-                        该字段已在 R74-3 删除，重新加回会编译失败（见 store/auth.tsx 顶部注释）。
-                        刷新后仍在的机制：Layout 包住全部路由，user 由
-                        GET /api/users/me 重取（Cookie dd_rt 有效期 7 天），
-                        因此「关掉页面再打开」入口照样在 —— 见
-                        scripts/e2e/admin-entry-ui-check.mjs 的复开断言。 */}
-                    {isOperator(user.role) ? (
-                      <a className="nav-link" href={ADMIN_URL} style={{ display: 'block' }}>
-                        进入管理后台
-                      </a>
-                    ) : null}
-                    <div className="divider" style={{ margin: '6px 0' }} />
-                    <button
-                      className="nav-link"
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        border: 'none',
-                        background: 'none',
-                      }}
-                      onClick={async () => {
-                        await logout();
-                        navigate('/');
-                      }}
-                    >
-                      退出登录
-                    </button>
+
+                    <div className="user-panel-group">
+                      <button
+                        className="user-panel-item user-panel-logout"
+                        onClick={async () => {
+                          closeUserMenuNow();
+                          await logout();
+                          navigate('/');
+                        }}
+                      >
+                        <span className="user-panel-icon" aria-hidden>↩</span>
+                        <span className="user-panel-label">退出登录</span>
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>
