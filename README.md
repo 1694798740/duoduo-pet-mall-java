@@ -2059,6 +2059,53 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（四十九）· 修复：小程序「一绑定微信就退出登录」
+
+**现象**：手机号登录后绑定微信，绑定失败的同时被退出登录；注册后再绑定也失败。
+
+**根因（三层叠加，缺一不可）**
+
+1. **配置**：容器内 `WECHAT_SECRET` 与 `WECHAT_APPID` 不匹配。
+   实测微信返回 `errcode=40125 invalid appsecret`（用同一对凭据调 `/cgi-bin/token` 也失败）。
+   这意味着**任何**真实 `wx.login` 换取都会失败，与用户操作无关。
+2. **后端错误码**：`WechatGateway` 把微信侧所有失败一律抛 401 `UNAUTHORIZED`。
+   「一次性 code 无效」和「AppSecret 配错」被表达成「你没有登录」。
+3. **端侧策略**：小程序 `request.js` 对**任何** 401 都 `clearSession()`，
+   于是绑定失败 → 401 → 清令牌 → 用户被踢下线。这就是"一绑定就退出"的直接机制。
+
+**修复**
+
+- 新增两个语义精确的错误码（`duoduo-common/ErrorCode`）：
+  - `WECHAT_CODE_INVALID` → **400**（一次性 code 过期/已用）；
+  - `WECHAT_CONFIG_ERROR` → **503**（AppSecret/AppID/IP 白名单）。
+  ★ 两者都**不是 401**；也刻意避开 422（本项目 422 已被"微信未绑定"占用）。
+- `WechatGateway.toException()`：按 errcode/errmsg 分类（纯函数），
+  并把 `invalid appsecret` 写进**服务端日志与错误文案**，不再让人猜。
+- 小程序 `login.js`：绑定失败的 `tokenGone` 判定只认「401 身份失效」；
+  新增 `WECHAT_CODE_INVALID` / `WECHAT_CONFIG_ERROR` 的专属文案，
+  并明确告知「你的登录状态不受影响」。
+- 新增 `scripts/wechat-config-check.mjs`：3 秒校验 AppID/Secret 是否配对，
+  直接给出「去哪重置 secret」的指引（只打印 AppID 后 4 位与密钥长度）。
+- `wechat-auth-smoke.ps1` 的形态判定同步升级（原来的断言是"假 code → 401 UNAUTHORIZED"，
+  正是本次要废掉的旧约定）：新增 `CODE_INVALID` / `CONFIG_ERROR` 两支，
+  断言不变量「微信失败不得返回 401」。
+
+**验证**
+
+| 项 | 结果 |
+| --- | --- |
+| `wechat-config-check.mjs` | 复现 `40125 invalid appsecret`，退出码 1 |
+| bind（有效令牌 + 假 code） | **503 `WECHAT_CONFIG_ERROR`**（修复前是 401） |
+| `wechat/token`（假 code） | 503 `WECHAT_CONFIG_ERROR` |
+| `WechatGatewayErrorMappingTest` | 5/5（含"任何分类都不得产生 401"） |
+| `wechat-auth-smoke.ps1` | **26/0**，形态自动识别为 `CONFIG_ERROR` |
+| `wechat-bind-smoke.ps1` | **24/0** |
+
+**仍需你做的一步**：到微信公众平台 → 开发管理 → 开发设置 → **重置 AppSecret**，
+把新值写进 `.env` 的 `WECHAT_SECRET`，然后 `docker compose up -d duoduo-user-app`，
+再跑 `node scripts/wechat-config-check.mjs` 确认配对成功。在此之前：
+真实微信登录会返回 503（文案已明确"服务端配置未就绪"），**手机号登录不受影响、也不会再被踢下线**。
+
 ### 2026-10-20（四十八）· 网页端地图选点（高德 JSAPI 2.0）
 
 **需求**：网页端也要像外卖 App 那样——点定位弹地图、拖动地标选位置。

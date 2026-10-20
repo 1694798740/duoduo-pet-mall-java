@@ -65,6 +65,26 @@ public enum ErrorCode {
     PAYMENT_CHANNEL_ERROR(HttpStatus.BAD_GATEWAY, "支付渠道调用失败"),
     PAYMENT_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "支付回调金额与支付单不一致"),
 
+    /**
+     * 微信一次性 code 无效 / 已过期 / 已被使用（422）。
+     *
+     * <p><b>刻意不用 401</b>：这是「请求参数里的一次性凭据不能用」，
+     * 与「你没有登录 / 登录已过期」是两件事。此前一律 401，
+     * 导致小程序把所有微信失败都当成「登录态失效」→ 清空本地会话，
+     * 表现为「一绑定微信就被踢下线」（2026-10-20 用户报障）。
+     * 用 400 + 独立 code，端侧才能只提示重试、不动登录态。
+     * <p><b>不能用 422</b>：本项目的 422 已被「微信未绑定」这个业务语义占用，
+     * 复用会把「code 过期」误解成「需要绑定」。
+     */
+    WECHAT_CODE_INVALID(HttpStatus.BAD_REQUEST, "微信凭据无效或已过期，请重试"),
+    /**
+     * 微信侧配置错误（503）：AppID 与 AppSecret 不匹配、AppID 无权限等。
+     *
+     * <p>这类问题<b>不是用户能修的</b>，也不该让端侧清会话；必须让它以「服务不可用」
+     * 的面目出现，并在服务端日志里点名「appsecret 不匹配」。
+     */
+    WECHAT_CONFIG_ERROR(HttpStatus.SERVICE_UNAVAILABLE, "微信登录未正确配置，请联系管理员"),
+
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁，请稍后再试"),
     DEGRADED(HttpStatus.SERVICE_UNAVAILABLE, "依赖服务不可用，已降级"),
 

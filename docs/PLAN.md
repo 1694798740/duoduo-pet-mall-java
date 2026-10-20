@@ -215,6 +215,18 @@
 | 测试 | 新增 `address-cascade-ui-check` 22 项（含**懒加载**与**换省清空**断言）；`address-ui-check` 改 `selectOption` 逐级填，65 项；反向验证无效 Key → 200 + 字段 null；未登录 → 401 |
 | 回归 | header-layout 109 / home 9 全绿；首屏 JS 235.4→239.3KB |
 
+### 2026-10-20（四十九）· 修复：小程序绑定微信即被登出
+
+| 项 | 实现 |
+| --- | --- |
+| 根因①（配置） | `WECHAT_SECRET` 与 `WECHAT_APPID` 不匹配：微信返回 `40125 invalid appsecret`，所有真实 wx.login 换取必失败 |
+| 根因②（后端） | 微信失败一律映射 401 `UNAUTHORIZED`，与「未登录」不可区分 |
+| 根因③（端侧） | `request.js` 见 401 即 `clearSession()` → 绑定失败导致登出 |
+| 修复 | 新增 `WECHAT_CODE_INVALID`(400) / `WECHAT_CONFIG_ERROR`(503)，`WechatGateway.toException()` 纯函数分类；小程序只把真正 401 当登录失效，并按新码给专属文案 |
+| 工具 | 新增 `scripts/wechat-config-check.mjs`（校验 AppID/Secret 配对，3 秒出结论） |
+| 测试 | 单测 5/5；`wechat-auth-smoke` 26/0（新增 CODE_INVALID / CONFIG_ERROR 两支，断言"不得返回 401"）；`wechat-bind-smoke` 24/0 |
+| 待你操作 | 微信公众平台重置 AppSecret → 更新 `.env` → 重启 user 容器 → 跑自检脚本 |
+
 ### 2026-10-20（四十八）· 网页端地图选点（高德 JSAPI 2.0）
 
 | 项 | 实现 |

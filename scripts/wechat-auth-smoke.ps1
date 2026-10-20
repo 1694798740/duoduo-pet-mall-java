@@ -126,21 +126,31 @@ Check "① 错误码为 BUSINESS_RULE" ($r.body.code -eq 'BUSINESS_RULE') $r.bod
 Check "① 提示引导先登录再绑定" ($r.body.message -match '先') $r.body.message
 $r = Call 'Post' "$Gateway/api/auth/wechat" $null @{ code = 'real-jscode-not-mock' } $null
 # 形态自适应（R59 二次修正）：**不读配置文件猜形态，直接问服务端**。
-# 同一个接口有两种合法形态：
-#   ① 容器里注入了真实 AppID/Secret → 假 code 被微信侧拒 → 401 UNAUTHORIZED；
-#   ② 没注入 → 走「外部依赖缺失」降级 → 503 DEGRADED。
+# 同一个接口有三种合法形态（2026-10-20 起区分「微信侧失败」与「没登录」）：
+#   ① 注入了 AppID+Secret 且配对正确 → 假 code 被微信拒 → 400 WECHAT_CODE_INVALID；
+#   ② 注入了但 AppSecret 不匹配（或 AppID/IP 白名单问题）→ 503 WECHAT_CONFIG_ERROR；
+#      ★ 这两类**都不能**是 401 UNAUTHORIZED：端侧一见 401 就清登录态，
+#        正是「一绑定微信就退出登录」的根因（2026-10-20 用户报障）。
+#   ③ 完全没注入 → 503 DEGRADED。
 # 两者都对，只是形态不同。最初写死 503，在配了凭据的机器上永远红，
 # 且报错把人往「服务端没降级」这个并不存在的毛病上引。
 # 中途改成读 .env 判断也不稳：compose 是**环境变量注入**，.env 的位置/编码/键名都可能踩空
 # —— 读配置猜形态，不如看服务端实际返回什么。
-$form = if ($r.status -eq 401) { 'CONFIGURED' } elseif ($r.status -eq 503) { 'DEGRADED' } else { 'UNKNOWN' }
+$form = if ($r.body.code -eq 'WECHAT_CODE_INVALID') { 'CODE_INVALID' }
+        elseif ($r.body.code -eq 'WECHAT_CONFIG_ERROR') { 'CONFIG_ERROR' }
+        elseif ($r.status -eq 503) { 'DEGRADED' }
+        else { 'UNKNOWN' }
 Write-Host "  [形态] 非 mock code 实返 $($r.status)/$($r.body.code) → 形态=$form"
 # $branchTotal/$branchRan 供断言总数守卫扣减互斥分支（见脚本末尾），避免守卫自己误报。
-$branchTotal = 5   # 三支 Check 数之和：CONFIGURED 2 + DEGRADED 2 + UNKNOWN 1
+$branchTotal = 7   # 四支 Check 数之和：CODE_INVALID 2 + CONFIG_ERROR 2 + DEGRADED 2 + UNKNOWN 1
 $branchRan = 0
-if ($form -eq 'CONFIGURED') {
-    Check "② 已配真实通道：非 mock code 的错误码为 UNAUTHORIZED" ($r.body.code -eq 'UNAUTHORIZED') "$($r.status)/$($r.body.code)"
-    Check "② 已配真实通道：提示引导重新拉起登录" ($r.body.message -match '登录') $r.body.message
+if ($form -eq 'CODE_INVALID') {
+    Check "② 真实通道：假 code 的错误码为 WECHAT_CODE_INVALID（不是 UNAUTHORIZED）" ($r.body.code -eq 'WECHAT_CODE_INVALID') "$($r.status)/$($r.body.code)"
+    Check "② 真实通道：状态码 400（端侧只提示重试，不清登录态）" ($r.status -eq 400) "$($r.status)"
+    $branchRan = 2
+} elseif ($form -eq 'CONFIG_ERROR') {
+    Check "② 真实通道：AppSecret 不匹配归为 WECHAT_CONFIG_ERROR（不是 UNAUTHORIZED）" ($r.body.code -eq 'WECHAT_CONFIG_ERROR') "$($r.status)/$($r.body.code)"
+    Check "② 配置错误状态码 503，且提示指向配置问题" ($r.status -eq 503 -and $r.body.message -match '配置') "$($r.status)/$($r.body.message)"
     $branchRan = 2
 } elseif ($form -eq 'DEGRADED') {
     Check "② 未配真实通道：非 mock code 的错误码为 DEGRADED" ($r.body.code -eq 'DEGRADED') "$($r.status)/$($r.body.code)"

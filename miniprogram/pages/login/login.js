@@ -113,6 +113,12 @@ Page({
     // 诊断线索：手机端没法看堆栈，把关键字段打出来，下次定位不用猜
     console.warn('[login] 微信登录失败', { status: status, code: err && err.code, message: err && err.message });
 
+    // 一次性 code 过期/已被使用：让用户重试即可，不能误导成「未绑定」
+    if (err && err.code === 'WECHAT_CODE_INVALID') {
+      wx.showToast({ title: '微信授权已过期，请重试', icon: 'none' });
+      return;
+    }
+
     if (status === 422) {
       // 先落"页面内引导"（不依赖 wx API，必然可见），再补 modal 作第二重保险
       const bound = !!this.data.loggedIn;
@@ -249,7 +255,10 @@ Page({
       })
       .catch((err) => {
         this.setData({ submitting: false });
-        const tokenGone = !!(err && (err.needLogin || err.status === 401 || err.code === 'UNAUTHORIZED'));
+        // ★ 只有「身份未认证 / 登录已过期」才算登录态失效。
+        //   微信侧的失败（code 过期、AppSecret 不匹配）由后端用 400/503 + 独立 code 表达，
+        //   绝不能再当成登录态失效 —— 否则绑定一失败就把用户踢下线（2026-10-20 事故根因）。
+        const tokenGone = !!(err && (err.needLogin || err.status === 401));
         if (tokenGone) {
           // 令牌失效：同类动作是「清会话 + 回到可执行的路径」，展示交给调用方统一处理
           api.clearSession();
@@ -426,8 +435,11 @@ Page({
     let content = (err && (err.friendly || err.message)) || '绑定失败，请稍后重试。';
     if (status === 409) {
       content = '这个微信已经绑定过其他账号，本次没有绑定。\n\n你的登录仍然成功，可以继续使用；如需换绑，请先在原账号解除绑定后再试。';
+    } else if (err && err.code === 'WECHAT_CODE_INVALID') {
+      // 一次性 code 只能用一次 / 已过期：属于「再点一次」就能解决的临时问题
+      content = '微信授权已过期（一次性凭据只能用一次），本次没有绑定。\n\n请再点一次绑定；你的登录状态不受影响。';
     } else if (status === 503) {
-      content = '微信服务暂时不可用，本次没有绑定。稍后可再试一次。';
+      content = '微信登录服务暂时不可用（服务端配置未就绪），本次没有绑定。\n\n你的登录状态正常，可继续用手机号使用；服务恢复后再尝试绑定。';
     }
     wx.showModal({
       title: '微信未绑定成功',

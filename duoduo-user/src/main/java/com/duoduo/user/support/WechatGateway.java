@@ -102,9 +102,10 @@ public class WechatGateway {
             HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode node = objectMapper.readTree(resp.body());
             if (node.hasNonNull("errcode") && node.get("errcode").asInt() != 0) {
-                // 微信侧拒绝（code 过期 / 已用 / appid 不匹配）。errcode 含义对用户无意义，转人话。
-                log.warn("jscode2session 被微信拒绝 errcode={}", node.get("errcode").asInt());
-                throw BizException.unauthorized("微信登录凭据无效或已过期，请重新拉起登录");
+                int errcode = node.get("errcode").asInt();
+                String errmsg = node.path("errmsg").asText("");
+                log.warn("jscode2session 被微信拒绝 errcode={} errmsg={}", errcode, errmsg);
+                throw toException(errcode, errmsg);
             }
             String openid = node.path("openid").asText("");
             if (openid.isEmpty()) {
@@ -121,6 +122,35 @@ public class WechatGateway {
             log.warn("调用微信 jscode2session 失败: {}", e.getClass().getSimpleName());
             throw degraded("微信服务暂时不可用，请稍后重试");
         }
+    }
+
+    /**
+     * 微信错误码 → 业务异常（**纯函数**，便于单测）。
+     *
+     * <p>分三类，绝不能混：
+     * <ol>
+     *   <li><b>配置错误</b>（40125 invalid appsecret / 40013 invalid appid / 40164 IP 白名单）：
+     *       服务端问题，返回 503 —— 端侧只提示「服务不可用」，<b>不能清登录态</b>；</li>
+     *   <li><b>一次性 code 无效</b>（40029 / 40163 / 40125 invalid code）：请求参数问题，
+     *       返回 422 —— 端侧提示「请重试」，同样<b>不清登录态</b>；</li>
+     *   <li>其余未知错误：按 code 无效处理，避免把用户踢下线。</li>
+     * </ol>
+     * 2026-10-20 之前的实现把 1、2 一律抛 401，导致小程序「一绑定微信就退出登录」。
+     */
+    static BizException toException(int errcode, String errmsg) {
+        String lower = errmsg == null ? "" : errmsg.toLowerCase(java.util.Locale.ROOT);
+        boolean secretInvalid = lower.contains("appsecret");
+        boolean appidInvalid = errcode == 40013 || lower.contains("invalid appid");
+        boolean ipBlocked = errcode == 40164 || lower.contains("invalid ip");
+        if (secretInvalid || appidInvalid || ipBlocked) {
+            String detail = secretInvalid
+                    ? "微信 AppSecret 与 AppID 不匹配"
+                    : appidInvalid ? "微信 AppID 无效" : "服务器 IP 不在微信白名单";
+            return new BizException(com.duoduo.common.enums.ErrorCode.WECHAT_CONFIG_ERROR,
+                    "微信登录未正确配置（" + detail + "），请联系管理员");
+        }
+        return new BizException(com.duoduo.common.enums.ErrorCode.WECHAT_CODE_INVALID,
+                "微信凭据无效或已过期，请重试");
     }
 
     private BizException degraded(String message) {
