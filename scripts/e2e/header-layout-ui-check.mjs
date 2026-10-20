@@ -285,21 +285,38 @@ step('⑤ 头像下拉：Esc 可关、点外部可关（此前只能靠「切换
    * 下一个 click 把 toggle 又切回了关闭态，于是「点外部前菜单已关」→ 断言空转。
    * 失败用例的**残留状态**会让后续断言变得不可信，这正是「断言必须自证不级联」的由来。
    */
+  /**
+   * 面板自 2026-10-20 动画修复起**常驻 DOM**（条件渲染会让首次插入的第一帧就是终态、
+   * transition 永远不触发）。所以「关掉」不再等于「元素消失」，必须改判可见性与可交互性 ——
+   * 继续用 count() 判定的话，恒等于 1 会让所有「已关闭」断言**假绿**。
+   */
+  const panelState = async () => page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu');
+    if (!p) return null;
+    const s = getComputedStyle(p);
+    return { opacity: Number(s.opacity), visibility: s.visibility, pointerEvents: s.pointerEvents };
+  });
+  const panelClosed = async () => {
+    const st = await panelState();
+    return Boolean(st) && (st.visibility === 'hidden' || st.opacity === 0) && st.pointerEvents === 'none';
+  };
+
   const openMenu = async () => {
     await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(400);
     await toggle.click();
     await page.waitForTimeout(250);
-    check('  前置：头像下拉已打开', (await menu.count()) === 1 && (await toggle.getAttribute('aria-expanded')) === 'true',
-      `menu=${await menu.count()} aria-expanded=${await toggle.getAttribute('aria-expanded')}`);
+    check('  前置：头像下拉已打开',
+      (await toggle.getAttribute('aria-expanded')) === 'true' && !(await panelClosed()),
+      { aria: await toggle.getAttribute('aria-expanded'), state: await panelState() });
   };
 
   // ---- ① Esc ----
   await openMenu();
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
-  check('★ Esc 能关掉头像下拉（此前关不掉，菜单一直压着页面右上角）', (await menu.count()) === 0,
-    await menu.count());
+  check('★ Esc 能关掉头像下拉（此前关不掉，菜单一直压着页面右上角）', await panelClosed(),
+    await panelState());
   check('Esc 关闭后 aria-expanded 复位为 false', (await toggle.getAttribute('aria-expanded')) === 'false');
   check('★ Esc 关闭后焦点回到触发按钮（键盘用户不丢位置）',
     await page.evaluate(() => document.activeElement?.getAttribute('aria-haspopup') === 'menu'));
@@ -311,7 +328,7 @@ step('⑤ 头像下拉：Esc 可关、点外部可关（此前只能靠「切换
   await page.locator('.app-header .search-inline span').first().click();
   await page.waitForTimeout(300);
   check('★ 点击菜单外部能关掉下拉（点的是不跳转元素，排除「路由切换顺带收起」）',
-    (await menu.count()) === 0, await menu.count());
+    await panelClosed(), await panelState());
 
   // ---- ③ 反向：点菜单内部不能被误判成外部点击（否则用户根本点不到里面的入口） ----
   await openMenu();
@@ -319,7 +336,7 @@ step('⑤ 头像下拉：Esc 可关、点外部可关（此前只能靠「切换
   await page.waitForURL((u) => u.pathname === '/me', { timeout: 10000 });
   await page.waitForTimeout(300);
   check('★ 点菜单内部条目照常跳转（内部点击不被当成外部点击）',
-    new URL(page.url()).pathname === '/me' && (await menu.count()) === 0, page.url());
+    new URL(page.url()).pathname === '/me' && (await panelClosed()), page.url());
 }
 
 // ---------------- ⑤b B 站式悬浮面板（2026-10-20 改版） ----------------
@@ -353,25 +370,76 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
   check('★ 读屏名仍带昵称（无障碍与既有定位不回退）',
     Boolean(triggerInfo) && triggerInfo.label.includes('账号菜单'), triggerInfo?.label);
 
-  // ---- ② 悬浮触发：面板弹出且带动画态 ----
+  // ---- ② 闭态：面板常驻但不可见、且真的处于缩小态（这是「动画能播」的前提） ----
+  const closedState = await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    if (!p) return null;
+    const s = getComputedStyle(p);
+    const m = new DOMMatrixReadOnly(s.transform);
+    return {
+      opacity: Number(s.opacity), visibility: s.visibility,
+      pointerEvents: s.pointerEvents, scale: Number(m.a.toFixed(3)),
+    };
+  });
+  check('★ 闭态面板常驻 DOM（不再条件渲染）但不可见、不可交互',
+    Boolean(closedState) && closedState.visibility === 'hidden' && closedState.opacity === 0
+    && closedState.pointerEvents === 'none', closedState);
+  check('★ 闭态确实是缩小态（scale≈0.88，动画起点真实存在）',
+    Boolean(closedState) && Math.abs(closedState.scale - 0.88) < 0.02, closedState);
+
+  // ---- ②b 悬停：逐帧录制证明「从小放大」真的在播（本轮修复的回归保险） ----
+  // 上一轮就是在这里翻车：面板条件渲染 + 插入 DOM 的第一帧已带 is-open，
+  // 浏览器没有「起始计算样式」可插值 → transition 不触发、getAnimations() 为空。
+  // 只断言「最终已展开」抓不到这种假象，必须连续采样**中间帧**。
   const box = await trigger.boundingBox();
+  await page.evaluate(() => {
+    window.__panelTrace = [];
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    const t0 = performance.now();
+    const tick = () => {
+      const s = getComputedStyle(p);
+      const m = new DOMMatrixReadOnly(s.transform);
+      window.__panelTrace.push({
+        t: Math.round(performance.now() - t0),
+        scale: Number(m.a.toFixed(3)),
+        opacity: Number(Number(s.opacity).toFixed(3)),
+      });
+      if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(350); // 80ms 意图延迟 + 200ms 淡入
+  await page.waitForTimeout(1000);
+  const trace = await page.evaluate(() => window.__panelTrace);
+  const midScale = trace.filter((s) => s.scale > 0.885 && s.scale < 0.995).length;
+  const midOpacity = trace.filter((s) => s.opacity > 0.02 && s.opacity < 0.98).length;
+  const finalScale = trace.length ? trace[trace.length - 1].scale : null;
+  const monotonic = trace.every((s, i) => i === 0 || s.scale >= trace[i - 1].scale - 0.002);
+  check('★ 展开过程中有连续中间帧（缩放没有瞬间跳到 100%）',
+    midScale >= 3, { midScale, frames: trace.length, sample: trace.slice(0, 6) });
+  check('★ 展开起点是明显缩小态（最小 scale ≤0.92，不是 0.97 那种看不出的幅度）',
+    trace.length > 0 && Math.min(...trace.map((s) => s.scale)) <= 0.92,
+    { minScale: trace.length ? Math.min(...trace.map((s) => s.scale)) : null });
+  check('★ 展开过程中透明度有中间值（淡入不是硬切）', midOpacity >= 2, { midOpacity });
+  check('★ 缩放单调递增并终止于 1.0（无跳变、无回弹过冲）',
+    monotonic && finalScale === 1, { monotonic, finalScale });
+
   const opened = await page.evaluate(() => {
     const p = document.querySelector('.app-header .user-menu.user-panel');
     if (!p) return null;
     const s = getComputedStyle(p);
     const btn = document.querySelector('.app-header button.icon-btn.avatar-btn');
-    return { opacity: Number(s.opacity), visible: s.visibility === 'visible',
-      expanded: btn.getAttribute('aria-expanded'), transform: s.transform };
+    return {
+      opacity: Number(s.opacity), visible: s.visibility === 'visible',
+      expanded: btn.getAttribute('aria-expanded'), transform: s.transform,
+    };
   });
   check('★ 悬停头像后面板展开（opacity=1、aria-expanded=true）',
     Boolean(opened) && opened.opacity === 1 && opened.visible && opened.expanded === 'true', opened);
 
-  // ---- ②b B 站式缩放动画：收起态是明显的缩小态，展开用回弹曲线「从小长大」 ----
-  // 曲线与缩小态读**样式表规则**而不是 computed style：
-  // ① computed timing-function 里的 cubic-bezier 自带逗号，按逗号解析会被切碎；
-  // ② 面板关闭后整个卸载（条件渲染），根本没有计算样式可读 —— 样式表规则是确定性的。
+  // ---- ②c 动画参数：收起态是缩小态、展开走 tokens、无过冲曲线 ----
+  // 曲线读**样式表规则**：computed timing-function 里的 cubic-bezier 自带逗号，
+  // 按逗号解析必碎（上一版就因此误判）。
   const growAnim = await page.evaluate(() => {
     let open = null;
     let closed = null;
@@ -389,20 +457,13 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
     }
     return { open, closed };
   });
-  check('★ 展开完成后 transform 复位（不残留缩放）',
+  check('★ 展开完成态 transform 为 none（不残留缩放）',
     /^none$/.test(String(growAnim.open?.transform ?? '')), growAnim);
-  check('★ 展开动画用回弹曲线（--ease-spring，轻微过冲的"从小长大"）',
-    /var\(--ease-spring\)/.test(String(growAnim.open?.transition)), growAnim);
-  check('★ 收起态是缩小态（scale(0.88)，展开即从小长大）',
+  check('★ 展开过渡引用动效令牌且不过冲（--ease-out，与录屏一致）',
+    /var\(--dur-base\)/.test(String(growAnim.open?.transition))
+    && /var\(--ease-out\)/.test(String(growAnim.open?.transition)), growAnim);
+  check('★ 收起态在样式表中是缩小态（scale(0.88)）',
     /scale\(0\.88\)/.test(String(growAnim.closed?.transform)), growAnim);
-  // 再真实走一遍「收起 → 重新悬停展开」：鼠标必须先挪开再回来 ——
-  // 指针一直停在按钮上时 mouseenter 不重发，面板不会自己再弹出来
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  await page.mouse.move(400, 500);
-  await page.waitForTimeout(150);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(350);
 
   // ---- ③ 桥接：鼠标穿过头像与面板之间的间隙，面板不得收起 ----
   const panelBox = await panel.boundingBox();
@@ -415,10 +476,14 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
     await page.waitForTimeout(30);
   }
   await page.waitForTimeout(250);
-  const stillOpen = await panel.count();
-  check('★ 鼠标穿过头像与面板的间隙后面板仍开着（桥接生效，不闪烁不误关）', stillOpen === 1, stillOpen);
+  const stillOpen = await page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('.app-header .user-menu.user-panel'));
+    return { visibility: s.visibility, opacity: Number(s.opacity) };
+  });
+  check('★ 鼠标穿过头像与面板的间隙后面板仍开着（桥接生效，不闪烁不误关）',
+    stillOpen.visibility === 'visible' && stillOpen.opacity === 1, stillOpen);
 
-  // ---- ④ 面板内容：大头像 + 昵称 + 分组入口 + 退出 ----
+  // ---- ④ 面板内容：头像 + 昵称 + 分组入口 + 退出 ----
   const content = await page.evaluate(() => {
     const p = document.querySelector('.app-header .user-menu.user-panel');
     if (!p) return null;
@@ -434,13 +499,24 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
   check('面板入口条目 ≥ 8 且有退出登录', content.items >= 8 && content.hasLogout, content);
   check('面板自身无横向溢出', content.overflowX === false, content);
 
-  // ---- ⑤ 移出面板：延迟淡出后收起（不是瞬间消失，也不能永远赖着） ----
+  // ---- ⑤ 移出面板：先淡出缩小、延迟到动画结束才隐藏（不能瞬间消失，也不能永远赖着） ----
   await page.mouse.move(400, 500); // 移到页面中部空白处
   await page.waitForTimeout(120);
-  const fading = await panel.count(); // 淡出期（200ms）内仍在 DOM
+  const fading = await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    const s = getComputedStyle(p);
+    return { visibility: s.visibility, opacity: Number(Number(s.opacity).toFixed(3)), scale: Number(new DOMMatrixReadOnly(s.transform).a.toFixed(3)) };
+  });
   await page.waitForTimeout(400);
-  const gone = await panel.count();
-  check('★ 移出后先淡出再卸载（120ms 时还在、520ms 后已移除）', fading === 1 && gone === 0,
+  const gone = await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu.user-panel');
+    if (!p) return { removed: true };
+    const s = getComputedStyle(p);
+    return { visibility: s.visibility, opacity: Number(s.opacity) };
+  });
+  check('★ 移出后先淡出再隐藏（120ms 时半透明仍在、520ms 时已隐藏）',
+    fading.visibility === 'visible' && fading.opacity > 0 && fading.opacity < 0.98
+    && (gone.removed === true || (gone.visibility === 'hidden' && gone.opacity === 0)),
     { fading, gone });
   check('★ 收起后 aria-expanded 复位 false',
     (await trigger.getAttribute('aria-expanded')) === 'false');
@@ -453,8 +529,12 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
     await page.waitForTimeout(60);
   }
   await page.waitForTimeout(500);
-  check('★ 快速反复进出 4 次后面板处于收起态（动画队列不堆积）', (await panel.count()) === 0,
-    await panel.count());
+  const endState = await page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('.app-header .user-menu.user-panel'));
+    return { visibility: s.visibility, opacity: Number(s.opacity) };
+  });
+  check('★ 快速反复进出 4 次后面板处于收起态（动画队列不堆积）',
+    endState.visibility === 'hidden' && endState.opacity === 0, endState);
 }
 
 // ---------------- ④ console ----------------

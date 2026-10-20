@@ -2701,7 +2701,8 @@ button.tag:active:not(:disabled),
     transform var(--dur-base) var(--ease-in-out), visibility 0s linear var(--dur-base);
 }
 /* is-open 挂在宿主上而不是面板上：关闭是宿主级别的判定（离开按钮+面板整体）。
-   展开用 --ease-spring（轻微过冲），缩放从小到大"弹"出来，收起用对称曲线缩回去。 */
+   曲线按用户提供的 B 站录屏逐帧反推校准：约 150~200ms 的淡入 + 轻微放大，
+   **没有过冲**（原 --ease-spring 的 1.32 过冲会在末尾"顶"一下，与视频不符）。 */
 .user-entry.is-open .user-panel {
   opacity: 1;
   visibility: visible;
@@ -2709,7 +2710,7 @@ button.tag:active:not(:disabled),
   pointer-events: auto;
   /* 展开时 visibility 不延迟（立即可交互）；收起时延迟到淡出结束（上面那条） */
   transition: opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-spring), visibility 0s;
+    transform var(--dur-base) var(--ease-out), visibility 0s;
 }
 
 /* ---------- 面板头部：横排（头像左、昵称/身份右），贴近 B 站且省高度 ---------- */

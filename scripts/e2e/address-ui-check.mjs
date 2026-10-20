@@ -209,9 +209,15 @@ await page.waitForTimeout(250);
 // 176px 宽的浮层随即盖住页面右上角的「+ 新增地址」按钮，导致后续点击被拦截、整套超时。
 // 教训：改共用组件后必须跑全量（本套件就是被全量回归抓出来的），且**过时注释会误导**。
 // 现在改成直接断言「Esc 已收起」，既守住新行为，也不再依赖旧行为。
+// 2026-10-20 动画修复起，面板**常驻 DOM**（条件渲染会让 transition 永远不触发），
+// 所以「已收起」的判据从 count()===0 改成「不可见 + 不可交互」，否则这条会恒假。
 check('Esc 能收起头像下拉（R74-2 新增；否则浮层会盖住页面右上角按钮）',
-  (await page.locator('.app-header .user-menu').count()) === 0,
-  await page.locator('.app-header .user-menu').count());
+  await page.evaluate(() => {
+    const p = document.querySelector('.app-header .user-menu');
+    if (!p) return true;
+    const s = getComputedStyle(p);
+    return (s.visibility === 'hidden' || Number(s.opacity) === 0) && s.pointerEvents === 'none';
+  }), await page.locator('.app-header .user-menu').count());
 check('页面渲染出来（标题 + 关联结算的说明）', t.includes('收货地址') && t.includes('结算'), t.slice(0, 240));
 check('空地址簿给出空态文案', t.includes('还没有收货地址'), t.slice(0, 400));
 check('空态提供「立即添加」主按钮', (await page.getByRole('button', { name: '立即添加' }).count()) >= 1, page.url());

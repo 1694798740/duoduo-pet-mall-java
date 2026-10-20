@@ -204,12 +204,24 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-20（四十四）· 修复：头像面板缩放动画从未生效
+
+| 项 | 实现 |
+| --- | --- |
+| 根因① | 条件渲染 + 展开时 `setMenuState('open')` 与挂载同一提交 → 元素首帧即带 `.is-open`，浏览器无「起始计算样式」，transition 不触发、`getAnimations()` 为空。实测 +60ms 即 `opacity=1 / transform=none / anims=[]` |
+| 根因② | `'closing'` 期间仍挂 `is-open`（判据 `!== 'closed'`）→ 移开后先等 200ms 才摘类，淡出被推迟，观感"愣一下再消失" |
+| 修复 | 面板**常驻 DOM**，只用宿主 `is-open` 切显隐（closed 态真实存在）；三态机简化为布尔，关闭不再需要定时器，仅保留 80ms 进入意图延迟 |
+| 参数 | 按录屏校准：ffmpeg 抽 60fps + 以悬停前帧为基线差分 → 约 150–200ms 淡入＋轻微放大、无位移、**无过冲** ⇒ `scale(0.88)` / `--dur-base` / `--ease-out`（弃用 `--ease-spring` 的 1.32 过冲） |
+| e2e | 103 → **109 项**：新增 rAF 连续采样（≥3 个缩放中间帧 / min scale ≤0.92 / 透明度中间值 / 单调递增至 1）；「已关闭」判据由 `count()` 改可见性+可交互性（常驻后 count 恒 1，否则假绿）；address 同步 |
+| 反向验证 | 产物 CSS 改 `scale(.88)`→`scale(1)`：恰好 4 红 / 105 绿 / 总数仍 109；恢复后哈希一致、复跑 109/0 |
+| 回归 | address 65 / my-listings 52 / notice-chat-follow 50 / admin-entry 74 / motion 22 / home 9 全绿 |
+
 ### 2026-10-20（四十三）· 头像面板缩小 ＋ B 站式缩放动画
 
 | 项 | 实现 |
 | --- | --- |
 | 尺寸 | 面板宽 300→256px；头部竖排→**横排**（头像 64→44px 左、昵称/身份右，B 站同构）；条目 padding 9→6px、字号 14→13px、图标 20→18px；整体高度约省 1/4 |
-| 动画 | 起始态 `scale(0.97)`→**`scale(0.88)` 且去掉位移**，origin top right 不变 —— 从右上角纯缩放「长出来」；展开曲线 `--ease-out`→`--ease-spring`（轻微过冲），收起对称收回；时长保持 `--dur-base` 200ms |
+| 动画 | 起始态 `scale(0.97)`→**`scale(0.88)` 且去掉位移**，origin top right 不变 —— 从右上角纯缩放「长出来」；展开曲线 `--ease-out`→`--ease-spring`（轻微过冲，**四十四轮按录屏改回 `--ease-out`**：B 站无过冲）；收起对称收回；时长保持 `--dur-base` 200ms |
 | e2e | ②b 段 3 项：transform 复位 / 展开引用 `--ease-spring` / 收起态规则含 `scale(0.88)`。曲线与缩小态读**样式表规则**而非 computed style（cubic-bezier 自带逗号会切碎按逗号解析；面板卸载后无计算样式可读）。修测试盲区：Esc 后指针停按钮上 `mouseenter` 不重发，重开需先移开再移回。全套件 100 → **103 项全过** |
 | 回归 | my-listings 52 / notice-chat-follow 50 / admin-entry 74 / motion 22 全 EXIT=0 |
 

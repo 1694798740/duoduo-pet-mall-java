@@ -2059,6 +2059,49 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-20（四十四）· 修复：头像面板缩放动画从未生效（条件渲染导致无起始样式）
+
+**用户反馈**：鼠标移到头像上，面板瞬间就是完整大小，没有从小到大的缩放过渡。
+
+**根因（实测确认，不是"幅度太小"）**
+
+1. 面板是**条件渲染**（`menuState !== 'closed' ? <div> : null`），而触发展开时
+   `setMenuState('open')` 与挂载发生在**同一次提交**里 —— 元素插入 DOM 的第一帧
+   就已经带着 `.is-open`。浏览器拿不到「起始计算样式」，`transition` 不触发、
+   `getAnimations()` 为空，CSS 里写的 `scale(0.88)` 从来没被渲染过一次。
+   诊断数据：`+60ms` 时面板已存在且 `opacity=1 / transform=none / anims=[]`。
+2. 附带问题：`'closing'` 状态下仍然挂着 `is-open`（类名判据是 `!== 'closed'`），
+   于是"移开"后先干等 200ms 才摘类 —— 淡出被整体推迟，观感是"先愣一下再消失"。
+
+**修复**
+
+- **面板常驻 DOM**，只由宿主上的 `is-open` 类切换显隐。closed 态真实存在
+  （`opacity:0 + visibility:hidden + pointer-events:none`，读屏器与 Tab 都进不去），
+  类切换才有前后两个计算样式可插值；收起时 `visibility` 靠
+  `transition: ... visibility 0s linear var(--dur-base)` 延迟到淡出结束才隐藏。
+- **三态机简化为布尔**：动画交给 CSS 后不再需要"关闭定时器"，摘类即刻开始淡出；
+  唯一保留的定时器是进入方向的 80ms 意图延迟（鼠标扫过顶栏不误弹）。
+- **参数按录屏校准**：用 ffmpeg 抽 60fps 帧、以悬停前画面为基线做差分反推
+  B 站面板：约 150–200ms 的淡入 + 轻微放大、无位移、**无过冲**。
+  故起始态 `scale(0.88)`、时长 `--dur-base`（200ms）、曲线 `--ease-out`
+  （原来的 `--ease-spring` 1.32 过冲会在末尾顶一下，与录屏不符）。
+
+**e2e（`header-layout-ui-check` 103 → 109 项）**
+
+- 新增逐帧证据：悬停前注入 rAF 采样器，连续记录 900ms 内面板的 computed
+  `scale` / `opacity`，断言 ① 存在 ≥3 个缩放中间帧、② 最小 scale ≤0.92
+  （抓"0.97 那种看不出来的幅度"）、③ 透明度有中间值、④ 缩放单调递增且终止于 1。
+  只断言"最终已展开"抓不到这类假象 —— 这正是上一轮 100 项全绿却仍然坏掉的原因。
+- 常驻 DOM 后 `count()` 恒为 1，所有「已关闭」判据改为**可见性 + 可交互性**
+  （`visibility:hidden` 或 `opacity:0`，且 `pointer-events:none`），
+  否则整套断言会集体假绿；同步修改 `address-ui-check` 的同类判据。
+- **反向验证**：容器内把产物 CSS 的 `transform:scale(.88)` 改成 `scale(1)`
+  → 恰好 4 条红、其余 105 条绿、总数仍 109（不多不少），`docker cp` 恢复后
+  哈希一致、复跑 109/0。
+
+**回归**：`address` 65 / `my-listings` 52 / `notice-chat-follow` 50 /
+`admin-entry` 74 / `motion` 22 / `home` 9 全 EXIT=0。
+
 ### 2026-10-20（四十三）· 头像面板缩小 ＋ B 站式「从小长大」缩放动画
 
 **需求**（用户截图反馈）：面板尺寸过大、遮挡页面内容，整体缩小到更合适的比例；
@@ -2071,7 +2114,8 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
   字号 14→13px、图标 20→18px、分组 padding 收紧。整体高度约省 1/4，遮挡面积明显下降。
 - **动画**：起始态 `scale(0.97)`（肉眼几乎看不出）改为 **`scale(0.88)` + 去掉位移**、
   `transform-origin: top right` 不变 —— 展开即从右上角**纯缩放长出来**（B 站手法）；
-  展开曲线换 `--ease-spring`（轻微过冲，"活"感），收起仍对称收回缩小态再淡出；
+  展开曲线换 `--ease-spring`（轻微过冲，"活"感，**四十四轮按录屏改回 `--ease-out`**：
+  B 站实测无过冲）；收起仍对称收回缩小态再淡出；
   时长保持 `--dur-base`（200ms，在 150–250ms 区间内）。
 - **e2e**：`header-layout-ui-check` ②b 段改/增 3 项断言 —— 展开完成 transform 复位、
   展开过渡引用 `--ease-spring`、收起态样式表规则含 `scale(0.88)`。曲线与缩小态读
