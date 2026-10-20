@@ -131,6 +131,8 @@ import type {
   TenantHealthPanel,
   RegeoView,
   JsApiConfig,
+  DeleteBlockersView,
+  DeleteAccountView,
 } from './types';
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
@@ -187,6 +189,26 @@ export const userApi = {
   /** 实名认证；身份证仅存掩码 */
   realName: (body: { realName: string; idCard: string }) =>
     api.post<UserView>('/api/users/me/realname', body),
+
+  /**
+   * C7 · 账号注销。
+   *
+   * 三个动作与后端状态机一一对应：预检（阻塞清单）→ 申请（进入冷静期）
+   * → 撤销（冷静期内可反悔）。撤销刻意不依赖登录态：注销期间登录已被停用。
+   */
+  deleteAccount: {
+    /** 预检：返回阻塞项清单 + 当前注销状态 */
+    precheck: () => api.get<DeleteBlockersView>('/api/users/me/delete-account'),
+    /** 提交申请；被业务挡住时后端返回 409 ACCOUNT_DELETE_BLOCKED */
+    request: (body: { password: string; reason?: string }) =>
+      api.post<DeleteAccountView>('/api/users/me/delete-account', body),
+    /** 撤销（需登录态，便捷通道） */
+    cancel: (body: { password: string }) =>
+      api.del<null>('/api/users/me/delete-account', body),
+    /** 撤销（无登录态：手机号 + 密码） */
+    cancelByPhone: (body: { phone: string; password: string }) =>
+      api.post<null>('/api/auth/account-deletion/cancel', body),
+  },
 
   /**
    * 申请成为卖家（商家入驻）：把 role 升级为 SELLER。

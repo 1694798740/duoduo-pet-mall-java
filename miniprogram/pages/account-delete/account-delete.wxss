@@ -1,0 +1,118 @@
+.page {
+  padding: 24rpx 24rpx 60rpx;
+  background: #f6f7f9;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.state {
+  padding: 80rpx 0;
+  text-align: center;
+  color: #8a8f99;
+  font-size: 28rpx;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 28rpx;
+  margin-bottom: 24rpx;
+}
+
+.card.danger {
+  background: #fff5f5;
+  border: 1rpx solid #f5c2c0;
+}
+
+.card.warn {
+  background: #fff9ec;
+  border: 1rpx solid #f0d9a8;
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f2329;
+  margin-bottom: 16rpx;
+}
+
+.card-text {
+  font-size: 27rpx;
+  color: #3d4450;
+  line-height: 1.7;
+}
+
+.card-text.dim,
+.kv.dim {
+  color: #8a8f99;
+  font-size: 25rpx;
+}
+
+.kv {
+  font-size: 27rpx;
+  color: #3d4450;
+  line-height: 1.9;
+}
+
+.blocked-item {
+  padding: 16rpx 0;
+  border-top: 1rpx dashed #e6e8eb;
+}
+
+.blocked-head {
+  font-size: 27rpx;
+  color: #1f2329;
+  font-weight: 500;
+}
+
+.blocked-ref {
+  color: #8a8f99;
+  font-weight: 400;
+}
+
+.blocked-detail {
+  font-size: 25rpx;
+  color: #6b7280;
+  margin-top: 6rpx;
+}
+
+.input {
+  height: 88rpx;
+  background: #f6f7f9;
+  border-radius: 12rpx;
+  padding: 0 24rpx;
+  font-size: 28rpx;
+  margin-bottom: 20rpx;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.check-text {
+  font-size: 26rpx;
+  color: #6b7280;
+  margin-left: 8rpx;
+}
+
+.btn-danger {
+  background: #d93025;
+  color: #fff;
+  font-size: 30rpx;
+  border-radius: 12rpx;
+  padding: 20rpx 0;
+  text-align: center;
+}
+
+.btn-plain {
+  background: #fff;
+  color: #1f2329;
+  border: 1rpx solid #d0d3d9;
+  font-size: 30rpx;
+  border-radius: 12rpx;
+  padding: 18rpx 0;
+  text-align: center;
+  margin-top: 8rpx;
+}

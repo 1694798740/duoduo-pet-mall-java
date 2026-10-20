@@ -146,7 +146,9 @@ const get = (path, opts) => request('GET', path, null, opts);
 const post = (path, data, opts) => request('POST', path, data, opts);
 const put = (path, data, opts) => request('PUT', path, data, opts);
 const patch = (path, data, opts) => request('PATCH', path, data, opts);
-const del = (path, opts) => request('DELETE', path, null, opts);
+// C7：DELETE 也需要带请求体（撤销注销要传密码校验），因此签名与 put/patch 对齐。
+// 既有调用点都只传 path，data 缺省为 undefined → 走 request 里的 `data || {}`，行为不变。
+const del = (path, data, opts) => request('DELETE', path, data, opts);
 
 /**
  * 文件上传（A15）：wx.uploadFile 与 wx.request 是两套 API，包一层对齐 request 的行为 ——

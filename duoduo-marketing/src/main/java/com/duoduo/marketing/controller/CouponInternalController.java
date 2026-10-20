@@ -8,12 +8,16 @@ import com.duoduo.marketing.dto.CouponDtos.LockResult;
 import com.duoduo.marketing.dto.CouponDtos.ReleaseRequest;
 import com.duoduo.marketing.dto.CouponDtos.ReleaseResult;
 import com.duoduo.marketing.dto.CouponDtos.SweepResult;
+import com.duoduo.marketing.dto.PersonalDataCleanupResult;
 import com.duoduo.marketing.service.CouponReleaseJob;
 import com.duoduo.marketing.service.CouponService;
+import com.duoduo.marketing.service.PersonalDataCleanupService;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -34,10 +38,14 @@ public class CouponInternalController {
 
     private final CouponService couponService;
     private final CouponReleaseJob releaseJob;
+    private final PersonalDataCleanupService personalDataCleanupService;
 
-    public CouponInternalController(CouponService couponService, CouponReleaseJob releaseJob) {
+    public CouponInternalController(CouponService couponService,
+                                    CouponReleaseJob releaseJob,
+                                    PersonalDataCleanupService personalDataCleanupService) {
         this.couponService = couponService;
         this.releaseJob = releaseJob;
+        this.personalDataCleanupService = personalDataCleanupService;
     }
 
     /**
@@ -89,5 +97,33 @@ public class CouponInternalController {
     @PostMapping("/sweep")
     public ApiResponse<SweepResult> sweep() {
         return ApiResponse.ok(releaseJob.sweepNow());
+    }
+
+    /**
+     * C7 · 账号注销的个人数据清理（服务间调用，见 {@code docs/account-deletion-design.md} 4.4）。
+     *
+     * <p><b>内部接口</b>：路径以 {@code /api/coupons/internal/} 开头，由本域
+     * {@code InternalTokenFilter} 校验 {@code X-Internal-Token}（既有前缀已覆盖本路径，
+     * 无需改 Filter）。调用方是用户域的注销编排，五域全部成功后才落
+     * {@code t_user.account_status = DELETED}。
+     *
+     * <p>两种模式（查询串 {@code dryRun}）：
+     * <ul>
+     *   <li>{@code dryRun=true} —— 预检，只查不写，返回「将删多少行券」；</li>
+     *   <li>缺省 / false —— 执行，删该用户未使用 / 已锁定 / 已过期的券。
+     *       <b>幂等可重入</b>：调度失败重试时重复调用不报错、不二次破坏。</li>
+     * </ul>
+     *
+     * <p>已核销（{@code USED}）的券刻意不删：它对应一笔真实订单，
+     * 订单留档要回答「这单抵了多少」（理由见 {@code PersonalDataCleanupService} 类注释）。
+     */
+    @PostMapping("/users/{userId}/personal-data")
+    public ApiResponse<PersonalDataCleanupResult> cleanupPersonalData(
+            @PathVariable Long userId,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun) {
+        PersonalDataCleanupResult result = dryRun
+                ? personalDataCleanupService.preview(userId)
+                : personalDataCleanupService.execute(userId);
+        return ApiResponse.ok(result);
     }
 }

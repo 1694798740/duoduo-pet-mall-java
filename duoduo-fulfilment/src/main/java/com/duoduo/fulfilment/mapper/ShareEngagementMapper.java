@@ -54,6 +54,28 @@ public interface ShareEngagementMapper {
             + "AND share_id IN (${shareIds})")
     List<Long> favoritedShareIds(@Param("userId") Long userId, @Param("shareIds") String shareIds);
 
+    // ---------------- C7 · 账号注销：按用户整体清理（删/查，见 PersonalDataCleanupService） ----------------
+    //
+    // 为什么点赞/收藏也按 user_id 整表删：注销清的是「这个人留下的一切互动痕迹」，
+    // 逐条 (share_id, user_id) 删要先查再删，纯属多绕一圈 —— 这四张表
+    // （含评论点赞）在账号注销场景下没有「只删一部分」的语义。
+
+    /** 该用户点过的赞总数（注销预检 / 执行回报） */
+    @Select("SELECT COUNT(*) FROM t_share_like WHERE user_id = #{userId}")
+    long countLikesByUser(@Param("userId") Long userId);
+
+    /** 删该用户的全部点赞；幂等，重复执行命中 0 行 */
+    @Delete("DELETE FROM t_share_like WHERE user_id = #{userId}")
+    int deleteLikesByUser(@Param("userId") Long userId);
+
+    /** 该用户的收藏总数（注销预检 / 执行回报） */
+    @Select("SELECT COUNT(*) FROM t_share_favorite WHERE user_id = #{userId}")
+    long countFavoritesByUser(@Param("userId") Long userId);
+
+    /** 删该用户的全部收藏；幂等，重复执行命中 0 行 */
+    @Delete("DELETE FROM t_share_favorite WHERE user_id = #{userId}")
+    int deleteFavoritesByUser(@Param("userId") Long userId);
+
     // ---------------- 计数回写（GREATEST 防负漂移：事实行已删但计数列万一没对上） ----------------
 
     @Update("UPDATE t_product_share SET like_count = GREATEST(0, like_count + #{delta}) WHERE id = #{shareId}")

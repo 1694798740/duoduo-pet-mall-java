@@ -86,6 +86,34 @@ export interface UserView {
   merchant?: MerchantBrief | null;
 }
 
+/**
+ * C7 · 账号注销：阻塞项（未终态订单 / 进行中售后 / 商家身份 / 在售闲置）。
+ * type 决定端侧归类展示，ref 是订单号等业务标识，detail 是可直接展示的说明。
+ */
+export interface BlockedItemView {
+  type: string;
+  ref: string;
+  detail: string;
+}
+
+/** 注销预检结果（点击「注销账号」时先拉一次，把待办摆给用户） */
+export interface DeleteBlockersView {
+  blocked: boolean;
+  items: BlockedItemView[];
+  /** 后端同时会把当前注销状态带上，端侧据此切换「申请 / 撤销」形态 */
+  accountStatus?: string;
+  scheduledAt?: string | null;
+  graceDays?: number;
+}
+
+/** 提交注销后的状态视图 */
+export interface DeleteAccountView {
+  accountStatus: string;
+  scheduledAt: string | null;
+  graceDays: number;
+  blockedItems: BlockedItemView[];
+}
+
 export interface PetView {
   id: string;
   name: string;

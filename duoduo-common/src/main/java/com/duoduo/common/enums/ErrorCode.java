@@ -85,6 +85,27 @@ public enum ErrorCode {
      */
     WECHAT_CONFIG_ERROR(HttpStatus.SERVICE_UNAVAILABLE, "微信登录未正确配置，请联系管理员"),
 
+    /**
+     * C7 · 账号注销被未完成的业务挡住（409）。
+     *
+     * <p>有未终态订单、进行中售后、店铺主体身份或在售闲置时，注销申请必须被拒绝 ——
+     * 否则"删掉的只是账号"，订单履约、退款、店铺主体却悬在半空。
+     * 响应体另带 {@code blockedItems} 清单（订单号 + 状态 / 店铺 / 闲置），
+     * 端侧据此告诉用户"先去处理哪几件"，而不是干巴巴一句"不能注销"。
+     *
+     * <p>用 409 而不是 422：422 在本项目已被「微信未绑定」占用（见 WECHAT_CODE_INVALID
+     * 注释里的同类理由），复用会把两种语义搅在一起。
+     */
+    ACCOUNT_DELETE_BLOCKED(HttpStatus.CONFLICT, "账号存在未完成的业务，暂时无法注销"),
+    /**
+     * C7 · 账号正在注销冷静期内（409）。
+     *
+     * <p>用户提交注销后进入 7 天冷静期，此期间登录被停用（防止"注销了还能继续买东西"），
+     * 但可凭「手机号 + 密码」撤销。错误码独立出来，端侧才能把用户导向「撤销注销」页，
+     * 而不是普通登录页 —— 后者会让用户以为密码错了。
+     */
+    ACCOUNT_DELETING(HttpStatus.CONFLICT, "账号正在注销冷静期内，登录已停用"),
+
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁，请稍后再试"),
     DEGRADED(HttpStatus.SERVICE_UNAVAILABLE, "依赖服务不可用，已降级"),
 

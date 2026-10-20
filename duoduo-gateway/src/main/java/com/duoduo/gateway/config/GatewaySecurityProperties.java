@@ -36,6 +36,13 @@ public class GatewaySecurityProperties {
             // /api/auth/login 不会覆盖 /api/auth/login/token）。
             "/api/auth/login/token",
             "/api/auth/register",
+            // C7 · 注销冷静期内撤销账号：**必须免登**。
+            // 冷静期的设计就是「登录停用」，用户此刻手里没有任何有效会话 ——
+            // 若要求带令牌，这个端点永远调不通，等于把承诺的撤销通道堵死。
+            // 安全性靠「手机号 + 密码」重新验证（与登录同一口径：不区分账号不存在与密码错误），
+            // 信任级别与 /api/auth/login 相同，因此同样是**精确路径**、不用通配
+            // （通配会连带放行将来挂在同一子树下的其它写操作）。
+            "/api/auth/account-deletion/cancel",
             "/api/auth/sms/**",
             "/api/auth/refresh",
             // 移动端刷新：refreshToken 由端侧请求体传入，此时 access token 已过期，

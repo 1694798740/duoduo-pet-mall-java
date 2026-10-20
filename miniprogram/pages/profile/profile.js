@@ -111,4 +111,15 @@ Page({
     this.setData({ logged: false, user: null, couponCount: 0 });
     wx.showToast({ title: '已退出登录', icon: 'none' });
   },
+
+  /**
+   * C7 · 账号注销入口。
+   *
+   * 用 navigateTo 而不是 switchTab：这是独立页面，且注销后要能返回。
+   * ★ 注意：提交注销成功后后端会吊销所有 refresh 令牌，本页返回时登录态已失效，
+   *   注销页内部会自行 clearSession()，这里不重复处理。
+   */
+  goDeleteAccount() {
+    wx.navigateTo({ url: '/pages/account-delete/account-delete' });
+  },
 });

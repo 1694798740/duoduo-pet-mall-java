@@ -1,0 +1,56 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="state">正在检查账号状态…</view>
+
+  <block wx:else>
+    <!-- ── 甲：冷静期形态（账号已在注销流程中） ───────────────────────────── -->
+    <view wx:if="{{cancelling}}" class="card danger">
+      <view class="card-title">账号正在注销冷静期</view>
+      <view class="card-text">
+        你的账号已申请注销，<text wx:if="{{scheduledAtText}}">将于 {{scheduledAtText}} 执行</text>
+        <text wx:else>将在 {{graceDays}} 天后执行</text>。期间登录已被停用。
+      </view>
+      <view class="card-text dim">
+        现在反悔还来得及：填手机号和密码，点下面的「撤销注销」即可恢复账号。
+      </view>
+    </view>
+
+    <!-- ── 乙：申请前形态 ─────────────────────────────────────────────────── -->
+    <block wx:else>
+      <view class="card">
+        <view class="card-title">注销后会发生什么</view>
+        <view class="kv">· 手机号、昵称、头像、实名信息、收货地址、宠物档案将被清除，无法恢复</view>
+        <view class="kv">· 订单、支付、售后等交易记录按法规留存，其中的收件人信息会做脱敏</view>
+        <view class="kv">· 账号进入 {{graceDays}} 天冷静期，期间无法登录，期满才真正执行</view>
+      </view>
+
+      <view wx:if="{{blocked}}" class="card warn">
+        <view class="card-title">还有 {{items.length}} 件事没处理完</view>
+        <view wx:for="{{items}}" wx:key="ref" class="blocked-item">
+          <view class="blocked-head">{{item.label}}<text wx:if="{{item.ref}}" class="blocked-ref">（{{item.ref}}）</text></view>
+          <view class="blocked-detail">{{item.detail}}</view>
+        </view>
+        <view class="card-text dim">处理完再回来申请，否则提交会被拒绝。</view>
+      </view>
+
+      <view wx:else class="card">
+        <view class="card-title">确认身份</view>
+        <input class="input" password placeholder="请输入登录密码" value="{{password}}" bindinput="onPasswordInput" />
+        <input class="input" placeholder="注销原因（选填，帮我们改进）" value="{{reason}}" bindinput="onReasonInput" />
+        <view class="check" bindtap="toggleConfirm">
+          <checkbox value="1" checked="{{confirmed}}" />
+          <text class="check-text">我已了解：注销后个人数据无法恢复</text>
+        </view>
+        <button class="btn-danger" loading="{{submitting}}" bindtap="submit">申请注销账号</button>
+      </view>
+    </block>
+
+    <!-- ── 撤销区：冷静期和正常状态都保留（正常状态下提交失败也能自救） ────── -->
+    <view class="card">
+      <view class="card-title">撤销注销申请</view>
+      <view class="card-text dim">冷静期内登录已停用，这里用「手机号 + 密码」验证身份，不需要登录态。</view>
+      <input class="input" type="number" maxlength="11" placeholder="手机号" value="{{phone}}" bindinput="onPhoneInput" />
+      <input class="input" password placeholder="登录密码" value="{{cancelPassword}}" bindinput="onCancelPasswordInput" />
+      <button class="btn-plain" loading="{{submitting}}" bindtap="cancel">撤销注销</button>
+    </view>
+  </block>
+</view>

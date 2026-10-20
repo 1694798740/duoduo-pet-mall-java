@@ -107,3 +107,5 @@
 </view>
 
 <button wx:if="{{logged}}" class="btn btn-plain logout-btn" bindtap="logout">退出登录</button>
+<!-- C7：隐私指引 4.2 已承诺可注销账号，入口必须可见（微信平台规范要求） -->
+<view wx:if="{{logged}}" class="delete-account-entry" bindtap="goDeleteAccount">注销账号</view>

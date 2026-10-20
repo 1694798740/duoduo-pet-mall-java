@@ -134,6 +134,33 @@ function submitRealName(realName, idCard) {
   return req.post('/api/users/me/realname', { realName, idCard });
 }
 
+/**
+ * C7 · 账号注销三件套（用户域）。
+ *
+ * 与实名不同，注销是**不可逆**操作，所以三个方法的错误都不做静默：
+ * 端侧必须让用户看清「为什么挡住我」。
+ *
+ *  - precheck：申请前的阻塞项清单（未终态订单 / 进行中售后 / 商家身份 / 在售闲置）；
+ *  - request：提交申请（需密码），成功即进入冷静期，**所有端登录即刻停用**；
+ *  - cancelByToken：冷静期内撤销（需登录态，便捷通道）；
+ *  - cancelByPhone：无需登录态的撤销（手机号 + 密码）—— 冷静期内登录已被停用，
+ *    用户手里根本没有会话，这条才是真正能用的撤销通道。
+ */
+const accountDeletion = {
+  precheck() {
+    return req.get('/api/users/me/delete-account');
+  },
+  request(password, reason) {
+    return req.post('/api/users/me/delete-account', { password, reason: reason || '' });
+  },
+  cancelByToken(password) {
+    return req.del('/api/users/me/delete-account', { password });
+  },
+  cancelByPhone(phone, password) {
+    return req.post('/api/auth/account-deletion/cancel', { phone, password });
+  },
+};
+
 // ── 商品域（公开） ──────────────────────────────────────────────────────────
 const product = {
   list(params) {
@@ -798,6 +825,7 @@ module.exports = {
   ensureSession,
   refreshSession,
   submitRealName,
+  accountDeletion,
   product,
   cart,
   order,

@@ -70,3 +70,13 @@
   color: var(--text-3);
 }
 
+
+/* C7 · 注销入口：刻意做成不显眼的文字链，但必须存在（平台规范要求可见可达） */
+.delete-account-entry {
+  margin: 24rpx auto 40rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #9aa0a6;
+  text-decoration: underline;
+  padding: 16rpx 0;
+}

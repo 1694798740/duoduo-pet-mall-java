@@ -462,4 +462,77 @@ public final class UserDtos {
             String fullAddress
     ) {
     }
+
+    // ---------------- C7 · 账号注销 ----------------
+
+    /**
+     * 提交注销申请。
+     *
+     * <p>密码必填：注销是不可逆操作的前置门，必须用「你知道密码」把「会话被盗用」
+     * 这种情况挡在外面 —— 只凭登录态就能注销，等于公共场所一台没锁屏的手机
+     * 被别人点两下就永久失去账号。
+     */
+    public record DeleteAccountRequest(
+            @NotBlank(message = "密码不能为空")
+            String password,
+
+            @Size(max = 200, message = "注销原因过长")
+            String reason
+    ) {
+    }
+
+    /**
+     * 撤销注销申请（C7）。
+     *
+     * <p><b>刻意不带登录态要求</b>：提交注销后账号已禁止登录，用户手里没有任何
+     * 有效会话，此时若要求登录态就等于「注销不可撤销」。改用「手机号 + 密码」
+     * 重新验证身份，与登录同一口径的错误提示（不区分账号不存在与密码错误）。
+     */
+    public record CancelDeleteAccountRequest(
+            @NotBlank(message = "手机号不能为空")
+            @Pattern(regexp = PHONE_REGEX, message = "请输入合法的 11 位手机号")
+            String phone,
+
+            @NotBlank(message = "密码不能为空")
+            String password
+    ) {
+    }
+
+    /**
+     * 一条阻塞项：告诉用户「先去处理什么」。
+     *
+     * @param type  类别：{@code ORDER} 未完成订单 / {@code AFTER_SALE} 进行中售后 /
+     *              {@code MERCHANT} 店铺主体身份 / {@code LISTING} 在售闲置
+     * @param ref   业务单号或店铺名（用户能认出的那一个）
+     * @param detail 人类可读的状态说明，如「已付款 · ¥39.90」
+     */
+    public record BlockedItemView(
+            String type,
+            String ref,
+            String detail
+    ) {
+    }
+
+    /** 注销预检结果（申请前给端侧展示，也可用于提交被拒时展示） */
+    public record DeleteBlockersView(
+            boolean blocked,
+            List<BlockedItemView> items
+    ) {
+    }
+
+    /**
+     * 注销状态视图。
+     *
+     * @param accountStatus {@code ACTIVE} / {@code CANCELLING} / {@code DELETED}
+     * @param scheduledAt   冷静期截止时间（ISO-8601）；非冷静期为 null
+     * @param graceDays     冷静期天数（配置项，默认 7）
+     * @param blockedItems  若因阻塞而未进入冷静期，这里给出清单
+     */
+    public record DeleteAccountView(
+            String accountStatus,
+            String scheduledAt,
+            int graceDays,
+            List<BlockedItemView> blockedItems
+    ) {
+    }
 }

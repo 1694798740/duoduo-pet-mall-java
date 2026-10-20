@@ -2,16 +2,23 @@ package com.duoduo.user.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.common.enums.ErrorCode;
+import com.duoduo.common.exception.BizException;
 import com.duoduo.user.dto.UserDtos.CreditUpdateRequest;
 import com.duoduo.user.dto.UserDtos.CreditUpdateResult;
+import com.duoduo.user.dto.UserDtos.DeleteAccountRequest;
+import com.duoduo.user.dto.UserDtos.DeleteAccountView;
+import com.duoduo.user.dto.UserDtos.DeleteBlockersView;
 import com.duoduo.user.dto.UserDtos.RealNameRequest;
 import com.duoduo.user.dto.UserDtos.UpdateProfileRequest;
 import com.duoduo.user.dto.UserDtos.UserView;
+import com.duoduo.user.service.AccountDeletionService;
 import com.duoduo.user.service.AuthService;
 import com.duoduo.user.service.PetProfileService;
 import com.duoduo.user.support.AuthCookieWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +26,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 账号信息接口。
@@ -35,16 +44,20 @@ public class UserController {
     private final com.duoduo.user.service.MerchantStaffService staffService;
     private final com.duoduo.user.service.MerchantOnboardingService onboardingService;
     private final com.duoduo.user.service.MerchantViolationService violationService;
+    /** C7 · 账号注销（软注销 + 匿名化，见 AccountDeletionService 类注释） */
+    private final AccountDeletionService accountDeletionService;
 
     public UserController(AuthService authService, PetProfileService petProfileService,
                           com.duoduo.user.service.MerchantStaffService staffService,
                           com.duoduo.user.service.MerchantOnboardingService onboardingService,
-                          com.duoduo.user.service.MerchantViolationService violationService) {
+                          com.duoduo.user.service.MerchantViolationService violationService,
+                          AccountDeletionService accountDeletionService) {
         this.staffService = staffService;
         this.onboardingService = onboardingService;
         this.violationService = violationService;
         this.authService = authService;
         this.petProfileService = petProfileService;
+        this.accountDeletionService = accountDeletionService;
     }
 
     @GetMapping("/me")
@@ -61,6 +74,57 @@ public class UserController {
     @PostMapping("/me/realname")
     public ApiResponse<UserView> submitRealName(@Valid @RequestBody RealNameRequest request) {
         return ApiResponse.ok(authService.submitRealName(UserContext.requireUserId(), request));
+    }
+
+    // ---------------- C7 · 账号注销 ----------------
+
+    /**
+     * 注销预检：有哪些事没做完会挡住注销。
+     *
+     * <p>与「提交注销」分开两个端点，是为了让端侧能在用户点确认<b>之前</b>
+     * 就把阻塞清单摆出来（弹窗里列出待处理的订单/售后/店铺/闲置），
+     * 而不是等用户输了密码才被告知不行。
+     */
+    @GetMapping("/me/delete-account")
+    public ApiResponse<DeleteBlockersView> deleteAccountBlockers() {
+        return ApiResponse.ok(accountDeletionService.precheck(UserContext.requireUserId()));
+    }
+
+    /**
+     * 提交注销申请。
+     *
+     * <p>被业务挡住时返回 <b>409 ACCOUNT_DELETE_BLOCKED</b>，message 里列出阻塞项；
+     * 端侧应先调上面的预检端点，正常不会走到这里。
+     */
+    @PostMapping("/me/delete-account")
+    public ApiResponse<DeleteAccountView> requestDeleteAccount(
+            @Valid @RequestBody DeleteAccountRequest request) {
+        DeleteAccountView view = accountDeletionService.request(
+                UserContext.requireUserId(), request.password(), request.reason());
+        if (!view.blockedItems().isEmpty()) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETE_BLOCKED,
+                    "有未完成的业务需要先处理：" + describe(view.blockedItems()));
+        }
+        return ApiResponse.ok(view);
+    }
+
+    /**
+     * 撤销注销申请（冷静期内，需登录态）。
+     *
+     * <p>登录态此时已不可用（注销期间登录被停用），所以这只是便捷入口；
+     * 真正的撤销通道是 {@code POST /api/auth/account-deletion/cancel}（手机号 + 密码）。
+     */
+    @DeleteMapping("/me/delete-account")
+    public ApiResponse<Void> cancelDeleteAccount(@Valid @RequestBody DeleteAccountRequest request) {
+        accountDeletionService.cancelByUserId(UserContext.requireUserId(), request.password());
+        return ApiResponse.ok();
+    }
+
+    private static String describe(List<com.duoduo.user.dto.UserDtos.BlockedItemView> items) {
+        return items.stream()
+                .map(i -> i.detail())
+                .reduce((a, b) -> a + "；" + b)
+                .orElse("");
     }
 
     /**

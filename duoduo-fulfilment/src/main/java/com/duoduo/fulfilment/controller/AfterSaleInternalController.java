@@ -2,8 +2,12 @@ package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.fulfilment.dto.AfterSaleStatsDtos.TenantAfterSaleStats;
+import com.duoduo.fulfilment.dto.PersonalDataCleanupResult;
 import com.duoduo.fulfilment.service.AfterSaleStatsService;
+import com.duoduo.fulfilment.service.PersonalDataCleanupService;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,9 +38,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class AfterSaleInternalController {
 
     private final AfterSaleStatsService afterSaleStatsService;
+    private final PersonalDataCleanupService personalDataCleanupService;
 
-    public AfterSaleInternalController(AfterSaleStatsService afterSaleStatsService) {
+    public AfterSaleInternalController(AfterSaleStatsService afterSaleStatsService,
+                                       PersonalDataCleanupService personalDataCleanupService) {
         this.afterSaleStatsService = afterSaleStatsService;
+        this.personalDataCleanupService = personalDataCleanupService;
     }
 
     /**
@@ -53,5 +60,34 @@ public class AfterSaleInternalController {
     public ApiResponse<TenantAfterSaleStats> tenantStats(@RequestParam("from") String from,
                                                          @RequestParam("to") String to) {
         return ApiResponse.ok(afterSaleStatsService.tenantStats(from, to));
+    }
+
+    /**
+     * C7 · 账号注销的个人数据清理（服务间调用，见 {@code docs/account-deletion-design.md} 4.4）。
+     *
+     * <p><b>内部接口</b>：类级前缀 {@code /api/aftersales/internal/} 已在本域
+     * {@code InternalTokenFilter} 的列举清单里，本路径被既有前缀覆盖，无需改 Filter。
+     * 调用方是用户域的注销编排，五域全部成功后才落
+     * {@code t_user.account_status = DELETED}。
+     *
+     * <p>两种模式（查询串 {@code dryRun}）：
+     * <ul>
+     *   <li>{@code dryRun=true} —— 预检，只查不写，返回「将删多少行、有多少进行中售后」，
+     *       供「申请注销」时判断有没有未了结的退款争议要挡下；</li>
+     *   <li>缺省 / false —— 执行，删该用户的分享 / 评论 / 点赞 / 收藏。
+     *       <b>幂等可重入</b>：调度失败重试时重复调用不报错、不二次破坏。</li>
+     * </ul>
+     *
+     * <p>{@code t_review}（评价）刻意不在清理范围：交易留档 + 商品评分事实源，
+     * 展示层已有「已注销用户」兜底（理由见 {@code PersonalDataCleanupService} 类注释）。
+     */
+    @PostMapping("/users/{userId}/personal-data")
+    public ApiResponse<PersonalDataCleanupResult> cleanupPersonalData(
+            @PathVariable Long userId,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun) {
+        PersonalDataCleanupResult result = dryRun
+                ? personalDataCleanupService.preview(userId)
+                : personalDataCleanupService.execute(userId);
+        return ApiResponse.ok(result);
     }
 }

@@ -17,9 +17,11 @@ import com.duoduo.trade.dto.OrderDtos.PreviewOrderResult;
 import com.duoduo.trade.dto.OrderDtos.RefundRequest;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
+import com.duoduo.trade.dto.PersonalDataCleanupResult;
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.service.OrderPlaceService;
 import com.duoduo.trade.service.OrderService;
+import com.duoduo.trade.service.PersonalDataCleanupService;
 import com.duoduo.trade.support.OrderPlaceGuard;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.ObjectProvider;
@@ -46,13 +48,16 @@ public class OrderController {
     private final OrderService orderService;
     private final OrderPlaceGuard placeGuard;
     private final ObjectProvider<OrderPlaceService> placeServiceProvider;
+    private final PersonalDataCleanupService personalDataCleanupService;
 
     public OrderController(OrderService orderService,
                            OrderPlaceGuard placeGuard,
-                           ObjectProvider<OrderPlaceService> placeServiceProvider) {
+                           ObjectProvider<OrderPlaceService> placeServiceProvider,
+                           PersonalDataCleanupService personalDataCleanupService) {
         this.orderService = orderService;
         this.placeGuard = placeGuard;
         this.placeServiceProvider = placeServiceProvider;
+        this.personalDataCleanupService = personalDataCleanupService;
     }
 
     /**
@@ -268,5 +273,35 @@ public class OrderController {
     public ApiResponse<com.duoduo.trade.dto.OrderDtos.SellerOrderStats> internalSellerStats(
             @PathVariable Long sellerId) {
         return ApiResponse.ok(orderService.internalSellerStats(sellerId));
+    }
+
+    /**
+     * C7 · 账号注销的个人数据清理（服务间调用，见 {@code docs/account-deletion-design.md} 4.4）。
+     *
+     * <p><b>内部接口</b>：路径以 {@code /api/orders/internal/} 开头，由本域
+     * {@code InternalTokenFilter} 校验 {@code X-Internal-Token}（既有前缀已覆盖本路径，
+     * 无需改 Filter）。调用方是用户域的注销编排，五域全部成功后才落
+     * {@code t_user.account_status = DELETED}。
+     *
+     * <p>两种模式（查询串 {@code dryRun}）：
+     * <ul>
+     *   <li>{@code dryRun=true} —— 预检，只查不写，返回「将删 / 将脱敏 / 阻塞多少行」，
+     *       供「申请注销」时判断有没有未完成的订单要挡下；</li>
+     *   <li>缺省 / false —— 执行，删购物车 + 脱敏订单收货人。<b>幂等可重入</b>：
+     *       调度失败重试时重复调用不报错、不二次破坏。</li>
+     * </ul>
+     *
+     * <p>为什么路径里带 {@code userId} 而不是从登录态取：这是服务间调用，
+     * 没有「当前登录用户」，被清理的对象就是参数本身（同
+     * {@code /internal/{userId}/credit} 的口径）。
+     */
+    @PostMapping("/internal/users/{userId}/personal-data")
+    public ApiResponse<PersonalDataCleanupResult> cleanupPersonalData(
+            @PathVariable Long userId,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun) {
+        PersonalDataCleanupResult result = dryRun
+                ? personalDataCleanupService.preview(userId)
+                : personalDataCleanupService.execute(userId);
+        return ApiResponse.ok(result);
     }
 }

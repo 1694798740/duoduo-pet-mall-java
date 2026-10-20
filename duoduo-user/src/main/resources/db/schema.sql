@@ -29,6 +29,13 @@ CREATE TABLE t_user (
     -- 权限版本（E17）：角色变更时 +1，访问令牌带签发时的值，网关比对不一致即拒绝。
     -- 初始 0 与 PermVersion.INITIAL 对齐（避免"默认值是 0、起点却是 1"两套口径）。
     perm_version    BIGINT       NOT NULL DEFAULT 0,
+    -- 账号注销状态机（C7）：与 status（封禁）正交。
+    --   ACTIVE 正常 / CANCELLING 冷静期内（登录停用、可撤销）/ DELETED 已注销（PII 清空、行保留）
+    account_status      VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
+    delete_requested_at TIMESTAMP,
+    delete_scheduled_at TIMESTAMP,
+    delete_reason       VARCHAR(200),
+    delete_executed_at  TIMESTAMP,
     last_login_at   TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL,
     updated_at      TIMESTAMP    NOT NULL,

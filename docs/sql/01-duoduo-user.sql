@@ -41,13 +41,20 @@ CREATE TABLE IF NOT EXISTS `t_user` (
     `totp_enabled`    TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'E21 · 是否已完成绑定验证（0=已生成密钥但未验证 / 1=已启用，登录时强制校验）',
     `totp_bound_at`   DATETIME              DEFAULT NULL COMMENT 'E21 · 绑定完成时间（UTC）；NULL = 未绑定',
     `totp_last_step`  BIGINT                DEFAULT NULL COMMENT 'E21 · 最近一次成功校验的时间步（防同一枚码重放）',
+    -- C7 · 账号注销状态机（与上面的 status 正交：status 管封禁，account_status 管注销）
+    `account_status`      VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE 正常 / CANCELLING 注销冷静期内（登录停用、可撤销）/ DELETED 已注销（PII 已清空、行保留）',
+    `delete_requested_at` TIMESTAMP             DEFAULT NULL COMMENT '用户提交注销申请的 UTC 时间',
+    `delete_scheduled_at` TIMESTAMP             DEFAULT NULL COMMENT '冷静期截止 UTC 时间（= 申请时间 + grace-days，默认 7 天）；调度到点执行',
+    `delete_reason`       VARCHAR(200)          DEFAULT NULL COMMENT '用户填写的注销原因（可选，用于产品改进）',
+    `delete_executed_at`  TIMESTAMP             DEFAULT NULL COMMENT '实际执行注销的 UTC 时间（五域个人数据清理全部成功后写入）',
     `last_login_at`   TIMESTAMP             DEFAULT NULL,
     `created_at`      TIMESTAMP    NOT NULL,
     `updated_at`      TIMESTAMP    NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_user_phone` (`phone`),
     UNIQUE KEY `uk_user_wxopenid` (`wx_openid`),
-    KEY `idx_user_created_at` (`created_at`)
+    KEY `idx_user_created_at` (`created_at`),
+    KEY `idx_user_account_status` (`account_status`, `delete_scheduled_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户账号';
 
 -- ---------------------------------------------------------------------------

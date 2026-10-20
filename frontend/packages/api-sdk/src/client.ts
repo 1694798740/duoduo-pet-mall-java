@@ -229,8 +229,9 @@ export const api = {
     request<T>(path, { ...options, method: 'PATCH', body }),
   put: <T>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
     request<T>(path, { ...options, method: 'PUT', body }),
-  del: <T>(path: string, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
-    request<T>(path, { ...options, method: 'DELETE' }),
+  // C7：撤销注销需要带请求体传密码，因此 del 与 post/put 一样接受 body
+  del: <T>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
+    request<T>(path, { ...options, method: 'DELETE', body }),
 };
 
 /** 统一的用户可读错误文案 */

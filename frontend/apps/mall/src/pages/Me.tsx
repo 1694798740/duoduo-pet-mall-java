@@ -14,6 +14,7 @@ import { refreshSession, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { userApi } from '@duoduo/api-sdk/endpoints';
 import { formatDate } from '@duoduo/api-sdk/client';
 import { Alert, Field, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import type { DeleteBlockersView } from '@duoduo/api-sdk/types';
 import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { CreditPanel } from '@duoduo/shared/components/CreditBadge';
 import { canAccessSellerConsole } from '@duoduo/shared/lib/roles';
@@ -36,6 +37,185 @@ const ROLE_LABELS: Record<string, string> = {
 
 export function roleLabelOf(role: string): string {
   return ROLE_LABELS[role.toUpperCase()] ?? role;
+}
+
+/**
+ * C7 · 账号注销面板。
+ *
+ * 三条与后端状态机一一对应的规则：
+ *   ① 展开即**预检**，把未完成的订单 / 售后 / 店铺 / 闲置摆出来 ——
+ *      不能让用户填完密码才被告知不行；
+ *   ② 提交需要密码 + 勾选确认，两个条件缺一不可（不可逆操作）；
+ *   ③ 冷静期内登录被停用，撤销用「手机号 + 密码」，不依赖会话。
+ */
+function DeleteAccountPanel() {
+  const { push } = useToast();
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [blockers, setBlockers] = useState<DeleteBlockersView | null>(null);
+  const [password, setPassword] = useState('');
+  const [reason, setReason] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [cancelPhone, setCancelPhone] = useState('');
+  const [cancelPwd, setCancelPwd] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setBlockers(await userApi.deleteAccount.precheck());
+    } catch (err) {
+      push(toFriendlyMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !blockers) void load();
+  };
+
+  const submit = async () => {
+    if (!password) return push('请输入登录密码');
+    if (!confirmed) return push('请先勾选「我已了解后果」');
+    setBusy(true);
+    try {
+      const view = await userApi.deleteAccount.request({ password, reason });
+      push(`注销申请已提交，${view.graceDays} 天冷静期内无法登录，期满后执行`);
+      setPassword('');
+      setConfirmed(false);
+      await load();
+    } catch (err) {
+      push(toFriendlyMessage(err));
+      await load(); // 409 时把阻塞清单刷出来
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!/^1\d{10}$/.test(cancelPhone)) return push('请输入 11 位手机号');
+    if (!cancelPwd) return push('请输入登录密码');
+    setBusy(true);
+    try {
+      await userApi.deleteAccount.cancelByPhone({ phone: cancelPhone, password: cancelPwd });
+      push('已撤销注销，账号恢复正常');
+      setCancelPwd('');
+      await load();
+    } catch (err) {
+      push(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelling = blockers?.accountStatus === 'CANCELLING';
+  const blocked = !!blockers?.blocked;
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 16 }}>
+      <h3 style={{ marginBottom: 10 }}>账号注销</h3>
+      <p className="small muted" style={{ marginBottom: 10 }}>
+        《用户隐私保护指引》承诺可注销账号。注销后手机号、昵称、头像、地址、宠物档案将被清除；
+        订单等交易记录按法规留存并脱敏。
+      </p>
+      <button className="btn btn-ghost btn-sm" onClick={toggle}>
+        {open ? '收起' : cancelling ? '撤销注销' : '注销账号'}
+      </button>
+
+      {open ? (
+        <div style={{ marginTop: 14 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : cancelling ? (
+            <Alert kind="warn">
+              账号正在 {blockers?.graceDays ?? 7} 天注销冷静期
+              {blockers?.scheduledAt ? `，将于 ${formatDate(blockers.scheduledAt)} 执行` : ''}
+              ，期间无法登录。在下方撤销即可恢复。
+            </Alert>
+          ) : blocked ? (
+            <Alert kind="warn">
+              还有 {blockers?.items.length ?? 0} 件事没处理完，处理后再申请：
+              <ul style={{ marginTop: 6 }}>
+                {blockers?.items.map((it) => (
+                  <li key={it.ref || it.type}>
+                    {it.detail}
+                    {it.ref ? `（${it.ref}）` : ''}
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          ) : null}
+
+          {!cancelling && !blocked ? (
+            <>
+              <Field label="登录密码">
+                <input
+                  className="input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="请输入登录密码"
+                />
+              </Field>
+              <Field label="注销原因（选填）">
+                <input
+                  className="input"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="帮我们改进"
+                />
+              </Field>
+              <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                />
+                我已了解：注销后个人数据无法恢复
+              </label>
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: 10 }}
+                disabled={busy}
+                onClick={() => void submit()}
+              >
+                {busy ? '提交中…' : '申请注销账号'}
+              </button>
+            </>
+          ) : null}
+
+          <div style={{ marginTop: 16, borderTop: '1px solid var(--border, #e6e8eb)', paddingTop: 12 }}>
+            <p className="small muted" style={{ marginBottom: 8 }}>
+              撤销注销（冷静期内登录已停用，这里用手机号 + 密码验证，不需要登录态）
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                className="input"
+                style={{ maxWidth: 160 }}
+                value={cancelPhone}
+                onChange={(e) => setCancelPhone(e.target.value)}
+                placeholder="手机号"
+              />
+              <input
+                className="input"
+                style={{ maxWidth: 160 }}
+                type="password"
+                value={cancelPwd}
+                onChange={(e) => setCancelPwd(e.target.value)}
+                placeholder="登录密码"
+              />
+              <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void cancel()}>
+                撤销注销
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export const MePage: React.FC = () => {
@@ -323,6 +503,9 @@ export const MePage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* C7 · 账号注销：隐私指引已承诺可注销，入口必须真实可达 */}
+          <DeleteAccountPanel />
         </div>
       </div>
     </div>

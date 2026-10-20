@@ -1,9 +1,11 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.product.dto.PersonalDataCleanupResult;
 import com.duoduo.product.dto.ProductDtos.InternalListingView;
 import com.duoduo.product.dto.ProductDtos.WantResult;
 import com.duoduo.product.service.ListingService;
+import com.duoduo.product.service.PersonalDataCleanupService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,9 +31,12 @@ import java.util.List;
 public class InternalListingController {
 
     private final ListingService listingService;
+    private final PersonalDataCleanupService personalDataCleanupService;
 
-    public InternalListingController(ListingService listingService) {
+    public InternalListingController(ListingService listingService,
+                                     PersonalDataCleanupService personalDataCleanupService) {
         this.listingService = listingService;
+        this.personalDataCleanupService = personalDataCleanupService;
     }
 
     /** 批量取闲置卡事实（问一问定收件人 + 卡片展示）；幽灵 id 静默跳过 */
@@ -54,5 +59,34 @@ public class InternalListingController {
     public ApiResponse<WantResult> markWant(@PathVariable Long id,
                                             @RequestParam("buyerId") Long buyerId) {
         return ApiResponse.ok(new WantResult(listingService.markWant(id, buyerId)));
+    }
+
+    /**
+     * C7 · 账号注销的个人数据清理（服务间调用，见 {@code docs/account-deletion-design.md} 4.4）。
+     *
+     * <p><b>内部接口</b>：路径以 {@code /api/listings/internal/} 开头，由本域
+     * {@code InternalTokenFilter} 校验 {@code X-Internal-Token}（既有前缀已覆盖本路径，
+     * 无需改 Filter）。调用方是用户域的注销编排，五域全部成功后才落
+     * {@code t_user.account_status = DELETED}。
+     *
+     * <p>两种模式（查询串 {@code dryRun}）：
+     * <ul>
+     *   <li>{@code dryRun=true} —— 预检，只查不写，返回「将删多少行、有多少在售闲置」，
+     *       供「申请注销」时判断有没有在售商品要挡下；</li>
+     *   <li>缺省 / false —— 执行，删该用户已下架的闲置。
+     *       <b>幂等可重入</b>：调度失败重试时重复调用不报错、不二次破坏。</li>
+     * </ul>
+     *
+     * <p>在售（{@code ON_SALE}）与已售出（{@code SOLD}）的闲置刻意不删：
+     * 前者被调用方预检挡下，后者关联真实订单（理由见 {@code PersonalDataCleanupService} 类注释）。
+     */
+    @PostMapping("/internal/users/{userId}/personal-data")
+    public ApiResponse<PersonalDataCleanupResult> cleanupPersonalData(
+            @PathVariable Long userId,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun) {
+        PersonalDataCleanupResult result = dryRun
+                ? personalDataCleanupService.preview(userId)
+                : personalDataCleanupService.execute(userId);
+        return ApiResponse.ok(result);
     }
 }

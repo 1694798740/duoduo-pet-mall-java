@@ -10,6 +10,7 @@
     "pages/seckill/seckill",
     "pages/coupons/coupons",
     "pages/address/address",
+    "pages/account-delete/account-delete",
     "pages/order-detail/order-detail",
     "pages/checkout/checkout",
     "pages/pay/pay",

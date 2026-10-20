@@ -63,6 +63,24 @@ public class UserEntity {
      * 才能拒绝"截获后原样重放"。允许 null（从未成功校验过）。
      */
     private Long totpLastStep;
+    /**
+     * C7 · 账号注销状态：{@code ACTIVE} / {@code CANCELLING}（冷静期，登录停用、可撤销）
+     * / {@code DELETED}（已注销，PII 已清空、行保留）。
+     *
+     * <p>与 {@link #status} 正交：status 管封禁，本列管注销。刻意不复用 status，
+     * 是因为「已注销」必须能被登录/刷新/调度三处稳定识别，而封禁态另有一套
+     * 「仅可浏览与申诉」的语义，混在一列里迟早会写出 {@code status==DELETED && 允许浏览}
+     * 这类自相矛盾的判断。
+     */
+    private String accountStatus;
+    /** C7 · 用户提交注销申请的 UTC 时间 */
+    private LocalDateTime deleteRequestedAt;
+    /** C7 · 冷静期截止 UTC 时间；调度到点执行注销（{@code AccountDeletionJob}） */
+    private LocalDateTime deleteScheduledAt;
+    /** C7 · 用户填写的注销原因（可选） */
+    private String deleteReason;
+    /** C7 · 实际执行注销的 UTC 时间（五域个人数据清理全部成功后写入） */
+    private LocalDateTime deleteExecutedAt;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -193,6 +211,46 @@ public class UserEntity {
 
     public void setTotpLastStep(Long totpLastStep) {
         this.totpLastStep = totpLastStep;
+    }
+
+    public String getAccountStatus() {
+        return accountStatus;
+    }
+
+    public void setAccountStatus(String accountStatus) {
+        this.accountStatus = accountStatus;
+    }
+
+    public LocalDateTime getDeleteRequestedAt() {
+        return deleteRequestedAt;
+    }
+
+    public void setDeleteRequestedAt(LocalDateTime deleteRequestedAt) {
+        this.deleteRequestedAt = deleteRequestedAt;
+    }
+
+    public LocalDateTime getDeleteScheduledAt() {
+        return deleteScheduledAt;
+    }
+
+    public void setDeleteScheduledAt(LocalDateTime deleteScheduledAt) {
+        this.deleteScheduledAt = deleteScheduledAt;
+    }
+
+    public String getDeleteReason() {
+        return deleteReason;
+    }
+
+    public void setDeleteReason(String deleteReason) {
+        this.deleteReason = deleteReason;
+    }
+
+    public LocalDateTime getDeleteExecutedAt() {
+        return deleteExecutedAt;
+    }
+
+    public void setDeleteExecutedAt(LocalDateTime deleteExecutedAt) {
+        this.deleteExecutedAt = deleteExecutedAt;
     }
 
     /**

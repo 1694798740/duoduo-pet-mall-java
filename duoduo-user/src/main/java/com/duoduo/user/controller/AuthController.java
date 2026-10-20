@@ -58,9 +58,13 @@ public class AuthController {
     private static final String COOKIE_REFRESH = AuthCookieWriter.COOKIE_REFRESH;
 
     private final AuthService authService;
+    /** C7 · 账号注销（撤销入口，见 {@link #cancelAccountDeletion}） */
+    private final com.duoduo.user.service.AccountDeletionService accountDeletionService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService,
+                          com.duoduo.user.service.AccountDeletionService accountDeletionService) {
         this.authService = authService;
+        this.accountDeletionService = accountDeletionService;
     }
 
     @PostMapping("/register")
@@ -182,6 +186,24 @@ public class AuthController {
                 : readCookie(servletRequest, COOKIE_REFRESH);
         authService.logout(token);
         clearCookies(response);
+        return ApiResponse.ok();
+    }
+
+    /**
+     * C7 · 撤销账号注销（冷静期内）。
+     *
+     * <p><b>刻意不要求登录态</b>：用户提交注销后登录已被停用，手里没有任何有效会话。
+     * 若这里要求登录态，注销就成了不可逆操作 —— 而"不可逆"正是注销功能最需要避免的
+     * 形态（误点、冲动、被他人操作）。身份改用「手机号 + 密码」重新验证，
+     * 错误提示与登录完全一致，不暴露"这个手机号是否存在"。
+     *
+     * <p>网关侧本端点保持需鉴权白名单之外（它本就是公开认证端点），
+     * 由服务层用密码做真正的身份校验。
+     */
+    @PostMapping("/account-deletion/cancel")
+    public ApiResponse<Void> cancelAccountDeletion(
+            @Valid @RequestBody com.duoduo.user.dto.UserDtos.CancelDeleteAccountRequest request) {
+        accountDeletionService.cancel(request.phone(), request.password());
         return ApiResponse.ok();
     }
 

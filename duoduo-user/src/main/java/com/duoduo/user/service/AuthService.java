@@ -180,6 +180,13 @@ public class AuthService {
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");
         }
+        // C7 · 注销冷静期内停用登录：允许"注销了还能继续买东西"是明显的逻辑漏洞。
+        // 错误码独立（ACCOUNT_DELETING），端侧据此导向「撤销注销」页而不是普通登录页 ——
+        // 否则用户会以为是自己密码错了。
+        if (AccountDeletionService.ACCOUNT_CANCELLING.equals(entity.getAccountStatus())) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETING,
+                    "账号正在注销冷静期内，登录已停用；如需恢复请使用「撤销注销」");
+        }
 
         // E21 · 第二步验证。顺序刻意排在密码校验**之后**：
         // 若先验动态码，"这个手机号存不存在、有没有开两步验证"就会暴露给尚未持有密码的人。
@@ -226,6 +233,15 @@ public class AuthService {
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁");
+        }
+        // C7 · 刷新通道同样挡注销态：refresh 令牌有效期 7 天，与冷静期同长 ——
+        // 这里不挡，"申请注销"时吊销的刷新令牌之外，任何在飞行中的旧令牌都能把会话续满一周。
+        if (AccountDeletionService.ACCOUNT_CANCELLING.equals(entity.getAccountStatus())) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETING,
+                    "账号正在注销冷静期内，登录已停用；如需恢复请使用「撤销注销」");
+        }
+        if (AccountDeletionService.ACCOUNT_DELETED.equals(entity.getAccountStatus())) {
+            throw BizException.conflict("账号已注销");
         }
 
         // E21 · 两步验证：账号**现已启用** 2FA，而这枚刷新令牌是在"未满足"的状态下签发的
@@ -290,6 +306,13 @@ public class AuthService {
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁，仅可浏览与申诉");
+        }
+        // C7 · 注销冷静期内停用登录：允许"注销了还能继续买东西"是明显的逻辑漏洞。
+        // 错误码独立（ACCOUNT_DELETING），端侧据此导向「撤销注销」页而不是普通登录页 ——
+        // 否则用户会以为是自己密码错了。
+        if (AccountDeletionService.ACCOUNT_CANCELLING.equals(entity.getAccountStatus())) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETING,
+                    "账号正在注销冷静期内，登录已停用；如需恢复请使用「撤销注销」");
         }
         // E21 · 已启用两步验证的账号**不能**走微信登录。
         //
@@ -578,6 +601,9 @@ public class AuthService {
         }
         if ("BANNED".equals(entity.getStatus())) {
             throw BizException.forbidden("账号已被封禁");
+        }
+        if (AccountDeletionService.ACCOUNT_DELETED.equals(entity.getAccountStatus())) {
+            throw BizException.conflict("账号已注销");
         }
         LoginUser loginUser = new LoginUser(entity.getId(), entity.getPhone(), entity.getRole(),
                 entity.isRealNameVerified());
