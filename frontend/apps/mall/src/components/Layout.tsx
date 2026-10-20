@@ -367,17 +367,19 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
                 {menuState !== 'closed' ? (
                   <div className="user-menu user-panel" aria-label="账号菜单">
-                    {/* 头部：头像 + 昵称 + 身份/手机掩码（B 站面板同构：居中、上头像下名字） */}
+                    {/* 头部：头像左、昵称/身份右（B 站面板同构，横排省高度） */}
                     <div className="user-panel-head">
                       {user.avatar ? (
                         <img className="user-panel-avatar" src={user.avatar} alt="" />
                       ) : (
                         <span className="user-panel-avatar" aria-hidden>👤</span>
                       )}
-                      <strong className="user-panel-name">{user.nickname}</strong>
-                      <span className="user-panel-meta">
-                        {ROLE_LABELS[user.role] ?? user.role}
-                        {user.phoneMasked ? ` · ${user.phoneMasked}` : ''}
+                      <span className="user-panel-id">
+                        <strong className="user-panel-name">{user.nickname}</strong>
+                        <span className="user-panel-meta">
+                          {ROLE_LABELS[user.role] ?? user.role}
+                          {user.phoneMasked ? ` · ${user.phoneMasked}` : ''}
+                        </span>
                       </span>
                     </div>
 

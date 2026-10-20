@@ -368,6 +368,42 @@ step('⑤b 头像悬浮面板：悬停弹出 / 桥接不闪断 / 移出延迟收
   check('★ 悬停头像后面板展开（opacity=1、aria-expanded=true）',
     Boolean(opened) && opened.opacity === 1 && opened.visible && opened.expanded === 'true', opened);
 
+  // ---- ②b B 站式缩放动画：收起态是明显的缩小态，展开用回弹曲线「从小长大」 ----
+  // 曲线与缩小态读**样式表规则**而不是 computed style：
+  // ① computed timing-function 里的 cubic-bezier 自带逗号，按逗号解析会被切碎；
+  // ② 面板关闭后整个卸载（条件渲染），根本没有计算样式可读 —— 样式表规则是确定性的。
+  const growAnim = await page.evaluate(() => {
+    let open = null;
+    let closed = null;
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      for (const r of rules) {
+        if (r.selectorText === '.user-entry.is-open .user-panel') {
+          open = { transform: r.style.transform, transition: r.style.transition };
+        }
+        if (r.selectorText === '.user-panel') {
+          closed = { transform: r.style.transform };
+        }
+      }
+    }
+    return { open, closed };
+  });
+  check('★ 展开完成后 transform 复位（不残留缩放）',
+    /^none$/.test(String(growAnim.open?.transform ?? '')), growAnim);
+  check('★ 展开动画用回弹曲线（--ease-spring，轻微过冲的"从小长大"）',
+    /var\(--ease-spring\)/.test(String(growAnim.open?.transition)), growAnim);
+  check('★ 收起态是缩小态（scale(0.88)，展开即从小长大）',
+    /scale\(0\.88\)/.test(String(growAnim.closed?.transform)), growAnim);
+  // 再真实走一遍「收起 → 重新悬停展开」：鼠标必须先挪开再回来 ——
+  // 指针一直停在按钮上时 mouseenter 不重发，面板不会自己再弹出来
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  await page.mouse.move(400, 500);
+  await page.waitForTimeout(150);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(350);
+
   // ---- ③ 桥接：鼠标穿过头像与面板之间的间隙，面板不得收起 ----
   const panelBox = await panel.boundingBox();
   check('前置：面板在触发按钮下方（间隙 ≤14px，桥接覆盖）',

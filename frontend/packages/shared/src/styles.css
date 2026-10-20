@@ -2671,7 +2671,8 @@ button.tag:active:not(:disabled),
 }
 
 /* ---------- 面板 ----------
-   常态用 visibility:hidden + opacity:0 + 位移缩放：
+   常态用 visibility:hidden + opacity:0 + 明显的缩小态（scale 0.88）：
+   展开时从右上角"长出来"（B 站式缩放动画），收起时缩回去再淡出。
    visibility 参与过渡（延迟到淡出结束才生效），这样
    ① 收起有淡出动画（display:none 做不到）；
    ② 收起后彻底不可交互、不可聚焦、读屏器读不到（单用 opacity:0 做不到）。
@@ -2683,9 +2684,9 @@ button.tag:active:not(:disabled),
   top: calc(100% + 10px);
   right: -6px;
   z-index: 90;
-  width: 300px;
+  width: 256px;
   max-width: calc(100vw - 24px);
-  padding-bottom: 6px;
+  padding-bottom: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2694,12 +2695,13 @@ button.tag:active:not(:disabled),
   transform-origin: top right;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(8px) scale(0.97);
+  transform: scale(0.88);
   pointer-events: none;
   transition: opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out), visibility 0s linear var(--dur-base);
+    transform var(--dur-base) var(--ease-in-out), visibility 0s linear var(--dur-base);
 }
-/* is-open 挂在宿主上而不是面板上：关闭是宿主级别的判定（离开按钮+面板整体） */
+/* is-open 挂在宿主上而不是面板上：关闭是宿主级别的判定（离开按钮+面板整体）。
+   展开用 --ease-spring（轻微过冲），缩放从小到大"弹"出来，收起用对称曲线缩回去。 */
 .user-entry.is-open .user-panel {
   opacity: 1;
   visibility: visible;
@@ -2707,21 +2709,22 @@ button.tag:active:not(:disabled),
   pointer-events: auto;
   /* 展开时 visibility 不延迟（立即可交互）；收起时延迟到淡出结束（上面那条） */
   transition: opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out), visibility 0s;
+    transform var(--dur-base) var(--ease-spring), visibility 0s;
 }
 
-/* ---------- 面板头部：居中头像 + 昵称 + 身份/手机掩码 ---------- */
+/* ---------- 面板头部：横排（头像左、昵称/身份右），贴近 B 站且省高度 ---------- */
 .user-panel-head {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 2px;
-  padding: 18px 16px 14px;
+  gap: 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
 .user-panel-avatar {
-  width: 64px;
-  height: 64px;
+  width: 44px;
+  height: 44px;
+  flex: none;
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid var(--border);
@@ -2729,25 +2732,33 @@ button.tag:active:not(:disabled),
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  font-size: 20px;
   line-height: 1;
-  margin-bottom: 4px;
+}
+.user-panel-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
 }
 .user-panel-name {
-  font-size: 15px;
-  max-width: 100%;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .user-panel-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- 分组条目 ---------- */
 .user-panel-group {
-  padding: 6px 0;
+  padding: 4px 0;
 }
 .user-panel-group + .user-panel-group {
   border-top: 1px solid var(--border);
@@ -2755,12 +2766,12 @@ button.tag:active:not(:disabled),
 .user-panel-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 16px;
+  padding: 6px 14px;
   border: none;
   background: none;
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   color: var(--text);
   text-align: left;
@@ -2772,8 +2783,9 @@ button.tag:active:not(:disabled),
   color: var(--brand);
 }
 .user-panel-icon {
-  width: 20px;
+  width: 18px;
   flex: none;
+  font-size: 13px;
   text-align: center;
 }
 .user-panel-label {
