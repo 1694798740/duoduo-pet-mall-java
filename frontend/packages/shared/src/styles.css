@@ -39,6 +39,9 @@
   --shadow-lg: 0 16px 48px rgba(16, 20, 32, 0.14);
   --header-h: 64px;
   --max-w: 1200px;
+  /* 顶栏底色单独成变量：毛玻璃底必须是半透明色，且深浅两档的"基色"完全不同
+     —— 写死 rgba(255,255,255,.92) 的后果是暗夜档导航栏整条白底（2026-10-21 用户报障）。 */
+  --header-bg: rgba(255, 255, 255, 0.92);
 
   /* ---------- 暗夜档（A2，2026-10-20） ----------
      切换机制：<html data-theme="dark">，由 ThemeProvider 设置。
@@ -68,17 +71,28 @@ html[data-theme='dark'] {
   --border: #2a2f3a;
   --border-strong: #3a4150;
 
-  --text: #e6e8ee;
-  --text-2: #a8aebd;
-  --text-3: #7d8494;
+  /* ---------- 文字三档（2026-10-21 调柔） ----------
+     旧值 --text #e6e8ee 亮度≈213（几乎贴纯白），大面积正文压在 #0f1115 上
+     对比度拉到 13:1 以上，用户反馈"过亮、刺眼"。
+     参照 GitHub Dark / VS Code Dark+ 的正文取值，压到 #c9cdd6（≈205）——
+     对比度回到约 10:1 的舒适区间，弱光环境下长时间阅读不累；
+     次级/辅助文字同步各降一档，保持层级差不变。 */
+  --text: #c9cdd6;
+  --text-2: #9aa1b0;
+  --text-3: #767e8e;
 
-  --brand-strong: #ffb38a;
-  --accent-strong: #5eead4;
-  --danger-strong: #f98a8f;
-  --warn-strong: #f5c26b;
-  --success-strong: #6ee79b;
+  /* strong 系是"彩色底上的文字色"，同步降亮度 —— 只降一档，保证在 soft 底上
+     仍有 4.5:1 以上的可读对比；降幅过大反而让状态色"发灰"。 */
+  --brand-strong: #f2a276;
+  --accent-strong: #4fd8c4;
+  --danger-strong: #e87c81;
+  --warn-strong: #e0b35c;
+  --success-strong: #5bd289;
   --brand-line: #7a3a24;
   --brand-line-soft: #2a1c15;
+
+  /* 顶栏：与 --surface 同族的半透明基色，毛玻璃效果两档一致 */
+  --header-bg: rgba(23, 26, 33, 0.86);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
@@ -86,12 +100,14 @@ html[data-theme='dark'] {
   --c-0b7a6f: #37beb1;
   --c-0f8f82: #45c9bc;
   --c-0f9e8f: #51ccbf;
-  --c-10894c: #41c884;
   --c-14b8a6: #69d3c8;
   --c-157437: #38c169;
   --c-1b8a43: #4bcb79;
   --c-1d4ed8: #3863dc;
-  --c-1f2430: #dddfe4;
+  /* ★ 这三个色只被 Toast 当背景用（.toast / .toast-success / .toast-error），
+     文字固定白字 —— 深色档必须保持"深底"，此前被映射成浅色（#dddfe4/#41c884/#d43439），
+     白字压浅底几乎不可读（2026-10-21 修）。其余 --c-* 仍走常规映射。 */
+  --c-1f2430: #2b3242;
   --c-43b95a: #58c36d;
   --c-4c3fa6: #8e85d1;
   --c-4cc463: #63cc77;
@@ -99,7 +115,7 @@ html[data-theme='dark'] {
   --c-9a3412: #cc6f50;
   --c-9fe3da: #25564f;
   --c-b45309: #d08f5d;
-  --c-c0292e: #d43439;
+  --c-c0292e: #b02a30;
   --c-c3ebd1: #255636;
   --c-c4efe9: #1e3e39;
   --c-c7ddfb: #1e2b3e;
@@ -142,6 +158,7 @@ html[data-theme='dark'] {
   --c-fff6f1: #3e291e;
   --c-fff7f3: #3e291e;
   --c-fff8f4: #3e2a1e;
+  --c-10894c: #157a43;
 
 }
 
@@ -320,7 +337,7 @@ h4 {
   top: 0;
   z-index: 60;
   height: var(--header-h);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--header-bg);
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -628,7 +645,7 @@ h4 {
 .btn-accent-outline {
   border-color: var(--c-9fe3da);
   color: var(--c-0f8f82);
-  background: #fff;
+  background: var(--surface);
 }
 .btn-accent-outline:hover:not(:disabled) {
   border-color: var(--accent);
@@ -668,7 +685,7 @@ h4 {
 .btn-danger {
   border-color: var(--c-f3c2c3);
   color: var(--danger);
-  background: #fff;
+  background: var(--surface);
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-soft);
@@ -1162,6 +1179,10 @@ button.link:hover {
   padding: 20px;
   animation: fade-in var(--dur-fast) var(--ease-out);
 }
+/* 深色下环境亮度低，0.45 的遮罩与深底拉不开层次，弹窗会"浮"不起来 */
+html[data-theme='dark'] .modal-mask {
+  background: rgba(0, 0, 0, 0.62);
+}
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -1237,7 +1258,7 @@ button.link:hover {
   gap: 8px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--surface);
   border: 1px solid var(--brand-line);
   font-size: 13px;
   margin-bottom: 14px;
@@ -1482,7 +1503,7 @@ button.link:hover {
   object-fit: cover;
 }
 .pd-price-block {
-  background: linear-gradient(120deg, var(--c-fff6f1), #fff);
+  background: linear-gradient(120deg, var(--c-fff6f1), var(--surface));
   border: 1px solid var(--c-ffe0cd);
   border-radius: var(--radius);
   padding: 16px;
@@ -2230,7 +2251,7 @@ button.link:hover {
   border-radius: var(--radius-lg);
   background:
     radial-gradient(120% 140% at 0% 0%, var(--c-fff2ea) 0%, rgba(255, 242, 234, 0) 55%),
-    linear-gradient(135deg, var(--c-fff8f4) 0%, #ffffff 60%);
+    linear-gradient(135deg, var(--c-fff8f4) 0%, var(--surface) 60%);
   border: 1px solid var(--c-ffe0d3);
 }
 .daily-seckill-head {

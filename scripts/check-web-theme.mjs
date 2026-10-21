@@ -67,6 +67,8 @@ const COLOR_VARS = [
   '--text', '--text-2', '--text-3',
   '--brand-strong', '--accent-strong', '--danger-strong', '--warn-strong', '--success-strong',
   '--brand-line', '--brand-line-soft',
+  // 顶栏毛玻璃底：写死 rgba(255,...) 的回归就是暗夜档整条白导航（2026-10-21 用户报障）
+  '--header-bg',
 ];
 for (const v of COLOR_VARS) {
   check(`深色档覆盖了 ${v}`, darkVars.includes(v), v);
@@ -124,6 +126,22 @@ const MUST_NOT_OVERRIDE = ['--radius', '--radius-sm', '--radius-lg', '--header-h
   '--dur-fast', '--dur-base', '--ease-out'];
 for (const v of MUST_NOT_OVERRIDE) {
   check(`深色档未改动 ${v}（避免切换时布局跳动/快慢不一）`, !darkVars.includes(v), v);
+}
+
+// ---------- 1.5) 2026-10-21 两起真实回归的针对性断言 ----------
+// 顶栏：.app-header 的背景必须引用变量。浅色档的 rgba(255,255,255,.92) 当时写死在规则里，
+// 深色档没有任何覆盖，结果暗夜下整条导航是白的 —— 页面其余部分全黑，就它亮着。
+const headerStart = css.indexOf('.app-header {');
+const headerBlock = headerStart >= 0 ? css.slice(headerStart, css.indexOf('}', headerStart)) : '';
+check('.app-header 背景引用 var(--header-bg)（不得写死白色）',
+  /background:\s*var\(--header-bg\)/.test(headerBlock) && !/rgba\(255/.test(headerBlock));
+check('深色档覆盖了 --header-bg 且基色是深色',
+  /--header-bg:\s*rgba\(23,\s*26,\s*33/.test(css));
+// Toast：这三个 --c-* 只被 Toast 当背景、文字固定白字 —— 深色档一旦按常规曲线映射成浅色，
+// 就是"白字压浅底"几乎不可读。必须保持深底（亮度 < 110）。
+for (const v of ['--c-1f2430', '--c-10894c', '--c-c0292e']) {
+  const d = valueOf(/html\[data-theme='dark'\] \{/, v);
+  check(`深色档 ${v}（Toast 底色）保持深底`, !!d && luminance(d) < 110, d);
 }
 
 // ---------- 2) 三端都挂了 Provider 与切换按钮 ----------
