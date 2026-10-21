@@ -176,6 +176,15 @@ public class CosObjectStorage implements ObjectStorage {
         // 只记 key（服务端生成的 UUID 形态），不记请求体，也不记签名头
         log.error("COS {}失败 status={} {}{} backend=cos bucket={}",
                 action, status, detail, " key=" + key, bucket);
+        // ★ 欠费停服（HTTP 451 UnavailableForLegalReasons）单独点名：
+        //   这是**账号欠费**，不是网络抖动 —— "请稍后重试"只会让用户白白重试，
+        //   读和写会一起 451（已存图片同样打不开）。必须把"去充值"说在明面上，
+        //   并且提示语要能直接落到排障动作上（控制台看欠费通知）。
+        if (status == 451 || (msg != null && msg.contains("arrears"))) {
+            throw new BizException(ErrorCode.DEGRADED,
+                    "图片存储服务（腾讯云 COS）因账户欠费已被停用，上传与已存图片暂时都无法访问；"
+                            + "请在腾讯云控制台充值恢复（HTTP 451）");
+        }
         throw new BizException(ErrorCode.INTERNAL,
                 "对象存储" + action + "失败（HTTP " + status + detail + "）");
     }

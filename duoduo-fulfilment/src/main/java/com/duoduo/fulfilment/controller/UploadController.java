@@ -138,9 +138,11 @@ public class UploadController {
             log.error("读取上传流失败 stored={}", stored, e);
             throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
         } catch (BizException e) {
-            // 存储层（含 COS）的失败已带可读原因，这里只补一句用户可行动的话，原样抛出
+            // 存储层（含 COS）的失败消息已经是对用户可行动的（如"账户欠费被停用，请充值"），
+            // **原样抛出**，不要覆盖 —— 早期这里统一盖成"请稍后重试"，把"欠费停服"
+            // 这种重试一百次也不会好的问题说成偶发故障，排障方向直接被带偏。
             log.error("图片写入存储失败 backend={} stored={}", storage.backend(), stored, e);
-            throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
+            throw e;
         }
 
         String url = baseUrl(request) + "/uploads/" + stored;
@@ -211,8 +213,9 @@ public class UploadController {
         try {
             storage.put(ObjectStorage.PREFIX_PUBLIC + stored, bytes, contentType);
         } catch (BizException e) {
+            // 同上：存储层给的消息已可行动（欠费 / 权限 / 桶名错各有各的话），原样抛出
             log.error("远程图片写入存储失败 backend={} stored={}", storage.backend(), stored, e);
-            throw BizException.businessRule("图片保存失败，请稍后重试或联系客服");
+            throw e;
         }
 
         String url = baseUrl(request) + "/uploads/" + stored;

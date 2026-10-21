@@ -6,6 +6,17 @@
  *
  * 关于实名认证：后端只保存身份证掩码，明文不入库、不回传。
  * 因此界面上的身份证输入框只做即时校验，提交后只回显 xxx****xxxx。
+ *
+ * <h2>页面分区（2026-10-21 重排）</h2>
+ * 旧版是「左列只挂一张基本资料卡、右列从上到下堆五张卡」，左列下半整屏空白，
+ * 视线要跨三屏才能找齐「账号状态 → 信用分 → 实名 → 快捷入口 → 注销」。
+ * 现在按「身份 → 信用与认证 → 账号与隐私」三区从上往下：
+ * <ol>
+ *   <li>**身份区**：基本资料（左）+ 账号状态与快捷入口（右）—— 都是「我是谁」这一层；</li>
+ *   <li>**信用与认证区**：信用分（左）+ 实名认证（右）—— 都是「平台如何评估 / 校验我」；</li>
+ *   <li>**账号与隐私区**：账号注销 —— 不可逆操作独立成区放在最后，与前面的日常操作拉开距离。</li>
+ * </ol>
+ * 只挪卡片位置、不改任何样式类，功能与视觉风格保持不变。
  */
 
 import React, { useEffect, useState } from 'react';
@@ -47,6 +58,19 @@ export function roleLabelOf(role: string): string {
  *      不能让用户填完密码才被告知不行；
  *   ② 提交需要密码 + 勾选确认，两个条件缺一不可（不可逆操作）；
  *   ③ 冷静期内登录被停用，撤销用「手机号 + 密码」，不依赖会话。
+ *
+ * <h2>撤销区（2026-10-21 修正）</h2>
+ * <ul>
+ *   <li>**只在冷静期 / 刚提交后出现** —— 账号状态正常时这块表单毫无意义，
+ *       一直摆着反而让人以为「随时要填一遍手机号密码」；</li>
+ *   <li>**输入框一律空白、一律手填**。此前的「预填了当前用户名和密码」不是代码赋值，
+ *       是浏览器自动填充：这组 input 没声明 `autoComplete`，Chrome 会把登录表单记住的
+ *       账号密码塞进来。撤销验证和登录是**两件事**（这里是"证明你是号主"而不是"再登一次"），
+ *       被填上登录凭据既吓人又会诱导用户直接点提交 —— 所以表单级 `autoComplete="off"`，
+ *       密码框再加一道 `new-password`（Chrome 对 password 框只认这个，不认 off）；</li>
+ *   <li>**结果就地展示**（Alert）而不是只飘一条 toast —— toast 几秒就没了，
+ *       撤销失败的人需要反复看清失败原因（手机号错了？密码错了？）。</li>
+ * </ul>
  */
 function DeleteAccountPanel() {
   const { push } = useToast();
@@ -62,6 +86,8 @@ function DeleteAccountPanel() {
   const [busy, setBusy] = useState(false);
   const [cancelPhone, setCancelPhone] = useState('');
   const [cancelPwd, setCancelPwd] = useState('');
+  /** 撤销结果就地展示：toast 会消失，失败原因必须留 在页面上让人看清 */
+  const [cancelResult, setCancelResult] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   // 提交成功后进入冷静期，本页会把会话清掉 —— 需要一个"已提交"的停留态
   const [submitted, setSubmitted] = useState(false);
 
@@ -116,17 +142,27 @@ function DeleteAccountPanel() {
   };
 
   const cancel = async () => {
-    if (!/^1\d{10}$/.test(cancelPhone)) return push('请输入 11 位手机号');
-    if (!cancelPwd) return push('请输入登录密码');
+    setCancelResult(null);
+    if (!/^1\d{10}$/.test(cancelPhone.trim())) {
+      setCancelResult({ kind: 'error', text: '请输入注册时使用的 11 位手机号（纯数字，不带空格或横线）' });
+      return;
+    }
+    if (!cancelPwd) {
+      setCancelResult({ kind: 'error', text: '请输入该账号的登录密码' });
+      return;
+    }
     setBusy(true);
     try {
-      await userApi.deleteAccount.cancelByPhone({ phone: cancelPhone, password: cancelPwd });
-      push('已撤销注销，账号恢复正常');
+      await userApi.deleteAccount.cancelByPhone({ phone: cancelPhone.trim(), password: cancelPwd });
+      setCancelResult({ kind: 'success', text: '已撤销注销，账号恢复正常，现在可以用手机号重新登录了' });
       setCancelPwd('');
+      setCancelPhone('');
       setSubmitted(false);
       await load();
     } catch (err) {
-      push(toFriendlyMessage(err));
+      // 401（手机号或密码不对）/ 404（没有进行中的注销）/ 409 等都原文透出，
+      // 不猜原因 —— 猜错一句会把人引去改本来就对的输入
+      setCancelResult({ kind: 'error', text: toFriendlyMessage(err) });
     } finally {
       setBusy(false);
     }
@@ -140,7 +176,7 @@ function DeleteAccountPanel() {
         订单等交易记录按法规留存并脱敏。
       </p>
       <button className="btn btn-ghost btn-sm" onClick={() => void open()}>
-        {cancelling ? '撤销注销' : '注销账号'}
+        {cancelling ? '查看注销进度 / 撤销' : '注销账号'}
       </button>
 
       {/* 冷静期/已提交：账号已不可用，直接把结果说清楚，不再展示申请表单 */}
@@ -211,31 +247,54 @@ function DeleteAccountPanel() {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 16, borderTop: '1px solid var(--border, #e6e8eb)', paddingTop: 12 }}>
-        <p className="small muted" style={{ marginBottom: 8 }}>
-          撤销注销（冷静期内登录已停用，这里用手机号 + 密码验证，不需要登录态）
-        </p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            className="input"
-            style={{ maxWidth: 160 }}
-            value={cancelPhone}
-            onChange={(e) => setCancelPhone(e.target.value)}
-            placeholder="手机号"
-          />
-          <input
-            className="input"
-            style={{ maxWidth: 160 }}
-            type="password"
-            value={cancelPwd}
-            onChange={(e) => setCancelPwd(e.target.value)}
-            placeholder="登录密码"
-          />
-          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void cancel()}>
-            撤销注销
-          </button>
-        </div>
-      </div>
+      {/* 撤销区只在冷静期出现：账号正常时它毫无意义，常驻只会让人困惑 */}
+      {cancelling || submitted ? (
+        <form
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void cancel();
+          }}
+          style={{ marginTop: 16, borderTop: '1px solid var(--border, #e6e8eb)', paddingTop: 12 }}
+        >
+          <p className="small muted" style={{ marginBottom: 8 }}>
+            撤销注销 —— 冷静期内登录已停用，这里用<strong>注册手机号 + 登录密码</strong>验证身份，
+            不需要登录状态。两项都需要手动输入。
+          </p>
+          {cancelResult ? (
+            <div style={{ marginBottom: 10 }}>
+              <Alert kind={cancelResult.kind}>{cancelResult.text}</Alert>
+            </div>
+          ) : null}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <Field label="注册手机号">
+              <input
+                className="input"
+                style={{ width: 200 }}
+                value={cancelPhone}
+                onChange={(e) => setCancelPhone(e.target.value)}
+                placeholder="请输入 11 位手机号"
+                inputMode="numeric"
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="登录密码">
+              <input
+                className="input"
+                style={{ width: 200 }}
+                type="password"
+                value={cancelPwd}
+                onChange={(e) => setCancelPwd(e.target.value)}
+                placeholder="请手动输入登录密码"
+                autoComplete="new-password"
+              />
+            </Field>
+            <button className="btn btn-ghost btn-sm" disabled={busy} type="submit">
+              {busy ? '验证中…' : '撤销注销'}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {/* 二次确认：与小程序端 wx.showModal 的语义一致，文案也保持一致 */}
       <Modal
@@ -268,7 +327,6 @@ function DeleteAccountPanel() {
     </div>
   );
 }
-
 
 export const MePage: React.FC = () => {
   const { user, pets, refreshMe, loading } = useAuth();
@@ -371,6 +429,37 @@ export const MePage: React.FC = () => {
     }
   };
 
+  const quickLinks = (
+    <>
+      {canAccessSellerConsole(user.role) ? (
+        <Link className="btn btn-primary btn-sm" to="/seller">
+          商家端
+        </Link>
+      ) : null}
+      <Link className="btn btn-ghost btn-sm" to="/orders">
+        我的订单
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/coupons">
+        我的券包
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/after-sales">
+        我的售后
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/reviews/mine">
+        我的评价
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/cart">
+        购物车
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/pets">
+        宠物档案
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/listings">
+        二手闲置
+      </Link>
+    </>
+  );
+
   return (
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
@@ -378,6 +467,7 @@ export const MePage: React.FC = () => {
         <span className="section-sub">账号 ID {user.id}</span>
       </div>
 
+      {/* ── 第一区 · 身份：我是谁（资料 + 状态 + 常去的地方） ─────────────── */}
       <div className="grid grid-2" style={{ alignItems: 'start' }}>
         <div className="card card-pad">
           <h3 style={{ marginBottom: 12 }}>基本资料</h3>
@@ -462,92 +552,8 @@ export const MePage: React.FC = () => {
           </div>
 
           <div className="card card-pad" style={{ marginTop: 16 }}>
-            <h3 style={{ marginBottom: 10 }}>信用分</h3>
-            {/* 这里刻意**不**用 user.creditScore：那是用户库里的一份副本（定时任务回写），
-                可能落后于履约域的实时计算值。同一页面上放两个来源的同一指标，
-                迟早会出现「上面 100、下面 60」—— 所以只留这一个权威来源。 */}
-            <CreditPanel userId={user.id} />
-          </div>
-
-          <div className="card card-pad" style={{ marginTop: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>实名认证</h3>
-
-            {user.realNameVerified ? (
-              <dl className="spec-list">
-                <dt>真实姓名</dt>
-                <dd>{user.realName ?? '—'}</dd>
-                <dt>身份证号</dt>
-                <dd>{user.idCardMasked ?? '—'}</dd>
-                <dt>状态</dt>
-                <dd>
-                  <span className="tag tag-success">已认证</span>
-                </dd>
-              </dl>
-            ) : (
-              <>
-                <Alert kind="info">
-                  实名信息仅用于交易合规校验，服务端只存储掩码，不回传明文。
-                </Alert>
-                {realError ? (
-                  <div style={{ margin: '12px 0' }}>
-                    <Alert kind="error">{realError}</Alert>
-                  </div>
-                ) : null}
-                <form onSubmit={submitRealName} style={{ marginTop: 12 }}>
-                  <Field label="真实姓名" required>
-                    <input
-                      className="input"
-                      value={realName}
-                      onChange={(e) => setRealName(e.target.value)}
-                      maxLength={20}
-                    />
-                  </Field>
-                  <Field label="身份证号" required hint="18 位，末位可为 X">
-                    <input
-                      className="input"
-                      value={idCard}
-                      onChange={(e) => setIdCard(e.target.value.replace(/[^\dxX]/g, '').slice(0, 18))}
-                      placeholder="请输入身份证号"
-                    />
-                  </Field>
-                  <button className="btn btn-primary" type="submit" disabled={realBusy}>
-                    {realBusy ? '提交中…' : '提交认证'}
-                  </button>
-                </form>
-              </>
-            )}
-          </div>
-
-          <div className="card card-pad" style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 10 }}>快捷入口</h3>
-            <div className="row row-wrap">
-              {canAccessSellerConsole(user.role) ? (
-                <Link className="btn btn-primary btn-sm" to="/seller">
-                  商家端
-                </Link>
-              ) : null}
-              <Link className="btn btn-ghost btn-sm" to="/orders">
-                我的订单
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/coupons">
-                我的券包
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/after-sales">
-                我的售后
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/reviews/mine">
-                我的评价
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/cart">
-                购物车
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/pets">
-                宠物档案
-              </Link>
-              <Link className="btn btn-ghost btn-sm" to="/listings">
-                二手闲置
-              </Link>
-            </div>
+            <div className="row row-wrap">{quickLinks}</div>
             {canAccessSellerConsole(user.role) ? null : (
               <div className="small muted" style={{ marginTop: 10 }}>
                 想卖东西？完成实名后到<Link to="/seller" className="text-brand"> 商家端 </Link>
@@ -555,11 +561,72 @@ export const MePage: React.FC = () => {
               </div>
             )}
           </div>
-
-          {/* C7 · 账号注销：隐私指引已承诺可注销，入口必须真实可达 */}
-          <DeleteAccountPanel />
         </div>
       </div>
+
+      {/* ── 第二区 · 信用与认证：平台如何评估 / 校验我 ───────────────────── */}
+      <div className="grid grid-2" style={{ marginTop: 16, alignItems: 'start' }}>
+        <div className="card card-pad">
+          <h3 style={{ marginBottom: 10 }}>信用分</h3>
+          {/* 这里刻意**不**用 user.creditScore：那是用户库里的一份副本（定时任务回写），
+              可能落后于履约域的实时计算值。同一页面上放两个来源的同一指标，
+              迟早会出现「上面 100、下面 60」—— 所以只留这一个权威来源。 */}
+          <CreditPanel userId={user.id} />
+        </div>
+
+        <div className="card card-pad">
+          <h3 style={{ marginBottom: 12 }}>实名认证</h3>
+
+          {user.realNameVerified ? (
+            <dl className="spec-list">
+              <dt>真实姓名</dt>
+              <dd>{user.realName ?? '—'}</dd>
+              <dt>身份证号</dt>
+              <dd>{user.idCardMasked ?? '—'}</dd>
+              <dt>状态</dt>
+              <dd>
+                <span className="tag tag-success">已认证</span>
+              </dd>
+            </dl>
+          ) : (
+            <>
+              <Alert kind="info">
+                实名信息仅用于交易合规校验，服务端只存储掩码，不回传明文。
+              </Alert>
+              {realError ? (
+                <div style={{ margin: '12px 0' }}>
+                  <Alert kind="error">{realError}</Alert>
+                </div>
+              ) : null}
+              <form onSubmit={submitRealName} style={{ marginTop: 12 }}>
+                <Field label="真实姓名" required>
+                  <input
+                    className="input"
+                    value={realName}
+                    onChange={(e) => setRealName(e.target.value)}
+                    maxLength={20}
+                  />
+                </Field>
+                <Field label="身份证号" required hint="18 位，末位可为 X">
+                  <input
+                    className="input"
+                    value={idCard}
+                    onChange={(e) => setIdCard(e.target.value.replace(/[^\dxX]/g, '').slice(0, 18))}
+                    placeholder="请输入身份证号"
+                  />
+                </Field>
+                <button className="btn btn-primary" type="submit" disabled={realBusy}>
+                  {realBusy ? '提交中…' : '提交认证'}
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── 第三区 · 账号与隐私：不可逆操作独立成区，放在最后 ─────────────── */}
+      {/* C7 · 账号注销：隐私指引已承诺可注销，入口必须真实可达 */}
+      <DeleteAccountPanel />
     </div>
   );
 };
