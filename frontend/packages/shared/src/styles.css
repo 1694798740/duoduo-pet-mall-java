@@ -38,7 +38,9 @@
   --shadow: 0 4px 16px rgba(16, 20, 32, 0.07);
   --shadow-lg: 0 16px 48px rgba(16, 20, 32, 0.14);
   --header-h: 64px;
-  --max-w: 1200px;
+  /* 2026-10-21：1200 在 2K/4K 逻辑宽下只占视口约一半（用户报"页面拥挤狭窄"），
+     提到 1320 —— 够容纳商详两栏 + 推荐四列，又不至于在 1366 笔记本上挤压。 */
+  --max-w: 1320px;
   /* 顶栏底色单独成变量：毛玻璃底必须是半透明色，且深浅两档的"基色"完全不同
      —— 写死 rgba(255,255,255,.92) 的后果是暗夜档导航栏整条白底（2026-10-21 用户报障）。 */
   --header-bg: rgba(255, 255, 255, 0.92);
@@ -1478,16 +1480,76 @@ html[data-theme='dark'] .modal-mask {
   }
 }
 
-/* ---------- 商详 ---------- */
+/* ---------- 商详 ----------
+   2026-10-21 重排为标准电商结构：
+     ① 顶部两栏：主图（约 45%）| 购买信息（约 55%）—— 信息列更宽，价格/规格/按钮不再挤；
+     ② 「商品介绍 / 规格参数 / 包装规格」移出两栏、改为下方通栏 —— 此前这四张长卡
+        全堆在左列，左列被拉到两三屏长、右列大量留白，重心严重失衡；
+     ③ 介绍大图用 auto-fit 两列网格 —— 宽屏并排展示，避免竖向长条。
+   全部内容卡继续走 .card，观感与全站一致。 */
 .pd-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
+  gap: 32px;
+  align-items: start;
 }
 @media (max-width: 860px) {
   .pd-layout {
     grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
   }
+}
+/* 通栏内容卡（介绍 / 规格）：紧贴两栏主体，保持统一的卡片节奏 */
+.pd-section {
+  margin-top: 20px;
+}
+/* 商品介绍正文：比全站默认字号大半档、行高放宽 —— 详情长文可读性优先 */
+.pd-detail-text {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-2);
+  margin: 0;
+}
+/* 介绍大图：宽屏两列并排、窄屏自动单列（auto-fit 天然响应式） */
+.pd-detail-imgs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.pd-detail-imgs img {
+  width: 100%;
+  border-radius: 12px;
+  display: block;
+}
+/* 规格参数 | 包装规格 双栏并排；auto-fit 在窄屏自动落到单列 */
+.pd-cols-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.pd-cols-2 > .card {
+  margin-top: 0;
+}
+/* 主图下方缩略图条：从内联样式抽成类，选中态加粗描边 + 统一 hover 反馈 */
+.pd-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  outline: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+  opacity: 0.85;
+}
+.pd-thumb:hover {
+  opacity: 1;
+}
+.pd-thumb.active {
+  border-color: var(--brand);
+  opacity: 1;
 }
 .pd-gallery-main {
   width: 100%;

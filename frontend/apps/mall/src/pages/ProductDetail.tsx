@@ -277,113 +277,12 @@ export const ProductDetailPage: React.FC = () => {
                   key={`${img}-${index}`}
                   src={img}
                   alt={`${card.title} 图 ${index + 1}`}
-                  style={{
-                    width: 64,
-                    height: 64,
-                    objectFit: 'cover',
-                    borderRadius: 10,
-                    border:
-                      index === imgIndex ? '2px solid var(--brand)' : '1px solid var(--border)',
-                    cursor: 'pointer',
-                  }}
+                  className={`pd-thumb${index === imgIndex ? ' active' : ''}`}
                   onClick={() => setImgIndex(index)}
                   loading="lazy"
                   decoding="async"
                 />
               ))}
-            </div>
-          ) : null}
-
-          {data.detail ? (
-            <div className="card card-pad" style={{ marginTop: 18 }}>
-              <h3 style={{ marginBottom: 8 }}>商品介绍</h3>
-              <p className="muted-2" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                {data.detail}
-              </p>
-              {/* 图文配图（第七十三轮）：与小程序端同一映射池（base=seed+2 取 3 张），
-                  两端「商品介绍」从此是同一批图；后端将来下发真实图时原样放行 */}
-              {detailImages(card.id).map((img, index) => (
-                <img
-                  key={`${img}-${index}`}
-                  src={img}
-                  alt={`${card.title} 介绍图 ${index + 1}`}
-                  style={{
-                    width: '100%',
-                    borderRadius: 12,
-                    marginTop: index === 0 ? 12 : 10,
-                    display: 'block',
-                  }}
-                  loading="lazy"
-                  decoding="async"
-                />
-              ))}
-            </div>
-          ) : null}
-
-          <div className="card card-pad" style={{ marginTop: 16 }}>
-            <h3 style={{ marginBottom: 10 }}>规格参数</h3>
-            <dl className="spec-list">
-              <dt>品牌</dt>
-              <dd>{card.brandName ?? '—'}</dd>
-              <dt>分类</dt>
-              <dd>{card.categoryName ?? '—'}</dd>
-              <dt>适用宠物</dt>
-              <dd>
-                {suitability.species.length
-                  ? suitability.species.map((s) => SPECIES_LABEL[s] ?? s).join(' / ')
-                  : '通用'}
-              </dd>
-              <dt>适用阶段</dt>
-              <dd>
-                {suitability.lifeStages.length
-                  ? suitability.lifeStages.map((l) => LIFE_STAGE_LABEL[l] ?? l).join(' / ')
-                  : '全阶段'}
-              </dd>
-              <dt>过敏原</dt>
-              <dd>{suitability.allergens.length ? suitability.allergens.join('、') : '未标注'}</dd>
-              <dt>食品类</dt>
-              <dd>{suitability.food ? '是（不适用 7 天无理由）' : '否（支持 7 天无理由）'}</dd>
-            </dl>
-            {suitability.food ? (
-              <div style={{ marginTop: 12 }}>
-                <Alert kind="warn">
-                  食品类商品不支持 7 天无理由退货（依据《消费者权益保护法》第 25 条）。
-                  如收到时已变质、破损或临期，可申请退款并提供照片凭证。
-                </Alert>
-              </div>
-            ) : null}
-          </div>
-
-          {/* 包装规格（第七十三轮）：与小程序端逐行同构 —— spec 键值对 + SKU 编码 + 当前库存。
-              之前只有小程序有这一块，两端详情页信息不对称 */}
-          {selectedSku ? (
-            <div className="card card-pad" style={{ marginTop: 16 }}>
-              <h3 style={{ marginBottom: 10 }}>包装规格</h3>
-              <dl className="spec-list">
-                {Object.keys(selectedSku.spec).length ? (
-                  Object.entries(selectedSku.spec)
-                    .filter(([, v]) => v)
-                    .map(([k, v]) => (
-                      <React.Fragment key={k}>
-                        <dt>{k}</dt>
-                        <dd>{v}</dd>
-                      </React.Fragment>
-                    ))
-                ) : (
-                  <>
-                    <dt>规格</dt>
-                    <dd>默认规格</dd>
-                  </>
-                )}
-                {selectedSku.skuCode ? (
-                  <>
-                    <dt>SKU 编码</dt>
-                    <dd>{selectedSku.skuCode}</dd>
-                  </>
-                ) : null}
-                <dt>当前库存</dt>
-                <dd>{selectedSku.stock > 0 ? `${selectedSku.stock} 件` : '补货中'}</dd>
-              </dl>
             </div>
           ) : null}
         </div>
@@ -634,6 +533,102 @@ export const ProductDetailPage: React.FC = () => {
             ) : null}
           </div>
         </div>
+      </div>
+
+      {/* ---------- 通栏详情区（2026-10-21 重排） ----------
+          此前「商品介绍 / 规格参数 / 包装规格」三张长卡堆在左列，把左列拉到两三屏长、
+          右列大量留白。改为通栏后：介绍大图宽屏两列并排，规格两卡并排，重心恢复平衡。 */}
+      {data.detail ? (
+        <div className="card card-pad pd-section">
+          <h3 style={{ marginBottom: 8 }}>商品介绍</h3>
+          <p className="pd-detail-text" style={{ whiteSpace: 'pre-wrap' }}>
+            {data.detail}
+          </p>
+          {/* 图文配图（第七十三轮）：与小程序端同一映射池（base=seed+2 取 3 张），
+              两端「商品介绍」从此是同一批图；后端将来下发真实图时原样放行 */}
+          {detailImages(card.id).length ? (
+            <div className="pd-detail-imgs">
+              {detailImages(card.id).map((img, index) => (
+                <img
+                  key={`${img}-${index}`}
+                  src={img}
+                  alt={`${card.title} 介绍图 ${index + 1}`}
+                  loading="lazy"
+                  decoding="async"
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="pd-cols-2">
+        <div className="card card-pad">
+          <h3 style={{ marginBottom: 10 }}>规格参数</h3>
+          <dl className="spec-list">
+            <dt>品牌</dt>
+            <dd>{card.brandName ?? '—'}</dd>
+            <dt>分类</dt>
+            <dd>{card.categoryName ?? '—'}</dd>
+            <dt>适用宠物</dt>
+            <dd>
+              {suitability.species.length
+                ? suitability.species.map((s) => SPECIES_LABEL[s] ?? s).join(' / ')
+                : '通用'}
+            </dd>
+            <dt>适用阶段</dt>
+            <dd>
+              {suitability.lifeStages.length
+                ? suitability.lifeStages.map((l) => LIFE_STAGE_LABEL[l] ?? l).join(' / ')
+                : '全阶段'}
+            </dd>
+            <dt>过敏原</dt>
+            <dd>{suitability.allergens.length ? suitability.allergens.join('、') : '未标注'}</dd>
+            <dt>食品类</dt>
+            <dd>{suitability.food ? '是（不适用 7 天无理由）' : '否（支持 7 天无理由）'}</dd>
+          </dl>
+          {suitability.food ? (
+            <div style={{ marginTop: 12 }}>
+              <Alert kind="warn">
+                食品类商品不支持 7 天无理由退货（依据《消费者权益保护法》第 25 条）。
+                如收到时已变质、破损或临期，可申请退款并提供照片凭证。
+              </Alert>
+            </div>
+          ) : null}
+        </div>
+
+        {/* 包装规格（第七十三轮）：与小程序端逐行同构 —— spec 键值对 + SKU 编码 + 当前库存。
+            之前只有小程序有这一块，两端详情页信息不对称 */}
+        {selectedSku ? (
+          <div className="card card-pad">
+            <h3 style={{ marginBottom: 10 }}>包装规格</h3>
+            <dl className="spec-list">
+              {Object.keys(selectedSku.spec).length ? (
+                Object.entries(selectedSku.spec)
+                  .filter(([, v]) => v)
+                  .map(([k, v]) => (
+                    <React.Fragment key={k}>
+                      <dt>{k}</dt>
+                      <dd>{v}</dd>
+                    </React.Fragment>
+                  ))
+              ) : (
+                <>
+                  <dt>规格</dt>
+                  <dd>默认规格</dd>
+                </>
+              )}
+              {selectedSku.skuCode ? (
+                <>
+                  <dt>SKU 编码</dt>
+                  <dd>{selectedSku.skuCode}</dd>
+                </>
+              ) : null}
+              <dt>当前库存</dt>
+              <dd>{selectedSku.stock > 0 ? `${selectedSku.stock} 件` : '补货中'}</dd>
+            </dl>
+          </div>
+        ) : null}
       </div>
 
       {/* 商品评价（公开可见，未登录也能看）：紧跟主体内容，属于决策信息而非补充信息 */}
