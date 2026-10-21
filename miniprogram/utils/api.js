@@ -747,6 +747,22 @@ const social = {
       return req.post('/api/socials/notices/read-all');
     },
   },
+
+  /**
+   * 问客服直连（A4，2026-10-20）。
+   *
+   * 不新造接待系统：拿服务端下发的官方客服 userId，直接打开与 TA 的私信会话，
+   * 复用整套 /api/socials/messages/** 规则（未读、非互关限发、上下文隔离）。
+   *
+   * ★ 失败必须诚实：账号没就绪时服务端回 503 SUPPORT_AGENT_NOT_READY，
+   *   调用方要给「暂时没接通」的兜底 + AI 导购出口，不能静默停在原地 ——
+   *   拿一个查无此人的 id 也能进会话（昵称退化成「用户710…」），用户以为接通了。
+   */
+  support: {
+    agent() {
+      return req.get('/api/socials/support/agent');
+    },
+  },
 };
 
 // ── 金额工具（分 → 元字符串，避免浮点误差） ─────────────────────────────────

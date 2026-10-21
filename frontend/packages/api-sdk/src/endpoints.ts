@@ -1143,6 +1143,25 @@ export const messageApi = {
   unreadCount: () => api.get<UnreadCount>('/api/socials/messages/unread-count'),
 };
 
+// ---------- 问客服（A4 · 直连官方客服账号） ----------
+//
+// 口径：**不新造接待系统**，直接把用户送进「和官方客服账号的私信会话」。
+// 收件人由服务端下发，前端不硬编码 userId —— 换客服账号只改 duoduo.social.official-cs-user-id。
+// 会话规则（未读 / 非互关限发 / 上下文隔离）全部复用 /api/socials/messages/**，不产生第二套消息模型。
+export const supportApi = {
+  /** 官方客服账号 userId：前端拿它拼 /messages/:peerId */
+  agent: () => api.get<{ userId: string }>('/api/socials/support/agent'),
+
+  /**
+   * 平台侧会话列表（客服账号视角）。
+   *
+   * 前台不调用，留给后续「后台接待台」；先建好是为了让客服账号能被**同一套接口**查到，
+   * 避免后台将来另造一份 `t_support_session`。
+   */
+  conversations: (query?: { page?: number; pageSize?: number }) =>
+    api.get<ConversationView[]>('/api/socials/support/conversations', { query }),
+};
+
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1） ----------
 //
 // 信息流 / 详情 / 话题 / 评论列表公开可逛（匿名标记恒 false）；写操作一律 POST 两段路径

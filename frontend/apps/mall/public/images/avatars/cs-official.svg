@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="32" fill="#4f6ef7"/>
+  <!-- 猫耳 -->
+  <path d="M18 24 L22 10 L30 20 Z" fill="#fff"/>
+  <path d="M46 24 L42 10 L34 20 Z" fill="#fff"/>
+  <!-- 脸 -->
+  <ellipse cx="32" cy="36" rx="16" ry="14" fill="#fff"/>
+  <!-- 耳机弧线 -->
+  <path d="M16 30 a17 17 0 0 1 32 0" fill="none" stroke="#ffd15c" stroke-width="4" stroke-linecap="round"/>
+  <rect x="12" y="29" width="6" height="10" rx="3" fill="#ffd15c"/>
+  <rect x="46" y="29" width="6" height="10" rx="3" fill="#ffd15c"/>
+  <!-- 眼睛与鼻嘴 -->
+  <circle cx="25" cy="35" r="2.6" fill="#4f6ef7"/>
+  <circle cx="39" cy="35" r="2.6" fill="#4f6ef7"/>
+  <path d="M29 42 h6 l-3 3 Z" fill="#4f6ef7"/>
+  <path d="M32 45 v2 M32 47 q-3 3 -6 1 M32 47 q3 3 6 1" fill="none" stroke="#4f6ef7" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

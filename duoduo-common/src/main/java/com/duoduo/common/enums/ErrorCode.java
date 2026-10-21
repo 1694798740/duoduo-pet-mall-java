@@ -106,6 +106,16 @@ public enum ErrorCode {
      */
     ACCOUNT_DELETING(HttpStatus.CONFLICT, "账号正在注销冷静期内，登录已停用"),
 
+    /**
+     * A4 · 客服账号尚未就绪（503）。
+     *
+     * <p>`duoduo.social.official-cs-user-id` 配的那个账号在库里不存在（种子数据没跑、
+     * 被清理脚本带走、或配置改错）。这时**不能**把 userId 原样下发 —— 端侧会顺利跳进
+     * 一个「查无此人」的会话（昵称退化成「用户710…」），用户发出去的消息永远没人看。
+     * 明确回 503，端侧退回说明弹窗并给 AI 导购出口，比假装接通诚实。
+     */
+    SUPPORT_AGENT_NOT_READY(HttpStatus.SERVICE_UNAVAILABLE, "客服账号暂未就绪，请稍后再试或先问 AI 导购"),
+
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁，请稍后再试"),
     DEGRADED(HttpStatus.SERVICE_UNAVAILABLE, "依赖服务不可用，已降级"),
 

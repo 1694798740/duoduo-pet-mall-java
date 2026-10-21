@@ -35,6 +35,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { canAccessSellerConsole, isOperator } from '@duoduo/shared/lib/roles';
 import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
+import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
 
 /**
  * 顶栏只放「逛 / 买」这条一级动线 —— 个人事务（订单 / 宠物 / 收货地址）统一收进头像下拉。
@@ -321,6 +322,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 aria-label="搜索商品"
               />
             </form>
+
+            {/* A2 · 主题切换：放在图标按钮区，与购物车/通知同排 */}
+            <ThemeToggle />
 
             <Link className="icon-btn" to="/cart" aria-label="购物车">
               🛒

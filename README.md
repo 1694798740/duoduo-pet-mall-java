@@ -2059,6 +2059,58 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-21（五十二）· Web 注销入口 ＋ Web 暗夜模式 ＋ 问客服直连 ＋ 支付资质调研
+
+本轮四件事，按用户指定顺序一次做完。
+
+**1. Web 端账号注销入口（与小程序同口径）**
+
+`Me.tsx` 新增 `DeleteAccountPanel`，三态渲染：未申请（风险提示 + 二次确认 Modal）→
+有阻塞项（逐条列出订单/售后/退款等未了结业务，不给提交按钮）→ 冷静期（显示执行时间 + 撤销入口）。
+提交成功后 `await logout()` —— 服务端此时已停用登录，留在原页只会让下一个请求 401。
+文案与小程序端逐条对齐，**二次确认是独立 Modal 而非 `window.confirm`**（全站已无原生弹窗）。
+
+**2. Web 端暗夜模式（三端）**
+
+- `packages/shared/src/store/theme.tsx`：三态 `light | dark | system`，`matchMedia` 跟随系统、
+  `localStorage` 记忆、`dataset.theme` + `documentElement.style.colorScheme` 同步（后者让滚动条、
+  原生控件、表单控件一起变深，只改 CSS 变量是做不到的）；
+- `styles.css` 追加 `html[data-theme='dark']` 覆盖块：**26 个语义变量 + 59 个 `--c-<hex>` 派生变量成对定义**，
+  只覆盖颜色，不动尺寸与动效令牌（否则暗色下版式会"变胖"）；
+- 深色映射用四档曲线并按亮度压制饱和度 —— 首版直接把颜色反相，`#0b7a6f` 变成荧光青 `#2cf2de`、
+  `#191c23`（深底）反过来变成 `#485064`（在深底上看不清），实测不可用后重写；
+- 商城 / 后台 / 商家端三个入口都挂 `ThemeProvider`，顶栏加 `ThemeToggle`（三态循环，不是开关）。
+
+**3. 问客服直连（三端）**
+
+- 后端 `SupportController`：`GET /api/socials/support/agent` 下发官方客服 userId，
+  `GET /api/socials/support/conversations` 给平台侧接待台留口；**不新造接待系统**，
+  直接复用 `/api/socials/messages/**`（未读、非互关限发、上下文隔离全部沿用）；
+- 网页 `SupportEntry.tsx` 从「占位弹窗」改成真跳转 `/messages/:peerId`；
+  小程序「我的 → 在线客服」同款入口，`profile.js` 的 `goSupport()`；
+- ★ **实测抓到一个静默失败**：配置默认值 `710000000000000001` 在本机库中并不存在
+  （种子增量 16 从未执行），而私信会话端点对不存在的 peer **返回 200**、昵称退化成
+  「用户710000000000000001」—— 端侧会顺利跳进一个查无此人的会话，消息永远没人看。
+  修法：`agent()` 回源 `briefs` 校验账号真实存在，不存在回 **503 `SUPPORT_AGENT_NOT_READY`**，
+  端侧退回说明弹窗并给 AI 导购出口；同时补跑增量 16（建客服账号 + 32 个自营商品归属回填）。
+  反向验证：指向不存在 id 的临时容器恰好返回 503 与预期报文。
+
+**4. 顺带修掉一个真故障：小程序地址页「保存」完全无效**
+
+跑静态自检时抓到 3 条「事件未定义」—— `pages/address/address.js` 里的
+`onInput` / `pickLabel` / `save` / `validate` 四个方法**在"坐标系修复"那次改动中被整段吞掉**
+（花括号配对替换时把文件尾部一起匹配进去）。症状不是报错，而是**输入框打不进字、点保存没反应**。
+已从 `7f7fa8b` 原样补回，并在该处留注释说明教训。
+
+**5. 支付资质调研（A3 补充结论）**
+
+输出 `docs/payment-qualification-alipay-vs-wechat.md`。结论：
+**换支付宝解决不了微信小程序收款** —— 一是微信小程序只认 `wx.requestPayment`，
+内嵌支付宝违反运营规范（资质再全也绕不过）；二是支付宝虽允许"个人账号 + 无营业执照"开 JSAPI，
+但信用卡日限额 1 万，正常经营仍需执照。**办个体工商户是唯一同时解开两家限制的动作。**
+
+---
+
 ### 2026-10-20（五十一）· 新增「附近位置」快选入口（wx.choosePoi），三个定位入口并存
 
 **动机**：自动定位有偏差、地图选点要拖地标，而很多场景用户只是想"选旁边那个小区 / 写字楼 / 商圈"。

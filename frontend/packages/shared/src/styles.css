@@ -17,6 +17,16 @@
   --border: #e9eaee;
   --border-strong: #d9dbe1;
 
+  /* 强色：浅色档沿用此前散落在各处的派生色（悬浮/激活态），
+     深色档单独取更亮的值 —— 深色底上把主色压暗会让按钮"糊掉"。 */
+  --brand-strong: #c2410c;
+  --accent-strong: #0f766e;
+  --danger-strong: #b42318;
+  --warn-strong: #92400e;
+  --success-strong: #15803d;
+  --brand-line: #ffd8c7;
+  --brand-line-soft: #fff7ed;
+
   --text: #191c23;
   --text-2: #5b6070;
   --text-3: #8b90a0;
@@ -29,6 +39,172 @@
   --shadow-lg: 0 16px 48px rgba(16, 20, 32, 0.14);
   --header-h: 64px;
   --max-w: 1200px;
+
+  /* ---------- 暗夜档（A2，2026-10-20） ----------
+     切换机制：<html data-theme="dark">，由 ThemeProvider 设置。
+     为什么只覆盖"颜色类"变量：
+       · 尺寸 / 圆角 / 动效令牌在两套主题下必须完全一致，否则切换时会伴随
+         布局跳动与快慢不一 —— 那是比"没做暗夜"更糟的体验；
+       · 阴影在深色底上几乎看不见，因此改用更大的不透明度 + 更暗的基色，
+         否则卡片会"贴"在背景上分不出层次。 */
+}
+
+html[data-theme='dark'] {
+  --brand: #ff8a5b;
+  --brand-dark: #ff7a45;
+  --brand-soft: #3a241c;
+  --accent: #2dd4bf;
+  --accent-soft: #12332f;
+  --danger: #f2666b;
+  --danger-soft: #3a1d1e;
+  --warn: #f0a92e;
+  --warn-soft: #3a2c12;
+  --success: #35c46a;
+  --success-soft: #14301f;
+
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1d212a;
+  --border: #2a2f3a;
+  --border-strong: #3a4150;
+
+  --text: #e6e8ee;
+  --text-2: #a8aebd;
+  --text-3: #7d8494;
+
+  --brand-strong: #ffb38a;
+  --accent-strong: #5eead4;
+  --danger-strong: #f98a8f;
+  --warn-strong: #f5c26b;
+  --success-strong: #6ee79b;
+  --brand-line: #7a3a24;
+  --brand-line-soft: #2a1c15;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --c-0b7a6f: #37beb1;
+  --c-0f8f82: #45c9bc;
+  --c-0f9e8f: #51ccbf;
+  --c-10894c: #41c884;
+  --c-14b8a6: #69d3c8;
+  --c-157437: #38c169;
+  --c-1b8a43: #4bcb79;
+  --c-1d4ed8: #3863dc;
+  --c-1f2430: #dddfe4;
+  --c-43b95a: #58c36d;
+  --c-4c3fa6: #8e85d1;
+  --c-4cc463: #63cc77;
+  --c-6d5bd0: #7260d2;
+  --c-9a3412: #cc6f50;
+  --c-9fe3da: #25564f;
+  --c-b45309: #d08f5d;
+  --c-c0292e: #d43439;
+  --c-c3ebd1: #255636;
+  --c-c4efe9: #1e3e39;
+  --c-c7ddfb: #1e2b3e;
+  --c-c93b40: #d05357;
+  --c-dcd6fb: #231e3e;
+  --c-ded7fb: #241e3e;
+  --c-e05a2b: #df714a;
+  --c-e11d2e: #dd3f4d;
+  --c-e7e8ec: #292b33;
+  --c-e8f7f4: #1e3e38;
+  --c-eef7ff: #1e2f3e;
+  --c-eff6ff: #1e2c3e;
+  --c-f0f1f4: #272a35;
+  --c-f3c2c3: #3e1e1e;
+  --c-f3f0ff: #241e3e;
+  --c-f3fbfa: #1e3e3a;
+  --c-f5f3ff: #231e3e;
+  --c-f5f5f5: #2e2e2e;
+  --c-f7c9cb: #3e1e1f;
+  --c-fdba74: #563e25;
+  --c-fde68a: #564c25;
+  --c-ff6a3d: #563025;
+  --c-ff7a45: #563325;
+  --c-ff8a5b: #563325;
+  --c-ff9f6b: #563625;
+  --c-ffb38a: #563625;
+  --c-ffcdb8: #3e271e;
+  --c-ffd2c0: #3e271e;
+  --c-ffd6d3: #3e201e;
+  --c-ffe0cd: #3e2a1e;
+  --c-ffe0d3: #3e271e;
+  --c-ffe0d6: #3e261e;
+  --c-ffe3d4: #3e291e;
+  --c-ffe4de: #3e241e;
+  --c-ffe7d9: #3e2a1e;
+  --c-fff1ea: #3e291e;
+  --c-fff1f0: #3e201e;
+  --c-fff2ea: #3e2a1e;
+  --c-fff5f2: #3e251e;
+  --c-fff6f1: #3e291e;
+  --c-fff7f3: #3e291e;
+  --c-fff8f4: #3e2a1e;
+
+}
+
+:root {
+  --c-0b7a6f: #0b7a6f;
+  --c-0f8f82: #0f8f82;
+  --c-0f9e8f: #0f9e8f;
+  --c-10894c: #10894c;
+  --c-14b8a6: #14b8a6;
+  --c-157437: #157437;
+  --c-1b8a43: #1b8a43;
+  --c-1d4ed8: #1d4ed8;
+  --c-1f2430: #1f2430;
+  --c-43b95a: #43b95a;
+  --c-4c3fa6: #4c3fa6;
+  --c-4cc463: #4cc463;
+  --c-6d5bd0: #6d5bd0;
+  --c-9a3412: #9a3412;
+  --c-9fe3da: #9fe3da;
+  --c-b45309: #b45309;
+  --c-c0292e: #c0292e;
+  --c-c3ebd1: #c3ebd1;
+  --c-c4efe9: #c4efe9;
+  --c-c7ddfb: #c7ddfb;
+  --c-c93b40: #c93b40;
+  --c-dcd6fb: #dcd6fb;
+  --c-ded7fb: #ded7fb;
+  --c-e05a2b: #e05a2b;
+  --c-e11d2e: #e11d2e;
+  --c-e7e8ec: #e7e8ec;
+  --c-e8f7f4: #e8f7f4;
+  --c-eef7ff: #eef7ff;
+  --c-eff6ff: #eff6ff;
+  --c-f0f1f4: #f0f1f4;
+  --c-f3c2c3: #f3c2c3;
+  --c-f3f0ff: #f3f0ff;
+  --c-f3fbfa: #f3fbfa;
+  --c-f5f3ff: #f5f3ff;
+  --c-f5f5f5: #f5f5f5;
+  --c-f7c9cb: #f7c9cb;
+  --c-fdba74: #fdba74;
+  --c-fde68a: #fde68a;
+  --c-ff6a3d: #ff6a3d;
+  --c-ff7a45: #ff7a45;
+  --c-ff8a5b: #ff8a5b;
+  --c-ff9f6b: #ff9f6b;
+  --c-ffb38a: #ffb38a;
+  --c-ffcdb8: #ffcdb8;
+  --c-ffd2c0: #ffd2c0;
+  --c-ffd6d3: #ffd6d3;
+  --c-ffe0cd: #ffe0cd;
+  --c-ffe0d3: #ffe0d3;
+  --c-ffe0d6: #ffe0d6;
+  --c-ffe3d4: #ffe3d4;
+  --c-ffe4de: #ffe4de;
+  --c-ffe7d9: #ffe7d9;
+  --c-fff1ea: #fff1ea;
+  --c-fff1f0: #fff1f0;
+  --c-fff2ea: #fff2ea;
+  --c-fff5f2: #fff5f2;
+  --c-fff6f1: #fff6f1;
+  --c-fff7f3: #fff7f3;
+  --c-fff8f4: #fff8f4;
 
   /* ---------- 动效令牌（2026-10-19 统一） ----------
      纪律一：全站 transition / animation 只准引用本组令牌，不要再写裸时长、裸缓动。
@@ -173,7 +349,7 @@ h4 {
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  background: linear-gradient(135deg, #ffb38a, var(--brand));
+  background: linear-gradient(135deg, var(--c-ffb38a), var(--brand));
   display: grid;
   place-items: center;
   font-size: 18px;
@@ -433,44 +609,44 @@ h4 {
   color: #fff;
 }
 .btn-accent:hover:not(:disabled) {
-  background: #0f9e8f;
+  background: var(--c-0f9e8f);
 }
 /* 品牌浅底（2026-10-18）：与「去支付」的实心橙区分——
    同一色系但一个是**实心白字（主操作）**，一个是**浅底橙字（次操作）**，
    放在同一张卡片里既关联又不会看错。用于「去评价」。 */
 .btn-brand-soft {
   background: var(--brand-soft);
-  border-color: #ffd2c0;
+  border-color: var(--c-ffd2c0);
   color: var(--brand-dark);
 }
 .btn-brand-soft:hover:not(:disabled) {
-  background: #ffe3d4;
+  background: var(--c-ffe3d4);
   border-color: var(--brand);
 }
 /* 青色描边（2026-10-18）：给「申请售后」这类**次要但非中性**的动作，
    与「问客服 / 已评价」的灰色描边区分开，又不至于和「查看详情」的青色实心抢注意力。 */
 .btn-accent-outline {
-  border-color: #9fe3da;
-  color: #0f8f82;
+  border-color: var(--c-9fe3da);
+  color: var(--c-0f8f82);
   background: #fff;
 }
 .btn-accent-outline:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: #0b7a6f;
+  color: var(--c-0b7a6f);
 }
 /**
  * 付款按钮（2026-10-18）：绿色系，但刻意做成「渐变 + 内高光 + 绿色投影」而不是纯色块。
  *
  * 为什么不用纯绿：
- *   · 纯色大块绿在白色卡片上显得平，和「查看详情」的青色实心（#14b8a6）只差一点色相，
+ *   · 纯色大块绿在白色卡片上显得平，和「查看详情」的青色实心（var(--c-14b8a6)）只差一点色相，
  *     远看容易混；渐变把明度拉开（上浅下深），一眼能分出"这是可点的付款按钮"；
  *   · 内高光（inset）给按钮一点"凸起"的层次，配合绿色投影，与站内其他实心按钮同一套质感。
  *
  * 色相刻意选**叶绿**（145° 左右），与青石色（174°，偏蓝绿）保持明确距离。
  */
 .btn-pay {
-  background: linear-gradient(135deg, #4cc463 0%, #1b8a43 100%);
+  background: linear-gradient(135deg, var(--c-4cc463) 0%, var(--c-1b8a43) 100%);
   border-color: transparent;
   color: #fff;
   box-shadow:
@@ -478,7 +654,7 @@ h4 {
     0 2px 10px rgba(27, 138, 67, 0.28);
 }
 .btn-pay:hover:not(:disabled) {
-  background: linear-gradient(135deg, #43b95a 0%, #157437 100%);
+  background: linear-gradient(135deg, var(--c-43b95a) 0%, var(--c-157437) 100%);
   color: #fff;
 }
 .btn-ghost {
@@ -490,7 +666,7 @@ h4 {
   color: var(--brand-dark);
 }
 .btn-danger {
-  border-color: #f3c2c3;
+  border-color: var(--c-f3c2c3);
   color: var(--danger);
   background: #fff;
 }
@@ -508,8 +684,8 @@ h4 {
   box-shadow: 0 2px 10px rgba(229, 72, 77, 0.24);
 }
 .btn-danger-solid:hover:not(:disabled) {
-  background: #c93b40;
-  border-color: #c93b40;
+  background: var(--c-c93b40);
+  border-color: var(--c-c93b40);
   color: #fff;
 }
 .btn-sm {
@@ -597,27 +773,27 @@ h4 {
 .tag-self {
   background: var(--brand-soft);
   color: var(--brand-dark);
-  border-color: #ffd8c7;
+  border-color: var(--brand-line);
 }
 .tag-second {
   background: var(--accent-soft);
-  color: #0f766e;
-  border-color: #c4efe9;
+  color: var(--accent-strong);
+  border-color: var(--c-c4efe9);
 }
 .tag-warn {
   background: var(--warn-soft);
-  color: #92400e;
-  border-color: #fde68a;
+  color: var(--warn-strong);
+  border-color: var(--c-fde68a);
 }
 .tag-danger {
   background: var(--danger-soft);
-  color: #b42318;
-  border-color: #f7c9cb;
+  color: var(--danger-strong);
+  border-color: var(--c-f7c9cb);
 }
 .tag-success {
   background: var(--success-soft);
-  color: #15803d;
-  border-color: #c3ebd1;
+  color: var(--success-strong);
+  border-color: var(--c-c3ebd1);
 }
 
 /* 可点击的筛选标签（搜索页 / 闲置页用它代替下拉框） */
@@ -709,7 +885,7 @@ button.link:hover {
 .goods-card:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow);
-  border-color: #ffd8c7;
+  border-color: var(--brand-line);
 }
 .goods-media {
   position: relative;
@@ -774,7 +950,7 @@ button.link:hover {
 }
 .goods-reason {
   font-size: 12px;
-  color: #0f766e;
+  color: var(--accent-strong);
   background: var(--accent-soft);
   border-radius: 6px;
   padding: 5px 8px;
@@ -782,7 +958,7 @@ button.link:hover {
 }
 .goods-allergy {
   font-size: 12px;
-  color: #b42318;
+  color: var(--danger-strong);
   background: var(--danger-soft);
   border-radius: 6px;
   padding: 5px 8px;
@@ -887,7 +1063,7 @@ button.link:hover {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, #f0f1f4 25%, #e7e8ec 37%, #f0f1f4 63%);
+  background: linear-gradient(90deg, var(--c-f0f1f4) 25%, var(--c-e7e8ec) 37%, var(--c-f0f1f4) 63%);
   background-size: 400% 100%;
   animation: shimmer 1.3s ease infinite;
   border-radius: 10px;
@@ -914,28 +1090,28 @@ button.link:hover {
 }
 .alert-error {
   background: var(--danger-soft);
-  border-color: #f7c9cb;
-  color: #b42318;
+  border-color: var(--c-f7c9cb);
+  color: var(--danger-strong);
 }
 .alert-warn {
   background: var(--warn-soft);
-  border-color: #fde68a;
-  color: #92400e;
+  border-color: var(--c-fde68a);
+  color: var(--warn-strong);
 }
 .alert-info {
-  background: #eff6ff;
-  border-color: #c7ddfb;
-  color: #1d4ed8;
+  background: var(--c-eff6ff);
+  border-color: var(--c-c7ddfb);
+  color: var(--c-1d4ed8);
 }
 .alert-success {
   background: var(--success-soft);
-  border-color: #c3ebd1;
-  color: #15803d;
+  border-color: var(--c-c3ebd1);
+  color: var(--success-strong);
 }
 .alert-ai {
-  background: linear-gradient(135deg, #f5f3ff, #eef7ff);
-  border-color: #dcd6fb;
-  color: #4c3fa6;
+  background: linear-gradient(135deg, var(--c-f5f3ff), var(--c-eef7ff));
+  border-color: var(--c-dcd6fb);
+  color: var(--c-4c3fa6);
 }
 
 /* ---------- Toast ---------- */
@@ -956,17 +1132,17 @@ button.link:hover {
   max-width: 90vw;
   padding: 10px 16px;
   border-radius: 12px;
-  background: #1f2430;
+  background: var(--c-1f2430);
   color: #fff;
   font-size: 13px;
   box-shadow: var(--shadow-lg);
   animation: toast-in var(--dur-enter) var(--ease-spring);
 }
 .toast-success {
-  background: #10894c;
+  background: var(--c-10894c);
 }
 .toast-error {
-  background: #c0292e;
+  background: var(--c-c0292e);
 }
 @keyframes toast-in {
   from {
@@ -1038,8 +1214,8 @@ button.link:hover {
   overflow: hidden;
   border-radius: var(--radius-lg);
   padding: 32px;
-  background: linear-gradient(120deg, #fff1ea 0%, #ffe7d9 45%, #e8f7f4 100%);
-  border: 1px solid #ffe0cd;
+  background: linear-gradient(120deg, var(--c-fff1ea) 0%, var(--c-ffe7d9) 45%, var(--c-e8f7f4) 100%);
+  border: 1px solid var(--c-ffe0cd);
 }
 .hero h1 {
   font-size: 28px;
@@ -1062,7 +1238,7 @@ button.link:hover {
   padding: 6px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.75);
-  border: 1px solid #ffd8c7;
+  border: 1px solid var(--brand-line);
   font-size: 13px;
   margin-bottom: 14px;
 }
@@ -1088,7 +1264,7 @@ button.link:hover {
   padding: 0 20px;
   border-radius: 999px;
   border: none;
-  background: linear-gradient(135deg, #ffb38a, var(--brand));
+  background: linear-gradient(135deg, var(--c-ffb38a), var(--brand));
   color: #fff;
   font-weight: 600;
   font-size: 15px;
@@ -1121,13 +1297,13 @@ button.link:hover {
   gap: 10px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(120deg, #fff7f3, #f3fbfa);
+  background: linear-gradient(120deg, var(--c-fff7f3), var(--c-f3fbfa));
 }
 .dd-avatar {
   width: 36px;
   height: 36px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #ffb38a, var(--brand));
+  background: linear-gradient(135deg, var(--c-ffb38a), var(--brand));
   display: grid;
   place-items: center;
   font-size: 18px;
@@ -1171,8 +1347,8 @@ button.link:hover {
 }
 .dd-msg-system .dd-bubble {
   background: var(--warn-soft);
-  border-color: #fde68a;
-  color: #92400e;
+  border-color: var(--c-fde68a);
+  color: var(--warn-strong);
   font-size: 12px;
 }
 .dd-cards {
@@ -1306,8 +1482,8 @@ button.link:hover {
   object-fit: cover;
 }
 .pd-price-block {
-  background: linear-gradient(120deg, #fff6f1, #fff);
-  border: 1px solid #ffe0cd;
+  background: linear-gradient(120deg, var(--c-fff6f1), #fff);
+  border: 1px solid var(--c-ffe0cd);
   border-radius: var(--radius);
   padding: 16px;
 }
@@ -1442,9 +1618,9 @@ button.link:hover {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #6d5bd0;
-  background: #f3f0ff;
-  border: 1px solid #ded7fb;
+  color: var(--c-6d5bd0);
+  background: var(--c-f3f0ff);
+  border: 1px solid var(--c-ded7fb);
   border-radius: 6px;
   padding: 2px 7px;
 }
@@ -1675,7 +1851,7 @@ button.link:hover {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ff9f6b 0%, #ff7a45 100%);
+  background: linear-gradient(90deg, var(--c-ff9f6b) 0%, var(--c-ff7a45) 100%);
   transition: var(--t-progress);
 }
 
@@ -1857,7 +2033,7 @@ button.link:hover {
   height: 72px;
   border-radius: 8px;
   object-fit: cover;
-  background: var(--surface-alt, #f5f5f5);
+  background: var(--surface-alt, var(--c-f5f5f5));
   flex: none;
 }
 
@@ -1879,7 +2055,7 @@ button.link:hover {
 }
 
 .seckill-title:hover {
-  color: var(--brand, #e05a2b);
+  color: var(--brand, var(--c-e05a2b));
 }
 
 .seckill-price-row {
@@ -1933,13 +2109,13 @@ button.link:hover {
 }
 .sk-tag-live {
   color: #fff;
-  background: linear-gradient(135deg, #ff6a3d 0%, #e11d2e 100%);
+  background: linear-gradient(135deg, var(--c-ff6a3d) 0%, var(--c-e11d2e) 100%);
   box-shadow: 0 2px 8px rgba(225, 29, 46, 0.28);
 }
 .sk-tag-soon {
-  color: #b45309;
-  background: #fff7ed;
-  border: 1px solid #fdba74;
+  color: var(--c-b45309);
+  background: var(--brand-line-soft);
+  border: 1px solid var(--c-fdba74);
 }
 .sk-tag-dot {
   width: 6px;
@@ -2002,12 +2178,12 @@ button.link:hover {
   padding: 2px 7px;
   border-radius: 6px;
   font-size: 12px;
-  color: #b42318;
-  background: #fff1f0;
-  border: 1px solid #ffd6d3;
+  color: var(--danger-strong);
+  background: var(--c-fff1f0);
+  border: 1px solid var(--c-ffd6d3);
   white-space: nowrap;
 }
-.sk-countdown-label { color: #b42318; opacity: 0.8; }
+.sk-countdown-label { color: var(--danger-strong); opacity: 0.8; }
 .sk-countdown-clock {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
@@ -2031,14 +2207,14 @@ button.link:hover {
   height: 6px;
   min-width: 48px;
   border-radius: 999px;
-  background: #ffe4de;
+  background: var(--c-ffe4de);
   overflow: hidden;
 }
 .sk-progress-fill {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ff8a5b 0%, #e11d2e 100%);
+  background: linear-gradient(90deg, var(--c-ff8a5b) 0%, var(--c-e11d2e) 100%);
   transition: var(--t-progress);
 }
 .sk-progress-text {
@@ -2053,9 +2229,9 @@ button.link:hover {
   padding: 18px;
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(120% 140% at 0% 0%, #fff2ea 0%, rgba(255, 242, 234, 0) 55%),
-    linear-gradient(135deg, #fff8f4 0%, #ffffff 60%);
-  border: 1px solid #ffe0d3;
+    radial-gradient(120% 140% at 0% 0%, var(--c-fff2ea) 0%, rgba(255, 242, 234, 0) 55%),
+    linear-gradient(135deg, var(--c-fff8f4) 0%, #ffffff 60%);
+  border: 1px solid var(--c-ffe0d3);
 }
 .daily-seckill-head {
   display: flex;
@@ -2096,7 +2272,7 @@ button.link:hover {
 .daily-seckill-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow);
-  border-color: #ffcdb8;
+  border-color: var(--c-ffcdb8);
 }
 .daily-seckill-media {
   position: relative;
@@ -2152,8 +2328,8 @@ button.link:hover {
   margin-top: 12px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #fff5f2 0%, #fff 70%);
-  border: 1px solid #ffe0d6;
+  background: linear-gradient(135deg, var(--c-fff5f2) 0%, #fff 70%);
+  border: 1px solid var(--c-ffe0d6);
 }
 .pd-seckill-strip .sk-progress {
   flex: 1;
@@ -2164,9 +2340,9 @@ button.link:hover {
   padding: 8px 10px;
   border-radius: 10px;
   font-size: 13px;
-  color: #9a3412;
-  background: #fff7ed;
-  border: 1px dashed #fdba74;
+  color: var(--c-9a3412);
+  background: var(--brand-line-soft);
+  border: 1px dashed var(--c-fdba74);
 }
 .sk-tag-mini {
   height: 16px;
@@ -2807,4 +2983,56 @@ button.tag:active:not(:disabled),
 .user-panel-logout:hover {
   color: var(--danger);
   background: var(--danger-soft);
+}
+
+/* ---------- 主题切换按钮（A2，2026-10-20） ----------
+   位置由各端顶栏决定，这里只定外观：
+   刻意做成"图标 + 文字"，不用纯图标 —— 单独的 ☀️/🌙 在深色顶栏上
+   对比度不达标，且读屏与色盲用户都拿不到状态。 */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--t-chip);
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.theme-toggle:active {
+  transform: scale(0.96);
+  transition: var(--t-press);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.theme-toggle-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .theme-toggle-text {
+    display: none;
+  }
+}
+
+/* 系统偏好减弱动效时，主题切换不做位移反馈（与全站动效纪律一致） */
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle:active {
+    transform: none;
+  }
 }

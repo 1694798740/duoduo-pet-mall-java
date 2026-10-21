@@ -58,6 +58,50 @@ Page({
     wx.navigateTo({ url: '/pages/address/address' });
   },
 
+  // ── 问客服直连（A4，2026-10-20）──────────────────────────────
+  /**
+   * 先向服务端要「官方客服是谁」，再打开与 TA 的私信会话。
+   *
+   * <p>前端不硬编码客服 id：换客服账号只改服务端 `duoduo.social.official-cs-user-id`，
+   * 端侧无需发版。会话本身复用整套 /api/socials/messages/** 规则。
+   *
+   * <p>★ 失败必须给下一步：服务端在客服账号不存在时回 503（SUPPORT_AGENT_NOT_READY）。
+   * 若这里只是吞掉异常，用户点一下没反应，会以为按钮坏了。
+   */
+  goSupport() {
+    wx.showLoading({ title: '正在接通…', mask: true });
+    api.social.support
+      .agent()
+      .then((res) => {
+        wx.hideLoading();
+        const peerId = res && res.userId;
+        if (!peerId) {
+          this.supportFallback();
+          return;
+        }
+        // 注意参数名是 peerId（不是 userId）；id 一律按字符串拼，禁止 Number() 强转
+        wx.navigateTo({ url: '/pages/chat/chat?peerId=' + String(peerId) });
+      })
+      .catch(() => {
+        wx.hideLoading();
+        this.supportFallback();
+      });
+  },
+
+  /** 客服没接通时的兜底：说清原因 + 给 AI 导购出口（7×24 在线，不是安慰话） */
+  supportFallback() {
+    wx.showModal({
+      title: '客服暂时没接通',
+      content:
+        '可能是网络不稳定，或客服账号尚未配置。商品参数、规格、订单进度这类问题可以先问 AI 导购（7×24 小时在线）。',
+      confirmText: '去问 AI',
+      cancelText: '知道了',
+      success: (r) => {
+        if (r.confirm) wx.navigateTo({ url: '/pages/ai/ai' });
+      },
+    });
+  },
+
   // ── 微信绑定管理（A14）────────────────────────────────────
   /**
    * 绑定 / 解绑微信。

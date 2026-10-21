@@ -14,6 +14,7 @@
  * 这里只负责"入口级"的体验（非运营看到可读提示，而不是一屏 403）。
  */
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 import { AdminLoginPage } from './AdminLogin';
@@ -68,6 +69,8 @@ const AdminShell: React.FC = () => {
           <strong>多多宠物 · 平台管理后台</strong>
           <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
             <span className="text-muted">{user.nickname || user.phoneMasked}（{user.role}）</span>
+            {/* A2 · 主题切换 */}
+            <ThemeToggle />
             <a className="btn btn-sm btn-ghost" href={MALL_URL}>
               返回商城
             </a>

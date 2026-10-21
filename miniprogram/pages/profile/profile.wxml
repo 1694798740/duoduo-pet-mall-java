@@ -34,6 +34,12 @@
     <text>AI 导购「多多」</text>
     <text class="arrow">›</text>
   </view>
+  <!-- 问客服直连（A4）：跳到与官方客服账号的私信会话；客服 id 由服务端下发 -->
+  <view wx:if="{{logged}}" class="menu-item" bindtap="goSupport">
+    <text class="mi-icon">💬</text>
+    <text>在线客服</text>
+    <text class="arrow">›</text>
+  </view>
   <view class="menu-item" bindtap="go" data-url="/pages/seckill/seckill">
     <text class="mi-icon">⚡</text>
     <text>限时秒杀</text>

@@ -11,6 +11,7 @@
  * <p>页面之间的跳转：商家各页内部用的是站内链接（`/seller/...`），在本商家应用内依然成立。
  */
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
 import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { MerchantLoginPage } from './MerchantLogin';
@@ -93,6 +94,8 @@ const MerchantShell: React.FC = () => {
           <strong>多多宠物 · 商家工作台</strong>
           <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
             <span className="text-muted">{user.nickname || user.phoneMasked}（{user.role}）</span>
+            {/* A2 · 主题切换 */}
+            <ThemeToggle />
             <a className="btn btn-sm btn-ghost" href={MALL_URL}>
               返回商城
             </a>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="32" fill="#ff9f43"/>
+  <!-- 狗耳（垂耳） -->
+  <path d="M17 18 q-4 12 2 20 q6 -4 5 -16 Z" fill="#8b5a2b"/>
+  <path d="M47 18 q4 12 -2 20 q-6 -4 -5 -16 Z" fill="#8b5a2b"/>
+  <!-- 脸 -->
+  <ellipse cx="32" cy="34" rx="16" ry="15" fill="#ffd9a8"/>
+  <ellipse cx="32" cy="41" rx="8" ry="6.5" fill="#fff2df"/>
+  <!-- 眼睛鼻嘴 -->
+  <circle cx="25" cy="31" r="2.6" fill="#5b3a1a"/>
+  <circle cx="39" cy="31" r="2.6" fill="#5b3a1a"/>
+  <ellipse cx="32" cy="39" rx="3" ry="2.2" fill="#5b3a1a"/>
+  <path d="M32 41.5 v2 M32 43.5 q-3 3 -6 1 M32 43.5 q3 3 6 1" fill="none" stroke="#5b3a1a" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

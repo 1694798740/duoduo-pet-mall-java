@@ -6,6 +6,7 @@ import { ToastProvider } from '@duoduo/shared/components/ui';
 import { ConfirmProvider } from '@duoduo/shared/components/confirm';
 import { AppProvider } from '@duoduo/shared/store/app';
 import { AuthProvider } from '@duoduo/shared/store/auth';
+import { ThemeProvider } from '@duoduo/shared/store/theme';
 import '@duoduo/shared/styles.css';
 
 /**
@@ -21,9 +22,11 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
       <ToastProvider>
         <ConfirmProvider>
         <AppProvider>
-          <AuthProvider>
+          <ThemeProvider>
+            <AuthProvider>
             <AdminRoot />
           </AuthProvider>
+            </ThemeProvider>
         </AppProvider>
       </ConfirmProvider>
       </ToastProvider>

@@ -435,6 +435,72 @@ Page({
     });
   },
 
+  // ── 表单输入 ─────────────────────────────────────────────
+  //
+  // ★ 2026-10-21 补回：这三个方法（含 validate）在做「坐标系修复」那次改动时被
+  //   整段吞掉了 —— 替换函数时花括号配对把文件尾部一起吃进匹配范围。
+  //   症状不是报错，而是「点保存没反应、输入框打不进字」，静态自检才抓出来。
+  //   教训：改 JS 用括号配对替换后，必须回头确认「文件末尾的最后一个方法还在」。
+  onInput(e) {
+    const field = e.currentTarget.dataset.field;
+    if (!field) return;
+    this.setData({ ['form.' + field]: e.detail.value });
+  },
+
+  pickLabel(e) {
+    const label = e.currentTarget.dataset.label;
+    // 再点一次可取消标签
+    this.setData({ 'form.label': this.data.form.label === label ? '' : label });
+  },
+
+  /** 本地校验与后端约束保持一致，避免"本地过了、后端 400" */
+  validate() {
+    const f = this.data.form;
+    if (!f.receiverName.trim()) return '请填写收货人';
+    if (f.receiverName.trim().length > 50) return '收货人最多 50 个字符';
+    if (!PHONE_REGEX.test(f.receiverPhone.trim())) return '请填写正确的 11 位手机号';
+    if (!f.province.trim()) return '请选择省份';
+    if (!f.city.trim()) return '请选择城市';
+    if (!f.district.trim()) return '请选择区 / 县';
+    if (f.detail.trim().length > 200) return '详细地址最多 200 个字符';
+    if (f.label && f.label.length > 20) return '标签最多 20 个字符';
+    return '';
+  },
+
+  save() {
+    if (this.data.saving) return;
+    const msg = this.validate();
+    if (msg) {
+      wx.showToast({ title: msg, icon: 'none' });
+      return;
+    }
+    const f = this.data.form;
+    const payload = {
+      receiverName: f.receiverName.trim(),
+      receiverPhone: f.receiverPhone.trim(),
+      province: f.province.trim(),
+      city: f.city.trim(),
+      district: f.district.trim(),
+      detail: f.detail.trim(),
+      label: f.label || undefined,
+    };
+    this.setData({ saving: true });
+    const action = this.data.editingId
+      ? api.address.update(this.data.editingId, payload)
+      : api.address.create(payload);
+    action
+      .then(() => {
+        this.setData({ saving: false });
+        wx.showToast({ title: this.data.editingId ? '已保存' : '已新增', icon: 'success' });
+        this.closeForm();
+        this.fetchList();
+      })
+      .catch((err) => {
+        this.setData({ saving: false });
+        wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none' });
+      });
+  },
+
   // ── 列表操作 ─────────────────────────────────────────────
   setDefault(e) {
     const id = e.currentTarget.dataset.id;
