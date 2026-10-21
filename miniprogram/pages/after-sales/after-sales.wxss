@@ -11,11 +11,11 @@
 .as-type {
   font-size: 30rpx;
   font-weight: 600;
-  color: #23262f;
+  color: var(--text);
 }
 .as-reason {
   font-size: 26rpx;
-  color: #23262f;
+  color: var(--text);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

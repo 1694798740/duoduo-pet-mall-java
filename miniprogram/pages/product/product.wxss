@@ -32,7 +32,7 @@
 /* 供货身份标签（第七十三轮）：自营=暖橙实底、入驻=灰底描边，与 Web 端 .tag/.tag-self 同语言 */
 .p-supply { margin-bottom: 10rpx; }
 .tag-self { background: #fff3ec; color: #d9640f; }
-.tag-merchant { background: #f3f4f6; color: var(--text-3); border: 1rpx solid var(--border); }
+.tag-merchant { background: var(--gray-weak); color: var(--text-3); border: 1rpx solid var(--border); }
 
 .p-title { font-size: 34rpx; font-weight: 700; margin-bottom: 12rpx; }
 .p-price-row { display: flex; align-items: center; justify-content: space-between; }
@@ -98,7 +98,7 @@
   align-items: center;
   gap: 16rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
 /* 第五十三轮热修二：四个按钮同排时给足文字空间，否则「加入购物车」「立即购买」被压成两行。
@@ -133,7 +133,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: #fff;
+  background: var(--card);
   border-radius: 24rpx 24rpx 0 0;
   padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
 }

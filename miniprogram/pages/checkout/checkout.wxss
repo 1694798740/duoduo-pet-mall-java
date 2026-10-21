@@ -58,7 +58,7 @@
   align-items: center;
   gap: 20rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
 .footer-total { flex: 1; font-size: 28rpx; }

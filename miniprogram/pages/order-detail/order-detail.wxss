@@ -175,7 +175,7 @@
   justify-content: center;
   gap: 20rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
 .footer-btn {
@@ -196,5 +196,5 @@
 .as-row + .as-row {
   margin-top: 20rpx;
   padding-top: 20rpx;
-  border-top: 1rpx solid #f0f0f0;
+  border-top: 1rpx solid var(--line);
 }

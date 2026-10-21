@@ -5,7 +5,7 @@
   align-items: center;
   margin: 20rpx 24rpx;
   padding: 24rpx;
-  background: #fff;
+  background: var(--card);
   border-radius: 16rpx;
 }
 
@@ -22,13 +22,13 @@
 .me-title {
   font-size: 30rpx;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
 }
 
 .me-sub {
   margin-top: 4rpx;
   font-size: 24rpx;
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 .badge {
@@ -84,8 +84,8 @@
   padding: 0 28rpx;
   margin-right: 16rpx;
   border-radius: 28rpx;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--gray-weak);
+  color: var(--text-2);
   font-size: 26rpx;
 }
 
@@ -99,7 +99,7 @@
   padding: 24rpx 0 40rpx;
   text-align: center;
   font-size: 24rpx;
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 .notice-list {
@@ -111,7 +111,7 @@
   align-items: flex-start;
   padding: 24rpx;
   margin-bottom: 16rpx;
-  background: #fff;
+  background: var(--card);
   border-radius: 16rpx;
 }
 
@@ -134,7 +134,7 @@
   align-items: center;
   font-size: 29rpx;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
 }
 
 .dot {
@@ -150,19 +150,19 @@
   margin-top: 8rpx;
   font-size: 26rpx;
   line-height: 1.5;
-  color: #4b5563;
+  color: var(--text-2);
 }
 
 .n-time {
   margin-top: 10rpx;
   font-size: 22rpx;
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 .empty {
   padding: 140rpx 0;
   text-align: center;
-  color: #9ca3af;
+  color: var(--text-3);
   font-size: 26rpx;
 }
 

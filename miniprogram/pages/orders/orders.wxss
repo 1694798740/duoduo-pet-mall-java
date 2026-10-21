@@ -1,6 +1,6 @@
 .order-tabs {
   white-space: nowrap;
-  background: #fff;
+  background: var(--card);
   padding: 16rpx 12rpx;
   position: sticky;
   top: 0;
@@ -22,7 +22,7 @@
 .o-actions { display: flex; justify-content: flex-end; gap: 16rpx; }
 .o-btn { width: 180rpx; height: 60rpx; font-size: 26rpx; }
 .o-btn-plain {
-  background: #fff;
+  background: var(--card);
   border: 2rpx solid var(--brand);
   color: var(--brand);
   border-radius: 28rpx;
@@ -38,7 +38,7 @@
   width: 100rpx;
   height: 100rpx;
   border-radius: 10rpx;
-  background: #f5f5f5;
+  background: var(--bg);
   flex: 0 0 100rpx;
 }
 .o-goods-main {
@@ -48,7 +48,7 @@
 }
 .o-goods-title {
   font-size: 26rpx;
-  color: #23262f;
+  color: var(--text);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
@@ -66,7 +66,7 @@
   align-items: baseline;
   gap: 12rpx;
   font-size: 26rpx;
-  color: #23262f;
+  color: var(--text);
 }
 
 /* D4：秒杀筛选提示条 */

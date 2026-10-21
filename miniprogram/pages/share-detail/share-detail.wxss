@@ -85,7 +85,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: #fff;
+  background: var(--card);
   border-radius: 24rpx 24rpx 0 0;
   padding: 32rpx 32rpx calc(28rpx + env(safe-area-inset-bottom));
 }
@@ -135,7 +135,7 @@
   line-height: 1;
   padding: 0 22rpx;
   border-radius: 24rpx;
-  background: var(--brand-weak, #eef1ff);
+  background: var(--brand-weak, var(--brand-weak));
   color: var(--brand);
   font-size: 24rpx;
   white-space: nowrap;
@@ -185,7 +185,7 @@
   line-height: 1;
   padding: 0 12rpx;
   border-radius: 16rpx;
-  background: var(--brand-weak, #eef1ff);
+  background: var(--brand-weak, var(--brand-weak));
   color: var(--brand);
   font-size: 20rpx;
 }
@@ -232,7 +232,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: #fff;
+  background: var(--card);
   border-top: 1rpx solid var(--line);
   padding: 14rpx 24rpx calc(14rpx + env(safe-area-inset-bottom));
   z-index: 260;

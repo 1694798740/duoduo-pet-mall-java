@@ -95,7 +95,7 @@
   white-space: nowrap;
 }
 /* 配色与语义对齐：待审=提示 / 驳回=警示 / 在售=正常 / 下架·已售=中性 */
-.fm-badge-pending { background: #fff7e6; color: #b7791f; }
+.fm-badge-pending { background: var(--warn-weak); color: #b7791f; }
 .fm-badge-rejected { background: var(--accent-weak, rgba(240, 82, 82, 0.12)); color: var(--accent); }
 .fm-badge-onsale { background: #e8f8ee; color: #1aad19; }
 .fm-badge-off { background: var(--bg); color: var(--text-2); }

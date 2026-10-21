@@ -13,7 +13,7 @@
 .amount {
   font-size: 88rpx;
   font-weight: 700;
-  color: #23262f;
+  color: var(--text);
   margin: 40rpx 0 16rpx;
 }
 .rmb {

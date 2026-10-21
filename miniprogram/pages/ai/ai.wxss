@@ -18,7 +18,7 @@
 }
 .bubble {
   max-width: 70%;
-  background: #fff;
+  background: var(--card);
   border-radius: 4rpx 24rpx 24rpx 24rpx;
   padding: 20rpx 24rpx;
   font-size: 27rpx;
@@ -27,10 +27,10 @@
   word-break: break-all;
 }
 .bubble-user { background: var(--brand); color: #fff; border-radius: 24rpx 4rpx 24rpx 24rpx; }
-.bubble-error { color: #e5484d; background: #fff1f0; }
+.bubble-error { color: #e5484d; background: var(--accent-weak); }
 .rec-list { margin: -8rpx 0 24rpx 80rpx; }
 .rec-card {
-  background: #fff;
+  background: var(--card);
   border: 1rpx solid var(--line);
   border-radius: 16rpx;
   padding: 20rpx;
@@ -48,7 +48,7 @@
   align-items: center;
   gap: 16rpx;
   padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 -2rpx 12rpx rgba(35, 38, 47, 0.06);
 }
 .chat-input {
@@ -80,7 +80,7 @@
   line-height: 1;
   padding: 0 28rpx;
   border-radius: 30rpx;
-  background: #fff;
+  background: var(--card);
   border: 2rpx solid var(--brand);
   color: var(--brand);
   font-size: 26rpx;

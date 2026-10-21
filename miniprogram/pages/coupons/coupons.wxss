@@ -1,6 +1,6 @@
 .cp-tabs {
   display: flex;
-  background: #fff;
+  background: var(--card);
   padding: 16rpx;
   gap: 12rpx;
   position: sticky;
@@ -20,7 +20,7 @@
   display: flex;
   align-items: center;
   gap: 24rpx;
-  background: #fff;
+  background: var(--card);
   border-radius: var(--radius);
   margin: 20rpx 24rpx;
   padding: 28rpx;

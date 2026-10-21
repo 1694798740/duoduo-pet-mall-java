@@ -11,10 +11,48 @@ page {
   --bg: #f5f6fa;
   --card: #ffffff;
   --line: #eceef2;
+  --gray-weak: #f3f4f6;
+  --warn-weak: #fff7e6;
   --radius: 20rpx;
   background: var(--bg);
   color: var(--text);
   font-size: 28rpx;
+}
+
+/* ── 暗夜模式（A2 · 小程序端，2026-10-21）──
+   机制：系统暗色时 wxss 的 prefers-color-scheme 自动生效（wxss 原生支持），
+   原生导航栏 / tabBar / 窗口背景由 theme.json 两档切换（app.json 已开 darkmode）。
+   纪律与 Web 端一致：
+   · 只换颜色，不动尺寸/圆角/动效 —— 切主题不能伴随布局跳动；
+   · 正文取 #c9cdd6（与 Web 端同一档柔和度），对比度约 10:1，不刺眼；
+   · 卡片 #171a21 与页面底 #0f1115 拉开层次；阴影改用黑色高不透明度，
+     否则深底上卡片会"贴"在背景上分不出块。 */
+@media (prefers-color-scheme: dark) {
+  page {
+    --brand: #7c93ff;
+    --brand-weak: #232a3d;
+    --accent: #ff7a52;
+    --accent-weak: #3a241c;
+    --success: #3fbf3d;
+    --text: #c9cdd6;
+    --text-2: #9aa1b0;
+    --text-3: #767e8e;
+    --bg: #0f1115;
+    --card: #171a21;
+    --line: #2a2f3a;
+    --gray-weak: #252a33;
+    --warn-weak: #33290f;
+  }
+  .card,
+  .goods-card,
+  .entry-grid {
+    box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.35);
+  }
+  /* 骨架屏底与高光在深底上反过来才看得见"流动" */
+  .skeleton { background: #1d212a; }
+  .skeleton::after {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  }
 }
 
 /* 自绘导航栏组件按块级参与布局（自定义组件标签默认行内） */
@@ -90,7 +128,7 @@ nav-bar { display: block; }
 }
 .tag-brand { background: var(--brand-weak); color: var(--brand); }
 .tag-accent { background: var(--accent-weak); color: var(--accent); }
-.tag-gray { background: #f3f4f6; color: var(--text-3); }
+.tag-gray { background: var(--gray-weak, #f3f4f6); color: var(--text-3); }
 
 /* ── 空态 / 错误态 ── */
 .empty {

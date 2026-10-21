@@ -13,6 +13,15 @@
   background: #4f6ef7;
 }
 
+/* 暗夜模式（A2）：品牌蓝压暗一档 —— 亮蓝大色块在深色页面顶端过于刺眼，
+   但仍保留蓝系以维持品牌识别；标题/返回键本来就是白字，无需改。 */
+@media (prefers-color-scheme: dark) {
+  .nb-ph,
+  .nb {
+    background: #2b3550;
+  }
+}
+
 .nb-inner {
   display: flex;
   align-items: center;

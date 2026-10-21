@@ -2059,6 +2059,31 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-21（五十七）· 小程序端暗夜模式（A2 四端收官）
+
+D3 拍板「四端全做」后的最后一块。小程序与 Web 机制不同：没有全局 Provider，
+靠 **`@media (prefers-color-scheme: dark)`（wxss 原生支持）+ `theme.json` 两档主题**：
+
+- **原生层**：`app.json` 开 `darkmode: true` + `themeLocation`，原生导航栏 / 窗口背景 /
+  tabBar 颜色全部改引 `@变量`；`theme.json` 两档定义。暗色 tabBar `#171a21`、选中色提亮一档
+  （`#4f6ef7 → #8fa2ff`）；tabBar `borderStyle` 只接受 black/white 字面量、不能引用变量（平台限制，保留 black）。
+- **变量层**：`app.wxss` 暗色块覆盖 10 个语义 token（正文 `#c9cdd6`，与 Web 端同一档柔和度；
+  卡片 `#171a21`、页面底 `#0f1115`、边框 `#2a2f3a`），并新增 `--gray-weak`/`--warn-weak`；
+  骨架屏底与高光反向（深底上 shimmer 才看得见"流动"）；卡片阴影换黑色高不透明度。
+- **自绘导航栏**（26 个页面在用）：组件 wxss 加暗色覆盖，品牌蓝压暗为 `#2b3550` ——
+  亮蓝大色块在深色页面顶端过于刺眼，压暗后保品牌识别；白字标题/返回键无需改。
+- **页面样式批量替换**：27 个 wxss 文件、约 90 处硬编码色 → 语义变量
+  （background `#fff`→`var(--card)` 等 9 条映射，全部浅色取值等于原值 —— **浅色档零变化**；
+  `color: #fff` 26 处白字压彩色底刻意保留）。tabBar 图标是浅灰线条 PNG，天然适配深底，无需重做。
+- wxml 内联样式与 JS 动态配色核查过：只有 2 处轮播指示点品牌色，两主题通用，无需处理。
+
+**验证**：`check-miniprogram-dark.mjs`（新守卫）**25/0** —— darkmode 开关、theme.json 两档、
+变量成对、亮度方向（暗色正文更亮/页面底更暗）、自绘导航栏覆盖、`background #fff` 防回潮；
+反向验证：注入 2 处破坏（暗色正文改暗 + 页面混入 `background: #fff`）→ 恰好 2 条红、
+其余全绿，还原后 25/0；`check-miniprogram.js` 0 错误 / 0 告警；app.json / theme.json JSON 合法性通过。
+**真机/开发者工具的最终手感（切系统暗色看 5 个 tab 页 + 商品页）待用户侧确认** ——
+自动化测不到微信开发者工具的模拟器渲染。
+
 ### 2026-10-21（五十六）· 商品详情页重排：两栏失衡修复 ＋ 宽屏适配
 
 **用户报障**：商详页"图片区和介绍区容器宽度不足，DIV 只占页面一半，页面拥挤狭窄"。

@@ -20,7 +20,7 @@
   height: 120rpx;
   border-radius: 14rpx;
   flex: none;
-  background: #fff;
+  background: var(--card);
 }
 .sk-info { flex: 1; min-width: 0; }
 .sk-name { font-size: 27rpx; font-weight: 500; }
@@ -37,7 +37,7 @@
   margin: 20rpx 24rpx 0;
   padding: 20rpx 24rpx;
   border-radius: 16rpx;
-  background: #fff;
+  background: var(--card);
   font-size: 26rpx;
   color: var(--text-2, #666);
 }

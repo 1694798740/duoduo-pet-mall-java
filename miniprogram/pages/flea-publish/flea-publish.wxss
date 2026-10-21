@@ -4,7 +4,7 @@
 /* 实名预检引导卡（第五十二轮热修）：未实名时替代表单显示 */
 .fp-gate {
   margin: 32rpx 24rpx;
-  background: #ffffff;
+  background: var(--card);
   border-radius: 16rpx;
   padding: 48rpx 36rpx;
   text-align: center;
@@ -13,12 +13,12 @@
 .fp-gate-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: var(--text-1, #1f2430);
+  color: var(--text-1, var(--text));
   margin-bottom: 14rpx;
 }
 .fp-gate-text {
   font-size: 26rpx;
-  color: var(--text-2, #6b7280);
+  color: var(--text-2, var(--text-2));
   line-height: 1.7;
   margin-bottom: 32rpx;
 }

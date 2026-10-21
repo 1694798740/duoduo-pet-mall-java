@@ -19,7 +19,7 @@
   flex: 0 0 200rpx;
   width: 200rpx;
   height: 100%;
-  background: #fff;
+  background: var(--card);
 }
 
 /* 每一项：图标 + 单行文案；左内边距与选中态左条对齐，切换时文字不跳动 */
@@ -98,14 +98,14 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 24rpx;
-  color: #9ca3af;
+  color: var(--text-3);
 }
 .cat-chip {
   display: inline-flex;
   align-items: center;
   gap: 8rpx;
   padding: 8rpx 22rpx;
-  background: #fff;
+  background: var(--card);
   border-radius: 28rpx;
   font-size: 24rpx;
   color: var(--text-2);

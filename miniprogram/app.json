@@ -34,10 +34,11 @@
     "pages/share-topic/share-topic"
   ],
   "window": {
-    "navigationBarBackgroundColor": "#4f6ef7",
-    "navigationBarTextStyle": "white",
+    "navigationBarBackgroundColor": "@navBgColor",
+    "navigationBarTextStyle": "@navTxtStyle",
     "navigationBarTitleText": "多多宠物商店",
-    "backgroundColor": "#f5f6fa"
+    "backgroundColor": "@bgColor",
+    "backgroundTextStyle": "@bgTxtStyle"
   },
   "permission": {
     "scope.userLocation": {
@@ -53,10 +54,12 @@
     "nav-bar": "/components/nav-bar/nav-bar",
     "notice-toast": "/components/notice-toast/notice-toast"
   },
+  "darkmode": true,
+  "themeLocation": "theme.json",
   "tabBar": {
-    "color": "#9ca3af",
-    "selectedColor": "#4f6ef7",
-    "backgroundColor": "#ffffff",
+    "color": "@tabFontColor",
+    "selectedColor": "@tabSelectedColor",
+    "backgroundColor": "@tabBgColor",
     "borderStyle": "black",
     "list": [
       {

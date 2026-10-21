@@ -66,7 +66,7 @@
   width: 110rpx;
   height: 110rpx;
   border-radius: 12rpx;
-  background: #fff;
+  background: var(--card);
   flex: none;
 }
 .st-p-info { flex: 1; min-width: 0; }
@@ -95,7 +95,7 @@
   line-height: 1;
   padding: 0 20rpx;
   border-radius: 22rpx;
-  background: var(--brand-weak, #eef1ff);
+  background: var(--brand-weak, var(--brand-weak));
   color: var(--brand);
   font-size: 23rpx;
   white-space: nowrap;
