@@ -72,6 +72,16 @@ duoduo:
     # 拼图片对外 URL 的 base。留空 = 按请求的 X-Forwarded-*（网关场景）或 Host（直连调试）推断；
     # 生产若图片走独立域名 / CDN，在这里配（如 https://img.example.com）
     public-base-url: ${UPLOADS_PUBLIC_BASE_URL:}
+    # 图片处理参数（数据万象 imageMogr2），拼在上传返回的 URL 末尾。留空 = 完全不处理（默认）。
+    # 例：?imageMogr2/auto-orient/thumbnail/1600x1600>/format/webp/quality/82/strip
+    #   auto-orient  先按 EXIF 纠正方向 —— 必须排在 strip 之前，否则手机竖拍图会躺倒
+    #   thumbnail/>  长边压到 1600 且只缩不放（小图不会被拉糊）
+    #   format/webp  同画质下比 JPEG 再小 25%~35%，且支持透明通道（PNG 转 JPEG 会变黑底）
+    #   quality/82   视觉无损区间；低于 70 才开始出现可察觉的块效应
+    #   strip        去 EXIF/ICC 等元信息，通常再省 10~30KB
+    # ★ 只对 COS 后端有意义；本地盘模式请留空，否则 URL 会带一串无效参数。
+    # ★ GIF 由代码强制跳过：format/webp 会把动图压成静图。
+    image-suffix: ${UPLOADS_IMAGE_SUFFIX:}
     # 单图大小上限（MB）。0 表示不限制（仍受 spring.servlet.multipart 硬顶约束）
     max-size-mb: ${UPLOADS_MAX_MB:5}
   storage:

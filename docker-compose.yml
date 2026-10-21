@@ -306,6 +306,10 @@ services:
       #   留空时按请求的 X-Forwarded-* 推断 —— 那样 URL 会指向应用自身，
       #   在"本地盘 + 应用出图"下是对的，在"对象存储直出"下就绕过了桶（能显示，但不是我们想要的路径）。
       UPLOADS_PUBLIC_BASE_URL: ${UPLOADS_PUBLIC_BASE_URL:-}
+      # 图片处理参数（数据万象 imageMogr2）。留空 = 原图直出。
+      #   ★ 只在 STORAGE_TYPE=cos 时配置；格式是「?imageMogr2/...」，含 "?"，别漏。
+      #   GIF 由代码强制跳过（转 WebP 会让动图变静图）。
+      UPLOADS_IMAGE_SUFFIX: ${UPLOADS_IMAGE_SUFFIX:-}
     volumes:
       # 上传图片持久化：本地盘存储是对象存储接入前的过渡态，卷挂载保证生命周期独立于容器
       - fulfilment-uploads:/data/uploads

@@ -83,6 +83,21 @@ public class UploadController {
     private final String publicBaseUrl;
 
     /**
+     * 拼在图片 URL 后面的处理参数（数据万象 imageMogr2），形如
+     * {@code ?imageMogr2/auto-orient/thumbnail/1600x1600>/format/webp/quality/82/strip}。
+     *
+     * <p><b>为什么做成"空即关闭"的配置，而不是写死</b>：
+     * <ul>
+     *   <li>本地盘模式（{@code duoduo.storage.type=local}）没有图片处理能力，
+     *       带参数只会产生一条永远走不到的特殊分支；</li>
+     *   <li>参数调错了（比如把商品图压糊）要能一行环境变量回滚，
+     *       而不是回滚一次发布 —— 图片是用户能直接看见的东西，必须留后路。</li>
+     * </ul>
+     * 默认空串，行为与改造前逐字节一致。
+     */
+    private final String imageSuffix;
+
+    /**
      * 下载远程图片的客户端：<b>不跟随重定向</b>。
      * 跟随 3xx 会绕过「公网地址校验」（先给公网，再 302 到内网），是最常见的一类 SSRF 绕法。
      */
@@ -94,10 +109,12 @@ public class UploadController {
     public UploadController(
             @Qualifier("publicObjectStorage") ObjectStorage storage,
             @Value("${duoduo.uploads.max-size-mb:5}") int maxSizeMb,
-            @Value("${duoduo.uploads.public-base-url:}") String publicBaseUrl) {
+            @Value("${duoduo.uploads.public-base-url:}") String publicBaseUrl,
+            @Value("${duoduo.uploads.image-suffix:}") String imageSuffix) {
         this.storage = storage;
         this.maxSizeMb = maxSizeMb;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.trim();
+        this.imageSuffix = imageSuffix == null ? "" : imageSuffix.trim();
     }
 
     /**
@@ -145,7 +162,7 @@ public class UploadController {
             throw e;
         }
 
-        String url = baseUrl(request) + "/uploads/" + stored;
+        String url = publicUrl(request, stored, ext);
         // 不记原文件名：它是不可信输入，进日志只会污染检索
         log.info("用户 {} 上传图片 {}（{} 字节，后端 {}）", userId, stored, file.getSize(), storage.backend());
         return ApiResponse.ok(Map.of("url", url));
@@ -218,7 +235,7 @@ public class UploadController {
             throw e;
         }
 
-        String url = baseUrl(request) + "/uploads/" + stored;
+        String url = publicUrl(request, stored, ext);
         log.info("用户 {} 从 {} 导入图片 {}（{} 字节，后端 {}）",
                 userId, uri.getHost(), stored, bytes.length, storage.backend());
         return ApiResponse.ok(Map.of("url", url));
@@ -264,6 +281,25 @@ public class UploadController {
         int dot = name.lastIndexOf('.');
         if (dot < 0 || dot == name.length() - 1) return null;
         return name.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * 对外图片 URL = base + {@code /uploads/<uuid>.<ext>} + 可选处理参数。
+     *
+     * <p><b>GIF 刻意不加参数</b>：{@code format/webp} 会把动图压成一张静态图，
+     * 用户上传的表情包/动图会突然不动 —— 这种"只是变小了"的功能性回归最容易
+     * 在验收时被漏掉。动图体积大是业务事实，不为省几十 KB 把它变成静图。
+     *
+     * <p>参数只影响**返回给前端的地址**，不改桶内对象，也不改本服务
+     * {@code GET /uploads/{file}} 的读取契约：本地盘模式下该端点仍按原路径可读
+     * （query 部分不进 {@code @PathVariable}，被 Spring 自然忽略）。
+     */
+    private String publicUrl(HttpServletRequest request, String stored, String ext) {
+        String base = baseUrl(request) + "/uploads/" + stored;
+        if (imageSuffix.isEmpty() || "gif".equals(ext)) {
+            return base;
+        }
+        return base + imageSuffix;
     }
 
     /**

@@ -2059,6 +2059,45 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-21（五十四）· 图片资源优化：压缩落地 ＋ CDN/生命周期/防盗链方案
+
+**已落地：图片压缩（读取时处理，零存储增量）**
+
+- `UploadController` 新增 `imageSuffix` 配置与 `publicUrl()`，上传与「远程导入」两条
+  路径返回的图片 URL 统一带数据万象参数：
+  `?imageMogr2/auto-orient/thumbnail/1600x1600>/format/webp/quality/82/strip`
+- 配置项：`duoduo.uploads.image-suffix` / 环境变量 `UPLOADS_IMAGE_SUFFIX`，
+  **留空即完全关闭**，默认空 —— 行为与改造前逐字节一致，可一行回滚。
+- **GIF 强制跳过**：`format/webp` 会把动图压成一张静图，表情包会突然不动。
+  这条分支有独立断言（`GIF 的 URL 不带处理参数`），不是靠注释保证。
+- 参数顺序有讲究：`auto-orient` 必须在 `strip` 之前，否则手机竖拍图会躺倒。
+
+实测（`scripts/check-image-compression.mjs`，走网关真实上传）：
+
+| 用例 | 结果 |
+|---|---|
+| 商品图 JPEG 20766 B → WebP | 6584 B，**-68.3%**，`Content-Type: image/webp` |
+| GIF | URL 无处理参数，动效保留 |
+| 反向验证（置空 `UPLOADS_IMAGE_SUFFIX`） | 恰好一条红（`返回 URL 带 imageMogr2 参数`），其余绿 |
+
+端到端 8 通过 / 0 失败。成本：基础图片处理 **≤10TB/月 免费**，本项目量级不产生费用。
+
+**方案文档：`docs/image-delivery-optimization.md`**
+
+CDN 接入 / 生命周期 / 防盗链三项的完整可执行配置，含参数取值理由、成本测算与回滚。
+两条必须先知道的结论：
+
+- **CDN 被前置条件卡住**：中国境内加速要求加速域名已备案，项目目前没有自有域名。
+- **现有 AK 没有桶配置权限**（`GET ?lifecycle` / `?referer` / `?cors` / `?acl` 全 403），
+  这是当初按最小权限刻意设计的，**不应为了配规则给应用密钥加 `cos:*`** ——
+  桶级操作请用主账号或独立的运维子账号，且绝不注入容器。
+
+成本对比（假设月图片下行 100GB、50 万请求）：直连 50.5 元 → 仅压缩 15.5 元 →
+压缩 + CDN（命中率 85%）约 9.7 元。
+
+新增 `docker-compose.yml` 的 `UPLOADS_IMAGE_SUFFIX` 透传（此前只在 `.env` 里加变量
+不会生效，容器收不到）。
+
 ### 2026-10-21（五十三）· 个人中心重排 ＋ 头像保存根因 ＋ 撤销注销表单修正
 
 **1. 页面布局重排（只挪卡片位置，不改样式与功能）**
