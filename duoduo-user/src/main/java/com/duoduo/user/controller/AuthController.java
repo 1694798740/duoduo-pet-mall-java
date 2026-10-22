@@ -53,7 +53,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    // Cookie 名与属性统一在 AuthCookieWriter：角色升级后重签令牌也要用同一份口径
+    // Cookie 名与属性统一在 AuthCookieWriter：角色升级后重签令牌也要用同一份口径。
+    // ★ 三个站点各自一套名字（dd_at / dd_at_m / dd_at_a）—— Cookie 不区分端口，
+    //   共用名字会让 localhost:8088 与 localhost:8091 互相覆盖登录态（2026-10-21 修复）。
     private static final String COOKIE_ACCESS = AuthCookieWriter.COOKIE_ACCESS;
     private static final String COOKIE_REFRESH = AuthCookieWriter.COOKIE_REFRESH;
 
@@ -72,7 +74,7 @@ public class AuthController {
                                           @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                           HttpServletResponse response) {
         LoginResponse result = authService.register(request, entry);
-        writeCookies(response, result);
+        writeCookies(response, result, entry);
         return ApiResponse.ok(result.user());
     }
 
@@ -82,7 +84,7 @@ public class AuthController {
                                        @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                        HttpServletResponse response) {
         LoginResponse result = authService.login(request, userAgent, entry);
-        writeCookies(response, result);
+        writeCookies(response, result, entry);
         return ApiResponse.ok(result.user());
     }
 
@@ -104,12 +106,13 @@ public class AuthController {
     public ApiResponse<UserView> refresh(@RequestBody(required = false) RefreshRequest request,
                                          HttpServletRequest servletRequest,
                                          @RequestHeader(value = "User-Agent", required = false) String userAgent,
+                                         @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                          HttpServletResponse response) {
         String token = request != null && request.refreshToken() != null && !request.refreshToken().isBlank()
                 ? request.refreshToken()
-                : readCookie(servletRequest, COOKIE_REFRESH);
+                : readCookie(servletRequest, COOKIE_REFRESH, entry);
         LoginResponse result = authService.refresh(token, userAgent);
-        writeCookies(response, result);
+        writeCookies(response, result, entry);
         return ApiResponse.ok(result.user());
     }
 
@@ -180,12 +183,13 @@ public class AuthController {
     @PostMapping("/logout")
     public ApiResponse<Void> logout(@RequestBody(required = false) RefreshRequest request,
                                     HttpServletRequest servletRequest,
+                                    @RequestHeader(value = ClientEntry.HEADER, required = false) String entry,
                                     HttpServletResponse response) {
         String token = request != null && request.refreshToken() != null && !request.refreshToken().isBlank()
                 ? request.refreshToken()
-                : readCookie(servletRequest, COOKIE_REFRESH);
+                : readCookie(servletRequest, COOKIE_REFRESH, entry);
         authService.logout(token);
-        clearCookies(response);
+        clearCookies(response, entry);
         return ApiResponse.ok();
     }
 
@@ -209,15 +213,15 @@ public class AuthController {
 
     // ---------- 内部方法 ----------
 
-    private void writeCookies(HttpServletResponse response, LoginResponse result) {
-        AuthCookieWriter.write(response, result);
+    private void writeCookies(HttpServletResponse response, LoginResponse result, String entry) {
+        AuthCookieWriter.write(response, result, entry);
     }
 
-    private void clearCookies(HttpServletResponse response) {
-        AuthCookieWriter.clear(response);
+    private void clearCookies(HttpServletResponse response, String entry) {
+        AuthCookieWriter.clear(response, entry);
     }
 
-    private String readCookie(HttpServletRequest request, String name) {
-        return AuthCookieWriter.read(request, name);
+    private String readCookie(HttpServletRequest request, String name, String entry) {
+        return AuthCookieWriter.read(request, name, entry);
     }
 }

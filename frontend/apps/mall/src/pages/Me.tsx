@@ -551,6 +551,46 @@ export const MePage: React.FC = () => {
             </dl>
           </div>
 
+          {/* C 批：客服「发送商品」的两个来源入口。做成独立卡而不是塞进快捷入口，
+              因为这是"我的商品资产"，与"去哪办事"不是一类东西。 */}
+          <div className="card card-pad" style={{ marginTop: 16 }}>
+            <h3 style={{ marginBottom: 8 }}>我的商品</h3>
+            <Link to="/favorites" className="sup-item" style={{ textDecoration: 'none' }}>
+              <span>
+                <span className="sup-item-name">⭐ 我的收藏夹</span>
+                <span className="sup-item-preview">收藏的商品可以直接发给客服</span>
+              </span>
+              <span className="muted">›</span>
+            </Link>
+            <Link to="/history" className="sup-item" style={{ textDecoration: 'none' }}>
+              <span>
+                <span className="sup-item-name">🕘 我的足迹</span>
+                <span className="sup-item-preview">最近浏览过的商品</span>
+              </span>
+              <span className="muted">›</span>
+            </Link>
+          </div>
+
+          {/* C 批：客服「发送商品」的两个来源入口。做成独立卡而不是塞进快捷入口，
+              因为这是"我的商品资产"，与"去哪办事"不是一类东西。 */}
+          <div className="card card-pad" style={{ marginTop: 16 }}>
+            <h3 style={{ marginBottom: 8 }}>我的商品</h3>
+            <Link to="/favorites" className="sup-item" style={{ textDecoration: 'none' }}>
+              <span>
+                <span className="sup-item-name">⭐ 我的收藏夹</span>
+                <span className="sup-item-preview">收藏的商品可以直接发给客服</span>
+              </span>
+              <span className="muted">›</span>
+            </Link>
+            <Link to="/history" className="sup-item" style={{ textDecoration: 'none' }}>
+              <span>
+                <span className="sup-item-name">🕘 我的足迹</span>
+                <span className="sup-item-preview">最近浏览过的商品</span>
+              </span>
+              <span className="muted">›</span>
+            </Link>
+          </div>
+
           <div className="card card-pad" style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 10 }}>快捷入口</h3>
             <div className="row row-wrap">{quickLinks}</div>
@@ -574,7 +614,7 @@ export const MePage: React.FC = () => {
           <CreditPanel userId={user.id} />
         </div>
 
-        <div className="card card-pad">
+        <div className="card card-pad" id="realname">
           <h3 style={{ marginBottom: 12 }}>实名认证</h3>
 
           {user.realNameVerified ? (

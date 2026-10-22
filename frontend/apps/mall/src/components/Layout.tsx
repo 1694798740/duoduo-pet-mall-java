@@ -31,11 +31,12 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { canAccessSellerConsole, isOperator } from '@duoduo/shared/lib/roles';
 import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
+import { userApi } from '@duoduo/api-sdk/endpoints';
 
 /**
  * 顶栏只放「逛 / 买」这条一级动线 —— 个人事务（订单 / 宠物 / 收货地址）统一收进头像下拉。
@@ -96,13 +97,14 @@ const ROLE_LABELS: Record<string, string> = {
  * 既有的 `getByRole('link', { name: '个人中心' })` 就全找不到了；
  * 容器同样不用 role="menu"（menu 语义要求子项必须是 menuitem，混用反而是无效 ARIA）。
  */
-const MenuLink: React.FC<{ to: string; icon: string; label: string; badge?: number }> = ({
+const MenuLink: React.FC<{ to: string; icon: string; label: string; badge?: number; onClick?: (e: React.MouseEvent) => void }> = ({
   to,
   icon,
   label,
   badge,
+  onClick,
 }) => (
-  <Link className="user-panel-item" to={to}>
+  <Link className="user-panel-item" to={to} onClick={onClick}>
     <span className="user-panel-icon" aria-hidden>
       {icon}
     </span>
@@ -115,7 +117,7 @@ const MenuLink: React.FC<{ to: string; icon: string; label: string; badge?: numb
 );
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, loading: authLoading } = useAuth();
   const {
     cartCount,
     refreshCart,
@@ -170,6 +172,42 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  /**
+   * 跨站身份闸门（双身份链路）。
+   *
+   * <p>商家工作台带 {@code from=merchant&expect=<userId>} 进来时：
+   * <ul>
+   *   <li>商城登录的就是同一账号 → 直接放行（清掉查询参数，地址栏不残留）；</li>
+   *   <li>未登录或登录的是**另一个**账号 → 视为登录已过期：清掉商城会话，
+   *       跳登录页并带上 {@code reason=expired} 提示。</li>
+   * </ul>
+   *
+   * <p>为什么"不同账号"要清会话而不是并存：这两个入口的语义是「进入我的商城账户」，
+   * 如果保留另一个账号的会话，用户会以为自己看到的是自己的工作台账号。
+   * 清会话＋重新登录是唯一不会造成身份误认的处理。
+   */
+  const fromMerchant = searchParams.get('from') === 'merchant';
+  const expectUserId = searchParams.get('expect');
+  useEffect(() => {
+    if (!fromMerchant || !expectUserId || authLoading) return;
+    if (location.pathname === '/login') return;
+    if (user && String(user.id) === expectUserId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('from');
+      next.delete('expect');
+      // 用 navigate 显式带上 hash：setSearchParams 会丢掉 #realname，
+      // 用户落到的就不是"实名认证"那一块了（跨站入口带锚点正是为了直达）。
+      navigate(
+        { pathname: location.pathname, search: next.toString(), hash: location.hash },
+        { replace: true },
+      );
+      return;
+    }
+    void logout().finally(() => {
+      navigate(`/login?reason=expired&next=${encodeURIComponent(location.pathname + location.hash)}`, { replace: true });
+    });
+    }, [fromMerchant, expectUserId, authLoading, user, location.pathname, location.hash, navigate, logout, searchParams]);
 
   // 登录态变化时同步角标；未登录时 count 接口会 401，refreshCart 内部已兜底为 0
   useEffect(() => {
@@ -389,7 +427,25 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   </div>
 
                   <div className="user-panel-group">
-                    <MenuLink to="/me" icon="👤" label="个人中心" />
+                    <MenuLink
+                      to="/me"
+                      icon="👤"
+                      label="个人中心"
+                      onClick={(e) => {
+                        // 点开之前先验一次会话：令牌过期时不要"点进去了但一片空白"
+                        e.preventDefault();
+                        void userApi
+                          .me()
+                          .then(() => navigate('/me'))
+                          .catch(() => {
+                            void logout().finally(() =>
+                              navigate('/login?reason=expired&next=%2Fme', { replace: true }),
+                            );
+                          });
+                      }}
+                    />
+                    <MenuLink to="/favorites" icon="⭐" label="我的收藏夹" />
+                    <MenuLink to="/history" icon="🕘" label="我的足迹" />
                     <MenuLink to="/orders" icon="🧾" label="我的订单" />
                     <MenuLink to="/after-sales" icon="🛡️" label="我的售后" />
                     <MenuLink to="/coupons" icon="🎟️" label="我的券包" />
@@ -408,8 +464,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <MenuLink to="/share" icon="🌏" label="分享圈" />
                     <MenuLink to="/share/mine" icon="✍️" label="我的分享" />
                     <MenuLink to="/follow" icon="❤️" label="关注与粉丝" />
-                    <MenuLink to="/notifications" icon="🔔" label="通知中心" badge={unread.notice} />
-                    <MenuLink to="/messages" icon="💬" label="私信" badge={unread.message} />
+                    {/* 通知中心 = 通知未读 + 客服未读（客服已归入「商家」分类展示） */}
+                    <MenuLink
+                      to="/notifications"
+                      icon="🔔"
+                      label="通知中心"
+                      badge={Number(unread.notice) + Number(unread.support)}
+                    />
+                    <MenuLink to="/messages" icon="💬" label="私信" badge={Number(unread.message)} />
                   </div>
 
                   {/* 工作台入口单独成组 —— 它们是「另一重身份」的入口，不是个人资料。

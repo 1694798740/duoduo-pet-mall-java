@@ -1,0 +1,117 @@
+/**
+ * 商家工作台 · 账号中心。
+ *
+ * <h2>为什么不是跳到商城「个人中心」</h2>
+ * 三个站点是独立入口，各有独立登录态（2026-10-21 起 Cookie 名也按入口分开：
+ * `dd_at` / `dd_at_m` / `dd_at_a`）。工作台里点「个人中心」如果跳商城的 /me，
+ * 看到的是**商城那个账号**——用户明明在商家端登录了 A，个人中心却显示买家 B，
+ * 这不是"串号"，是两个站点各自登录了不同账号，但界面上没有任何提示。
+ *
+ * <p>所以工作台有自己的账号页：展示当前**工作台登录身份**（角色、账号、店铺身份），
+ * 退出也在这里。商城的个人中心仍可从「返回商城」进入，两者互不冒充。
+ */
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
+import { useAuth } from '@duoduo/shared/store/auth';
+import { formatBjDateTime } from '@duoduo/shared/lib/time';
+
+const ROLE_TEXT: Record<string, string> = {
+  SELLER: '商家（店铺主体）',
+  OPERATOR: '平台运营',
+  ADMIN: '平台管理员',
+  USER: '普通用户',
+};
+
+
+export const SellerAccountPage: React.FC = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  if (!user) return null;
+
+  return (
+    <div>
+      <h2 className="section-title">账号中心</h2>
+      <p className="small muted" style={{ marginBottom: 16 }}>
+        这里是商家工作台的登录账号；商城个人中心是另一套账号，两者互不影响。
+      </p>
+
+      <div className="card card-pad" style={{ maxWidth: 640 }}>
+        <div className="row" style={{ gap: 14, alignItems: 'center', marginBottom: 16 }}>
+          {user.avatar ? (
+            <img
+              src={user.avatar}
+              alt=""
+              style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover' }}
+            />
+          ) : (
+            <span
+              aria-hidden
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                background: 'var(--surface-2)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 24,
+              }}
+            >
+              👤
+            </span>
+          )}
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 600 }}>{user.nickname || '未设置昵称'}</div>
+            <div className="small muted">{ROLE_TEXT[user.role?.toUpperCase()] || user.role}</div>
+          </div>
+        </div>
+
+        <dl style={{ display: 'grid', gridTemplateColumns: '110px 1fr', rowGap: 10, margin: 0 }}>
+          <dt className="small muted">手机号</dt>
+          <dd style={{ margin: 0 }}>{user.phoneMasked}</dd>
+          <dt className="small muted">账号 ID</dt>
+          <dd style={{ margin: 0, fontFamily: 'monospace' }}>{user.id}</dd>
+          <dt className="small muted">注册时间</dt>
+          <dd style={{ margin: 0 }}>{formatBjDateTime(user.createdAt) || '—'}</dd>
+          <dt className="small muted">实名认证</dt>
+          <dd style={{ margin: 0 }}>{user.realNameVerified ? '已认证' : '未认证'}</dd>
+          {user.merchant && (
+            <>
+              <dt className="small muted">所属店铺</dt>
+              <dd style={{ margin: 0 }}>
+                {user.merchant.storeName}
+                （{user.merchant.memberRole === 'OWNER' ? '店主' : '店员'}）
+              </dd>
+            </>
+          )}
+        </dl>
+
+        <div className="row" style={{ gap: 8, marginTop: 20 }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => void logout().then(() => navigate('/login', { replace: true }))}
+          >
+            退出登录
+          </button>
+        </div>
+
+        {/* 双身份：同一账号在商城也有买家侧。
+            带上 expect：商城据此判断"当前商城登录的是不是同一个人"，
+            相同则直接进入，不同/未登录则提示登录已过期并跳登录页。 */}
+        <div className="row" style={{ gap: 8, marginTop: 14 }}>
+          <a className="btn btn-ghost" href={`${MALL_URL}/me?from=merchant&expect=${user.id}`}>
+            去商城个人中心
+          </a>
+        </div>
+        <p className="small muted" style={{ marginTop: 12, marginBottom: 0 }}>
+          商家工作台与商城共用同一个账号（同一手机号）：商城侧的个人中心仍按商城登录态展示。
+          若商城当前登录的不是本账号，进入时会提示登录已过期并要求重新登录。
+        </p>
+      </div>
+    </div>
+  );
+};

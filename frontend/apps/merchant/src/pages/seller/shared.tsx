@@ -7,6 +7,8 @@
 
 import React from 'react';
 import { Link } from 'react-router-dom';
+
+const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
 import { Alert } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -38,15 +40,17 @@ export const SellerApplyCard: React.FC<{ compact?: boolean }> = ({ compact }) =>
         6 类），由平台人工审核。审核通过后即可开通店铺。
       </Alert>
 
+      {/* 未实名时跳商城实名区块：站内 /me 会被 MerchantShell 的身份拦截页吞掉（点不动） */}
+      {/* 未实名时跳商城实名区块：站内 /me 会被 MerchantShell 的身份拦截页吞掉（点不动） */}
       <div className="row row-wrap" style={{ marginTop: 14 }}>
         {verified ? (
           <Link className="btn btn-primary" to="/apply">
             填写入驻申请
           </Link>
         ) : (
-          <Link className="btn btn-primary" to="/me">
+          <a className="btn btn-primary" href={`${MALL_URL}/me?from=merchant&expect=${user?.id ?? ''}#realname`}>
             先去实名认证
-          </Link>
+          </a>
         )}
       </div>
 

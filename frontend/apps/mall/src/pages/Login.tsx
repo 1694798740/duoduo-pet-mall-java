@@ -29,6 +29,7 @@ export const LoginPage: React.FC = () => {
   const { push } = useToast();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const expired = params.get('reason') === 'expired';
   const next = params.get('next') ?? '/';
 
   const clientValidate = (): string | null => {
@@ -109,7 +110,8 @@ export const LoginPage: React.FC = () => {
           </div>
         ) : null}
 
-        <form onSubmit={submit}>
+        {expired ? <Alert kind="warn">登录已过期，请重新登录。</Alert> : null}
+      <form onSubmit={submit}>
           <Field label="手机号" required>
             <input
               className="input"

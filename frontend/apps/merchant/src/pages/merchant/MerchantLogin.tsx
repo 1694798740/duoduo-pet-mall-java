@@ -9,7 +9,7 @@
  * 与后端同口径；非准入角色登录后**立刻退出会话**并明确告知，避免"已登录却处处 403"。
  */
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -17,6 +17,8 @@ import { useAuth } from '@duoduo/shared/store/auth';
 export const MerchantLoginPage: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const expired = params.get('reason') === 'expired';
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -54,6 +56,11 @@ export const MerchantLoginPage: React.FC = () => {
         <p className="text-muted" style={{ marginTop: 4, fontSize: 13 }}>
           仅限已入驻的商家账号使用。
         </p>
+        {expired ? (
+          <div className="alert" style={{ margin: '12px 0' }} role="status">
+            登录已过期，请重新登录。
+          </div>
+        ) : null}
         {error ? (
           <div className="alert alert-error" style={{ margin: '12px 0' }} role="alert">
             {error}

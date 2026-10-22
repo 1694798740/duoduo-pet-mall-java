@@ -22,6 +22,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
+  /**
+   * 静态资源目录复用商城的 `public`。
+   *
+   * <p>客服会话里的商品卡走 `productImage()`，输出的是站内相对路径
+   * `/img/products/p01.jpg`——这套图池只存在于 `apps/mall/public/`。
+   * 商家端若用自己的 `public`（只有 favicon），卡片图在商家站点必然 404（2026-10-21 实测）。
+   * 与其复制一份图片（改图时必然漂移），不如让两个站点共享同一个资源目录：
+   * 两端发的都是同一张图，体积也只有 268KB。
+   */
+  publicDir: path.resolve(here, '../mall/public'),
   resolve: {
     alias: {
       '@duoduo/api-sdk': path.resolve(here, '../../packages/api-sdk/src'),

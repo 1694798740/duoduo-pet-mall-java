@@ -10,9 +10,9 @@
  *
  * <p>页面之间的跳转：商家各页内部用的是站内链接（`/seller/...`），在本商家应用内依然成立。
  */
-import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
-import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
+import { canAccessMerchantWorkspace, isOperator } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { MerchantLoginPage } from './MerchantLogin';
 import { SellerDashboardPage } from '../seller/Dashboard';
@@ -21,6 +21,8 @@ import { SellerOrdersPage } from '../seller/Orders';
 import { SellerProductsPage } from '../seller/Products';
 import { SellerSettlementsPage } from '../seller/Settlements';
 import { SellerAfterSalesPage } from '../seller/AfterSales';
+import { SellerSupportPage } from '../seller/SupportInbox';
+import { SellerAccountPage } from '../seller/Account';
 import { SellerApplyCard } from '../seller/shared';
 import { MerchantApplyPage } from '../seller/Apply';
 import { SellerStaffPage } from '../seller/Staff';
@@ -32,6 +34,9 @@ const TABS_FOR_OWNER = [
   { to: '/seller', label: '经营概览', end: true },
   { to: '/seller/products', label: '商品管理', end: false },
   { to: '/seller/orders', label: '订单管理', end: false },
+  // 客服信息：买家咨询的接待入口。自营店铺的接待人是官方客服账号（同样是 SELLER），
+  // 第三方店铺是各自商家 —— 同一页、同一套接口，靠登录态区分，不靠前端传参。
+  { to: '/seller/support', label: '客服信息', end: false },
   { to: '/seller/after-sales', label: '售后处理', end: false },
   { to: '/seller/settlements', label: '结算对账', end: false },
   { to: '/seller/staff', label: '店员管理', end: false },
@@ -40,6 +45,9 @@ const TABS_FOR_STAFF = [
   { to: '/seller', label: '经营概览', end: true },
   { to: '/seller/products', label: '商品管理', end: false },
   { to: '/seller/orders', label: '订单管理', end: false },
+  // 客服信息对所有能进工作台的角色可见：运营/店员进去会看到说明页，
+  // 而不是"页签凭空消失"——消失会让人以为功能没上线。
+  { to: '/seller/support', label: '客服信息', end: false },
   { to: '/seller/after-sales', label: '售后处理', end: false },
 ];
 const tabsFor = (role: string | undefined, merchant: { memberRole: string } | null | undefined) =>
@@ -48,6 +56,8 @@ const tabsFor = (role: string | undefined, merchant: { memberRole: string } | nu
     : TABS_FOR_OWNER;
 
 const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http://localhost:8088';
+/** 平台管理后台入口（独立站点、独立主机名 → 独立 Cookie，与商家登录态互不影响） */
+const ADMIN_URL = (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'http://admin.localhost:8090';
 
 /** 跳回商会站点（跨主机名，必须绝对地址） */
 const BackToMall: React.FC = () => {
@@ -78,7 +88,7 @@ const MerchantShell: React.FC = () => {
       <div className="container" style={{ paddingTop: 24 }}>
         <SellerApplyCard />
         <p className="text-muted" style={{ marginTop: 12 }}>
-          <a href={MALL_URL}>返回商城</a>
+          <a href={`${MALL_URL}/?from=merchant&expect=${user.id}`}>返回商城</a>
         </p>
       </div>
     );
@@ -93,10 +103,62 @@ const MerchantShell: React.FC = () => {
         <div className="row row-between row-wrap" style={{ gap: 12 }}>
           <strong>多多宠物 · 商家工作台</strong>
           <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
-            <span className="text-muted">{user.nickname || user.phoneMasked}（{user.role}）</span>
-            {/* A2 · 主题切换 */}
+            {/* 头像 + 昵称整体是「个人中心」入口 → 工作台自己的账号页。
+                ★ 不能跳商城 /me：那是**另一套登录态**（商城与商家端各自登录），
+                  用户在工作台登录 A、商城登录 B 时，跳过去会看到 B，
+                  表现为「商家登录后个人中心是买家」。 */}
+            <Link
+              to="/seller/account"
+              className="row"
+              style={{ gap: 8, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}
+              title="账号中心"
+            >
+              {user.avatar ? (
+                <img className="nav-avatar" src={user.avatar} alt="" />
+              ) : (
+                <span
+                  aria-hidden
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    background: 'var(--surface-2)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                  }}
+                >
+                  👤
+                </span>
+              )}
+              <span className="text-muted">
+                {user.nickname || user.phoneMasked}（{user.role}）
+              </span>
+            </Link>
+            {/* 平台后台入口按角色显隐：只给运营 / 管理员（isOperator 与后端 LoginUser#isOperator 同口径）。
+                商家（SELLER / 店员）看不到 —— 后台是平台级事务，不是店铺的。 */}
+            {isOperator(user.role) && (
+              <a className="btn btn-sm btn-ghost" href={`${ADMIN_URL}/admin.html`}>
+                平台后台
+              </a>
+            )}
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => {
+                // 先确认本地仍有登录态；没有就直接按"登录已过期"处理，而不是静默跳转
+                if (!user) {
+                  navigate('/login?reason=expired', { replace: true });
+                  return;
+                }
+                navigate('/seller/account');
+              }}
+            >
+              个人中心
+            </button>
             <ThemeToggle />
-            <a className="btn btn-sm btn-ghost" href={MALL_URL}>
+            <a className="btn btn-sm btn-ghost" href={`${MALL_URL}/?from=merchant&expect=${user.id}`}>
               返回商城
             </a>
             <button
@@ -142,6 +204,9 @@ export const MerchantRoot: React.FC = () => (
       <Route path="/seller" element={<SellerDashboardPage />} />
       <Route path="/seller/orders" element={<SellerOrdersPage />} />
       <Route path="/seller/orders/:orderNo" element={<SellerOrderDetailPage />} />
+      <Route path="/seller/support" element={<SellerSupportPage />} />
+      {/* 账号中心：工作台自己的身份页，不与商城个人中心共用（两套独立登录态） */}
+      <Route path="/seller/account" element={<SellerAccountPage />} />
       <Route path="/seller/products" element={<SellerProductsPage />} />
       <Route path="/seller/settlements" element={<SellerSettlementsPage />} />
       <Route path="/seller/staff" element={<SellerStaffPage />} />

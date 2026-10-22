@@ -118,7 +118,11 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        String token = resolveToken(request);
+        // 入口标识必须在取令牌之前解析：三个站点各用一套 Cookie 名
+        // （dd_at / dd_at_m / dd_at_a）。Cookie 不区分端口，共用名字会让
+        // localhost:8088 与 localhost:8091 互相覆盖登录态（2026-10-21 修复）。
+        String requestEntry = ClientEntry.normalize(request.getHeaders().getFirst(ClientEntry.HEADER));
+        String token = resolveToken(request, requestEntry);
         JwtTokenService.TokenPayload payload = jwtTokenService.parse(token, JwtTokenService.TYPE_ACCESS);
 
         boolean whitelisted = isWhitelisted(path);
@@ -144,8 +148,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return forbidden(exchange, "当前登录入口无权访问该接口");
         }
 
-        // 归一化入口标识：**只认三个合法字面量**，其余一律当作未声明（不让任意值往下游传）
-        String requestEntry = ClientEntry.normalize(request.getHeaders().getFirst(ClientEntry.HEADER));
+        // 入口标识已在取令牌前归一化（见上方）：只认三个合法字面量，其余当作未声明。
 
         // 无论是否白名单，都先剥离客户端可能伪造的身份头
         ServerHttpRequest.Builder builder = request.mutate()
@@ -280,8 +283,17 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                 && properties.isPermVersionEnabled();
     }
 
-    /** 令牌来源：Authorization: Bearer 优先，其次 httpOnly Cookie */
-    private String resolveToken(ServerHttpRequest request) {
+    /**
+     * 令牌来源：Authorization: Bearer 优先，其次 httpOnly Cookie。
+     *
+     * <p>Cookie 名按入口区分（{@code dd_at} / {@code dd_at_m} / {@code dd_at_a}）：
+     * Cookie 按主机名隔离但<b>不区分端口</b>，商城（:8088）与商家端（:8091）若共用
+     * {@code dd_at}，登录一端会把另一端顶掉 —— 表现为「商家登录后个人中心是买家」。
+     *
+     * <p>商家 / 后台**不回退**基础名：否则那边没登录时会拿商城会话顶上，正是要消灭的串台。
+     * 商城与未声明入口（小程序带 Bearer，不走这里）保留回退，兼容改造前签发的会话。
+     */
+    private String resolveToken(ServerHttpRequest request, String entry) {
         String authorization = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authorization != null && authorization.startsWith("Bearer ")) {
             String value = authorization.substring(7).trim();
@@ -289,13 +301,29 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                 return value;
             }
         }
-        if (request.getCookies().containsKey(COOKIE_ACCESS)) {
-            var cookie = request.getCookies().getFirst(COOKIE_ACCESS);
-            if (cookie != null && !cookie.getValue().isBlank()) {
-                return cookie.getValue();
-            }
+        String scoped = cookieValue(request, cookieName(entry));
+        if (scoped != null) {
+            return scoped;
+        }
+        if (entry == null || ClientEntry.MALL.equals(entry)) {
+            return cookieValue(request, COOKIE_ACCESS);
         }
         return null;
+    }
+
+    private String cookieName(String entry) {
+        if (ClientEntry.MERCHANT.equals(entry)) {
+            return COOKIE_ACCESS + "_m";
+        }
+        if (ClientEntry.ADMIN.equals(entry)) {
+            return COOKIE_ACCESS + "_a";
+        }
+        return COOKIE_ACCESS;
+    }
+
+    private String cookieValue(ServerHttpRequest request, String name) {
+        var cookie = request.getCookies().getFirst(name);
+        return cookie == null || cookie.getValue().isBlank() ? null : cookie.getValue();
     }
 
     private boolean isWhitelisted(String path) {
