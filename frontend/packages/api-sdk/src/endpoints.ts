@@ -1343,6 +1343,8 @@ export interface PickerProduct {
   image: string | null;
   price: number | null;
   status?: string | null;
+  /** 仅足迹接口下发（UTC ISO，如 2026-10-22T05:02:00Z）；收藏/已购买为 null */
+  viewedAt?: string | null;
 }
 
 export const favoriteApi = {

@@ -264,6 +264,16 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-22（五十六）· 足迹按时间倒序 + 卡片显示浏览时间
+
+| 项 | 实现 |
+| --- | --- |
+| 排序 | `listViews` 本就 `orderByDesc(viewed_at)`；专项验证确认（浏览 3 件 → 返回倒序、时间递减） |
+| 时间下发 | `PickerProduct` 加 `viewedAt`（UTC ISO 带 Z；仅足迹下发，收藏/已购为 null） |
+| 前端 | 足迹卡片「浏览于 今天/昨天/MM-DD HH:mm」，走 `time.ts` 北京时间统一口径 |
+| 验证 | 接口专项 `history-order-verify.py` 9/0；媒体+收藏回归 15/0；UI `history-ui-verify.mjs` 3/0 |
+| 排障 | Bash 里 mvn 缺 JAVA_HOME 会静默 exit 0（假绿）→ 打包后核对 target jar 时间戳 |
+
 ### 2026-10-22（五十五）· 双身份链路：跨站身份闸门 + 入口去重 + 实名跳转修复
 
 | 项 | 实现 |

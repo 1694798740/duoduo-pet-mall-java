@@ -100,7 +100,7 @@ public class ProductInteractionService {
                         .last("LIMIT " + size + " OFFSET " + (p - 1) * size));
         long total = favoriteMapper.selectCount(new LambdaQueryWrapper<ProductFavoriteEntity>()
                 .eq(ProductFavoriteEntity::getUserId, userId));
-        List<PickerProduct> items = enrich(rows.stream().map(ProductFavoriteEntity::getSpuId).toList());
+        List<PickerProduct> items = enrich(rows.stream().map(ProductFavoriteEntity::getSpuId).toList(), Map.of());
         return PageResult.of(items, total, p, size);
     }
 
@@ -126,7 +126,7 @@ public class ProductInteractionService {
         }
     }
 
-    /** 我的足迹（按浏览时间倒序） */
+    /** 我的足迹（按浏览时间倒序；时间随卡片下发，供前端显示「哪天看的」） */
     public PageResult<PickerProduct> listViews(Long userId, int page, int pageSize) {
         int p = Math.max(1, page);
         int size = Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE);
@@ -137,7 +137,11 @@ public class ProductInteractionService {
                         .last("LIMIT " + size + " OFFSET " + (p - 1) * size));
         long total = viewMapper.selectCount(new LambdaQueryWrapper<ProductViewEntity>()
                 .eq(ProductViewEntity::getUserId, userId));
-        List<PickerProduct> items = enrich(rows.stream().map(ProductViewEntity::getSpuId).toList());
+        Map<Long, LocalDateTime> viewedAt = new HashMap<>();
+        for (ProductViewEntity row : rows) {
+            viewedAt.put(row.getSpuId(), row.getViewedAt());
+        }
+        List<PickerProduct> items = enrich(rows.stream().map(ProductViewEntity::getSpuId).toList(), viewedAt);
         return PageResult.of(items, total, p, size);
     }
 
@@ -147,8 +151,8 @@ public class ProductInteractionService {
                 .eq(ProductViewEntity::getUserId, userId));
     }
 
-    /** 把 spuId 列表补成可展示的商品卡（顺序保持不变） */
-    private List<PickerProduct> enrich(List<Long> spuIds) {
+    /** 把 spuId 列表补成可展示的商品卡（顺序保持不变；viewedAt 仅足迹有值） */
+    private List<PickerProduct> enrich(List<Long> spuIds, Map<Long, LocalDateTime> viewedAt) {
         if (spuIds.isEmpty()) {
             return List.of();
         }
@@ -160,8 +164,10 @@ public class ProductInteractionService {
             if (spu == null) {
                 continue;
             }
+            LocalDateTime viewed = viewedAt.get(id);
             items.add(new PickerProduct(spu.getId(), spu.getTitle(), spu.getMainImage(),
-                    spu.getMinPrice(), spu.getStatus()));
+                    spu.getMinPrice(), spu.getStatus(),
+                    viewed == null ? null : viewed.toInstant(ZoneOffset.UTC).toString()));
         }
         return items;
     }
@@ -170,7 +176,7 @@ public class ProductInteractionService {
         return LocalDateTime.now(ZoneOffset.UTC);
     }
 
-    /** 「发送商品」选择器用的轻量卡片；status 用于前端标注「已下架」 */
-    public record PickerProduct(Long id, String title, String image, Long price, String status) {
+    /** 「发送商品」选择器用的轻量卡片；status 用于前端标注「已下架」；viewedAt 仅足迹下发（UTC ISO） */
+    public record PickerProduct(Long id, String title, String image, Long price, String status, String viewedAt) {
     }
 }

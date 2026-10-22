@@ -2059,6 +2059,16 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十三）· 足迹时间戳：卡片直接显示「哪天看的」
+
+- **后端**：`/api/history/products` 每条卡片随下发 `viewedAt`（UTC ISO，带 Z）；
+  排序本就按 `viewed_at` 倒序（同商品重复浏览 upsert 只留最近一次），专项验证 9/0
+  （浏览 3 件 → 倒序、时间递减、UTC 格式）。
+- **前端**：足迹卡片新增「浏览于 今天/昨天/MM-DD HH:mm」一行（北京时间统一口径
+  `time.ts` 渲染）；收藏/已购接口不下发该字段。UI 验证 `history-ui-verify.mjs` 通过。
+- **注意**：本轮排障发现 Bash 里 `mvn` 缺 `JAVA_HOME` 会**静默无输出 exit 0**（假绿），
+  打包后必须核对 target jar 时间戳。
+
 ### 2026-10-22（六十二）· 端侧视频压缩、跨站账号提示、入口可发现性
 
 - **端侧压缩**：仅校验时长 ≤60 秒、不限制大小；>6MB 用 canvas+MediaRecorder 压到 720p/1.6Mbps，

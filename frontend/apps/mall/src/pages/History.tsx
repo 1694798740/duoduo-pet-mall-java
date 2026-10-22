@@ -10,6 +10,18 @@ import { historyApi, type PickerProduct } from '@duoduo/api-sdk/endpoints';
 import { productImage } from '@duoduo/api-sdk/images';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
+import { formatBjDate, formatBjShort } from '@duoduo/shared/lib/time';
+
+/** 足迹时间戳：今天/昨天用相对称呼，更早显示日期；时间一律北京时间（与全站口径一致） */
+function viewStamp(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const time = formatBjShort(iso).slice(6); // "HH:mm"
+  const day = formatBjDate(iso);
+  const now = new Date();
+  if (day === formatBjDate(now.toISOString())) return `今天 ${time}`;
+  if (day === formatBjDate(new Date(now.getTime() - 86_400_000).toISOString())) return `昨天 ${time}`;
+  return `${day} ${time}`;
+}
 
 export const HistoryPage: React.FC = () => {
   const { push } = useToast();
@@ -74,6 +86,11 @@ export const HistoryPage: React.FC = () => {
               <div className="small" style={{ marginTop: 8 }}>{p.title}</div>
               {p.price != null && (
                 <div className="small" style={{ color: 'var(--brand-strong)' }}>¥{(p.price / 100).toFixed(2)}</div>
+              )}
+              {p.viewedAt && (
+                <div className="small" style={{ color: 'var(--text-2)', marginTop: 2 }}>
+                  浏览于 {viewStamp(p.viewedAt)}
+                </div>
               )}
             </Link>
           ))}
