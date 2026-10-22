@@ -159,7 +159,11 @@ try {
   const selects = page.locator('.modal select, [role="dialog"] select');
   await selects.nth(0).selectOption(LEAF_CATEGORY);
   await selects.nth(1).selectOption(BRAND);
-  await page.locator('input[placeholder*="图片地址"]').fill('/img/products/e14-audit.svg');
+  // 主图上传器有两个输入：粘贴地址必须落在「主图地址」那个，且要点「添加地址」才生效。
+  // 旧用例填的是详情图地址输入、也没提交 → 主图为空，校验失败（2026-10-22 修正）。
+  await page.locator('input[placeholder*="主图地址"]').fill('/img/products/e14-audit.svg');
+  await page.getByRole('button', { name: '添加地址' }).first().click();
+  await page.waitForTimeout(800);
   await page.locator('input[placeholder="0.00"]').first().fill('199');
   await page.locator('input[placeholder="0"]').first().fill('20');
   await page.getByRole('button', { name: '提交审核' }).click();

@@ -196,8 +196,12 @@ step('⑤ 我的分享：编辑可见、删除消失');
   const afterEdit = await page.locator('body').innerText();
   check('⑤ 编辑保存后列表更新（显示「已编辑」痕迹的内容）', afterEdit.includes('（已编辑）'), afterEdit.slice(0, 240));
 
-  page.on('dialog', (d) => d.accept());
+  // 删除用的是页面内自定义确认弹窗（不是原生 confirm）：
+  // 第一次点击只是打开弹窗，必须在弹窗里再点一次「删除」才会真正调用接口。
   await page.getByRole('button', { name: '删除', exact: true }).first().click();
+  const confirmDelete = page.locator('.modal').getByRole('button', { name: '删除', exact: true });
+  await confirmDelete.waitFor({ timeout: 5000 });
+  await confirmDelete.last().click();
   await page.waitForTimeout(1800);
   const afterDel = await page.locator('body').innerText();
   check('⑤ 删除后列表消失（软删：管理页不可见）', !afterDel.includes('（已编辑）'), afterDel.slice(0, 240));

@@ -264,6 +264,116 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-22（五十五）· 双身份链路：跨站身份闸门 + 入口去重 + 实名跳转修复
+
+| 项 | 实现 |
+| --- | --- |
+| 双身份 | 同一账号（同一 userId）在商城/工作台均可登录；工作台提供「去商城个人中心」与「返回商城」，携带 `from=merchant&expect=<userId>` |
+| 身份闸门 | 商城 Layout：`expect` 与当前商城登录为同一账号 → 直接放行（清参数、保留 hash）；不同或未登录 → 清商城会话 + `/login?reason=expired&next=…` |
+| 登录提示 | 商城与商家登录页在 `reason=expired` 时显示「登录已过期，请重新登录」 |
+| 个人中心 | 商城头像下拉「个人中心」先调 `userApi.me()` 验证会话，失败即登出并跳过期登录页 |
+| 去重 | 下拉菜单中「我的收藏夹 / 我的足迹」重复两遍，删掉一份 |
+| 实名按钮 | 根因：非卖家时 `MerchantShell` 对所有子路由渲染同一引导卡，`/me` 也被吞掉。改为直接跳 `${MALL_URL}/me?from=merchant&expect=<id>#realname`；商城锚点保留 |
+| 验证 | 同账号→商城首页仍登录；不同账号/未登录→`/login?reason=expired` 且提示可见；实名跳转落 `/me#realname`；SELLER 可正常使用商城个人中心；菜单各 1 项；登录隔离 11/0、媒体 15/0、主题 55/0 |
+
+### 2026-10-22（五十四）· 移除跨站「商城个人中心」入口（角色边界修正）
+
+| 项 | 实现 |
+| --- | --- |
+| 商家账号页 | 删除「去商城个人中心」外链（原先会带着工作台账号 id 跳到商城 `/me`），改为静态说明：两端账号独立、工作台不跳商城个人中心 |
+| 返回商城 | 去掉 `from/expect` 参数，恢复为纯导航 |
+| 商城 | 删除「账号不一致」提示条与 `expect` 解析（任意 URL 都能触发这类提示，本身也不该由商城解释另一端身份） |
+| 验证 | 账号页无跨站入口且有边界说明；商城 `/me?from=merchant&expect=…` 不再出现提示；登录隔离 **11/0**；主题守卫 55/0 |
+
+### 2026-10-22（五十三）· 待办复核：两条 e2e、售后上传口径、二维码守卫
+
+| 项 | 实现 |
+| --- | --- |
+| C1 e2e | 均为用例过期：商品发布改为主图地址输入 + 点「添加地址」；分享删除补「确认弹窗内再点删除」。结果 36/0、21/0 |
+| C3 上传口径 | `ImageUrls` 允许 `http(s)` 与站内 `/uploads/`（拒绝任意 `/`）；三站点 nginx 增 `/uploads/` 反代；`imageMogr2` 仅在 COS 后端追加 |
+| 二维码 | 实为 2026-10-18 已换 `qrcode` 库；本轮补 `scripts/check-qrcode.mjs`（定位图案/时序/分隔带/内容差异）6/0 |
+| 复核结论 | C7 注销页、D1 个人主页、D3 小程序搜索结果页**均已存在**，台账过期；C2 夹具清理因无法区分验收账号，暂不批量执行 |
+
+### 2026-10-22（五十二）· 端侧视频压缩 + 跨站账号提示 + 入口可发现性
+
+| 项 | 实现 |
+| --- | --- |
+| 端侧压缩 | `chat-media.tsx`：时长 >60 秒直接拒绝；>6MB 走 canvas + MediaRecorder 重录（高≤720/宽≤1280/30fps/1.6Mbps/96k），优先 mp4 否则 webm；压缩失败/不支持/产物不更小 → 回退原视频；压缩与上传均显示百分比 |
+| 服务端 | 视频不再按大小拒绝（`max-video-size-mb` 形同保留）；白名单加 webm；Range 覆盖 webm；nginx 上限 512m |
+| 小程序 | `utils/media.js`：`wx.getVideoInfo` 校验时长、`wx.compressVideo(medium)` 压缩、失败回退；两页复用 |
+| 跨站账号 | 商家端跳商城带 `from=merchant&expect=<userId>`；商城检测到不是同一账号时显示提示 + 「切换为工作台账号登录」（退出商城会话）/「继续使用当前账号」 |
+| 客服入口 | 商家工作台「客服信息」页签对所有角色可见；运营/店员进入显示职责说明页（不再静默消失）；平台后台按职责不承载客服接待 |
+| 个人中心 | 新增「我的商品」卡片（收藏夹/足迹），头像下拉同步加入口，页面 `/favorites` `/history` 已存在 |
+| 验证 | 压缩 13.2MB/30s → **5.52MB（-58%）**，进度 3%→6%→…；64.8s 视频被拒；角色页签/说明页、跨站提示与切换、入口跳转均实测 |
+
+### 2026-10-21（五十一）· 客服 C4：订单卡片 + 内置贴纸
+
+| 项 | 实现 |
+| --- | --- |
+| 订单事实 | 社交域新增 `OrderClient`（Feign + 内部签名）读 `GET /api/orders/internal/{orderNo}/fact`；只认单号，快照由服务端落 `meta_json` |
+| 归属校验 | 订单 `userId` 必须等于当前用户，否则 403（实测他人订单被拒） |
+| 前端 | 订单详情「咨询订单」先发卡再跳客服；订单卡买家端可跳详情，商家端只读（防越权跳转） |
+| 贴纸 | 6 张内置 SVG（`apps/mall/public/stickers`，商家 publicDir 共享），以 EMOJI 消息发送 |
+| 验证 | `media-favorite-smoke.py` **15/0**（新增订单卡 3 条）；其余回归 20/0、22/0、11/0；主题守卫 55/0、25/0 |
+| 限制 | 真实视频已验（用户提供 81MB 录屏 → 转码 720p/60s 5.5MB → 上传 COS → 播放走带正常）；81MB 原文件会被 20MB 上限拒绝，属设计行为 |
+
+### 2026-10-21（五十）· 客服 B/C 批：多媒体消息 + 四类商品来源
+
+| 项 | 实现 |
+| --- | --- |
+| 上传 | `UploadController` 支持 mp4（20MB），`GET /uploads/**` 支持 Range（206）；nginx 体积上限 25m；视频不追加图片处理参数 |
+| 数据 | 增量 39（消息媒体 6 列）、增量 40（`t_product_favorite` / `t_product_view`） |
+| 社交域 | 客服（用户/商家）与私信统一支持 `IMAGE/VIDEO/EMOJI`；媒体地址白名单校验；列表摘要用「[图片]/[视频]/[表情]」 |
+| 商品域 | 收藏切换/状态/列表、足迹记录/列表/清空；商品详情旁路记录足迹 |
+| 交易域 | `GET /api/orders/purchased-products`（按 spu 去重，仅已付款/发货/完成） |
+| 前端 | 共享 `ChatMediaMenu`/`MediaBubble`（三页复用）、`ProductPicker`（当前浏览/购物车/收藏/已购）、收藏与足迹页面、商品详情收藏按钮 |
+| 小程序 | 客服与私信页 `chooseMedia`（相册+拍摄）+ 上传 + 图片预览 + 视频播放 |
+| 未做 | **C4 订单卡片**（范围取舍）；真实视频播放与小程序的真机验收；贴纸类表情包 |
+
+### 2026-10-21（四十九）· 客服消息接入通知中心
+
+| 项 | 实现 |
+| --- | --- |
+| 写入 | `NoticeService.pushSupportNotice`：商家回复时写 `category=MERCHANT`、`bizType=SUPPORT` 通知，同会话合并；`jumpPage=/pages/support/support?sellerId=…` |
+| 落地页 | `NoticeWebPaths` 增 SUPPORT → `/support?sellerId=…` |
+| 计数 | SUPPORT 与 MESSAGE 一同从「通知未读」排除（未读口径仍在 support 会话上），`total = notice + message + support` |
+| 已读 | 买家打开客服会话 → 通知同步已读；通知中心「全部已读」→ 客服未读一并清零；菜单「通知中心」角标 = notice + support |
+| 验证 | `support-read-smoke.py` **20/0**；UI：菜单角标 1、通知列表「商家」分类可见、点击直达 `/support?sellerId=…`、读后归零 |
+
+### 2026-10-21（四十八）· 客服 A 批：未读/已读、筛选、越权修复
+
+| 项 | 实现 |
+| --- | --- |
+| 数据 | 增量 38：`t_support_session` 增双向读游标（`user_last_read_id`/`seller_last_read_id`），按历史 `read_at` 回填 |
+| 后端 | `SupportService`：标记已读推进游标并把未读置 0；会话详情返回 `peerLastReadId`/`myUnreadCount`；`listForSeller` 支持 `onlyUnread`；买家发消息时关闭会话自动重开 |
+| 前端 | 商家端筛选改「全部/未读」；`Number()` 归约修 `0000…`；点开即清零（乐观更新）；最后一条我方消息显示「已读 / 未读 N 条」；商品卡改工作台只读弹窗（不外链）；取消首条自动带卡 |
+| 隐患 | 列表自动选中第一条会误标已读 → 改为「列表只展示，点开才算读」 |
+| 验证 | 新增 `scripts/support-read-smoke.py` **16/0**；`support-split-smoke.py` 22/0；Playwright 角标 1→0、回执「未读 1 条」、弹窗不跳转 |
+
+### 2026-10-21（四十七）· 三端登录态隔离 + 时间口径 + 工作台账号中心
+
+| 项 | 实现 |
+| --- | --- |
+| 根因（隔离） | 三站共用 Cookie 名 `dd_at`/`dd_rt`，而 **Cookie 按主机名隔离、不区分端口** —— `localhost:8088` 与 `localhost:8091` 共用一个罐，登录一端覆盖另一端 |
+| 修复（隔离） | `AuthCookieWriter` 按 `X-Duoduo-Entry` 分名：`dd_at`（商城）/ `dd_at_m`（商家）/ `dd_at_a`（后台）；网关 `resolveToken` 同步按入口取名。**商家/后台不回退基础名**（否则商家未登录会被商城会话顶替），商城保留回退兼容老会话 |
+| 个人中心 | 商家端新增 `/seller/account` 账号中心（当前工作台身份：角色/手机/账号 ID/注册时间/店铺），顶栏头像与「个人中心」改为站内路由；不再跨站跳商城 `/me`（那是另一套登录态，会显示商城账号） |
+| 时间 | 后端统一 UTC 序列化，前端原先 `iso.replace('T',' ').slice()` 直接截串 → 早 8 小时。新增 `shared/lib/time.ts`（Asia/Shanghai，`formatBjShort/formatBjDateTime`），客服、私信列表、聊天页、通知中心统一改走它 |
+| 客服图 | 商家端产物缺 `/img/products/*`（图池只在商城 public）→ 商家 vite `publicDir` 指向 `apps/mall/public`，两端同源同图 |
+| 验证 | 新增 `scripts/auth-isolation-smoke.py` **11/0**（同罐两枚令牌并存、身份不同、商家不回退、商城回退正常）；`support-split-smoke.py` 22/0；Playwright 实测运营账号个人中心显示自身、客服账号可见 10 个会话、气泡时间 17:32（北京时间）、卡片 4 张 0 裂图 |
+
+### 2026-10-21（四十六）· 客服消息独立化：自营/第三方分治，接待移到商家工作台
+
+| 项 | 实现 |
+| --- | --- |
+| 数据 | 增量 37：`t_support_session`（唯一键 `seller_id+user_id`）+ `t_support_message` + 迁移台账；历史商品咨询/客服私信迁出并从 `t_social_message` 删除（本次 1 会话 / 2 消息，残留 0） |
+| 后端 | 新子包 `com.duoduo.social.support`：`SupportService` + 用户侧 `/api/support/**` + 商家侧 `/api/seller/support/**`（`isSeller()` 准入，sellerId 由登录态推导）；旧 `/api/socials/support/**` 删除 |
+| 区分口径 | **不用类型字段**：`sellerId == officialCsUserId` 即自营；第三方为商品归属卖家。同一套表与接口，只在 sellerId 分叉 |
+| 规则 | 客服**移除**「非互关限一条」（60 秒 20 条频控保留）；普通私信保留；商品/闲置咨询豁免不变；闲置只走私信，不进客服 |
+| 前端 | 商城新增 `/support`；商家工作台新增「客服信息」页签（`/seller/support`）；平台后台**不新增任何入口**；小程序新增 `pages/support`，商品「问一问」与「我的→问客服」改道 |
+| 未读 | `UnreadSummary` 增加 `support`，总数 = 通知 + 私信 + 客服；单测同步（16/0） |
+| 验证 | `scripts/support-split-smoke.py` **22/0**；反向验证（去掉角色校验）**21/1** 且总数不变；三端 `npm run build` 通过；小程序暗夜守卫 25/0 |
+| 遗留 | ① `MessageService.BIZ_ASK` 老通道未清理（旧客户端兜底）② 店员（STAFF）暂不可用客服工作台（需成员域回源）③ 商家端会话列表暂无关键词搜索 |
+
 ### 2026-10-20（四十五）· A1 地址改造：三级联动 + 定位回填
 
 | 项 | 实现 |
