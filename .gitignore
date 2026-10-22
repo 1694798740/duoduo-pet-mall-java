@@ -64,3 +64,7 @@ scripts/e2e/.shots/
 # 小程序端高德 Key（由 scripts/miniprogram-amap-key.mjs 从 .env 生成）
 # 只提交 amap.example.js；真值不进仓库，但会随小程序包下发（平台绑定 AppID 兜底）
 miniprogram/config/amap.js
+
+# 验证截图与本地工作台工具（不入库）
+scripts/e2e/*.png
+.workbuddy/
