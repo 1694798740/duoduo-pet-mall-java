@@ -299,12 +299,9 @@ export const SellerSupportPage: React.FC = () => {
                   <Bubble
                     key={m.id}
                     message={m}
+                    unreadTag={m.mine && !m.read}
                     receipt={
-                      isLastMine
-                        ? Number(thread.myUnreadCount) > 0
-                          ? `未读 ${Number(thread.myUnreadCount)} 条`
-                          : '已读'
-                        : null
+                      isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
                     onOpenCard={setCard}
                   />
@@ -425,11 +422,21 @@ function renderContent(message: SupportMessageView) {
 
 const Bubble: React.FC<{
   message: SupportMessageView;
+  /** 我发出、对方还没读的消息：气泡左侧挂「未读」标签（琥珀色，非红） */
+  unreadTag?: boolean;
   receipt: string | null;
   onOpenCard: (card: SupportProductCard) => void;
-}> = ({ message, receipt, onOpenCard }) => (
+}> = ({ message, unreadTag, receipt, onOpenCard }) => (
   <div className={`sup-row${message.mine ? ' mine' : ''}`}>
     <div className="sup-col">
+      {unreadTag && (
+        <span
+          className="tag tag-warn"
+          style={{ fontSize: 11, alignSelf: 'flex-end', marginBottom: 2 }}
+        >
+          未读
+        </span>
+      )}
       {renderContent(message)}
       {message.card && (
         <button

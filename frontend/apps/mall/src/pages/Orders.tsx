@@ -316,6 +316,21 @@ export const OrdersPage: React.FC = () => {
                 <div className="row-between row-wrap">
                   <div className="row row-wrap">
                     <strong className="small">订单号 {order.orderNo}</strong>
+                    {/* 店铺名 + 跳转（2026-10-22）：自营 sellerId=0 → /store/0 自营货架；
+                        第三方有店铺名才给链接（取名失败/夹具店铺不可跳 404 页，降级为纯文本） */}
+                    {String(order.sellerId) === '0' ? (
+                      <Link to="/store/0" className="small" style={{ color: 'var(--brand-strong)' }}>
+                        {order.storeName || '多多自营'}
+                      </Link>
+                    ) : order.storeName ? (
+                      <Link
+                        to={`/store/${order.sellerId}`}
+                        className="small"
+                        style={{ color: 'var(--brand-strong)' }}
+                      >
+                        {order.storeName}
+                      </Link>
+                    ) : null}
                     <span className="tag">{order.statusLabel}</span>
                     {order.orderType ? (
                       <span className={order.orderType === 'SECKILL' ? 'tag tag-warn' : 'tag'}>

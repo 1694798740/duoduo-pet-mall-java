@@ -54,7 +54,7 @@ class OrderListFilterTest {
         // 若哪天 listMine 真的用到了别的依赖，这里会立刻 NPE —— 比悄悄放过要好。
         service = new OrderService(orderMapper,
                 null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null);
         UserContext.set(new LoginUser(9001L, "13800000000", "USER", true));
     }
 

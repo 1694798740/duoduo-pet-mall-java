@@ -11,9 +11,15 @@
  * <p>页面之间的跳转：商家各页内部用的是站内链接（`/seller/...`），在本商家应用内依然成立。
  */
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
 import { canAccessMerchantWorkspace, isOperator } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
+import {
+  afterSaleApi,
+  sellerApi,
+  sellerSupportApi,
+} from '@duoduo/api-sdk/endpoints';
 import { MerchantLoginPage } from './MerchantLogin';
 import { SellerDashboardPage } from '../seller/Dashboard';
 import { SellerOrderDetailPage } from '../seller/OrderDetail';
@@ -59,6 +65,71 @@ const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http:
 /** 平台管理后台入口（独立站点、独立主机名 → 独立 Cookie，与商家登录态互不影响） */
 const ADMIN_URL = (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'http://admin.localhost:8090';
 
+/**
+ * 导航角标（2026-10-22 · Q8）。
+ *
+ * 数据源与口径：
+ *  · /seller/orders  ← sellerApi.summary().pendingShipCount（待发货 = 已付款，卖家该动了）；
+ *  · /seller/support ← sellerSupportApi.unreadCount()（买家咨询未读总数）；
+ *  · /seller/after-sales ← afterSaleApi.seller(PENDING).total + seller(RETURNING).total
+ *    （待卖家处理 + 待签收退货 —— 这两类都需要商家动手）。
+ *
+ * 触发：挂载即取 + 30s 轮询 + 路由切换时重取（点进去处理完，回来数字就更新）。
+ * 清除逻辑：进入对应页面后由页面自身的已读动作（打开会话 / 处理工单）收敛数字，
+ * 下一次轮询同步角标 —— 不在前端「点进即清零」，因为清零的事实必须来自服务端。
+ * 任何一个请求失败按 0 处理（角标是提醒，不能因为它报错挡住导航）。
+ */
+const useNavBadges = (enabled: boolean): Record<string, number> => {
+  const location = useLocation();
+  const [badges, setBadges] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    const load = async () => {
+      const [support, summary, pending, returning] = await Promise.allSettled([
+        sellerSupportApi.unreadCount(),
+        sellerApi.summary(),
+        afterSaleApi.seller({ status: 'PENDING', page: 1, pageSize: 1 }),
+        afterSaleApi.seller({ status: 'RETURNING', page: 1, pageSize: 1 }),
+      ]);
+      const next: Record<string, number> = {
+        '/seller/support': support.status === 'fulfilled' ? Number(support.value) || 0 : 0,
+        '/seller/orders': summary.status === 'fulfilled' ? Number(summary.value?.pendingShipCount) || 0 : 0,
+        '/seller/after-sales':
+          (pending.status === 'fulfilled' ? Number(pending.value?.total) || 0 : 0)
+          + (returning.status === 'fulfilled' ? Number(returning.value?.total) || 0 : 0),
+      };
+      if (alive) setBadges(next);
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, location.pathname]);
+
+  return badges;
+};
+
+/** 角标胶囊：数字 > 99 显示 99+。aria-hidden：不改变链接的可访问名称（e2e 按 label 精确匹配） */
+const NavBadge: React.FC<{ count: number }> = ({ count }) =>
+  count > 0 ? (
+    <span
+      aria-hidden
+      style={{
+        marginLeft: 6, padding: '0 6px', borderRadius: 9, minWidth: 18,
+        background: 'var(--danger, #e5484d)', color: '#fff', fontSize: 11,
+        lineHeight: '18px', display: 'inline-block', textAlign: 'center',
+        fontWeight: 600,
+      }}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  ) : null;
+
 /** 跳回商会站点（跨主机名，必须绝对地址） */
 const BackToMall: React.FC = () => {
   window.location.replace(`${MALL_URL}/me`);
@@ -69,6 +140,8 @@ const MerchantShell: React.FC = () => {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const workspaceReady = canAccessMerchantWorkspace(user?.role, user?.merchant);
+  const badges = useNavBadges(workspaceReady);
 
   if (loading) {
     return (
@@ -180,6 +253,7 @@ const MerchantShell: React.FC = () => {
             className={({ isActive }) => `btn btn-sm ${isActive ? 'btn-primary' : 'btn-ghost'}`}
           >
             {tab.label}
+            <NavBadge count={badges[tab.to] ?? 0} />
           </NavLink>
         ))}
       </nav>

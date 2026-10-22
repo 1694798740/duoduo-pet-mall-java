@@ -375,7 +375,7 @@ export const productApi = {
    */
   storeProducts: (
     sellerId: string,
-    query?: { sort?: string; page?: number; pageSize?: number; signal?: AbortSignal },
+    query?: { sort?: string; keyword?: string; page?: number; pageSize?: number; signal?: AbortSignal },
   ) => api.get<PageResult<ProductCard>>(`/api/products/store/${sellerId}`, { query }),
 
   /**
@@ -1122,6 +1122,12 @@ export const noticeApi = {
    * 返回同源同刻的三个计数，页面可拿 `message` 单独显示「私信 N 条」而不必再发一次请求。
    */
   unreadSummary: () => api.get<UnreadSummary>('/api/socials/notices/unread-summary'),
+  /**
+   * 分类未读数（2026-10-22 · Q9）：键为 ORDER / FRIEND / MERCHANT / SYSTEM / ANNOUNCEMENT。
+   * 与 unreadCount 同口径分桶（排除私信/客服通知；公告按已读集合扣除）。
+   */
+  unreadByCategory: () =>
+    api.get<Record<string, number>>('/api/socials/notices/unread-by-category'),
   /** 标记单条已读（幂等） */
   markRead: (id: string) => api.post<void>(`/api/socials/notices/${id}/read`),
   /** 全部已读（幂等） */

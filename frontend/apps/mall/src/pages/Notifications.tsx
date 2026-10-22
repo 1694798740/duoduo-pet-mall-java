@@ -9,7 +9,7 @@
  * 通知该跳哪是业务事实（发通知的那一侧最清楚），前端自己映射迟早和后端对不上。
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { noticeApi } from '@duoduo/api-sdk/endpoints';
 import type { NoticeView } from '@duoduo/api-sdk/types';
@@ -48,12 +48,28 @@ export const NotificationsPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [tick, setTick] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** 分类未读数（Q9，2026-10-22）：键 = ORDER/FRIEND/MERCHANT/SYSTEM/ANNOUNCEMENT，来自服务端分桶 */
+  const [categoryUnread, setCategoryUnread] = useState<Record<string, number>>({});
 
   const fetcher = useCallback(
     () => noticeApi.list({ category: category || undefined, page, pageSize: PAGE_SIZE }),
     [category, page, tick],
   );
   const { data, loading, error } = useAsync(fetcher, true, [category, page, tick]);
+
+  // 分类角标与列表联动刷新：进入页面 / 标记已读 / 全部已读后都会重取
+  useEffect(() => {
+    let alive = true;
+    noticeApi
+      .unreadByCategory()
+      .then((rows) => {
+        if (alive) setCategoryUnread(rows ?? {});
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [tick]);
 
   const items = data?.items ?? [];
   const unread = useMemo(() => items.filter((it) => !it.read).length, [items]);
@@ -111,6 +127,19 @@ export const NotificationsPage: React.FC = () => {
             }}
           >
             {c.label}
+            {c.key && Number(categoryUnread[c.key]) > 0 ? (
+              <span
+                aria-hidden
+                style={{
+                  marginLeft: 6, padding: '0 6px', borderRadius: 9, minWidth: 18,
+                  background: 'var(--danger, #e5484d)', color: '#fff', fontSize: 11,
+                  lineHeight: '18px', display: 'inline-block', textAlign: 'center',
+                  fontWeight: 600,
+                }}
+              >
+                {Number(categoryUnread[c.key]) > 99 ? '99+' : Number(categoryUnread[c.key])}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>

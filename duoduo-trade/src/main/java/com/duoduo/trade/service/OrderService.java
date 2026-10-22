@@ -196,6 +196,10 @@ public class OrderService {
      */
     private final SeckillService seckillService;
     private final SchedLeaderLock leaderLock;
+    /** 2026-10-22 · 订单卡片店铺名（第三方按店主 userId 跨域取名；自营固定「多多自营」不走该客户端） */
+    private final com.duoduo.trade.client.StoreNameClient storeNameClient;
+    /** 平台自营的展示名（与商品域 SELF_STORE_NAME 同文案） */
+    public static final String SELF_STORE_NAME = "多多自营";
 
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
@@ -214,7 +218,8 @@ public class OrderService {
                         LogisticsNotifier logisticsNotifier,
                         OrderNotifier orderNotifier,
                         SeckillService seckillService,
-                        SchedLeaderLock leaderLock) {
+                        SchedLeaderLock leaderLock,
+                        com.duoduo.trade.client.StoreNameClient storeNameClient) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -233,6 +238,7 @@ public class OrderService {
         this.orderNotifier = orderNotifier;
         this.seckillService = seckillService;
         this.leaderLock = leaderLock;
+        this.storeNameClient = storeNameClient;
     }
 
     // ---------------- 结算预览（只读） ----------------
@@ -2293,6 +2299,10 @@ public class OrderService {
                 .stream()
                 .collect(Collectors.groupingBy(OrderItemEntity::getOrderId));
         Map<Long, SettlementEntity> settlements = settlementService.mapByOrderIds(orderIds);
+        Map<Long, String> storeNames = loadStoreNames(orders.stream()
+                .map(OrderEntity::getSellerId)
+                .filter(id -> id != null && id != 0L)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new)));
 
         List<OrderView> views = new ArrayList<>(orders.size());
         for (OrderEntity order : orders) {
@@ -2306,6 +2316,7 @@ public class OrderService {
             views.add(new OrderView(
                     order.getOrderNo(),
                     order.getSellerId(),
+                    storeNameOf(order.getSellerId(), storeNames),
                     order.getOrderType(),
                     order.getStatus(),
                     OrderStatus.labelOf(order.getStatus()),
@@ -2332,6 +2343,35 @@ public class OrderService {
                     order.getLogisticsNo()));
         }
         return views;
+    }
+
+    /** 自营（seller_id=0）固定「多多自营」；第三方按店主 userId 查批量结果，查不到为 null（前端降级） */
+    private static String storeNameOf(Long sellerId, Map<Long, String> storeNames) {
+        if (sellerId == null || sellerId == 0L) {
+            return SELF_STORE_NAME;
+        }
+        return storeNames.get(sellerId);
+    }
+
+    /** 批量跨域取店铺名；失败降级为空 Map（店铺名是展示信息，不值得为它打挂订单列表） */
+    private Map<Long, String> loadStoreNames(java.util.Collection<Long> ownerUserIds) {
+        if (ownerUserIds == null || ownerUserIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            String csv = ownerUserIds.stream().map(String::valueOf)
+                    .collect(Collectors.joining(","));
+            com.duoduo.common.api.ApiResponse<java.util.List<com.duoduo.trade.client.dto.StoreBrief>> resp =
+                    storeNameClient.batch(csv);
+            if (resp == null || resp.data() == null) {
+                return Map.of();
+            }
+            Map<Long, String> map = new java.util.HashMap<>();
+            resp.data().forEach(b -> map.putIfAbsent(b.ownerUserId(), b.name()));
+            return map;
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     /** 从库存变更结果里挑出「真的冻成功了」的 SKU（用于精确补偿） */

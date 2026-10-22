@@ -361,6 +361,11 @@ export interface OrderItemView {
 export interface OrderView {
   orderNo: string;
   sellerId: string | null;
+  /**
+   * 店铺名（2026-10-22）：第三方 = 商家自有店名；自营 = 多多自营。
+   * 取名失败/老后端为 undefined，前端降级为「店铺{sellerId}」或隐藏入口。
+   */
+  storeName?: string | null;
   orderType: string;
   status: OrderStatus;
   /** 状态中文文案由服务端给出，前端不维护映射表 */

@@ -203,15 +203,11 @@ export const ChatPage: React.FC = () => {
       {sendError ? <Alert kind="error">{sendError}</Alert> : null}
 
       <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'flex-start' }}>
-        {productId ? (
-          <button type="button" className="btn btn-ghost" title="发送当前咨询的商品" onClick={() => void sendProductCard()}>
-            🛍
-          </button>
-        ) : null}
         <ChatMediaMenu
           onMedia={sendMedia}
           onEmoji={(emoji) => setDraft((v) => v + emoji)}
           onSticker={(url) => void sendSticker(url)}
+          onProduct={productId ? () => void sendProductCard() : undefined}
           onError={(msg) => setSendError(msg)}
           disabled={busy || !canSend}
         />

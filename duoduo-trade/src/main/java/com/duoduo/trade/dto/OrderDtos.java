@@ -208,6 +208,11 @@ public final class OrderDtos {
     public record OrderView(
             String orderNo,
             Long sellerId,
+            /**
+             * 店铺名（2026-10-22）：第三方 = t_merchant.name（按 sellerId=店主 userId 跨域取名）；
+             * 自营 = 固定「多多自营」。取名失败/老后端为 null，前端降级展示 sellerId。
+             */
+            String storeName,
             String orderType,
             String status,
             /** 状态中文文案，由服务端给出，前端不必维护映射表 */

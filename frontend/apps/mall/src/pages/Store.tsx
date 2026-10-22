@@ -36,18 +36,24 @@ export const StorePage: React.FC = () => {
   const { data: store, loading: storeLoading, error: storeError } =
     useAsync<StorePublicView | null>(storeFetcher);
 
-  // ── 商品分页（加载更多） ──
+  // ── 商品分页（加载更多）+ 排序 + 店内搜索（2026-10-22，对齐淘宝店铺页） ──
   const [items, setItems] = useState<ProductCard[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState('default');
+  const [keywordInput, setKeywordInput] = useState('');
+  const [keyword, setKeyword] = useState('');
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
-    // 切店（路由参数变化）时重置分页状态
+    // 切店（路由参数变化）时重置分页/排序/搜索状态
     setItems([]);
     setTotal(0);
     setPage(1);
+    setSort('default');
+    setKeywordInput('');
+    setKeyword('');
     setListError(null);
   }, [sellerId]);
 
@@ -56,7 +62,12 @@ export const StorePage: React.FC = () => {
     let cancelled = false;
     setListLoading(true);
     productApi
-      .storeProducts(sellerId, { page, pageSize: PAGE_SIZE })
+      .storeProducts(sellerId, {
+        sort: sort === 'default' ? undefined : sort,
+        keyword: keyword.trim() || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      })
       .then((res) => {
         if (cancelled) return;
         setTotal(res.total);
@@ -72,7 +83,7 @@ export const StorePage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [sellerId, page]);
+  }, [sellerId, page, sort, keyword]);
 
   if (!isSelf && storeLoading) return <LoadingBlock />;
   // 非自营店铺查不到（未入驻 / 未过审 / 停业）→ 明确报错，绝不渲染空壳页面
@@ -118,17 +129,84 @@ export const StorePage: React.FC = () => {
         </div>
       </section>
 
-      {/* ── 在售商品（网格 + 加载更多） ── */}
+      {/* ── 在售商品（排序 + 店内搜索 + 网格 + 加载更多） ── */}
       <section>
         <h3 className="section-title" style={{ fontSize: 16, marginBottom: 10 }}>
           全部商品
           {total > 0 ? <span className="small muted" style={{ fontWeight: 400, marginLeft: 8 }}>{total} 件在售</span> : null}
         </h3>
 
+        {/* 工具条：排序胶囊 + 店内搜索（风格与全站列表页一致） */}
+        <div className="row row-wrap" style={{ gap: 8, marginBottom: 12, alignItems: 'center' }}>
+          {(
+            [
+              { value: 'default', label: '综合' },
+              { value: 'sales', label: '销量' },
+              { value: 'price_asc', label: '价格↑' },
+              { value: 'price_desc', label: '价格↓' },
+              { value: 'newest', label: '最新' },
+            ] as { value: string; label: string }[]
+          ).map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              className={`btn btn-sm ${sort === s.value ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => {
+                setSort(s.value);
+                setPage(1);
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+          <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
+            <input
+              className="input"
+              style={{ width: 200 }}
+              placeholder="搜索本店商品"
+              value={keywordInput}
+              onChange={(e) => setKeywordInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setKeyword(keywordInput);
+                  setPage(1);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={() => {
+                setKeyword(keywordInput);
+                setPage(1);
+              }}
+            >
+              搜索
+            </button>
+            {keyword ? (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => {
+                  setKeywordInput('');
+                  setKeyword('');
+                  setPage(1);
+                }}
+              >
+                清除
+              </button>
+            ) : null}
+          </div>
+        </div>
+
         {listError ? <Alert kind="error">{listError}</Alert> : null}
 
         {items.length === 0 && !listLoading && !listError ? (
-          <Empty icon="🏪" title="这家店暂时没有在售商品" desc="换个店铺看看，或稍后再来" />
+          <Empty
+            icon="🏪"
+            title={keyword ? `本店没有与「${keyword}」匹配的商品` : '这家店暂时没有在售商品'}
+            desc={keyword ? '换个关键词试试' : '换个店铺看看，或稍后再来'}
+          />
         ) : (
           <div className="grid grid-goods">
             {items.map((item) => (

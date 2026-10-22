@@ -785,8 +785,11 @@ public class MerchantOnboardingService {
         if (ownerUserIds == null || ownerUserIds.isEmpty()) {
             return java.util.List.of();
         }
+        // 只认「营业中（APPROVED）」（2026-10-22 收口）：与店铺公开主页同一口径 ——
+        // 送审中/DRAFT 的夹具店铺对外不可见，把它的名字发出去会让订单卡跳到一个 404 店铺页。
         return merchantMapper.selectList(new LambdaQueryWrapper<MerchantEntity>()
-                        .in(MerchantEntity::getOwnerUserId, ownerUserIds))
+                        .in(MerchantEntity::getOwnerUserId, ownerUserIds)
+                        .eq(MerchantEntity::getStatus, MerchantStatus.APPROVED.name()))
                 .stream()
                 .map(e -> new com.duoduo.user.dto.MerchantDtos.StoreBrief(e.getOwnerUserId(), e.getName()))
                 .toList();

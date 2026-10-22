@@ -4,6 +4,26 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-22（六十四）· 十问题批次：咨询/店铺/客服/未读体验改造（Q1~Q10）**
+
+- **Q1 自营订单咨询报「店铺不存在」**：自营订单 `seller_id=0` 被当店铺 id 查询。修：social 侧
+  `sellerId==null||0` 统一落官方客服（ORDER 卡分支同兜底）；前端 sellerId 为 0/空时**不带**参数。
+- **Q2 店铺页排序/搜索**：`storeProducts` 增 `keyword`（本店范围 like，不进 ES）；`Store.tsx`
+  增综合/销量/价格/最新排序胶囊 + 店内搜索框，空态区分「无商品/无匹配」。
+- **Q3 订单卡片店铺名**：trade 经 Feign `tradeStoreNameClient` 批量取店名 → `OrderView.storeName`，
+  自营固定「多多自营」；user 域只回 `APPROVED` 店铺（防夹具死链）；卡片店名可点跳 `/store/{sellerId}`。
+- **Q4 会话名改店铺名**：social `sellerDisplayOf` 店铺名优先、自营客服保持昵称；订单卡直达对应店铺会话。
+- **Q5/Q6/Q7 聊天体验**：逐条「未读」琥珀标记（`m.mine && !m.read`）；加号菜单二级化
+  （图片/视频/表情/商品四入口），移除外置🛍；发商品「当前浏览」→「正在看」并回源真实商品卡。
+- **Q8 商家端导航角标**：四接口聚合 + 30s 轮询；角标 `aria-hidden` 防 `getByRole exact` 假红。
+- **Q9 通知分类未读数**：`GET /api/socials/notices/unread-by-category` 五类分桶（与徽标同口径）；
+  通知中心分类 chip 角标；三端未读方案见 `docs/notification-unread-badge-design.md`。
+- **Q10 图片灯箱 + 视频弹窗**：图片点击放大（缩放/下载）；视频自绘播放弹窗（进度/音量/全屏/保存）；
+  视频文件核实已在 COS，无需迁移。
+- **验证**：`scripts/web10-batch-check.py` **9/0**；e2e store-page 17/0、notice-chat-follow 50/0、
+  seller 40/0、cart-batch 31/0、product-detail 19/0；support-read 20/0、support-split 22/0；
+  trade 单测 119/0、social 16/0；六容器重建 healthy。
+
 **2026-10-22（六十三）· 支付成功却一直「待支付」：多卖家拆单撞幂等键，已修复**
 
 - **现象**：支付宝沙箱真实付款成功（两笔 `ALIPAY_PC` 均 SUCCESS），订单仍停在 `PENDING_PAYMENT`；
@@ -2083,6 +2103,25 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 ---
 
 ## 十二、变更记录
+
+### 2026-10-22（七十一）· 十问题批次：咨询/店铺/客服/未读体验改造（Q1~Q10）
+
+- **后端**：① social `SupportService` 自营兜底（sellerId 0/null → `officialCsUserId`）+ 会话店铺名
+  （`UserClient.storeNames` + `StoreBrief`，`sellerDisplayOf` 店铺名优先、自营保持昵称）；
+  ② social `NoticeController.unreadByCategory` 五类分桶（排除私信/客服，与徽标同口径）；
+  ③ trade `OrderService` 经 `StoreNameClient`（`contextId=tradeStoreNameClient`）批量补
+  `OrderView.storeName`，自营固定「多多自营」；user 域 `storeNamesOf` 只回 `APPROVED`；
+  ④ product `storeProducts` 增 `keyword`（本店范围 like，不进 ES）。
+- **前端**：`Store.tsx` 排序/搜索工具条；`Orders.tsx` 店铺名 Link；`Support.tsx`/`SupportInbox.tsx`
+  逐条未读标记与已读回执；`chat-media.tsx` 二级菜单 + 图片灯箱 + 视频自绘弹窗；
+  `product-picker.tsx`「正在看」回源；`MerchantRoot.tsx` `NavBadge` 导航角标；
+  `Notifications.tsx` 分类角标。角标一律 `aria-hidden`。
+- **新文件**：`docs/notification-unread-badge-design.md`（三端未读方案）、
+  `scripts/web10-batch-check.py`（9 项定向验证）、social/trade 两个 `StoreBrief` 与 `StoreNameClient`。
+- **验证**：`web10-batch-check.py` **9/0**；e2e store-page **17/0**、notice-chat-follow **50/0**、
+  seller **40/0**、cart-batch **31/0**、product-detail **19/0**；support-read **20/0**、
+  support-split **22/0**；trade 单测 **119/0**、social **16/0**；六容器重建 healthy。
+  顺带修 cart-batch 三处脆弱点（弹窗遮罩等待 /「清空·删除已选」两态文案 / 空车自愈夹具）。
 
 ### 2026-10-22（七十）· 修复：第三方商品错挂「多多自营」徽标；自营补进店入口
 

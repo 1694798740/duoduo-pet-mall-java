@@ -386,7 +386,8 @@ public class ProductService {
      * <p>可见口径与 {@link #searchByMysql} 一致：只认「在售 + 已过审」
      * （{@link #visibleSpuWrapper()}），店铺名随 {@code ProductCard.storeName} 自动带上。
      */
-    public PageResult<ProductCard> storeProducts(Long sellerId, String sort, int page, int pageSize) {
+    public PageResult<ProductCard> storeProducts(Long sellerId, String sort, String keyword,
+                                                 int page, int pageSize) {
         java.util.Objects.requireNonNull(sellerId, "sellerId");
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
@@ -396,6 +397,12 @@ public class ProductService {
         LambdaQueryWrapper<SpuEntity> wrapper = sellerId == 0L
                 ? visibleSpuWrapper().eq(SpuEntity::getSupplyType, "self")
                 : visibleSpuWrapper().eq(SpuEntity::getSellerId, sellerId);
+        // 店内搜索（2026-10-22）：关键词只过滤本店商品标题，模糊匹配与全站检索同风格；
+        // 不像全站检索那样回 ES —— 归属过滤必须留在 MySQL（见上「不进 ES」的理由）。
+        String kw = keyword == null ? "" : keyword.trim();
+        if (!kw.isEmpty()) {
+            wrapper.like(SpuEntity::getTitle, kw);
+        }
         applySort(wrapper, sort);
         wrapper.orderByDesc(SpuEntity::getId);
 

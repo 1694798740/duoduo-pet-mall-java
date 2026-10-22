@@ -13,14 +13,20 @@
  * 不让它显示成一个正常的在售商品。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { cartApi, favoriteApi, purchasedApi, type PickerProduct } from '@duoduo/api-sdk/endpoints';
+import {
+  cartApi,
+  favoriteApi,
+  productApi,
+  purchasedApi,
+  type PickerProduct,
+} from '@duoduo/api-sdk/endpoints';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Empty, LoadingBlock, Modal } from '@duoduo/shared/components/ui';
 
 type Tab = 'current' | 'cart' | 'favorite' | 'purchased';
 
 const TABS: { value: Tab; label: string }[] = [
-  { value: 'current', label: '当前浏览' },
+  { value: 'current', label: '正在看' },
   { value: 'cart', label: '购物车' },
   { value: 'favorite', label: '收藏夹' },
   { value: 'purchased', label: '已购买' },
@@ -58,13 +64,27 @@ export const ProductPicker: React.FC<{
         } else if (which === 'purchased') {
           const page = await purchasedApi.list({ page: 1, pageSize: 30 });
           setItems(page?.items ?? []);
-        } else {
-          // current：当前浏览的商品由会话上下文给出，这里只需要一条占位数据
-          setItems(
-            currentProductId
-              ? [{ id: currentProductId, title: '当前浏览的商品', image: null, price: null }]
-              : [],
-          );
+        } else if (which === 'current') {
+          // current：不再用占位数据（2026-10-22 修复「只显示文字不渲染商品卡」）——
+          // 按 currentProductId 回源商品详情，把标题/主图/价格/在售状态填进真实卡片。
+          if (!currentProductId) {
+            setItems([]);
+          } else {
+            const detail = await productApi.detail(currentProductId);
+            const card = detail?.card;
+            setItems(
+              card
+                ? [{
+                    id: String(card.id),
+                    title: card.title,
+                    image: card.mainImage ?? null,
+                    price: card.minPrice ?? null,
+                    // 商品卡没有 status 字段：库存口径映射为在售/已下架（详情页公开读只认在售+过审）
+                    status: card.inStock === false ? 'OFF_SHELF' : 'ON_SALE',
+                  }]
+                : [],
+            );
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : '加载失败');

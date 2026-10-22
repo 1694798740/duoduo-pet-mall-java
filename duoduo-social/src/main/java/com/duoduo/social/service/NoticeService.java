@@ -146,6 +146,40 @@ public class NoticeService {
         return new UnreadCount(directedTotal + announcementTotal - readCount);
     }
 
+    /**
+     * 分类未读数（2026-10-22 · Q9 通知中心分类角标）。
+     *
+     * <p>与 {@link #unreadCount} 完全同一套口径，只是按 category 分桶：
+     * 定向未读 + 我没读过的公告 − 已读集合；排除私信/客服通知（各自域单独计数）。
+     * 前端分类 chip 上挂的数字就是这里的值 —— 数字必须来自服务端，
+     * 前端拿「当前页里 !read 的条数」当角标会把分页外的未读全部漏掉。
+     */
+    public java.util.LinkedHashMap<String, Long> unreadByCategory(Long userId) {
+        java.util.LinkedHashMap<String, Long> result = new java.util.LinkedHashMap<>();
+        for (String category : java.util.List.of(SocialDtos.NOTICE_ORDER, SocialDtos.NOTICE_FRIEND,
+                SocialDtos.NOTICE_MERCHANT, SocialDtos.NOTICE_SYSTEM, SocialDtos.NOTICE_ANNOUNCEMENT)) {
+            long directed = countForBadge(userId, category);
+            long broadcast = countForBadge(0L, category);
+            long readCount = 0;
+            if (directed + broadcast > 0) {
+                List<Long> ids = new ArrayList<>();
+                noticeMapper.selectList(new LambdaQueryWrapper<SocialNoticeEntity>()
+                                .in(SocialNoticeEntity::getUserId, List.of(userId, 0L))
+                                .eq(SocialNoticeEntity::getCategory, category)
+                                .and(excludeMessageNotice())
+                                .select(SocialNoticeEntity::getId))
+                        .forEach(n -> ids.add(n.getId()));
+                if (!ids.isEmpty()) {
+                    readCount = noticeReadMapper.selectCount(new LambdaQueryWrapper<SocialNoticeReadEntity>()
+                            .eq(SocialNoticeReadEntity::getUserId, userId)
+                            .in(SocialNoticeReadEntity::getNoticeId, ids));
+                }
+            }
+            result.put(category, directed + broadcast - readCount);
+        }
+        return result;
+    }
+
     // ---------------- 写：推送（第五十五轮，内部端点 + 私信） ----------------
 
     /**

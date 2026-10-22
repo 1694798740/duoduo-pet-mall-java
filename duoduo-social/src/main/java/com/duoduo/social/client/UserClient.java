@@ -26,4 +26,12 @@ public interface UserClient {
     /** 批量取角色（发消息时落 sender_role 快照，通知按它分流好友 / 商家消息） */
     @GetMapping("/internal/roles")
     ApiResponse<List<UserRoleBrief>> roles(@RequestParam("ids") String userIds);
+
+    /**
+     * 批量取店铺名（2026-10-22 · 客服会话名改店铺名优先）：
+     * 第三方商家的接待方在会话列表/详情里应显示「喵星人旗舰店」而不是店主昵称。
+     * 查不到的 id 不返回（自营客服 / 未入驻用户），调用方降级回昵称。
+     */
+    @GetMapping("/internal/store-names")
+    ApiResponse<List<com.duoduo.social.client.dto.StoreBrief>> storeNames(@RequestParam("ownerIds") String ownerIds);
 }

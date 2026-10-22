@@ -680,15 +680,21 @@ const OrderConsultButton: React.FC<{ orderNo: string; sellerId?: string | number
   const navigate = useNavigate();
   const [busy, setBusy] = React.useState(false);
 
+  /** 自营订单 sellerId=0：0 不是店铺，不带参走自营客服（2026-10-22 修复「店铺不存在」） */
+  const sellerQuery = sellerId != null && String(sellerId) !== '0' && String(sellerId) !== ''
+    ? `?sellerId=${sellerId}`
+    : '';
+  const gotoSupport = () => navigate(`/support${sellerQuery}`);
+
   const consult = async () => {
     if (busy) return;
     setBusy(true);
     try {
       await supportApi.send({ type: 'ORDER', content: '', orderNo });
-      navigate(sellerId ? `/support?sellerId=${sellerId}` : '/support');
+      gotoSupport();
     } catch {
       // 失败时仍然把用户带到客服页：消息没发出去，但人不能卡在订单页
-      navigate(sellerId ? `/support?sellerId=${sellerId}` : '/support');
+      gotoSupport();
     } finally {
       setBusy(false);
     }

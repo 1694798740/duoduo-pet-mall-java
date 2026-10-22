@@ -31,7 +31,36 @@ try {
   await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 }).catch(() => fail('登录未跳转'));
 
   await page.goto(BASE + '/cart', { waitUntil: 'networkidle' });
-  await page.waitForSelector('.stack .card', { timeout: 15000 });
+  await page.waitForSelector('.stack .card', { timeout: 15000 }).catch(async () => {
+    // ★ 自愈夹具（2026-10-22）：购物车被上一轮的「确认删除」清空后，本轮必须有货可测。
+    //   通过 API 直接加购（同账号登录态），恢复基线商品（网易严选 全价成猫粮 2kg / SKU 3003）。
+    const token = await page.evaluate(async () => {
+      const r = await fetch('/api/auth/login/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone: '13600002222', password: 'duoduo12345' }),
+      });
+      const b = await r.json();
+      return b?.data?.accessToken ?? null;
+    });
+    if (!token) fail('自愈夹具失败：拿不到 accessToken');
+    else {
+      const added = await page.evaluate(async (t) => {
+        const r = await fetch('/api/cart/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+          credentials: 'include',
+          body: JSON.stringify({ skuId: '3003', quantity: 1 }),
+        });
+        return r.status;
+      }, token);
+      if (added >= 200 && added < 300) pass('自愈夹具：购物车为空，已补 1 行基线商品');
+      else fail(`自愈夹具失败：加购返回 ${added}`);
+      await page.goto(BASE + '/cart', { waitUntil: 'networkidle' });
+      await page.waitForSelector('.stack .card', { timeout: 15000 });
+    }
+  });
 
   const rowCount = () => page.locator('section .stack .card').count();
   /** 店铺组头（第八十一轮）：每组显示真实店铺名，自营组带「自营」徽标 */
@@ -171,23 +200,37 @@ try {
   else fail(`全选文案异常：${dialogText.replace(/\s+/g, ' ').slice(0, 100)}`);
   await page.screenshot({ path: 'scripts/e2e/verify-cart-batch-confirm.png' });
   await page.locator('button', { hasText: '取消' }).click();
-  await page.waitForTimeout(500);
+  // ★ 必须等弹窗真正关闭再继续：否则下一步点复选框时点击落在遮罩上被吞，
+  //   状态停在「全选」，后续弹的是「清空已选商品」而非「删除已选商品」（实测踩过）。
+  await page.waitForSelector('.modal, [role="dialog"]', { state: 'hidden', timeout: 5000 });
+  await page.waitForTimeout(300);
   if ((await rowCount()) === before) pass('取消批量删除后商品仍在');
   else fail('取消批量删除后仍被删');
 
   // ── 勾选 1 件 → 删除已选 → 确认 → 行数减 1、已选归零 ─────────
-  await allBox.click(); // 取消全选
+  if (await allBox.isChecked()) await allBox.click(); // 取消全选
   await page.waitForTimeout(1800);
   await page.locator('section .stack .card').first().locator('input[type="checkbox"]').click();
   await page.waitForTimeout(1000);
   await delBtn.click();
-  await page.waitForSelector('text=删除已选商品', { timeout: 5000 });
+  // ★ 弹窗文案取决于「选中是否等于全部」：购物车只剩 1 行时（夹具每轮净删 1 行），
+  //   勾选 1 件就是全选，应用（正确地）弹「清空已选商品」——两种文案都合法，
+  //   断言只要求弹窗出现且确认后行数减 1，不硬编码文案。
+  const dlgHandle = await page.waitForSelector('.modal, [role="dialog"]', { timeout: 5000 });
+  const dlgTitle = ((await dlgHandle.textContent()) || '').replace(/\s+/g, ' ');
+  if (/清空已选商品|删除已选商品/.test(dlgTitle)) {
+    pass(`确认弹窗出现（${/清空已选商品/.test(dlgTitle) ? '清空已选商品' : '删除已选商品'}）`);
+  } else {
+    fail(`确认弹窗文案异常：${dlgTitle.slice(0, 80)}`);
+  }
   await page.locator('button', { hasText: '确认删除' }).click();
   await page.waitForTimeout(1500);
   const after = await rowCount();
   if (after === before - 1) pass(`确认删除后行数 ${before} → ${after}`);
   else fail(`确认删除后行数异常：${before} → ${after}`);
-  if ((await selectedCount()) === 0) pass('删除后已选件数归零、合计同步为 ¥0.00');
+  // 购物车可能因此清空（夹具只剩 1 行时）：空车没有「已选 n 件」底栏，跳过该断言
+  if (after === 0) pass('删除后购物车已空（已选必然归零）');
+  else if ((await selectedCount()) === 0) pass('删除后已选件数归零、合计同步为 ¥0.00');
   else fail('删除后已选件数未归零');
 
   await page.screenshot({ path: 'scripts/e2e/verify-cart-after-batch.png' });

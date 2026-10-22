@@ -54,6 +54,15 @@ public class NoticeController {
     }
 
     /**
+     * 分类未读数（2026-10-22 · Q9）：ORDER / FRIEND / MERCHANT / SYSTEM / ANNOUNCEMENT
+     * 各自的未读数（与 unread-count 同口径分桶）。通知中心分类 chip 的角标数据源。
+     */
+    @GetMapping("/unread-by-category")
+    public ApiResponse<java.util.LinkedHashMap<String, Long>> unreadByCategory() {
+        return ApiResponse.ok(noticeService.unreadByCategory(UserContext.requireUserId()));
+    }
+
+    /**
      * 合并未读（第五十五轮）：通知 + 私信 + 总数 —— tabBar 角标的唯一数据源。
      *
      * <p>放在通知控制器下而不是新建一个控制器：角标讲的是「通知中心的未读」，

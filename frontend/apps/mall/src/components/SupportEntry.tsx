@@ -22,7 +22,8 @@ export const SupportEntry: React.FC<{ small?: boolean; sellerId?: string; produc
 
   const open = () => {
     const query = new URLSearchParams();
-    if (sellerId) query.set('sellerId', sellerId);
+    // sellerId=0（自营口径）不是店铺：不带参，由服务端落到自营客服
+    if (sellerId && sellerId !== '0') query.set('sellerId', sellerId);
     if (productId) query.set('productId', productId);
     const suffix = query.toString();
     navigate(suffix ? `/support?${suffix}` : '/support');

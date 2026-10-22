@@ -1,6 +1,19 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-21 · 第六批）**：**小程序端暗夜模式（A2 四端收官）** ——
+> **最新一轮（2026-10-22 · 第八十五轮）**：**十问题批次（用户逐题反馈的 Web 端体验改造）** ——
+> ① 自营订单咨询不再报「店铺不存在」（sellerId=0/null 统一落官方客服，ORDER 卡分支同兜底）；
+> ② 店铺页补淘宝式排序（综合/销量/价格/最新）与店内关键词搜索（`storeProducts` 增 `keyword`，本店范围 like，不进 ES）；
+> ③ 订单卡片显示店铺名并可跳店铺（trade 经 Feign `tradeStoreNameClient` 批量取店名，自营固定「多多自营」，user 域只回 APPROVED 防夹具死链）；
+> ④ 客服会话名改店铺名（social `sellerDisplayOf`，自营保持官方客服昵称）+ 订单卡直达对应店铺会话；
+> ⑤ 客服会话逐条「未读」琥珀标记（判据 `m.mine && !m.read`）+「已读」回执改为「我方未读=0」；
+> ⑥ 聊天加号菜单二级化（图片/视频/表情/商品四入口 + 表情二级面板），移除外置🛍；
+> ⑦ 发商品「当前浏览」改名「正在看」并回源真实商品卡；
+> ⑧ 商家工作台导航角标（四接口聚合 + 30s 轮询 + `aria-hidden` 防破坏可访问名）；
+> ⑨ 通知中心分类未读数（`unread-by-category` 五类分桶）+ 三端未读方案文档 `docs/notification-unread-badge-design.md`；
+> ⑩ 图片灯箱（缩放/下载）+ 视频自绘播放弹窗（控制条/音量/全屏；视频核实已在 COS，无需迁移）。
+> 验证：定向 `scripts/web10-batch-check.py` **9/0**；e2e store-page **17/0** / notice-chat-follow **50/0** / seller **40/0** / cart-batch **31/0** / product-detail **19/0**；support-read **20/0**、support-split **22/0**；trade 单测 **119/0**、social **16/0**；user/product/social/trade/商城/商家六容器重建 healthy。
+
+> **上一轮（2026-10-21 · 第六批）**：**小程序端暗夜模式（A2 四端收官）** ——
 > `app.json` 开 `darkmode` + `theme.json` 两档（原生导航/tabBar/窗口背景）；`app.wxss`
 > 暗色块覆盖 10 个 token（正文 #c9cdd6 与 Web 同档柔和度）+ 新增 --gray-weak/--warn-weak；
 > 自绘导航栏（26 页在用）品牌蓝压暗 #2b3550；27 个页面 wxss 约 90 处硬编码色批量映射为
@@ -272,6 +285,23 @@
 ---
 
 ## 6. 本轮变更记录
+
+### 2026-10-22（六十四）· 十问题批次：咨询/店铺/客服/未读体验改造（Q1~Q10）
+
+| 项 | 实现 |
+| --- | --- |
+| Q1 自营咨询报「店铺不存在」 | 根因：自营订单 `seller_id=0`，前端把 0 当店铺 id 拼进 `?sellerId=0`，social 侧按店铺找会话失败。修：`SupportService.ensureForUser/sendByUser` 里 `target = (sellerId==null||sellerId==0) ? officialCsUserId : sellerId`；ORDER 分支同兜底；前端 `OrderDetail.tsx`/`SupportEntry.tsx` sellerId 为 0/空时**不带** sellerId 参数 |
+| Q2 店铺页排序/搜索 | `ProductController.storeProducts` 增 `keyword`（service 内本店范围 `like` 过滤，不进 ES）；`Store.tsx` 增排序胶囊（综合/销量/价格↑↓/最新）+ 搜索框（Enter 触发、可清除），空态区分「无商品」与「无匹配」 |
+| Q3 订单卡片店铺名 | `OrderService` 经 Feign `StoreNameClient`（`contextId=tradeStoreNameClient`，防与既有同服务客户端冲突）批量取店名 → `OrderView.storeName`；自营（0/null）固定「多多自营」不查库；user 域 `storeNamesOf` 只回 `APPROVED`（DRAFT 夹具店铺不外发，前端无店名不给链接，杜绝死链）；`Orders.tsx` 卡片头部渲染店铺名 Link |
+| Q4 会话名改店铺名 | social 新增 `client/dto/StoreBrief.java` + `UserClient.storeNames()`；`toSessionView` 增店名映射参数，`sellerDisplayOf`：店铺名 > 昵称 > 「店铺{id}」，**自营客服保持昵称**；`loadStoreNames` 批量、排除 0 与官方客服、失败降级空 Map。四处调用点接线 |
+| Q5 逐条「未读」标记 | 买家端 `Support.tsx` 与商家端 `SupportInbox.tsx`：`unreadTag = m.mine && !m.read` 渲染琥珀 `tag-warn`（非红色，区别于报错）；「已读」回执改为 `isLastMine && myUnreadCount===0` |
+| Q6 加号菜单二级化 | `chat-media.tsx` 的 `ChatMediaMenu` 改 `panel: 'root'|'emoji'` 两层：根层四入口（图片/视频/表情/商品），表情进二级面板；`onProduct` 可选回调。商城 `Chat.tsx`/`Support.tsx` 移除外置 🛍，商品入口收编进菜单（Chat 仅在有商品上下文时启用） |
+| Q7「正在看」真实商品卡 | `product-picker.tsx` TAB 改名；current 分支改为 `productApi.detail(currentProductId)` 回源，映射 `{id,title,image,price}`，`ProductCard` 无 status 不硬造 |
+| Q8 商家端导航角标 | `MerchantRoot.tsx` 新增 `useNavBadges`（四接口 `Promise.allSettled`、30s 轮询、路由切换刷新）+ `NavBadge` 胶囊；`aria-hidden` 防改变按钮可访问名破坏 `getByRole exact` 断言 |
+| Q9 分类未读数 | `NoticeService.unreadByCategory` 五类分桶（与 unreadCount 同口径，排除私信/客服）→ `GET /api/socials/notices/unread-by-category`；`Notifications.tsx` chip 角标（>99 显示 99+，`aria-hidden`）；方案文档 `docs/notification-unread-badge-design.md`（三端链路 + 两条纪律：角标数字必须服务端分桶、私信/客服通知列表可见不计数） |
+| Q10 灯箱与视频弹窗 | `chat-media.tsx`：IMAGE 点击 → `ImageLightbox`（0.4~4 缩放、下载）；VIDEO → 海报+自绘播放按钮+时长角标 → `VideoPlayerModal`（播放/进度 seek/静音/音量/全屏/保存，纯 CSS 实现，不引播放器库）；`downloadMedia` fetch blob 优先、CORS 失败退 `window.open`。核实视频文件已在 COS（`STORAGE_TYPE=cos`，mp4 不追加 imageMogr2 后缀），无需迁移 |
+| 验证 | 定向 `scripts/web10-batch-check.py` **9/0**（登录 / Q1 会话落官方客服 / Q3 storeName 下发与自营值 / Q1 ORDER 卡发送 / Q4 第三方会话名=店铺名、自营保持客服 / Q9 五类齐备）；e2e `store-page` 17/0、`notice-chat-follow` 50/0、`seller` 40/0、`cart-batch` 31/0、`product-detail` 19/0；`support-read` 20/0、`support-split` 22/0；`mvn test` trade 119/0、social 16/0；六容器重建 healthy，`NO_PROXY=*` curl 实测排序升降序与关键词命中 |
+| 教训 | ① 角标 span 必须加 `aria-hidden`，否则按钮可访问名变化让 `getByRole(..., {exact:true})` 假红（两处都踩）；② 测试构造器加依赖要数参数（OrderListFilterTest 19 个 null）；③ cart-batch 三处脆弱点修复：取消弹窗后等遮罩 hidden、确认文案接受「清空/删除已选」两态、空车自愈夹具（登录+补 SKU 3003） |
 
 ### 2026-10-22（六十三）· 修「支付成功但订单仍是待支付」：多卖家拆单撞幂等键
 

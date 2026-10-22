@@ -271,12 +271,9 @@ export const SupportPage: React.FC = () => {
                   <Bubble
                     key={m.id}
                     message={m}
+                    unreadTag={m.mine && !m.read}
                     receipt={
-                      isLastMine
-                        ? Number(thread.myUnreadCount) > 0
-                          ? `未读 ${Number(thread.myUnreadCount)} 条`
-                          : '已读'
-                        : null
+                      isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
                   />
                 );
@@ -287,19 +284,11 @@ export const SupportPage: React.FC = () => {
 
           <footer className="sup-foot">
             <div className="row" style={{ gap: 8 }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setPickerOpen(true)}
-                disabled={sending || active?.status === 'CLOSED'}
-                title="发送商品"
-              >
-                🛍
-              </button>
               <ChatMediaMenu
                 onMedia={sendMedia}
                 onEmoji={(emoji) => setDraft((v) => v + emoji)}
                 onSticker={(url) => void sendSticker(url)}
+                onProduct={() => setPickerOpen(true)}
                 onError={(msg) => push(msg, 'error')}
                 disabled={sending || active?.status === 'CLOSED'}
               />
@@ -379,12 +368,22 @@ function renderContent(message: SupportMessageView) {
   );
 }
 
-const Bubble: React.FC<{ message: SupportMessageView; receipt: string | null }> = ({
-  message,
-  receipt,
-}) => (
+const Bubble: React.FC<{
+  message: SupportMessageView;
+  /** 我发出、对方还没读的消息：气泡左侧挂「未读」标签（琥珀色，非红） */
+  unreadTag?: boolean;
+  receipt: string | null;
+}> = ({ message, unreadTag, receipt }) => (
   <div className={`sup-row${message.mine ? ' mine' : ''}`}>
     <div className="sup-col">
+      {unreadTag && (
+        <span
+          className="tag tag-warn"
+          style={{ fontSize: 11, alignSelf: 'flex-end', marginBottom: 2 }}
+        >
+          未读
+        </span>
+      )}
       {renderContent(message)}
       {message.card && (
         <a href={`/product/${message.card.productId}`} className="card sup-card">

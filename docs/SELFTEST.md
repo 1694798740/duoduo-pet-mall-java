@@ -252,6 +252,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 小程序前端契约单测 | `scripts\*-test.js`（7 个） | id 精度 19 / 闲置筛选 42 / AI 澄清 23 / 分享圈 74 / 角标 59 / 通知入口 23 / 时间换算 12 |
 | 小程序无浏览器 | `node --test scripts/mp-harness/*.test.js`、`node scripts/mp-harness/behavior.test.js` | 页面挂载 33 + AI 页 4 + 页面行为 31 + 内部凭据对拍 4 = **72 项** |
 | 前端真实浏览器 | `scripts\e2e\run-ui-checks.ps1` | **22 套**（首页 / **商品详情页** / 地址簿 / 商家端 / **商家端看板** / 评价 / 售后 / 物流 / 举报台 / 优惠券 / **秒杀** / **后台入口** / **顶栏布局** / **后台图表** / **我的闲置** / **分享圈** / **通知·私信·关注** / 审核 SLA / 商品审核 / 资质有效期 / 商家店员 / 审核台）。单套调试：`-Only <名字>` |
+| 十问题定向验证（八十五轮） | `python scripts/web10-batch-check.py` | **9 项**：买家登录 / Q1 `messages?sellerId=0` 落官方客服 / Q3 订单列表 `storeName` 下发且自营=「多多自营」/ Q1 自营 ORDER 卡可发送 / Q4 第三方会话名=店铺名、自营保持客服昵称 / Q9 `unread-by-category` 五类齐备。**必须 `NO_PROXY="*"`** |
 | ⚠️ e2e 假红的头号原因是**数据脏** | — | e2e 断言「商品图零裂图」。若历史冒烟**中途被中断**，会残留一条带 `https://example.com/…` 占位图的夹具评价；它挂在种子商品上 → **首页与详情页同时报裂图**，看起来像代码回归。判据：`SELECT COUNT(*) FROM t_review WHERE images LIKE '%example.com%';`（应为 0）。`review-smoke.ps1` 已加**开机清扫**自动处理 |
 | 网页端容器（S1） | `bash scripts/web-up.sh`；验收用 `UI_BASE=http://localhost:8088` 跑 3 套 e2e | 1 个容器（8088）；home 9 + header-layout 88 + notice-chat-follow 50 全绿（同源反代、SPA 兜底、静态缓存、上传体积均已断言） |
 | 接口契约 | `python scripts/extract-api-contract.py --check` | 端点总数由脚本写在契约文档末尾（`合计 N 个端点`）——**这里不抄数字**（抄来的必然落后，且没有检查能发现） |

@@ -70,20 +70,22 @@ public class ProductController {
     }
 
     /**
-     * 店铺主页在售商品列表（第八十二轮）：`GET /api/products/store/{sellerId}?page=&pageSize=&sort=`。
+     * 店铺主页在售商品列表（第八十二轮；2026-10-22 补 keyword 站内搜索）：
+     * `GET /api/products/store/{sellerId}?page=&pageSize=&sort=&keyword=`。
      *
      * <p>路径用**两段**（`/store/{sellerId}`）：`/{spuId}` 只匹配单段，不会冲突（同 A14 建议接口的判断）。
      * 公开只读（网关 `/api/products/**` 已整体免登）。只认「在售 + 已过审」的公开可见口径；
      * 店铺名随 {@link ProductCard#storeName} 下发。sellerId = 0（自营）也走同一入口，
-     * 前端用 {@code /store/0} 展示「多多自营」货架。
+     * 前端用 {@code /store/0} 展示「多多自营」货架。keyword 只在<b>本店范围内</b>过滤标题（淘宝店铺内搜索）。
      */
     @GetMapping("/store/{sellerId:\\d+}")
     public ApiResponse<PageResult<ProductCard>> storeProducts(
             @PathVariable Long sellerId,
             @RequestParam(defaultValue = "default") String sort,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(productService.storeProducts(sellerId, sort, page, pageSize));
+        return ApiResponse.ok(productService.storeProducts(sellerId, sort, keyword, page, pageSize));
     }
 
     /**

@@ -107,7 +107,9 @@ public class SupportService {
 
     /** 取或建我与某商家（缺省=自营客服）的会话 */
     public SessionView ensureForUser(Long userId, Long sellerId) {
-        Long target = sellerId == null ? officialCsUserId : sellerId;
+        // sellerId=0 也是自营：交易域 t_order.seller_id 对自营订单落 0（历史口径），
+        // 咨询订单把 0 传上来时必须归到官方客服，否则用户表查无此人报「店铺不存在」（2026-10-22 修复）。
+        Long target = (sellerId == null || sellerId == 0L) ? officialCsUserId : sellerId;
         Map<Long, UserBrief> briefs = loadBriefs(List.of(target, userId));
         UserBrief seller = briefs.get(target);
         if (seller == null) {
@@ -119,7 +121,7 @@ public class SupportService {
             throw BizException.notFound("店铺");
         }
         SupportSessionEntity session = ensureSession(target, userId);
-        return toSessionView(session, briefs, true);
+        return toSessionView(session, briefs, loadStoreNames(List.of(target)), true);
     }
 
     /** 我的全部客服会话（不区分自营/商家，按最后消息倒序） */
@@ -132,7 +134,9 @@ public class SupportService {
         Map<Long, UserBrief> briefs = loadBriefs(rows.stream()
                 .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId()))
                 .toList());
-        return rows.stream().map(s -> toSessionView(s, briefs, true)).toList();
+        return rows.stream().map(s -> toSessionView(s, briefs,
+                loadStoreNames(rows.stream().map(SupportSessionEntity::getSellerId).toList()),
+                true)).toList();
     }
 
     public ThreadView userThread(Long userId, Long sellerId, int page, int pageSize) {
@@ -146,7 +150,7 @@ public class SupportService {
         boolean media = "IMAGE".equals(type) || "VIDEO".equals(type) || "EMOJI".equals(type);
 
         Long sellerId = request.sellerId();
-        Long target = sellerId == null ? officialCsUserId : sellerId;
+        Long target = (sellerId == null || sellerId == 0L) ? officialCsUserId : sellerId;
         String orderSnapshot = null;
         String orderNo = null;
         if ("ORDER".equals(type)) {
@@ -159,6 +163,10 @@ public class SupportService {
                 throw BizException.forbidden("该订单不属于当前账号");
             }
             target = fact.sellerId();
+            if (target == null || target == 0L) {
+                // 自营订单在交易域 seller_id=0：订单卡会话固定归到官方客服
+                target = officialCsUserId;
+            }
             orderNo = fact.orderNo();
             orderSnapshot = orderSnapshot(fact);
         }
@@ -290,14 +298,18 @@ public class SupportService {
                 .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId()))
                 .toList());
         List<SessionView> views = result.getRecords().stream()
-                .map(s -> toSessionView(s, briefs, false)).toList();
+                .map(s -> toSessionView(s, briefs,
+                        loadStoreNames(result.getRecords().stream()
+                                .map(SupportSessionEntity::getSellerId).toList()),
+                        false)).toList();
         return PageResult.of(views, result.getTotal(), p, size);
     }
 
     public ThreadView sellerThread(Long sellerId, Long sessionId, int page, int pageSize) {
         SupportSessionEntity session = requireOwnedSession(sellerId, sessionId);
         Map<Long, UserBrief> briefs = loadBriefs(List.of(session.getSellerId(), session.getUserId()));
-        return thread(toSessionView(session, briefs, false), page, pageSize, sellerId, false);
+        return thread(toSessionView(session, briefs, loadStoreNames(List.of(session.getSellerId())), false),
+                page, pageSize, sellerId, false);
     }
 
     public MessageView sendBySeller(Long sellerId, Long sessionId, SellerSendRequest request) {
@@ -550,13 +562,14 @@ public class SupportService {
         }
     }
 
-    private SessionView toSessionView(SupportSessionEntity s, Map<Long, UserBrief> briefs, boolean userSide) {
+    private SessionView toSessionView(SupportSessionEntity s, Map<Long, UserBrief> briefs,
+                                      Map<Long, String> storeNames, boolean userSide) {
         UserBrief seller = briefs.get(s.getSellerId());
         UserBrief user = briefs.get(s.getUserId());
         long unread = userSide ? nz(s.getUnreadForUser()) : nz(s.getUnreadForSeller());
         return new SessionView(
                 s.getId(), s.getSellerId(),
-                seller == null || seller.nickname() == null ? "店铺" + s.getSellerId() : seller.nickname(),
+                sellerDisplayOf(s.getSellerId(), seller, storeNames),
                 seller == null ? null : seller.avatar(),
                 s.getUserId(),
                 user == null || user.nickname() == null ? "用户" + s.getUserId() : user.nickname(),
@@ -565,6 +578,50 @@ public class SupportService {
                 s.getLastMessageAt() == null ? null : s.getLastMessageAt().toInstant(ZoneOffset.UTC).toString(),
                 unread,
                 s.getStatus());
+    }
+
+    /**
+     * 接待方展示名（2026-10-22 · 会话名店铺名优先）：
+     * 第三方商家显示店铺名（t_merchant.name，「喵星人旗舰店」），而不是店主昵称（「喵星人店主」）——
+     * 买家心智里是在「跟店聊」，昵称改了店名没改就会对不上。店铺名查不到（未入驻/降级）回退昵称。
+     * 自营客服不是店铺，保持昵称（「多多官方客服」）。
+     */
+    private String sellerDisplayOf(Long sellerId, UserBrief seller, Map<Long, String> storeNames) {
+        if (sellerId != null && !Objects.equals(sellerId, officialCsUserId)
+                && sellerId != 0L && storeNames.containsKey(sellerId)) {
+            String storeName = storeNames.get(sellerId);
+            if (storeName != null && !storeName.isBlank()) {
+                return storeName;
+            }
+        }
+        return seller == null || seller.nickname() == null ? "店铺" + sellerId : seller.nickname();
+    }
+
+    /** 会话集合的店铺名批量快照（一次跨域，列表与线程共用）；失败降级为空（回退昵称） */
+    private Map<Long, String> loadStoreNames(Collection<Long> sellerIds) {
+        List<Long> distinct = sellerIds.stream()
+                .filter(Objects::nonNull)
+                .filter(id -> id != 0L && !Objects.equals(id, officialCsUserId))
+                .distinct()
+                .toList();
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            var response = userClient.storeNames(distinct.stream()
+                    .map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(",")));
+            List<com.duoduo.social.client.dto.StoreBrief> rows = response == null ? null : response.data();
+            if (rows == null || rows.isEmpty()) {
+                return Map.of();
+            }
+            Map<Long, String> map = new HashMap<>();
+            rows.forEach(b -> map.putIfAbsent(b.ownerUserId(), b.name()));
+            return map;
+        } catch (Exception e) {
+            log.warn("批量取店铺名失败 ids={}", distinct, e);
+            return Map.of();
+        }
     }
 
     private MessageView toMessageView(SupportMessageEntity m, Long viewerId, ProductCardBrief product) {
