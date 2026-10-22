@@ -82,7 +82,9 @@ CREATE TABLE t_order (
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX uk_order_no ON t_order (order_no);
-CREATE UNIQUE INDEX uk_order_user_idem ON t_order (user_id, idempotent_key);
+-- 幂等键唯一性必须带卖家维度：多卖家购物车会拆成多张子单，子单共享同一个客户端幂等键。
+-- 只按 (user_id, idempotent_key) 唯一，第二张子单必然撞键（2026-10-22 事故根因）。
+CREATE UNIQUE INDEX uk_order_user_idem ON t_order (user_id, idempotent_key, seller_id);
 CREATE INDEX idx_order_user ON t_order (user_id, status);
 CREATE INDEX idx_order_seller ON t_order (seller_id, status);
 CREATE INDEX idx_order_expire ON t_order (status, expire_at);

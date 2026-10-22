@@ -217,6 +217,8 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 32 | 三端入口收窄（Node 冒烟，**不进上面的一键运行器**） | `e8-entry-scope-smoke.mjs` | 以退出码为准 |
 | 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
 | 34 | **租户健康度面板（E24）** | `tenant-health-smoke.ps1` | 90 |
+| 35 | **多卖家拆单幂等 / 支付入账**（Python 探针，不进一键运行器） | `split-order-idem-smoke.py` | 18 |
+| 36 | **冻结台账 ↔ 商品域对账守卫**（Node，直接读库判两个来源） | `check-stock-freeze-recon.mjs` | 6 |
 
 > ★ **本表的项数已在 2026-10-13 全套重跑后刷新。** 此后若有脚本变动，**要么重跑全套把总数实算一遍再改，
 > 要么就留着不改** —— 绝不允许**只把总数手改 +N**（那又是在写一个没人核的数字）。

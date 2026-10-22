@@ -61,4 +61,20 @@ public interface PaymentMapper extends BaseMapper<PaymentEntity> {
     int markClosedByOrder(@Param("orderId") Long orderId,
                           @Param("reason") String reason,
                           @Param("at") LocalDateTime at);
+
+    /**
+     * 重复收款留痕：渠道确认这笔钱<b>确实收到了</b>，但同一订单已由另一张支付单入账。
+     *
+     * <p>为什么不当作普通失败丢掉：钱已经在平台账上，这不是「支付失败」而是「多收了一笔」。
+     * 置为 CLOSED 只是停止继续入账，同时把渠道流水号与原因留在行上 ——
+     * 退款、对账、客服解释都以这行记录为依据。用 plain FAILED 会把这条事实抹掉，
+     * 之后谁也说不清「这笔 SUCCESS 的钱去哪了」。
+     */
+    @Update("UPDATE t_payment SET status = 'CLOSED', channel_trade_no = #{tradeNo}, "
+            + "fail_reason = #{reason}, updated_at = #{at} "
+            + "WHERE pay_no = #{payNo} AND status IN ('INIT', 'PENDING')")
+    int markDuplicateCharge(@Param("payNo") String payNo,
+                            @Param("tradeNo") String tradeNo,
+                            @Param("reason") String reason,
+                            @Param("at") LocalDateTime at);
 }

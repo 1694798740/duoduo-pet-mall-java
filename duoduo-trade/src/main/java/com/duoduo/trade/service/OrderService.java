@@ -54,12 +54,15 @@ import com.duoduo.trade.support.OrderStatus;
 import com.duoduo.trade.support.SettlementStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -160,6 +163,17 @@ public class OrderService {
 
     @Value("${duoduo.trade.order-expire-minutes:30}")
     private int orderExpireMinutes;
+
+    /**
+     * 自身代理（延迟注入，不参与构造器以避免自引用）。
+     *
+     * <p><b>为什么需要它</b>：下单要在「撞唯一键」时把本次事务整体回滚，然后到事务<b>外</b>
+     * 重新读首次结果重放。类内 {@code this.placeOrderTx(...)} 调用不走 Spring 代理，
+     * 事务与回滚都无从谈起；只有拿到代理对象才能切换事务边界。
+     */
+    @Autowired
+    @Lazy
+    private OrderService self;
 
     @Value("${duoduo.trade.max-items-per-order:50}")
     private int maxItemsPerOrder;
@@ -452,24 +466,52 @@ public class OrderService {
      * 同步下单入口（网关调用路径）：身份从 {@code UserContext} 取（网关注入的 X-User-*）。
      * 削峰队列的消费者走下面的重载 —— 两条路径共用同一份下单逻辑（验收④）。
      */
-    @Transactional
     public PlaceOrderResult placeOrder(PlaceOrderRequest request) {
         return placeOrder(UserContext.requireUserId(), request);
     }
 
     /**
-     * 下单核心（同步端点与削峰消费者共用，A11）。
+     * 下单入口（同步端点与削峰消费者共用，A11）——<b>事务边界所在的这一层不写库</b>。
+     *
+     * <p>写操作全在 {@link #placeOrderTx} 里，这么做只为了一件事：
+     * 唯一键撞车时，本次事务必须<b>整体回滚干净</b>，再回到事务外把首次结果读出来重放。
+     * 在事务内「补偿后 return」会把半批订单提交上去 —— 2026-10-22 的事故正是如此：
+     * 多卖家购物车拆出的第一张子单被提交了，但它的冻结库存已被补偿释放，
+     * 于是订单永远停在待付款、支付成功后也扣不动库存。
      *
      * <p>userId 显式入参：消费线程没有网关注入的身份上下文，消息体里带谁来。
-     * 幂等（唯一索引快路径）、库存校验、券锁定、状态机全部在本方法内 ——
+     * 幂等（唯一索引 + 快路径）、库存校验、券锁定、状态机全部在 {@link #placeOrderTx} 内 ——
      * 无论从哪条路径进来，语义严格一致。
      */
-    @Transactional
     public PlaceOrderResult placeOrder(Long userId, PlaceOrderRequest request) {
+        try {
+            return self.placeOrderTx(userId, request);
+        } catch (DuplicateOrderKeyException e) {
+            // 本次事务已回滚（补偿已在事务内完成）。首次成功的那批订单此刻才对外可见。
+            List<OrderEntity> winners = findAllByIdempotentKey(userId, request.idempotentKey());
+            if (winners.isEmpty()) {
+                throw e.original();
+            }
+            log.info("下单幂等撞车：本次事务已整体回滚，按首次结果重放 {} 笔订单（key={}）",
+                    winners.size(), request.idempotentKey());
+            return replay(userId, winners);
+        }
+    }
 
-        // 1) 幂等快路径：同一用户同一幂等键 → 直接返回首次产生的订单
-        OrderEntity existing = findByIdempotentKey(userId, request.idempotentKey());
-        if (existing != null) {
+    /**
+     * 下单写入核心：<b>必须在事务内执行</b>（只允许经 {@link #placeOrder(Long, PlaceOrderRequest)} 调用）。
+     *
+     * <p>拆单时<b>每张子单</b>都带同一个客户端幂等键，唯一索引因此必须带上卖家维度
+     * （{@code uk_order_user_idem(user_id, idempotent_key, seller_id)}）——
+     * 否则「一个购物车里有两家卖家的货」时，第二张子单必然撞键，
+     * 而它撞的不是并发，是自己人。
+     */
+    @Transactional
+    public PlaceOrderResult placeOrderTx(Long userId, PlaceOrderRequest request) {
+
+        // 1) 幂等快路径：同一用户同一幂等键 → 直接返回首次产生的那批订单（拆单可能有多张）
+        List<OrderEntity> existing = findAllByIdempotentKey(userId, request.idempotentKey());
+        if (!existing.isEmpty()) {
             return replay(userId, existing);
         }
 
@@ -586,15 +628,17 @@ public class OrderService {
                         frozenRefs));
             }
         } catch (DuplicateKeyException e) {
-            // 并发下同一幂等键撞车：唯一索引拦下了第二条，回滚并返回首次那条。
-            // 券也要一并解锁 —— 它是用「本次预生成的订单号」锁的，而那个订单并没有建成。
+            // 唯一索引拦下了重复的（user, 幂等键, 卖家）组合：并发双提交，或同一购物车里
+            // 同一卖家被拆成了两张单。无论哪种，**本事务一行都不能留** ——
+            // 尤其是库存冻结：它在商品服务上已经真实生效，补偿释放之后就与本地台账脱钩了。
+            //
+            // 早前这里「补偿完 return replay」等于让事务照常提交：第一张子单连同行和台账一起落库，
+            // 但它的冻结量已被下面这行释放掉 → 订单永远付不进款（扣库存时 frozen_stock 为 0）。
+            // 现在改为标记回滚 + 抛给事务外的入口处理：要么整批成立，要么整批不成立。
             releaseCouponQuietly(couponOrderNo, "幂等撞车补偿");
             releaseQuietly(frozenRefs, "幂等撞车补偿");
-            OrderEntity dup = findByIdempotentKey(userId, request.idempotentKey());
-            if (dup != null) {
-                return replay(userId, dup);
-            }
-            throw e;
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            throw new DuplicateOrderKeyException(request.idempotentKey(), e);
         } catch (RuntimeException e) {
             // 关键补偿：库存冻结与券锁定都在别的服务，不受本事务回滚保护
             releaseCouponQuietly(couponOrderNo, "下单失败补偿");
@@ -1091,13 +1135,44 @@ public class OrderService {
             return replayPayment(order, existing);
         }
 
+        LocalDateTime now = nowUtc();
+
+        // 同一订单只允许存在一个「收款入口」，这是钱的问题，不能靠订单状态兜。
+        //
+        // 订单状态只能挡住「已入账」，挡不住「钱已到账但入账失败」的那一段：
+        // 2026-10-22 用户点两次支付，开出两张支付宝收银台，两张都付了钱，
+        // 而订单因为库存扣减失败一直停在待付款 —— 平台多收了一笔，用户还看不到。
+        // 因此开新单之前必须自己查一遍该订单的支付单。
+        PaymentEntity paidOne = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getOrderId, order.getId())
+                .eq(PaymentEntity::getStatus, PaymentEntity.STATUS_SUCCESS)
+                .orderByDesc(PaymentEntity::getCreatedAt)
+                .last("LIMIT 1"));
+        if (paidOne != null) {
+            throw new BizException(ErrorCode.BUSINESS_RULE,
+                    "该订单已支付成功（支付单 " + paidOne.getPayNo() + "），请勿重复支付；"
+                            + "若订单状态仍未更新，请联系客服核对");
+        }
+
+        // 同一渠道还有一张未过期的支付单 → 直接复用它，不再生成第二个二维码。
+        // 「换个页面再点一次支付」不该产生第二条可付款链接 —— 那正是重复扣款的入口。
+        PaymentEntity livePayment = paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getOrderId, order.getId())
+                .eq(PaymentEntity::getChannel, channel.code())
+                .eq(PaymentEntity::getStatus, PaymentEntity.STATUS_PENDING)
+                .gt(PaymentEntity::getExpireAt, now)
+                .orderByDesc(PaymentEntity::getCreatedAt)
+                .last("LIMIT 1"));
+        if (livePayment != null) {
+            return replayPayment(order, livePayment);
+        }
+
         OrderStatus current = OrderStatus.of(order.getStatus());
         if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
                     "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许支付");
         }
 
-        LocalDateTime now = nowUtc();
         PaymentEntity payment = new PaymentEntity();
         payment.setId(idGenerator.nextId());
         payment.setPayNo(orderNoGenerator.next());
@@ -1189,6 +1264,15 @@ public class OrderService {
                     "回调金额（" + payload.amount() + " 分）与支付单金额（" + nz(payment.getAmount())
                             + " 分）不一致，已拒绝入账");
         }
+
+        // 重复收款：同一订单已经有别的支付单成功入账，这笔钱是多收的。
+        // 必须留痕并停止入账 —— 既不能扣第二次库存，也不能像「入账失败」那样无休止重试。
+        PaymentEntity anotherPaid = findAnotherSuccessPayment(order.getId(), payment.getPayNo());
+        if (anotherPaid != null) {
+            markDuplicateCharge(payment, payload.channelTradeNo(), anotherPaid);
+            return toPayResult(order, payment, true);
+        }
+
         OrderStatus current = OrderStatus.of(order.getStatus());
         if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
             throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
@@ -1221,6 +1305,14 @@ public class OrderService {
                 OrderEntity order = orderMapper.selectById(payment.getOrderId());
                 if (order == null || !"SUCCESS".equals(payload.status())
                         || payload.amount() != nz(payment.getAmount())) {
+                    continue;
+                }
+                // 渠道说「这笔钱收了」，但订单已由另一张支付单入账 → 重复收款，留痕待退款。
+                // 不能简单 continue：那样这张单会一路 PENDING 到过期，被标成「超时未支付」，
+                // 而钱其实已经收了 —— 账面上就凭空少了一笔收款。
+                PaymentEntity anotherPaid = findAnotherSuccessPayment(order.getId(), payment.getPayNo());
+                if (anotherPaid != null) {
+                    markDuplicateCharge(payment, payload.channelTradeNo(), anotherPaid);
                     continue;
                 }
                 OrderStatus current = OrderStatus.of(order.getStatus());
@@ -1968,10 +2060,18 @@ public class OrderService {
 
     // ---------------- 内部实现 ----------------
 
-    private OrderEntity findByIdempotentKey(Long userId, String key) {
-        return orderMapper.selectOne(new LambdaQueryWrapper<OrderEntity>()
+    /**
+     * 按幂等键取首次产生的<b>整批</b>订单。
+     *
+     * <p>必须是 List 而不是单条：一个购物车可能按卖家拆成多张子单，
+     * 它们共享同一个客户端幂等键（唯一索引里带了 seller_id 才允许）。用 {@code selectOne}
+     * 会直接抛 TooManyResultsException，表现为「多卖家购物车支付一次就报 500」。
+     */
+    private List<OrderEntity> findAllByIdempotentKey(Long userId, String key) {
+        return orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
                 .eq(OrderEntity::getUserId, userId)
-                .eq(OrderEntity::getIdempotentKey, key));
+                .eq(OrderEntity::getIdempotentKey, key)
+                .orderByAsc(OrderEntity::getId));
     }
 
     private OrderEntity findByOrderNo(Long userId, String orderNo) {
@@ -1990,6 +2090,40 @@ public class OrderService {
         return paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
                 .eq(PaymentEntity::getChannel, channel.trim().toUpperCase())
                 .eq(PaymentEntity::getIdempotentKey, idempotentKey));
+    }
+
+    /**
+     * 同一订单下「另一张」已成功入账的支付单 —— 有它即意味着本次是重复收款。
+     *
+     * <p>排除 {@code payNo} 自身：渠道回调必然重复投递，同一张支付单被处理两次是常态，
+     * 那不是重复收款（那张单的状态已经是 SUCCESS，前面的幂等分支就返回了）。
+     */
+    private PaymentEntity findAnotherSuccessPayment(Long orderId, String payNo) {
+        return paymentMapper.selectOne(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getOrderId, orderId)
+                .eq(PaymentEntity::getStatus, PaymentEntity.STATUS_SUCCESS)
+                .ne(PaymentEntity::getPayNo, payNo)
+                .orderByAsc(PaymentEntity::getCreatedAt)
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 把一笔「渠道确认已收、但订单已由别人入账」的支付单置为 CLOSED 并留痕。
+     *
+     * <p>日志用 ERROR：这是一笔要走退款的真实资金，必须能在日志里被检索到
+     * （对账守卫 {@code check-payment-recon.mjs} 也会把它列出来）。
+     */
+    private void markDuplicateCharge(PaymentEntity payment, String channelTradeNo, PaymentEntity anotherPaid) {
+        LocalDateTime now = nowUtc();
+        String reason = "重复支付：订单已由支付单 " + anotherPaid.getPayNo() + " 入账，本笔需退款";
+        int marked = paymentMapper.markDuplicateCharge(payment.getPayNo(), channelTradeNo, reason, now);
+        payment.setStatus(PaymentEntity.STATUS_CLOSED);
+        payment.setChannelTradeNo(channelTradeNo);
+        payment.setFailReason(reason);
+        log.error("重复收款：payNo={} tradeNo={} amount={}分 与已入账的 payNo={} 属于同一订单 {}，"
+                        + "本次未入账、需退款（mark={}）",
+                payment.getPayNo(), channelTradeNo, payment.getAmount(),
+                anotherPaid.getPayNo(), payment.getOrderId(), marked);
     }
 
     /** 支付幂等重放：返回首次支付的结果，不产生任何副作用 */
@@ -2094,11 +2228,36 @@ public class OrderService {
                 isoTs(payment.getExpireAt()));
     }
 
-    /** 幂等重放：返回该幂等键首次产生的订单 */
-    private PlaceOrderResult replay(Long userId, OrderEntity order) {
-        List<OrderView> views = toViews(List.of(order));
+    /**
+     * 幂等重放：返回该幂等键首次产生的那批订单（多卖家拆单会有多张）。
+     *
+     * <p>{@code idempotentReplay=true} 让前端能明确显示「这是已存在的订单」，
+     * 而不是把重放结果当成「刚刚又下了一单」。
+     */
+    private PlaceOrderResult replay(Long userId, List<OrderEntity> orders) {
+        List<OrderView> views = toViews(orders);
         return new PlaceOrderResult(views, views.size(),
                 views.stream().mapToLong(OrderView::payAmount).sum(), true);
+    }
+
+    /**
+     * 下单撞唯一键的内部信号：只在 {@code placeOrderTx} 与事务外入口之间传递。
+     *
+     * <p>它必须能穿出 {@code @Transactional} 才会触发回滚（运行期异常默认回滚），
+     * 所以是 RuntimeException；外层拿到后先查首次结果，查不到才把原始异常抛出，
+     * 保证「撞键」与「真的写失败」在调用方眼里不会被混为一谈。
+     */
+    private static final class DuplicateOrderKeyException extends RuntimeException {
+        private final transient DuplicateKeyException original;
+
+        private DuplicateOrderKeyException(String idempotentKey, DuplicateKeyException cause) {
+            super("下单幂等键撞车：" + idempotentKey, cause);
+            this.original = cause;
+        }
+
+        private DuplicateKeyException original() {
+            return original;
+        }
     }
 
     private void writeStatusLog(Long orderId, String from, String to,

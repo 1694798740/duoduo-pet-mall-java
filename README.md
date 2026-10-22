@@ -4,6 +4,31 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-22（六十三）· 支付成功却一直「待支付」：多卖家拆单撞幂等键，已修复**
+
+- **现象**：支付宝沙箱真实付款成功（两笔 `ALIPAY_PC` 均 SUCCESS），订单仍停在 `PENDING_PAYMENT`；
+  兜底调度每分钟重试并报「扣减库存失败：SKU 3010/3020 库存不足」，而库里 `stock=479/260`、
+  `frozen_stock=0` —— **库存根本不缺，缺的是冻结量**。所以问题不在回调，在下单那一刻。
+- **根因链**：多卖家购物车按卖家拆成多张子单，而每张子单都写同一个客户端 `idempotent_key`，
+  唯一索引却是 `(user_id, idempotent_key)` ⇒ **第二张子单必然撞键**（撞的是同一批拆单的自己人）。
+  撞键分支又在**事务内**「补偿释放库存 → `return replay`」⇒ 第一张子单连同行与台账一起提交，
+  但它的冻结量已被释放 ⇒ 商品域 `frozen_stock=0`、交易域台账 `FROZEN`，支付时
+  `deductStock` 要求 `frozen_stock >= qty`，永远扣不动。
+- **修复**：① 唯一索引加 `seller_id`（`docs/sql/incremental/42-order-idem-per-seller.sql`，可重复执行）；
+  ② 撞键改为 `setRollbackOnly()` + 抛内部信号，由**事务外**入口重查并回放整批（要么整批成立、要么整批不成立）；
+  ③ 幂等查询 `selectOne` → `selectList`（多行会抛 `TooManyResultsException`）；
+  ④ 顺手堵死**同一订单反复开收款入口** —— 开新单前查该订单是否已有 SUCCESS 支付单、同渠道未过期
+  `PENDING` 直接复用；回调/查询兜底遇到「订单已由另一张支付单入账」置 `CLOSED` 并留痕，不再无休止重试。
+- **数据修复**：`docs/sql/repair/2026-10-22-frozen-mismatch.sql` 只把两个来源摆回自洽，**不手工改订单状态**，
+  让兜底调度走完整入账链路（托管/券核销/状态日志都真实产生）。终态：订单 `PAID`、台账 `DEDUCTED`、
+  `stock 477/259`、`frozen 0`、托管单 `CUSTODY 14880`；被重复收取的 148.80 元经
+  `alipay.trade.refund` 原路退回（`fund_change=Y`）。
+- **验证**：新增 `scripts/split-order-idem-smoke.py` **18/18**（两家卖家拆 2 单 → 同键重放回整批 →
+  不重复冻结 → 台账与商品域一致 → 两张都能支付到 PAID）；新增
+  `scripts/check-stock-freeze-recon.mjs` **6/6**（修复前 **4/6**，恰好红在两条事故症状上；
+  反向验证：人为制造冻结量偏差只红 1 条）；`direct-buy-smoke` **14/0**（同时修掉脚本自身两处假绿）；
+  `mvn -pl duoduo-trade test` **119/0**。
+
 **2026-10-19（四十）· 秒杀添加商品功能修复（搜索污染根因 ＋ 移除手输 SKU ID ＋ 表单布局）**
 
 - **根因：搜索条件被「钻取态」污染**。选商品面板原来用「钻取数组空不空」判断该显示搜索结果还是某个商品的

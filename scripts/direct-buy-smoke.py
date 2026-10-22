@@ -89,9 +89,13 @@ def main():
     direct_order_no = first.get("orderNo")
 
     # 2) 直购不动购物车：加一件 → 直购 → 购物车条目数不变
-    call("POST", "/api/cart/items", {"skuId": 2006, "quantity": 1}, token)
+    #    夹具用 2003（自营、在售、有库存）。原来写的 2006 在库里已不存在——
+    #    加购静默失败 → before=0，断言报的是"直购动了购物车"，其实是夹具没了。
+    cart_sku = 2003
+    call("POST", "/api/cart/items", {"skuId": cart_sku, "quantity": 1}, token)
     status, body = call("GET", "/api/cart", None, token)
     before = len(((body or {}).get("data") or {}).get("items") or [])
+    check("② 夹具：购物车里已有 1 条", before == 1, "before=%s（0 说明加购没成功）" % before)
     status, _ = call("POST", "/api/orders", {
         "addressId": address_id, "buySkuId": sku_id, "buyQuantity": 1,
         "idempotentKey": "direct-%d" % random.getrandbits(48),
@@ -101,14 +105,17 @@ def main():
     check("② 直购不影响购物车条目数", before == after == 1, "before=%s after=%s" % (before, after))
 
     # 3) 购物车结算原路径仍可用，且清空已勾选条目
-    call("PATCH", "/api/cart/items/2006", {"selected": True}, token)
-    status, body = call("POST", "/api/orders", {
+    call("PATCH", "/api/cart/items/%d" % cart_sku, {"selected": True}, token)
+    place_status, body = call("POST", "/api/orders", {
         "addressId": address_id, "idempotentKey": "cart-%d" % random.getrandbits(48),
     }, token)
     cart_orders = ((body or {}).get("data") or {}).get("orders") or []
     status, body = call("GET", "/api/cart", None, token)
     left = len(((body or {}).get("data") or {}).get("items") or [])
-    check("③ 购物车结算仍可下单", status in (200, 201) and len(cart_orders) == 1, status)
+    # 状态码必须取「下单」那一次：后面那次 GET 会把它覆盖成 200，
+    # 断言就永远看不到下单失败（假绿）。
+    check("③ 购物车结算仍可下单", place_status in (200, 201) and len(cart_orders) == 1,
+          "%s orders=%d" % (place_status, len(cart_orders)))
     check("③ 购物车结算后已勾选条目被清空", left == 0, "left=%s" % left)
 
     # 4) buySkuId 缺 buyQuantity → 400
