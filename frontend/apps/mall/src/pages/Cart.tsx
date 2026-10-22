@@ -15,14 +15,14 @@
  *    避免与后端口径出现分毫差异
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { skuImage } from '@duoduo/api-sdk/images';
 import { cartApi } from '@duoduo/api-sdk/endpoints';
 import type { CartItemView, CartView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { Alert, Empty, LoadingBlock, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, LoadingBlock, Modal, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
 
 const INVALID_REASON_TEXT: Record<string, string> = {
@@ -167,11 +167,31 @@ export const CartPage: React.FC = () => {
   const { refreshCart } = useApp();
   const [pendingSku, setPendingSku] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** 删除前确认：单条 / 已选批量（全选时文案升级为「清空购物车」） */
+  const [confirm, setConfirm] = useState<
+    | { kind: 'item'; skuId: string; title: string }
+    | { kind: 'selected'; count: number; amount: number; all: boolean }
+    | null
+  >(null);
+  const [busy, setBusy] = useState(false);
+  const allRef = useRef<HTMLInputElement | null>(null);
 
   const fetcher = useCallback(() => cartApi.list(), []);
   const { data, loading, error, reload } = useAsync<CartView>(fetcher);
 
-  /** 所有写操作成功后统一刷新本地视图 + 头部角标 */
+  // 派生状态放在 hooks 区（组件有 early return，hooks 不能在其后）
+  const items = data?.items ?? [];
+  const validItems = items.filter((i) => i.valid);
+  const allSelected = validItems.length > 0 && validItems.every((i) => i.selected);
+  const someSelected = validItems.some((i) => i.selected);
+  const selectedCount = data?.selectedCount ?? 0;
+
+  // 只选了一部分时，全选框显示为「半选」——否则用户以为没选
+  useEffect(() => {
+    if (allRef.current) allRef.current.indeterminate = someSelected && !allSelected;
+  }, [someSelected, allSelected]);
+
+  /** 所有写操作成功后统一刷新本地视图 + 头部角标（数量/合计/全选态一起变） */
   const afterMutation = async () => {
     await reload();
     await refreshCart();
@@ -203,25 +223,42 @@ export const CartPage: React.FC = () => {
     }
   };
 
-  const removeItem = async (skuId: string) => {
-    setPendingSku(skuId);
+  /** 真正执行删除（确认弹窗之后才调用） */
+  const doRemoveItem = async (skuId: string) => {
+    setBusy(true);
     setActionError(null);
     try {
       await cartApi.remove(skuId);
       push('已移出购物车', 'success');
+      setConfirm(null);
       await afterMutation();
     } catch (err) {
       setActionError(toFriendlyMessage(err));
     } finally {
-      setPendingSku(null);
+      setBusy(false);
+    }
+  };
+
+  /** 删除已选（全选时即「清空已选中的全部商品」） */
+  const doRemoveSelected = async () => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await cartApi.removeSelected();
+      push(`已删除 ${res?.removed ?? selectedCount} 件商品`, 'success');
+      setConfirm(null);
+      await afterMutation();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   const selectAll = async () => {
     if (!data) return;
-    const validItems = data.items.filter((i) => i.valid);
-    const allSelected = validItems.length > 0 && validItems.every((i) => i.selected);
     setActionError(null);
+    setBusy(true);
     try {
       // 逐条设置：后端没有批量勾选接口，串行保证每步都成功
       for (const item of validItems) {
@@ -232,6 +269,8 @@ export const CartPage: React.FC = () => {
       await afterMutation();
     } catch (err) {
       setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -270,9 +309,6 @@ export const CartPage: React.FC = () => {
     );
   }
 
-  const validItems = data.items.filter((i) => i.valid);
-  const allSelected = validItems.length > 0 && validItems.every((i) => i.selected);
-
   return (
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
@@ -298,7 +334,7 @@ export const CartPage: React.FC = () => {
             pending={pendingSku === item.skuId}
             onQuantity={(skuId, q) => void changeQuantity(skuId, q)}
             onSelect={(skuId, s) => void changeSelection(skuId, s)}
-            onRemove={(skuId) => void removeItem(skuId)}
+            onRemove={() => setConfirm({ kind: 'item', skuId: item.skuId, title: item.title })}
           />
         ))}
       </div>
@@ -307,13 +343,31 @@ export const CartPage: React.FC = () => {
         <div className="row-between row-wrap">
           <label className="row small" style={{ gap: 6 }}>
             <input
+              ref={allRef}
               type="checkbox"
               checked={allSelected}
-              disabled={validItems.length === 0}
+              disabled={validItems.length === 0 || busy}
               onChange={() => void selectAll()}
             />
             全选（{validItems.length} 件可购买）
           </label>
+
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'var(--danger)' }}
+            disabled={selectedCount === 0 || busy}
+            onClick={() =>
+              setConfirm({
+                kind: 'selected',
+                count: selectedCount,
+                amount: data.selectedAmount,
+                all: allSelected,
+              })
+            }
+          >
+            删除已选{selectedCount > 0 ? `（${selectedCount}）` : ''}
+          </button>
 
           <div className="row row-wrap" style={{ marginLeft: 'auto' }}>
             <span className="small muted">
@@ -332,6 +386,43 @@ export const CartPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={confirm != null}
+        title={
+          confirm?.kind === 'item'
+            ? '移出购物车'
+            : confirm?.all
+              ? '清空已选商品'
+              : '删除已选商品'
+        }
+        onClose={() => (busy ? undefined : setConfirm(null))}
+        footer={
+          <>
+            <button className="btn btn-ghost" disabled={busy} onClick={() => setConfirm(null)}>
+              取消
+            </button>
+            <button
+              className="btn"
+              style={{ background: 'var(--danger)' }}
+              disabled={busy}
+              onClick={() =>
+                void (confirm?.kind === 'item' ? doRemoveItem(confirm.skuId) : doRemoveSelected())
+              }
+            >
+              {busy ? '处理中…' : '确认删除'}
+            </button>
+          </>
+        }
+      >
+        <p className="small">
+          {confirm?.kind === 'item'
+            ? `确定将「${confirm.title}」移出购物车吗？此操作不可撤销。`
+            : confirm?.all
+              ? `已全选 ${confirm?.count ?? 0} 件可购买商品（合计 ${formatPrice(confirm?.amount ?? 0)}），将全部删除且不可撤销。`
+              : `将删除已选的 ${confirm?.count ?? 0} 件商品（合计 ${formatPrice(confirm?.amount ?? 0)}），此操作不可撤销。`}
+        </p>
+      </Modal>
     </div>
   );
 };
