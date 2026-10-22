@@ -5504,3 +5504,12 @@ ES 索引 `duoduo-search` 里有 **124 条 LISTING 文档、0 条 SPU**，
   违禁词 422 / C2C 闲置可见性控制。
 - 用户域：注册登录 / httpOnly Cookie / 网关 401 拦截 / 身份透传 / 实名掩码 /
   宠物档案与「生命阶段矛盾」422。
+
+## 六十四（2026-10-22）：Web 端支付宝「电脑网站支付」渠道上线（沙箱就绪）
+
+- **新增 `ALIPAY_PC` 渠道**：`alipay.trade.page.pay` 预下单（RSA2 签名拼收银台 URL）→ 用户跳转支付宝付款 → 表单回调验签入账 → 同步退款。装进现有 `PaymentChannel` SPI 骨架，订单/账本/幂等代码零改动。
+- **手写 RSA2 签名/验签**（`AlipayCrypto`，约 60 行）：字典序拼串 + SHA256withRSA，不引 alipay-sdk 依赖链。单测 6/6：签名往返、篡改金额必拒、缺 sign 必拒、错公钥必拒、PEM 头兼容。
+- **沙箱/生产零代码差别**：只换 `ALIPAY_GATEWAY` 与密钥对。沙箱网关（`openapi-sandbox.dl.alipaydev.com`）**无需营业执照**，用沙箱钱包付款；生产网关（`openapi.alipay.com`）需个体工商户/企业实名并签约「电脑网站支付」。
+- **凭据只走环境变量**（`ALIPAY_PAY_ENABLED / APP_ID / PRIVATE_KEY_PEM / PUBLIC_KEY_PEM / GATEWAY / NOTIFY_URL / RETURN_URL / EXPIRE_MINUTES`），compose 已透传，启用即启动自检缺项失败（fail closed）。
+- **前端**：订单详情「支付渠道」新增「支付宝」——预下单后展示「跳转支付宝付款」按钮，付款后本页轮询 `GET /api/payments/{payNo}` 自动入账；「本机模拟扫码」收窄为沙箱渠道专用。
+- 已知边界：个人主体无照**只能跑沙箱**（正式收款必须执照签约，见 `docs/payment-qualification-alipay-vs-wechat.md`）；回调地址网关白名单 `/api/payments/callback/**` 已覆盖，无需新增。
