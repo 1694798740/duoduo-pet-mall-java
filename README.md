@@ -2059,6 +2059,15 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十五）· 排障：购物车/结算页封面裂图
+
+- **根因**：购物车下发 SKU 图 `/img/sku/*.svg`（语义占位路径，文件从不存在）；
+  `Cart.tsx` / `Checkout.tsx` 直接 `src={item.image}` 没走 `images.ts` 的重映射层（全仓仅此两处漏网）。
+- **迷惑点**：nginx SPA 回退把 404 变 **200 text/html**，网络面板看是绿的，`<img>` 却渲染不了 HTML。
+- **修复**：两页接入 `skuImage(skuId, spuId, image)`，与商品列表/详情同口径。
+- **验证**：真实浏览器抓包 src 变为 `p09.jpg`/`p02.jpg`（200 image/jpeg，naturalWidth=600）。
+  排查脚本沉淀为 `scripts/e2e/cart-img-debug.mjs`。
+
 ### 2026-10-22（六十四）· 足迹页对标淘宝：按天分组 + 分页 + 批量删除 + 搜索
 
 - **分组**：接口返回扁平倒序列表，前端按**北京自然日**分组（`bjDateKey`，不能拿 UTC 串截日期）；
