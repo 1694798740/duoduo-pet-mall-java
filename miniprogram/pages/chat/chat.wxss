@@ -151,3 +151,24 @@
   flex: none;
   margin: 0;
 }
+
+/* B 批：媒体气泡与「+」按钮 */
+.chat-plus {
+  flex: 0 0 auto;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: #f1f2f6;
+  color: #5b6070;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  margin-right: 12rpx;
+}
+.msg-media {
+  width: 360rpx;
+  max-height: 420rpx;
+  border-radius: 16rpx;
+  background: #f1f2f6;
+}

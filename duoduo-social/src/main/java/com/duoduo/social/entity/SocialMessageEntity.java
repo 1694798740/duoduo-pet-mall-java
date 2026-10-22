@@ -31,6 +31,12 @@ public class SocialMessageEntity {
     private String bizType;
     private Long bizId;
     private String content;
+    private String mediaUrl;
+    private String thumbUrl;
+    private Integer width;
+    private Integer height;
+    private Integer durationMs;
+    private String metaJson;
     private LocalDateTime readAt;
     private LocalDateTime createdAt;
 
@@ -88,6 +94,54 @@ public class SocialMessageEntity {
 
     public void setBizId(Long bizId) {
         this.bizId = bizId;
+    }
+
+    public String getMediaUrl() {
+        return mediaUrl;
+    }
+
+    public void setMediaUrl(String mediaUrl) {
+        this.mediaUrl = mediaUrl;
+    }
+
+    public String getThumbUrl() {
+        return thumbUrl;
+    }
+
+    public void setThumbUrl(String thumbUrl) {
+        this.thumbUrl = thumbUrl;
+    }
+
+    public Integer getWidth() {
+        return width;
+    }
+
+    public void setWidth(Integer width) {
+        this.width = width;
+    }
+
+    public Integer getHeight() {
+        return height;
+    }
+
+    public void setHeight(Integer height) {
+        this.height = height;
+    }
+
+    public Integer getDurationMs() {
+        return durationMs;
+    }
+
+    public void setDurationMs(Integer durationMs) {
+        this.durationMs = durationMs;
+    }
+
+    public String getMetaJson() {
+        return metaJson;
+    }
+
+    public void setMetaJson(String metaJson) {
+        this.metaJson = metaJson;
     }
 
     public String getContent() {

@@ -36,6 +36,7 @@ import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { notifyDataChanged, subscribeDataChanged } from '@duoduo/shared/lib/dataBus';
 import { SupportEntry } from '../components/SupportEntry';
+import { favoriteApi } from '@duoduo/api-sdk/endpoints';
 
 const SPECIES_LABEL: Record<string, string> = {
   cat: '猫',
@@ -522,8 +523,13 @@ export const ProductDetailPage: React.FC = () => {
                   </button>
                 </>
               )}
-              {/* 统一入口：位置固定放在购买动作右侧，售罄时同样可用（买不到也需要问） */}
-              <SupportEntry />
+              {/* 统一入口：位置固定放在购买动作右侧，售罄时同样可用（买不到也需要问）
+                  自营商品不传 sellerId（服务端落到自营客服）；入驻商品带上卖家与商品上下文 */}
+              <FavoriteButton spuId={String(card.id)} />
+              <SupportEntry
+                sellerId={card.supplyType === 'self' ? undefined : card.sellerId || undefined}
+                productId={String(card.id)}
+              />
             </div>
 
             {!canBuy && !buySeckill ? (
@@ -691,5 +697,49 @@ export const ProductDetailPage: React.FC = () => {
         </div>
       </Modal>
     </div>
+  );
+};
+
+
+/**
+ * 收藏按钮（C 批）：收藏夹是客服「发送商品」的来源之一。
+ *
+ * <p>状态以服务端为准（详情页可能从收藏列表点进来）：进入时查一次 status，
+ * 点击后按接口回执更新，不做本地猜测。
+ */
+const FavoriteButton: React.FC<{ spuId: string }> = ({ spuId }) => {
+  const [favorited, setFavorited] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void favoriteApi
+      .status([spuId])
+      .then((ids) => {
+        if (alive) setFavorited((ids || []).includes(spuId));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [spuId]);
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await favoriteApi.toggle(spuId);
+      setFavorited(Boolean(r?.favorited));
+    } catch {
+      // 收藏失败不打断购买流程：保持原状态，用户可再点一次
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button type="button" className="btn btn-ghost" onClick={() => void toggle()} disabled={busy}>
+      {favorited ? '★ 已收藏' : '☆ 收藏'}
+    </button>
   );
 };

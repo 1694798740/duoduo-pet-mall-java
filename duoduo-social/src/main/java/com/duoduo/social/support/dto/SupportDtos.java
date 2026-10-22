@@ -1,0 +1,97 @@
+package com.duoduo.social.support.dto;
+
+import java.util.List;
+
+/** 客服域对外视图（自营客服与第三方商家客服共用一套结构）。 */
+public final class SupportDtos {
+
+    private SupportDtos() {
+    }
+
+    /**
+     * 会话摘要。
+     *
+     * <p>同时带买卖双方的展示字段：用户侧只用到 seller*，商家侧只用到 user*，
+     * 但合成一个结构可以让工作台与用户页共用同一套渲染逻辑，少一份对齐成本。
+     */
+    public record SessionView(
+            Long id,
+            Long sellerId,
+            String sellerName,
+            String sellerAvatar,
+            Long userId,
+            String userName,
+            String userAvatar,
+            String lastMessage,
+            String lastMessageAt,
+            long unread,
+            String status
+    ) {
+    }
+
+    /** 商品上下文（只带渲染必需字段；价格用于卡片上的「¥xx 起」） */
+    public record ProductCard(Long productId, String title, String image, Long price) {
+    }
+
+    public record MessageView(
+            Long id,
+            Long senderId,
+            String senderRole,
+            String content,
+            String bizType,
+            Long bizId,
+            /** 媒体地址（IMAGE / VIDEO / EMOJI） */
+            String mediaUrl,
+            String thumbUrl,
+            Integer width,
+            Integer height,
+            Integer durationMs,
+            /** 卡片快照 JSON（商品/订单） */
+            String metaJson,
+            String createdAt,
+            boolean mine,
+            boolean read,
+            ProductCard card
+    ) {
+    }
+
+    /** 会话详情（消息按时间正序） */
+    public record ThreadView(
+            Long sessionId,
+            Long sellerId,
+            String sellerName,
+            String sellerAvatar,
+            Long userId,
+            String userName,
+            String userAvatar,
+            String status,
+            /** 对端读到的最大消息 id（已读回执判据） */
+            Long peerLastReadId,
+            /** 我方已发出、对端尚未读到的条数；0 = 全部已读 */
+            long myUnreadCount,
+            List<MessageView> items,
+            long total,
+            int page,
+            int pageSize
+    ) {
+    }
+
+    /**
+     * 用户发消息。{@code sellerId} 缺省 = 自营客服。
+     *
+     * <p>{@code type} 缺省 TEXT；IMAGE / VIDEO / EMOJI 必须带 {@code mediaUrl}
+     * （由 {@code POST /api/uploads} 生成），PRODUCT 用 {@code productId} 定卡。
+     */
+    public record SendRequest(Long sellerId, String content, Long productId, String type,
+                              String mediaUrl, String thumbUrl,
+                              Integer width, Integer height, Integer durationMs,
+                              /** type=ORDER 时必填：订单号（服务端回交易域校验归属并生成快照） */
+                              String orderNo) {
+    }
+
+    /** 商家发消息（第七十九轮 B 批：与用户侧一致，支持图片/视频/表情） */
+    public record SellerSendRequest(String content, String type,
+                                    String mediaUrl, String thumbUrl,
+                                    Integer width, Integer height, Integer durationMs) {
+    }
+}

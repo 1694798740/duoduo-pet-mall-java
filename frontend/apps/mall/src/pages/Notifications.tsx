@@ -17,6 +17,7 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, Pagination, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { useApp } from '@duoduo/shared/store/app';
+import { formatBjDateTime } from '@duoduo/shared/lib/time';
 
 const PAGE_SIZE = 15;
 
@@ -140,7 +141,7 @@ export const NotificationsPage: React.FC = () => {
             </div>
             <div className="small" style={{ marginTop: 6 }}>{it.content}</div>
             <div className="small muted" style={{ marginTop: 6 }}>
-              {it.createdAt?.replace('T', ' ').slice(0, 16)}
+              {formatBjDateTime(it.createdAt)}
               {it.jumpPage ? ' · 点击查看详情' : ''}
             </div>
           </button>

@@ -1,6 +1,7 @@
 package com.duoduo.social.service;
 
 import com.duoduo.social.dto.SocialDtos.UnreadSummary;
+import com.duoduo.social.support.service.SupportService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -25,18 +26,23 @@ public class UnreadService {
 
     private final NoticeService noticeService;
     private final MessageService messageService;
+    private final SupportService supportService;
 
-    public UnreadService(NoticeService noticeService, MessageService messageService) {
+    public UnreadService(NoticeService noticeService, MessageService messageService,
+                         SupportService supportService) {
         this.noticeService = noticeService;
         this.messageService = messageService;
+        this.supportService = supportService;
     }
 
-    /** 合并未读：通知 + 私信 + 总数（三个值同刻同源） */
+    /** 合并未读：通知 + 私信 + 客服 + 总数（四个值同刻同源） */
     public UnreadSummary summary(Long userId) {
         // 两个分项都不重叠：NoticeService.unreadCount 已排除私信通知（bizType=MESSAGE），
         // 否则「一条消息」会既进通知未读、又进私信未读，角标凭空翻倍（第五十五轮实测）。
+        // 客服自本轮起独立成表，天然不与私信重叠。
         long notice = noticeService.unreadCount(userId).count();
         long message = messageService.unreadCount(userId);
-        return new UnreadSummary(notice, message, notice + message);
+        long support = supportService.unreadForUser(userId);
+        return new UnreadSummary(notice, message, support, notice + message + support);
     }
 }

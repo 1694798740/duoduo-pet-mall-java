@@ -24,12 +24,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -69,17 +71,26 @@ public class UploadController {
             "jpeg", "image/jpeg",
             "png", "image/png",
             "webp", "image/webp",
-            "gif", "image/gif");
+            "gif", "image/gif",
+            // B 批（2026-10-21）：客服/私信支持视频消息。只收 mp4：小程序 <video> 与浏览器
+            // 兼容性最好，转码能力（mov/webm）不在本轮范围内。
+            "mp4", "video/mp4",
+            // 端侧压缩的产物：浏览器 MediaRecorder 在部分环境只产 webm
+            "webm", "video/webm");
 
     /** GET 只接受服务端自己生成的文件名（UUID + 白名单扩展名），路径穿越在正则这一层就死掉 */
     private static final Pattern SERVABLE = Pattern.compile(
-            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|jpeg|png|webp|gif)$");
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|jpeg|png|webp|gif|mp4|webm)$");
 
     private static final Set<String> IMAGE_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif");
 
+    /** 视频 MIME（B 批）：只收 mp4，与小程序的 chooseMedia / 浏览器 <video> 对齐 */
+    private static final Set<String> VIDEO_CONTENT_TYPES = Set.of("video/mp4", "video/webm");
+
     private final ObjectStorage storage;
     private final int maxSizeMb;
+    private final int maxVideoSizeMb;
     private final String publicBaseUrl;
 
     /**
@@ -109,10 +120,12 @@ public class UploadController {
     public UploadController(
             @Qualifier("publicObjectStorage") ObjectStorage storage,
             @Value("${duoduo.uploads.max-size-mb:5}") int maxSizeMb,
+            @Value("${duoduo.uploads.max-video-size-mb:20}") int maxVideoSizeMb,
             @Value("${duoduo.uploads.public-base-url:}") String publicBaseUrl,
             @Value("${duoduo.uploads.image-suffix:}") String imageSuffix) {
         this.storage = storage;
         this.maxSizeMb = maxSizeMb;
+        this.maxVideoSizeMb = maxVideoSizeMb;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.trim();
         this.imageSuffix = imageSuffix == null ? "" : imageSuffix.trim();
     }
@@ -132,16 +145,25 @@ public class UploadController {
         if (file == null || file.isEmpty()) {
             throw BizException.validation("请选择要上传的图片");
         }
-        if (maxSizeMb > 0 && file.getSize() > maxSizeMb * 1024L * 1024L) {
+        String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
+        boolean video = VIDEO_CONTENT_TYPES.contains(contentType);
+        // 视频**不按大小限制**（第七十九轮修订）：时长由端侧校验、体积由端侧压缩，
+        // 服务端再卡 MB 只会让「压缩失败回退原视频」这条兜底路径必然失败。
+        // 图片仍保留体积上限（图片没有端侧压缩管线，放任大图直接打满存储）。
+        if (!video && maxSizeMb > 0 && file.getSize() > maxSizeMb * 1024L * 1024L) {
             throw BizException.validation("图片不能超过 " + maxSizeMb + "MB");
         }
-        String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
-        if (!IMAGE_CONTENT_TYPES.contains(contentType)) {
-            throw BizException.validation("只支持 jpg / png / webp / gif 图片");
+        if (!video && !IMAGE_CONTENT_TYPES.contains(contentType)) {
+            throw BizException.validation("只支持 jpg / png / webp / gif 图片，或 mp4 视频");
         }
         String ext = extOf(file.getOriginalFilename());
         if (ext == null || !ALLOWED.containsKey(ext)) {
-            throw BizException.validation("只支持 jpg / png / webp / gif 图片");
+            throw BizException.validation("只支持 jpg / png / webp / gif 图片，或 mp4 视频");
+        }
+        // 扩展名与 MIME 必须一致：只改后缀的 exe/网页不能借 mp4 之名落盘
+        boolean extVideo = "mp4".equals(ext) || "webm".equals(ext);
+        if (extVideo != video) {
+            throw BizException.validation("文件类型与扩展名不一致");
         }
 
         String stored = UUID.randomUUID() + "." + ext;
@@ -164,7 +186,8 @@ public class UploadController {
 
         String url = publicUrl(request, stored, ext);
         // 不记原文件名：它是不可信输入，进日志只会污染检索
-        log.info("用户 {} 上传图片 {}（{} 字节，后端 {}）", userId, stored, file.getSize(), storage.backend());
+        log.info("用户 {} 上传{} {}（{} 字节，后端 {}）", userId, video ? "视频" : "图片",
+                stored, file.getSize(), storage.backend());
         return ApiResponse.ok(Map.of("url", url));
     }
 
@@ -257,9 +280,17 @@ public class UploadController {
         return out.toByteArray();
     }
 
-    /** 公开读：图片标签直出。文件名不是服务端生成的格式一律 404，不探测底层存储。 */
+    /**
+     * 公开读：图片 / 视频直出。文件名不是服务端生成的格式一律 404，不探测底层存储。
+     *
+     * <p><b>视频必须支持 Range（206）</b>：浏览器与小程序播放器拖动进度、
+     * 甚至 Safari 起播都会先发 {@code Range: bytes=0-1}；只回 200 全量字节时，
+     * 表现是「能下载但播不了 / 拖不动」，而接口看起来一切正常。
+     * 本地存储返回的是完整 byte[]，这里按 Range 切片；COS 场景可直接 302 到直链（COS 原生支持）。
+     */
     @GetMapping("/uploads/{filename}")
-    public ResponseEntity<byte[]> serve(@PathVariable String filename) {
+    public ResponseEntity<byte[]> serve(@PathVariable String filename,
+                                        @RequestHeader(value = HttpHeaders.RANGE, required = false) String range) {
         if (filename == null || !SERVABLE.matcher(filename).matches()) {
             return ResponseEntity.notFound().build();
         }
@@ -269,10 +300,67 @@ public class UploadController {
         }
         String ext = extOf(filename);
         MediaType mediaType = MediaType.parseMediaType(ALLOWED.getOrDefault(ext, "application/octet-stream"));
-        return ResponseEntity.ok()
+        boolean video = "mp4".equals(ext) || "webm".equals(ext);
+
+        if (video && range != null && range.startsWith("bytes=")) {
+            long[] window = parseRange(range, content.length);
+            if (window == null) {
+                return ResponseEntity.status(416)
+                        .header(HttpHeaders.CONTENT_RANGE, "bytes */" + content.length)
+                        .build();
+            }
+            int start = (int) window[0];
+            int end = (int) window[1];
+            byte[] slice = java.util.Arrays.copyOfRange(content, start, end + 1);
+            return ResponseEntity.status(206)
+                    .contentType(mediaType)
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + content.length)
+                    .contentLength(slice.length)
+                    .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic())
+                    .body(slice);
+        }
+
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                 .contentType(mediaType)
-                .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic())
-                .body(content);
+                .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic());
+        if (video) {
+            builder = builder.header(HttpHeaders.ACCEPT_RANGES, "bytes");
+        }
+        return builder.body(content);
+    }
+
+    /**
+     * 解析单段 Range：{@code bytes=start-end} / {@code bytes=start-} / {@code bytes=-suffix}。
+     * 返回 [start, end]（含端点）；越界返回 null（由调用方回 416）。
+     */
+    private long[] parseRange(String header, long length) {
+        try {
+            String spec = header.substring("bytes=".length()).split(",")[0].trim();
+            int dash = spec.indexOf('-');
+            if (dash < 0) {
+                return null;
+            }
+            String left = spec.substring(0, dash).trim();
+            String right = spec.substring(dash + 1).trim();
+            long start;
+            long end;
+            if (left.isEmpty()) {
+                long suffix = Long.parseLong(right);
+                start = Math.max(0, length - suffix);
+                end = length - 1;
+            } else {
+                start = Long.parseLong(left);
+                end = right.isEmpty() ? length - 1 : Long.parseLong(right);
+            }
+            if (start < 0 || start >= length) {
+                return null;
+            }
+            end = Math.min(end, length - 1);
+            return end < start ? null : new long[]{start, end};
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** 取小写扩展名（不含点）；无扩展名返回 null */
@@ -296,7 +384,12 @@ public class UploadController {
      */
     private String publicUrl(HttpServletRequest request, String stored, String ext) {
         String base = baseUrl(request) + "/uploads/" + stored;
-        if (imageSuffix.isEmpty() || "gif".equals(ext)) {
+        // 视频绝不能带 imageMogr2 参数：那不是视频处理接口，带上会直接 404/403。
+        // 同理，本地盘也没有图片处理能力：只有 COS 后端才追加该参数。
+        // （否则本地形态下 URL 会带一个没人处理的 query，nginx 甚至会因 `>` 直接 400）
+        boolean cosBackend = "cos".equalsIgnoreCase(storage.backend());
+        if (!cosBackend || imageSuffix.isEmpty() || "gif".equals(ext)
+                || "mp4".equals(ext) || "webm".equals(ext)) {
             return base;
         }
         return base + imageSuffix;

@@ -41,6 +41,8 @@ public final class SocialDtos {
 
     /** 通知业务类型：私信到达（同会话未读合并为一条，避免连发多条把通知中心刷屏） */
     public static final String NOTICE_BIZ_MESSAGE = "MESSAGE";
+    /** 客服消息（第七十九轮）：通知列表可见，但不计入通知未读（未读口径在 support 域，避免重复计数） */
+    public static final String NOTICE_BIZ_SUPPORT = "SUPPORT";
 
     // ---------------- 请求 ----------------
 
@@ -81,7 +83,14 @@ public final class SocialDtos {
             Long listingId,
 
             @Size(max = 1000, message = "消息内容不能超过 1000 字")
-            String content
+            String content,
+
+            /** 媒体地址（bizType=IMAGE/VIDEO/EMOJI 时必填，来自 POST /api/uploads） */
+            String mediaUrl,
+            String thumbUrl,
+            Integer width,
+            Integer height,
+            Integer durationMs
     ) {
     }
 
@@ -226,6 +235,11 @@ public final class SocialDtos {
             String bizType,
             Long bizId,
             String content,
+            String mediaUrl,
+            String thumbUrl,
+            Integer width,
+            Integer height,
+            Integer durationMs,
             String createdAt,
             boolean mine,
             boolean read,
@@ -360,6 +374,9 @@ public final class SocialDtos {
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(
                     using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long message,
+            @com.fasterxml.jackson.databind.annotation.JsonSerialize(
+                    using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
+            long support,
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(
                     using = com.duoduo.common.web.LongToStringJacksonModule.NumericLongSerializer.class)
             long total

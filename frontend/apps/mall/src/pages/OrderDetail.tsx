@@ -24,9 +24,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { orderApi, paymentApi } from '@duoduo/api-sdk/endpoints';
+import { orderApi, paymentApi, supportApi } from '@duoduo/api-sdk/endpoints';
 import type { OrderView, PayResult, SettlementView } from '@duoduo/api-sdk/types';
 import { useAsync, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import {
@@ -538,6 +538,7 @@ export const OrderDetailPage: React.FC = () => {
               ) : null}
 
               {/* 位置与文案与订单列表一致：取消 → 问客服 → 其他写操作 → 刷新 */}
+              <OrderConsultButton orderNo={order.orderNo} sellerId={order.sellerId} />
               <SupportEntry />
 
               <button className="btn btn-ghost" disabled={acting} onClick={() => void reloadOrder()}>
@@ -627,5 +628,41 @@ export const OrderDetailPage: React.FC = () => {
         ) : null}
       </Modal>
     </div>
+  );
+};
+
+
+/**
+ * 「咨询订单」按钮（C4）：把订单卡发给接待该订单的商家客服。
+ *
+ * <p>为什么先发消息再跳转、而不是在客服页填个输入框：
+ * 用户点这个按钮的意图就是「就这单有问题」，卡片必须已经在会话里，
+ * 否则跳过去还要再选一次商品/订单，等于把一步做成两步。
+ */
+const OrderConsultButton: React.FC<{ orderNo: string; sellerId?: string | number | null }> = ({
+  orderNo,
+  sellerId,
+}) => {
+  const navigate = useNavigate();
+  const [busy, setBusy] = React.useState(false);
+
+  const consult = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await supportApi.send({ type: 'ORDER', content: '', orderNo });
+      navigate(sellerId ? `/support?sellerId=${sellerId}` : '/support');
+    } catch {
+      // 失败时仍然把用户带到客服页：消息没发出去，但人不能卡在订单页
+      navigate(sellerId ? `/support?sellerId=${sellerId}` : '/support');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void consult()}>
+      咨询订单
+    </button>
   );
 };

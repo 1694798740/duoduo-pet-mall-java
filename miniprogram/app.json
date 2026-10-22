@@ -24,6 +24,7 @@
     "pages/follow-list/follow-list",
     "pages/chat-list/chat-list",
     "pages/chat/chat",
+    "pages/support/support",
     "pages/login/login",
     "pages/flea-market/flea-market",
     "pages/flea-detail/flea-detail",

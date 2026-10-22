@@ -19,11 +19,12 @@ import { messageApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
+import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { formatBjShort } from '@duoduo/shared/lib/time';
 
 const PAGE_SIZE = 30;
 
-const timeText = (iso: string | null | undefined): string =>
-  (iso ? iso.replace('T', ' ').slice(5, 16) : '');
+const timeText = (iso: string | null | undefined): string => formatBjShort(iso);
 
 export const ChatPage: React.FC = () => {
   const { peerId = '' } = useParams();
@@ -65,6 +66,65 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [items.length]);
+
+  /** 私信只允许发送「当前咨询的商品」卡，不提供收藏/购物车等来源 */
+  const sendSticker = async (url: string) => {
+    setBusy(true);
+    setSendError(null);
+    try {
+      await messageApi.send({
+        receiverId: peerId,
+        content: '',
+        bizType: 'EMOJI',
+        productId,
+        listingId,
+        mediaUrl: url,
+      });
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+
+  const sendProductCard = async () => {
+    if (!productId) return;
+    setBusy(true);
+    setSendError(null);
+    try {
+      await messageApi.send({ receiverId: peerId, content: '', bizType: 'PRODUCT', bizId: productId });
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendMedia = async (payload: MediaPayload, kind: 'IMAGE' | 'VIDEO') => {
+    setBusy(true);
+    setSendError(null);
+    try {
+      await messageApi.send({
+        receiverId: peerId,
+        content: '',
+        bizType: kind,
+        productId,
+        listingId,
+        mediaUrl: payload.mediaUrl,
+        width: payload.width,
+        height: payload.height,
+        durationMs: payload.durationMs,
+      });
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const send = async () => {
     const content = draft.trim();
@@ -128,9 +188,7 @@ export const ChatPage: React.FC = () => {
                   background: m.mine ? 'var(--brand-soft, #fff3e6)' : undefined,
                 }}
               >
-                <div className="small" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {m.content}
-                </div>
+                <MessageBody message={m} />
                 <div className="small muted" style={{ marginTop: 4, textAlign: 'right' }}>
                   {timeText(m.createdAt)}
                   {m.mine ? (m.read ? ' · 已读' : ' · 未读') : ''}
@@ -145,6 +203,18 @@ export const ChatPage: React.FC = () => {
       {sendError ? <Alert kind="error">{sendError}</Alert> : null}
 
       <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'flex-start' }}>
+        {productId ? (
+          <button type="button" className="btn btn-ghost" title="发送当前咨询的商品" onClick={() => void sendProductCard()}>
+            🛍
+          </button>
+        ) : null}
+        <ChatMediaMenu
+          onMedia={sendMedia}
+          onEmoji={(emoji) => setDraft((v) => v + emoji)}
+          onSticker={(url) => void sendSticker(url)}
+          onError={(msg) => setSendError(msg)}
+          disabled={busy || !canSend}
+        />
         <textarea
           className="input"
           style={{ flex: 1, minHeight: 62, resize: 'vertical' }}
@@ -177,6 +247,40 @@ export const ChatPage: React.FC = () => {
           </button>
         </div>
       ) : null}
+    </div>
+  );
+};
+
+
+/** 私信消息体：媒体走专用渲染，纯表情放大 */
+const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessageView }> = ({ message }) => {
+  const kind = message.bizType === 'IMAGE' || message.bizType === 'VIDEO' || message.bizType === 'EMOJI'
+    ? message.bizType
+    : null;
+  if (kind) {
+    return (
+      <>
+        <MediaBubble
+          kind={kind}
+          url={message.mediaUrl || ''}
+          thumbUrl={message.thumbUrl}
+          width={message.width}
+          height={message.height}
+          durationMs={message.durationMs}
+        />
+        {message.content && !/^\[(图片|视频|表情)\]$/.test(message.content) ? (
+          <div className="small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{message.content}</div>
+        ) : null}
+      </>
+    );
+  }
+  const emojiOnly = isEmojiOnly(message.content);
+  return (
+    <div
+      className="small"
+      style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: emojiOnly ? 28 : undefined }}
+    >
+      {message.content}
     </div>
   );
 };

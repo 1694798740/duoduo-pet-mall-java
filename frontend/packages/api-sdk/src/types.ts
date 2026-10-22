@@ -1536,6 +1536,8 @@ export interface UnreadCount {
 export interface UnreadSummary {
   notice: number;
   message: number;
+  /** 客服未读（第七十八轮起独立成表；第七十九轮起也出现在通知中心） */
+  support: number;
   total: number;
 }
 
@@ -1574,9 +1576,16 @@ export interface ChatMessageView {
   senderId: string;
   receiverId: string;
   senderRole: string;
+  /** TEXT / PRODUCT / IMAGE / VIDEO / EMOJI */
   bizType: string;
   bizId: string | null;
   content: string;
+  /** 媒体地址（IMAGE / VIDEO / EMOJI）；其它类型为 null */
+  mediaUrl?: string | null;
+  thumbUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
   createdAt: string;
   /** 是否我发的（展示左右分列的依据；前端不再自己比 userId） */
   mine: boolean;

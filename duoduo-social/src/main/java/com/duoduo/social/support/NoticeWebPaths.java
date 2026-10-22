@@ -29,6 +29,11 @@ public final class NoticeWebPaths {
         if ("ORDER".equals(category) && bizId != null && !bizId.isBlank()) {
             return "/orders/" + bizId.trim();
         }
+        if ("SUPPORT".equals(bizType)) {
+            // 客服消息（第七十九轮）：网页端落到独立客服页，带上接待方 sellerId
+            String sellerId = queryParam(jumpPage, "sellerId");
+            return sellerId != null && !sellerId.isBlank() ? "/support?sellerId=" + sellerId : "/support";
+        }
         if ("FRIEND".equals(category)) {
             String peerId = queryParam(jumpPage, "peerId");
             if (peerId != null && !peerId.isBlank()) {

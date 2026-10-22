@@ -21,7 +21,29 @@ class UnreadServiceTest {
 
     private final NoticeService noticeService = mock(NoticeService.class);
     private final MessageService messageService = mock(MessageService.class);
-    private final UnreadService service = new UnreadService(noticeService, messageService);
+    private final com.duoduo.social.support.service.SupportService supportService =
+            mock(com.duoduo.social.support.service.SupportService.class);
+    private final UnreadService service = new UnreadService(noticeService, messageService, supportService);
+
+    /**
+     * 客服未读必须计入角标（第七十八轮）。
+     *
+     * <p>这条守的是「拆表之后别把人漏了」：客服从私信表独立出去时，最容易发生的事
+     * 不是算重，而是**算漏** —— 用户收到客服回复，角标不动，于是再也不会点进客服页。
+     */
+    @Test
+    void 客服未读计入角标总数() {
+        when(noticeService.unreadCount(9L)).thenReturn(new com.duoduo.social.dto.SocialDtos.UnreadCount(1));
+        when(messageService.unreadCount(9L)).thenReturn(2L);
+        when(supportService.unreadForUser(9L)).thenReturn(4L);
+
+        UnreadSummary summary = service.summary(9L);
+
+        assertThat(summary.notice()).isEqualTo(1);
+        assertThat(summary.message()).isEqualTo(2);
+        assertThat(summary.support()).isEqualTo(4);
+        assertThat(summary.total()).isEqualTo(7);
+    }
 
     @Test
     void 角标等于通知未读加私信未读() {

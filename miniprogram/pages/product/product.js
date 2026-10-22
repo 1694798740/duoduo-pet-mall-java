@@ -258,30 +258,28 @@ Page({
   },
 
   /**
-   * 问一问（第四十七轮）：直接向卖家发起商品咨询 —— 与卖家聊天无需互关
-   * （ASK 会话在服务端豁免「非互关一条」限制）。
+   * 问一问（第四十七轮商品 / 第七十八轮改道客服）：向**客服**发起商品咨询。
    *
-   * <p>登录用 requireLogin：咨询是「以我的身份向卖家发声」，未登录必须主动登录
-   * （与分享/点赞同一纪律）。收件人只传 sellerId 作占位 —— 服务端会以商品归属
-   * 卖家为准重新定人，前端传值不被信任。
+   * <p>为什么不再跳私信：商品咨询属于客服业务（自营归平台客服、入驻归商家），
+   * 第七十八轮起有独立通道 /api/support/**，私信列表里也不再出现这类会话。
+   * 客服不受「非互关限一条」约束，用户可以把问题问完。
+   *
+   * <p>自营商品不传 sellerId（服务端落到官方客服账号）；入驻商品带上卖家，
+   * 服务端会校验商品确实属于该店铺，防止把 A 店商品塞进 B 店会话。
    */
   askSeller() {
     const detail = this.data.detail;
     if (!detail) return;
-    if (!detail.sellerId) {
-      wx.showToast({ title: '平台自营商品暂不支持在线咨询', icon: 'none' });
-      return;
-    }
     getApp()
       .requireLogin()
       .then(() => {
+        const selfGoods =
+          detail.supplyType === 'self' || !detail.sellerId || String(detail.sellerId) === '0';
         wx.navigateTo({
           url:
-            '/pages/chat/chat?peerId=' +
-            detail.sellerId +
-            '&productId=' +
+            '/pages/support/support?productId=' +
             this.data.id +
-            '&ask=1',
+            (selfGoods ? '' : '&sellerId=' + String(detail.sellerId)),
         });
       })
       .catch((err) => {

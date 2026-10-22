@@ -3119,3 +3119,135 @@ button.tag:active:not(:disabled),
     transform: none;
   }
 }
+
+/* ── 客服会话（商城 /support 与商家工作台「客服信息」共用，2026-10-21）──────────
+   全部走语义变量：这两页首版把激活底色写成未定义变量加浅色兜底，
+   而 Web 主题里只有 --brand-soft，没有 --brand-weak —— 变量未定义就永远落到写死的浅色兜底，
+   暗夜档出现「浅底 + 白字」。教训：颜色一律进本文件，不许在页面里内联兜底色。 */
+.sup-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.sup-list {
+  padding: 8px;
+}
+.sup-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sup-item:hover {
+  background: var(--surface-2);
+}
+.sup-item.active {
+  background: var(--brand-soft);
+}
+.sup-item-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.sup-item-preview {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sup-badge {
+  flex: 0 0 auto;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.sup-thread {
+  padding: 0;
+  overflow: hidden;
+}
+.sup-thread-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sup-body {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 16px;
+}
+.sup-foot {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+}
+.sup-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+.sup-row.mine {
+  justify-content: flex-end;
+}
+.sup-col {
+  max-width: 76%;
+}
+.sup-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14px;
+}
+.sup-row.mine .sup-bubble {
+  background: var(--brand);
+  color: #fff;
+}
+.sup-time {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.sup-row.mine .sup-time {
+  text-align: right;
+}
+.sup-card {
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  margin-top: 6px;
+  text-decoration: none;
+}
+.sup-card-img {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.sup-card-title {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+.sup-card-price {
+  color: var(--accent-strong);
+}

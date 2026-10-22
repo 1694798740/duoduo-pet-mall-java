@@ -246,6 +246,59 @@ public class NoticeService {
     // ---------------- 写：标记已读（需登录，幂等） ----------------
 
     /** 标记单条已读：公告与定向通知统一写集合表。他人/不存在一律 404。 */
+    /**
+     * 客服消息到达（第七十九轮）：写一条「商家」分类的通知，同一会话合并为一条。
+     *
+     * <p>为什么必须写：客服会话独立成表后，通知中心对它一无所知 ——
+     * 用户只在头像是看到一个「1」，点进通知中心却是空的，客服消息等于没有入口。
+     *
+     * <p>为什么<b>不计入</b>通知未读：未读的真实口径在 {@code t_support_session.unread_for_user}
+     * （会话级、打开即清零）。这里再算一次，同一条消息就会被数两遍（第五十五轮私信同款教训）。
+     * 列表看得到、计数不重复 —— 与私信通知的处理保持一致。
+     */
+    public void pushSupportNotice(Long userId, Long sellerId, Long sessionId, String content) {
+        String category = SocialDtos.NOTICE_MERCHANT;
+        String title = "客服消息";
+        String body = abbreviate(content, CONTENT_MAX);
+        String bizId = String.valueOf(sessionId);
+        String jumpPage = "/pages/support/support?sellerId=" + sellerId;
+        LocalDateTime now = nowUtc();
+
+        SocialNoticeEntity unread = findUnread(userId, category, SocialDtos.NOTICE_BIZ_SUPPORT, bizId);
+        if (unread != null) {
+            unread.setTitle(title);
+            unread.setContent(body);
+            unread.setJumpPage(jumpPage);
+            unread.setCreatedAt(now);
+            noticeMapper.updateById(unread);
+            return;
+        }
+        SocialNoticeEntity entity = new SocialNoticeEntity();
+        entity.setId(idGenerator.nextId());
+        entity.setUserId(userId);
+        entity.setCategory(category);
+        entity.setTitle(title);
+        entity.setContent(body);
+        entity.setBizType(SocialDtos.NOTICE_BIZ_SUPPORT);
+        entity.setBizId(bizId);
+        entity.setJumpPage(jumpPage);
+        entity.setCreatedAt(now);
+        noticeMapper.insert(entity);
+    }
+
+    /** 用户打开客服会话后，把该会话的通知标为已读（通知中心不再亮红点） */
+    public void markSupportNoticesRead(Long userId, Long sessionId) {
+        List<SocialNoticeEntity> rows = noticeMapper.selectList(
+                new LambdaQueryWrapper<SocialNoticeEntity>()
+                        .eq(SocialNoticeEntity::getUserId, userId)
+                        .eq(SocialNoticeEntity::getBizType, SocialDtos.NOTICE_BIZ_SUPPORT)
+                        .eq(SocialNoticeEntity::getBizId, String.valueOf(sessionId))
+                        .select(SocialNoticeEntity::getId));
+        for (SocialNoticeEntity n : rows) {
+            insertRead(userId, n.getId());
+        }
+    }
+
     public void markRead(Long userId, Long noticeId) {
         SocialNoticeEntity notice = noticeMapper.selectById(noticeId);
         if (notice == null || !(userId.equals(notice.getUserId()) || notice.getUserId() == 0L)) {
@@ -399,8 +452,12 @@ public class NoticeService {
      * {@code biz_type IS NULL OR biz_type <> 'MESSAGE'}。
      */
     private static java.util.function.Consumer<LambdaQueryWrapper<SocialNoticeEntity>> excludeMessageNotice() {
+        // 排除「已在各自域单独计数」的通知：私信（MESSAGE）与客服（SUPPORT）。
+        // 它们的未读分别由 t_social_message.read_at / t_support_session.unread_for_user 负责，
+        // 这里再算一次就是重复计数。IS NULL 分支不能少（公告的 biz_type 为空）。
         return w -> w.isNull(SocialNoticeEntity::getBizType)
-                .or().ne(SocialNoticeEntity::getBizType, SocialDtos.NOTICE_BIZ_MESSAGE);
+                .or().notIn(SocialNoticeEntity::getBizType,
+                        java.util.List.of(SocialDtos.NOTICE_BIZ_MESSAGE, SocialDtos.NOTICE_BIZ_SUPPORT));
     }
 
     /** 我在某批通知里的已读集合（一次查询，避免逐条 N+1） */

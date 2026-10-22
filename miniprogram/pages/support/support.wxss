@@ -1,0 +1,27 @@
+/* 客服页复用私信页的气泡语言（同一套 .chat-* / .msg-* 样式）。
+ *
+ * 为什么用 @import 而不是复制一份：两页视觉必须一致，复制出来的第二份
+ * 在改配色时必然漂移；抽公共文件则要动 chat 页，风险大于收益。
+ * 规则层的差异由 js 决定（客服没有互关/限发），与样式无关。 */
+@import "../chat/chat.wxss";
+
+/* B 批：媒体气泡与「+」按钮 */
+.chat-plus {
+  flex: 0 0 auto;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: #f1f2f6;
+  color: #5b6070;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  margin-right: 12rpx;
+}
+.msg-media {
+  width: 360rpx;
+  max-height: 420rpx;
+  border-radius: 16rpx;
+  background: #f1f2f6;
+}

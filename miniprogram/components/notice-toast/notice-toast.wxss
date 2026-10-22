@@ -12,7 +12,7 @@
   align-items: center;
   padding: 22rpx 24rpx;
   box-sizing: border-box;
-  background: #ffffff;
+  background: var(--card);
   border-radius: 20rpx;
   box-shadow: 0 10rpx 36rpx rgba(15, 23, 42, 0.18);
   /* 出场动画：元素一出现就自动播放，不需要 JS 先渲染再切类（那样首帧会有跳变） */
@@ -33,7 +33,7 @@
 .toast-title {
   font-size: 28rpx;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
   /* 长标题单行截断：卡片只有一行标题的位置，换行会把摘要挤没 */
   overflow: hidden;
   white-space: nowrap;
@@ -43,7 +43,7 @@
 .toast-content {
   margin-top: 6rpx;
   font-size: 25rpx;
-  color: #6b7280;
+  color: var(--text-2);
   /* 摘要最多两行（-webkit-box 是小程序里唯一稳定的多行截断方式） */
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -55,7 +55,7 @@
   flex-shrink: 0;
   margin-left: 12rpx;
   font-size: 22rpx;
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 /* 收起：与 js 的 LEAVE_MS(260ms) 严格对齐 —— 动画没播完就移除元素会「闪一下」 */

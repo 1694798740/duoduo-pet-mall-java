@@ -51,7 +51,21 @@
               <view wx:if="{{item.cardPriceText}}" class="price msg-card-price">{{item.cardPriceText}}</view>
             </view>
           </view>
-          <view class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
+          <image
+            wx:if="{{item.bizType === 'IMAGE'}}"
+            class="msg-media"
+            src="{{item.mediaUrl}}"
+            mode="widthFix"
+            data-url="{{item.mediaUrl}}"
+            bindtap="previewImage"
+          />
+          <video
+            wx:elif="{{item.bizType === 'VIDEO'}}"
+            class="msg-media"
+            src="{{item.mediaUrl}}"
+            object-fit="contain"
+          />
+          <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
           <view class="t3 msg-time">{{item.timeText}}{{item.mine && !item.read ? ' · 未读' : ''}}</view>
         </view>
       </view>
@@ -63,6 +77,7 @@
 
     <!-- 输入条 -->
     <view class="chat-input-bar">
+      <view class="chat-plus" bindtap="pickMedia">＋</view>
       <input
         class="chat-input"
         value="{{input}}"

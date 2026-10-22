@@ -1136,30 +1136,144 @@ export const messageApi = {
     api.post<number>(`/api/socials/messages/conversations/${peerId}/read`, undefined, { query }),
 
   /** 发消息；非互关每人限发一条（咨询会话豁免），被拒时服务端给人话原因 */
-  send: (body: { receiverId: string; content: string; productId?: string; listingId?: string }) =>
-    api.post<ChatMessageView>('/api/socials/messages', body),
+  send: (body: {
+    receiverId: string;
+    content: string;
+    bizType?: string;
+    bizId?: string;
+    productId?: string;
+    listingId?: string;
+    mediaUrl?: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+  }) => api.post<ChatMessageView>('/api/socials/messages', body),
 
   /** 我的私信未读总数（角标走合并口径 unread-summary；这里用于入口上的独立未读数） */
   unreadCount: () => api.get<UnreadCount>('/api/socials/messages/unread-count'),
 };
 
-// ---------- 问客服（A4 · 直连官方客服账号） ----------
+// ---------- 客服（第七十八轮 · 从私信独立出来） ----------
 //
-// 口径：**不新造接待系统**，直接把用户送进「和官方客服账号的私信会话」。
-// 收件人由服务端下发，前端不硬编码 userId —— 换客服账号只改 duoduo.social.official-cs-user-id。
-// 会话规则（未读 / 非互关限发 / 上下文隔离）全部复用 /api/socials/messages/**，不产生第二套消息模型。
-export const supportApi = {
-  /** 官方客服账号 userId：前端拿它拼 /messages/:peerId */
-  agent: () => api.get<{ userId: string }>('/api/socials/support/agent'),
+// 边界：
+//   · 客服消息有独立表（t_support_session / t_support_message）与独立前缀 /api/support/**，
+//     **不会**出现在私信列表里 —— 这不是查询过滤，是数据层分离；
+//   · 两类客服共用一个模型，靠 sellerId 区分：自营 = 官方客服账号（服务端缺省），
+//     第三方 = 商品归属卖家。前端只需要在第三方商品上带 sellerId；
+//   · 客服没有「互相关注才能发」的限制，普通私信有 —— 两套规则不要互相串。
+export interface SupportSessionView {
+  id: string;
+  sellerId: string;
+  sellerName: string;
+  sellerAvatar: string | null;
+  userId: string;
+  userName: string;
+  userAvatar: string | null;
+  lastMessage: string;
+  lastMessageAt: string;
+  unread: number;
+  status: 'OPEN' | 'CLOSED';
+}
 
-  /**
-   * 平台侧会话列表（客服账号视角）。
-   *
-   * 前台不调用，留给后续「后台接待台」；先建好是为了让客服账号能被**同一套接口**查到，
-   * 避免后台将来另造一份 `t_support_session`。
-   */
-  conversations: (query?: { page?: number; pageSize?: number }) =>
-    api.get<ConversationView[]>('/api/socials/support/conversations', { query }),
+export interface SupportProductCard {
+  productId: string;
+  title: string;
+  image: string | null;
+  price: number | null;
+}
+
+export interface SupportMessageView {
+  id: string;
+  senderId: string;
+  senderRole: 'USER' | 'SELLER' | 'SYSTEM';
+  content: string;
+  /** TEXT / PRODUCT / IMAGE / VIDEO / EMOJI / ORDER */
+  bizType: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER';
+  bizId: string | null;
+  mediaUrl: string | null;
+  thumbUrl: string | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  metaJson: string | null;
+  createdAt: string;
+  mine: boolean;
+  read: boolean;
+  card: SupportProductCard | null;
+}
+
+export interface SupportThreadView {
+  sessionId: string;
+  sellerId: string;
+  sellerName: string;
+  sellerAvatar: string | null;
+  userId: string;
+  userName: string;
+  userAvatar: string | null;
+  status: 'OPEN' | 'CLOSED';
+  /** 对端读到的最大消息 id（已读回执判据） */
+  peerLastReadId: string | null;
+  /** 我方已发出、对端尚未读到的条数；0 = 全部已读 */
+  myUnreadCount: number;
+  items: SupportMessageView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const supportApi = {
+  /** 取或建「我 ↔ 某接待方」的会话；sellerId 缺省 = 自营客服 */
+  session: (sellerId?: string) =>
+    api.get<SupportSessionView>('/api/support/session', { query: { sellerId } }),
+  /** 我的客服会话列表（自营 + 各商家各一条） */
+  sessions: () => api.get<SupportSessionView[]>('/api/support/sessions'),
+  messages: (query?: { sellerId?: string; page?: number; pageSize?: number }) =>
+    api.get<SupportThreadView>('/api/support/messages', { query }),
+  /** 发消息；productId 非空 = 附商品卡（服务端会校验商品归属该店铺） */
+  send: (body: {
+    sellerId?: string;
+    content: string;
+    productId?: string;
+    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER';
+    /** type=ORDER 时必填 */
+    orderNo?: string;
+    mediaUrl?: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+  }) => api.post<SupportMessageView>('/api/support/messages', body),
+  markRead: (sessionId: string) =>
+    api.post<number>('/api/support/read', undefined, { query: { sessionId } }),
+  unreadCount: () => api.get<number>('/api/support/unread-count'),
+};
+
+/**
+ * 商家工作台的客服接待接口。
+ *
+ * sellerId **不由前端传**：服务端从登录态推导，避免「换个 id 看别家会话」。
+ * 自营客服账号以 SELLER 身份登录时，这里就是它的接待台 —— 平台运营端不参与私信。
+ */
+export const sellerSupportApi = {
+  /** onlyUnread=true 只看未读（工作台「未读」筛选） */
+  sessions: (query?: { status?: string; onlyUnread?: boolean; page?: number; pageSize?: number }) =>
+    api.get<PageResult<SupportSessionView>>('/api/seller/support/sessions', { query }),
+  messages: (id: string, query?: { page?: number; pageSize?: number }) =>
+    api.get<SupportThreadView>(`/api/seller/support/sessions/${id}/messages`, { query }),
+  reply: (id: string, payload: {
+    content: string;
+    type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'EMOJI';
+    mediaUrl?: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+  }) => api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages`, payload),
+  markRead: (id: string) => api.post<number>(`/api/seller/support/sessions/${id}/read`),
+  setStatus: (id: string, value: 'OPEN' | 'CLOSED') =>
+    api.post<void>(`/api/seller/support/sessions/${id}/status`, undefined, { query: { value } }),
+  unreadCount: () => api.get<number>('/api/seller/support/unread-count'),
 };
 
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1） ----------
@@ -1219,4 +1333,35 @@ export const geoApi = {
    */
   regeo: (lng: number, lat: number, coord: 'gcj02' | 'wgs84') =>
     api.get<RegeoView>('/api/geo/regeo', { query: { lng, lat, coord } }),
+};
+
+
+// ---------- 收藏夹 / 足迹 / 已购（C 批） ----------
+export interface PickerProduct {
+  id: string;
+  title: string;
+  image: string | null;
+  price: number | null;
+  status?: string | null;
+}
+
+export const favoriteApi = {
+  /** 切换收藏，返回 { favorited } */
+  toggle: (spuId: string) => api.post<{ favorited: boolean }>(`/api/favorites/${spuId}`),
+  /** 批量收藏状态（详情页回填按钮） */
+  status: (spuIds: string[]) =>
+    api.get<string[]>('/api/favorites/status', { query: { spuIds: spuIds.join(',') } }),
+  list: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<PickerProduct>>('/api/favorites/products', { query }),
+};
+
+export const historyApi = {
+  list: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<PickerProduct>>('/api/history/products', { query }),
+  clear: () => api.del<number>('/api/history'),
+};
+
+export const purchasedApi = {
+  list: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<PickerProduct>>('/api/orders/purchased-products', { query }),
 };

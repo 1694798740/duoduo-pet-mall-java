@@ -14,6 +14,7 @@
 //  * 轮询 4s（wx.connectSocket 带不上 Authorization 头，破坏 JWT 鉴权模型，故不用 WS）；
 //  * 每次拉到新消息后调 markRead（幂等），红点在下一次会话列表刷新时消失。
 const api = require('../../utils/api');
+const media = require('../../utils/media');
 const images = require('../../utils/images');
 const { getNavMetrics } = require('../../utils/nav');
 
@@ -188,6 +189,66 @@ Page({
         this.setData({ sending: false });
         wx.showToast({ title: (err && err.message) || '发送失败', icon: 'none' });
       });
+  },
+
+  /** B 批：拍摄/相册选图或视频并发送（私信同样支持） */
+  pickMedia() {
+    if (!this.data.canSend) {
+      wx.showToast({ title: this.data.hint || '暂时不能发送', icon: 'none' });
+      return;
+    }
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image', 'video'],
+      sourceType: ['album', 'camera'],
+      maxDuration: 60,
+      success: (res) => {
+        const file = (res.tempFiles || [])[0];
+        if (!file) return;
+        const isVideo = res.type === 'video';
+        const prepared = isVideo ? media.prepareVideo(file) : Promise.resolve(null);
+        prepared
+          .then((p) => {
+            wx.showLoading({ title: isVideo && p && p.compressed ? '上传压缩视频…' : '上传中…', mask: true });
+            return api.upload(isVideo ? p.path : file.tempFilePath).then((data) => ({ data, p }));
+          })
+          .then(({ data, p }) => {
+            const url = data && data.url;
+            if (!url) throw { message: '上传失败' };
+            const extra = {};
+            if (isVideo && p) {
+              if (p.width) extra.width = p.width;
+              if (p.height) extra.height = p.height;
+              if (p.durationMs) extra.durationMs = p.durationMs;
+            } else {
+              if (file.width) extra.width = file.width;
+              if (file.height) extra.height = file.height;
+              if (file.duration) extra.durationMs = Math.round(file.duration * 1000);
+            }
+            return api.social.message.sendMedia(
+              this.data.peerId,
+              isVideo ? 'VIDEO' : 'IMAGE',
+              url,
+              this.data.productId || null,
+              this.data.listingId || null,
+              extra
+            );
+          })
+          .then(() => {
+            wx.hideLoading();
+            this.fetchThread(false);
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            wx.showToast({ title: (err && err.message) || '发送失败', icon: 'none' });
+          });
+      },
+    });
+  },
+
+  previewImage(e) {
+    const url = e.currentTarget.dataset.url;
+    if (url) wx.previewImage({ urls: [url], current: url });
   },
 
   /** 点卡片 → 按类型分流：闲置卡去闲置详情，商品卡去商城详情（不冒泡到气泡） */

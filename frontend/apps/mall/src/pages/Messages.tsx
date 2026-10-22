@@ -17,12 +17,18 @@ import { messageApi } from '@duoduo/api-sdk/endpoints';
 import type { ConversationView } from '@duoduo/api-sdk/types';
 import { Empty, LoadingBlock, Pagination } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
+import { formatBjShort } from '@duoduo/shared/lib/time';
 
 const PAGE_SIZE = 15;
 
-/** ISO 串 → 'MM-DD HH:mm'（容器与时区口径全 UTC，按原样展示，不做本地时区换算） */
-const shortTime = (iso: string | null | undefined): string =>
-  (iso ? iso.replace('T', ' ').slice(5, 16) : '');
+/**
+ * ISO 串 → 北京时间 'MM-DD HH:mm'。
+ *
+ * <p>★ 旧实现是「直接截字符串」，注释还写着「全 UTC，按原样展示」——那是错的：
+ * 后端存的是 UTC，原样展示就等于把 08:41Z 显示成 08:41，比北京时间早 8 小时。
+ * 时区换算交给 {@link formatBjShort}，各页共用一套口径。
+ */
+const shortTime = (iso: string | null | undefined): string => formatBjShort(iso);
 
 /** 会话要带上下文参数才能打开：同一对用户的多类会话互不串线 */
 const chatLink = (c: ConversationView): string => {

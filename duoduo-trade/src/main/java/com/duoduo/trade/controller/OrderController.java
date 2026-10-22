@@ -33,6 +33,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 订单接口（需登录）。
  *
@@ -49,15 +51,45 @@ public class OrderController {
     private final OrderPlaceGuard placeGuard;
     private final ObjectProvider<OrderPlaceService> placeServiceProvider;
     private final PersonalDataCleanupService personalDataCleanupService;
+    /** C 批：已购买商品（客服「发送商品」来源之一） */
+    private final com.duoduo.trade.mapper.OrderItemMapper orderItemMapper;
 
     public OrderController(OrderService orderService,
                            OrderPlaceGuard placeGuard,
                            ObjectProvider<OrderPlaceService> placeServiceProvider,
-                           PersonalDataCleanupService personalDataCleanupService) {
+                           PersonalDataCleanupService personalDataCleanupService,
+                           com.duoduo.trade.mapper.OrderItemMapper orderItemMapper) {
         this.orderService = orderService;
         this.placeGuard = placeGuard;
         this.placeServiceProvider = placeServiceProvider;
         this.personalDataCleanupService = personalDataCleanupService;
+        this.orderItemMapper = orderItemMapper;
+    }
+
+    /**
+     * 我已购买的商品（按 spu 去重，最近购买在前）。
+     *
+     * <p>只统计已付款/已发货/已完成的订单：未付款与退款单不该出现在
+     * 「我要咨询我买的这个」的候选里 —— 那会让客服与用户对「买过没有」各说各话。
+     */
+    @GetMapping("/purchased-products")
+    public ApiResponse<com.duoduo.common.api.PageResult<PurchasedProduct>> purchasedProducts(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        Long userId = UserContext.requireUserId();
+        int p = Math.max(1, page);
+        int size = Math.max(1, Math.min(pageSize, 50));
+        List<com.duoduo.trade.mapper.PurchasedProductRow> rows =
+                orderItemMapper.selectPurchased(userId, size, (p - 1) * size);
+        long total = orderItemMapper.countPurchased(userId);
+        List<PurchasedProduct> items = rows.stream()
+                .map(r -> new PurchasedProduct(r.getSpuId(), r.getTitle(), r.getMainImage(), r.getPrice()))
+                .toList();
+        return ApiResponse.ok(com.duoduo.common.api.PageResult.of(items, total, p, size));
+    }
+
+    /** 「发送商品」选择器的已购买卡片 */
+    public record PurchasedProduct(Long id, String title, String image, Long price) {
     }
 
     /**

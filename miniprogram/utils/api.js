@@ -675,6 +675,14 @@ const social = {
      *   「内容不存在或已删除」，表现为「消息怎么都发不出去」（官方客服 id 18 位、
      *   闲置 id 18 位，全部踩中）。后端字段是 Long，Jackson 对数字串自动转换，无需前端转数值。
      */
+    /** B 批：私信发送媒体（图片/视频） */
+    sendMedia(receiverId, type, mediaUrl, contextProductId, contextListingId, extra) {
+      const payload = { receiverId: String(receiverId), content: '', bizType: type, mediaUrl: String(mediaUrl) };
+      if (contextProductId) payload.productId = String(contextProductId);
+      if (contextListingId) payload.listingId = String(contextListingId);
+      if (extra) Object.assign(payload, extra);
+      return req.post('/api/socials/messages', payload);
+    },
     send(receiverId, content, bizType, bizId, contextProductId, contextListingId) {
       const payload = { content: content || '' };
       if (receiverId) payload.receiverId = String(receiverId);
@@ -749,18 +757,47 @@ const social = {
   },
 
   /**
-   * 问客服直连（A4，2026-10-20）。
+   * 客服（第七十八轮从私信独立）。
    *
-   * 不新造接待系统：拿服务端下发的官方客服 userId，直接打开与 TA 的私信会话，
-   * 复用整套 /api/socials/messages/** 规则（未读、非互关限发、上下文隔离）。
+   * 与私信是两条通道：独立表、独立前缀 /api/support/**，**不会**出现在私信列表里。
+   * 两类客服共用一个入口：
+   *  · sellerId 缺省 = 自营客服（服务端配置决定，前端不硬编码账号 id）；
+   *  · 第三方商品咨询带上商品归属卖家，服务端据此把会话归到该店铺。
    *
-   * ★ 失败必须诚实：账号没就绪时服务端回 503 SUPPORT_AGENT_NOT_READY，
-   *   调用方要给「暂时没接通」的兜底 + AI 导购出口，不能静默停在原地 ——
-   *   拿一个查无此人的 id 也能进会话（昵称退化成「用户710…」），用户以为接通了。
+   * 客服**没有**「互相关注后才能继续发」的限制 —— 那是社交私信的防骚扰规则。
    */
   support: {
-    agent() {
-      return req.get('/api/socials/support/agent');
+    /** 取或建「我 ↔ 某接待方」的会话 */
+    session(sellerId) {
+      return req.get('/api/support/session' + (sellerId ? '?sellerId=' + String(sellerId) : ''));
+    },
+    sessions() {
+      return req.get('/api/support/sessions');
+    },
+    /** 会话消息（时间正序）；sellerId 为空读自营客服会话 */
+    messages(sellerId, page, pageSize) {
+      const qs = ['page=' + (page || 1), 'pageSize=' + (pageSize || 20)];
+      if (sellerId) qs.push('sellerId=' + String(sellerId));
+      return req.get('/api/support/messages?' + qs.join('&'));
+    },
+    send(content, sellerId, productId) {
+      const payload = { content: content || '' };
+      if (sellerId) payload.sellerId = String(sellerId);
+      if (productId) payload.productId = String(productId);
+      return req.post('/api/support/messages', payload);
+    },
+    /** B 批：发送图片/视频（mediaUrl 由 api.upload 产出） */
+    sendMedia(sellerId, type, mediaUrl, extra) {
+      const payload = { content: '', type: type, mediaUrl: String(mediaUrl) };
+      if (sellerId) payload.sellerId = String(sellerId);
+      if (extra) Object.assign(payload, extra);
+      return req.post('/api/support/messages', payload);
+    },
+    markRead(sessionId) {
+      return req.post('/api/support/read?sessionId=' + String(sessionId));
+    },
+    unreadCount() {
+      return req.get('/api/support/unread-count');
     },
   },
 };

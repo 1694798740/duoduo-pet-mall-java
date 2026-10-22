@@ -1,0 +1,91 @@
+<nav-bar title="客服" back="{{true}}" />
+
+<view wx:if="{{error}}" class="error-box">
+  <view>{{error}}</view>
+  <button class="btn btn-plain btn-mini" bindtap="retry">重试</button>
+</view>
+<view wx:elif="{{loading}}" class="empty">正在接通客服…</view>
+
+<block wx:else>
+  <view class="chat-page" style="height: calc(100vh - {{navTotal}}px)">
+    <!-- 会话头部：接待方（自营客服 / 某商家客服） -->
+    <view class="chat-head">
+      <image class="chat-avatar" src="{{sellerAvatar || '/images/category/default.png'}}" mode="aspectFill" />
+      <view class="chat-head-info">
+        <view class="chat-nick">{{sellerName}}</view>
+        <view class="t3">{{status === 'CLOSED' ? '会话已关闭' : '客服消息 · 不受互相关注限制'}}</view>
+      </view>
+    </view>
+
+    <scroll-view class="chat-body" scroll-y scroll-into-view="{{scrollInto}}" scroll-with-animation>
+      <view wx:if="{{items.length === 0}}" class="empty">有问题直接问，客服会尽快回复</view>
+      <view
+        wx:for="{{items}}"
+        wx:key="id"
+        id="msg-{{item.id}}"
+        class="msg-row {{item.mine ? 'msg-mine' : ''}}"
+      >
+        <image
+          wx:if="{{!item.mine}}"
+          class="msg-avatar"
+          src="{{sellerAvatar || '/images/category/default.png'}}"
+          mode="aspectFill"
+        />
+        <view class="msg-col">
+          <view
+            wx:if="{{item.card}}"
+            class="msg-card"
+            data-spu="{{item.card.productId}}"
+            catchtap="goProduct"
+          >
+            <image class="msg-card-img" src="{{item.cardImage}}" mode="aspectFill" />
+            <view class="msg-card-info">
+              <view class="msg-card-title ellipsis-2">{{item.card.title}}</view>
+              <view wx:if="{{item.cardPriceText}}" class="price msg-card-price">{{item.cardPriceText}}</view>
+            </view>
+          </view>
+          <image
+            wx:if="{{item.bizType === 'IMAGE'}}"
+            class="msg-media"
+            src="{{item.mediaUrl}}"
+            mode="widthFix"
+            data-url="{{item.mediaUrl}}"
+            bindtap="previewImage"
+          />
+          <video
+            wx:elif="{{item.bizType === 'VIDEO'}}"
+            class="msg-media"
+            src="{{item.mediaUrl}}"
+            object-fit="contain"
+          />
+          <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
+          <view class="t3 msg-time">{{item.timeText}}</view>
+        </view>
+      </view>
+      <view style="height: 20rpx"></view>
+    </scroll-view>
+
+    <view class="chat-input-bar">
+      <view class="chat-plus" bindtap="pickMedia">＋</view>
+      <input
+        class="chat-input"
+        value="{{input}}"
+        placeholder="{{status === 'CLOSED' ? '会话已关闭' : '描述你的问题…'}}"
+        placeholder-class="chat-ph"
+        confirm-type="send"
+        bindinput="onInput"
+        bindconfirm="send"
+        disabled="{{status === 'CLOSED'}}"
+      />
+      <button
+        class="btn btn-accent chat-send"
+        size="mini"
+        bindtap="send"
+        disabled="{{status === 'CLOSED' || sending || !input}}"
+        loading="{{sending}}"
+      >
+        发送
+      </button>
+    </view>
+  </view>
+</block>

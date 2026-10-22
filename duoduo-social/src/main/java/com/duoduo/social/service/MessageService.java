@@ -119,6 +119,18 @@ public class MessageService {
         String bizType = normalizeBizType(request.bizType());
         Long bizId = request.bizId();
         String content = normalizeContent(request.content());
+        boolean media = "IMAGE".equals(bizType) || "VIDEO".equals(bizType) || "EMOJI".equals(bizType);
+        if (media) {
+            if (request.mediaUrl() == null || request.mediaUrl().isBlank()) {
+                throw BizException.validation("缺少媒体地址，请重新上传");
+            }
+            if (!isSafeMediaUrl(request.mediaUrl())) {
+                throw BizException.validation("媒体地址不合法");
+            }
+            if (content.isEmpty()) {
+                content = "IMAGE".equals(bizType) ? "[图片]" : "VIDEO".equals(bizType) ? "[视频]" : "[表情]";
+            }
+        }
         if (SocialDtos.BIZ_TEXT.equals(bizType) && content.isEmpty()) {
             throw BizException.validation("消息内容不能为空");
         }
@@ -204,6 +216,11 @@ public class MessageService {
         // 卡片类：用户附言优先，否则用商品/闲置标题兜底（摘要稳定，卡片视图读取时再取事实）
         String cardTitle = product != null ? product.title() : listing != null ? listing.title() : null;
         entity.setContent(content.isEmpty() && cardTitle != null ? cardTitle : content);
+        entity.setMediaUrl(request.mediaUrl());
+        entity.setThumbUrl(request.thumbUrl());
+        entity.setWidth(request.width());
+        entity.setHeight(request.height());
+        entity.setDurationMs(request.durationMs());
         entity.setCreatedAt(now);
         messageMapper.insert(entity);
         log.info("用户 {} 向用户 {} 发送 {} 消息（会话 {}）", userId, receiverId, bizType, conversationId);
@@ -405,9 +422,17 @@ public class MessageService {
         String type = bizType == null || bizType.isBlank() ? SocialDtos.BIZ_TEXT : bizType.trim();
         return switch (type) {
             case SocialDtos.BIZ_TEXT, SocialDtos.BIZ_ASK, SocialDtos.BIZ_PRODUCT,
-                 SocialDtos.BIZ_SHARE, SocialDtos.BIZ_PROFILE_CARD, SocialDtos.BIZ_LISTING -> type;
+                 SocialDtos.BIZ_SHARE, SocialDtos.BIZ_PROFILE_CARD, SocialDtos.BIZ_LISTING,
+                 // B 批（2026-10-21）：私信与客服一致的媒体类型
+                 "IMAGE", "VIDEO", "EMOJI" -> type;
             default -> throw BizException.validation("不支持的消息类型");
         };
+    }
+
+    /** 媒体地址只接受本站/HTTPS 地址，拒绝 data:/javascript: 这类可执行伪协议 */
+    private boolean isSafeMediaUrl(String url) {
+        return url != null && url.length() <= 500
+                && (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/uploads/"));
     }
 
     private String normalizeContent(String content) {
@@ -570,6 +595,11 @@ public class MessageService {
                 e.getBizType(),
                 e.getBizId(),
                 e.getContent(),
+                e.getMediaUrl(),
+                e.getThumbUrl(),
+                e.getWidth(),
+                e.getHeight(),
+                e.getDurationMs(),
                 iso(e.getCreatedAt()),
                 e.getSenderId().equals(viewerId),
                 e.getReadAt() != null,

@@ -7,6 +7,7 @@ import com.duoduo.social.dto.SocialDtos.UnreadCount;
 import com.duoduo.social.dto.SocialDtos.UnreadSummary;
 import com.duoduo.social.service.NoticeService;
 import com.duoduo.social.service.UnreadService;
+import com.duoduo.social.support.service.SupportService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,10 +29,13 @@ public class NoticeController {
 
     private final NoticeService noticeService;
     private final UnreadService unreadService;
+    private final SupportService supportService;
 
-    public NoticeController(NoticeService noticeService, UnreadService unreadService) {
+    public NoticeController(NoticeService noticeService, UnreadService unreadService,
+                            SupportService supportService) {
         this.noticeService = noticeService;
         this.unreadService = unreadService;
+        this.supportService = supportService;
     }
 
     /** 通知列表：定向通知 + 全站公告合并视图（category 可选过滤，page/pageSize 分页） */
@@ -70,7 +74,10 @@ public class NoticeController {
     /** 全部已读（我的定向未读 + 我没读过的公告，幂等） */
     @PostMapping("/read-all")
     public ApiResponse<Void> readAll() {
-        noticeService.readAll(UserContext.requireUserId());
+        Long userId = UserContext.requireUserId();
+        noticeService.readAll(userId);
+        // 客服消息已在通知中心展示，全部已读要连会话未读一起清 —— 否则角标还亮着
+        supportService.markAllReadForUser(userId);
         return ApiResponse.ok(null);
     }
 }

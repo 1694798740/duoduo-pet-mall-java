@@ -44,7 +44,7 @@ import type { UnreadSummary } from '@duoduo/api-sdk/types';
 export const UNREAD_POLL_MS = 10 * 1000;
 
 /** 全部计零（未登录 / 主动清空时用） */
-const EMPTY_UNREAD: UnreadSummary = { notice: 0, message: 0, total: 0 };
+const EMPTY_UNREAD: UnreadSummary = { notice: 0, message: 0, support: 0, total: 0 };
 
 interface AppState {
   /** 购物车件数角标 */
@@ -99,6 +99,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setUnread({
           notice: Number(d?.notice ?? 0),
           message: Number(d?.message ?? 0),
+          support: Number(d?.support ?? 0),
           total: Number(d?.total ?? 0),
         });
       } catch {
