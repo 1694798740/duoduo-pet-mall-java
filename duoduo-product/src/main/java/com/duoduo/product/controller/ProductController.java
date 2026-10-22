@@ -70,6 +70,23 @@ public class ProductController {
     }
 
     /**
+     * 店铺主页在售商品列表（第八十二轮）：`GET /api/products/store/{sellerId}?page=&pageSize=&sort=`。
+     *
+     * <p>路径用**两段**（`/store/{sellerId}`）：`/{spuId}` 只匹配单段，不会冲突（同 A14 建议接口的判断）。
+     * 公开只读（网关 `/api/products/**` 已整体免登）。只认「在售 + 已过审」的公开可见口径；
+     * 店铺名随 {@link ProductCard#storeName} 下发。sellerId = 0（自营）也走同一入口，
+     * 前端用 {@code /store/0} 展示「多多自营」货架。
+     */
+    @GetMapping("/store/{sellerId:\\d+}")
+    public ApiResponse<PageResult<ProductCard>> storeProducts(
+            @PathVariable Long sellerId,
+            @RequestParam(defaultValue = "default") String sort,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.ok(productService.storeProducts(sellerId, sort, page, pageSize));
+    }
+
+    /**
      * 商品详情。
      *
      * <p><b>{@code spuId} 必须是纯数字</b>（R60 压测发现）：不限定形状时，任何一段非数字路径

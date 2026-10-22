@@ -265,4 +265,20 @@ public final class MerchantDtos {
             String storeName
     ) {
     }
+
+    /**
+     * 店铺公开主页信息（第八十二轮）：店铺主页页头用。
+     *
+     * <p>只暴露可公开的字段——不含资质材料、违规计数、停业原因等运营侧信息。
+     * 仅「营业中（APPROVED）」的店铺可被查到，其余状态一律 404（与「未过审商品不可见」同口径）。
+     */
+    public record StorePublicView(
+            /** 店主 userId（路由参数，与 t_spu.seller_id 同键） */
+            Long ownerUserId,
+            /** 店铺名（t_merchant.name，全局唯一） */
+            String name,
+            /** 开店时间（审核通过时刻，ISO-8601 UTC） */
+            String openedAt
+    ) {
+    }
 }

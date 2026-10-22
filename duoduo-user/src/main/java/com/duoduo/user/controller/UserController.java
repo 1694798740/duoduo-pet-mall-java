@@ -241,6 +241,19 @@ public class UserController {
     }
 
     /**
+     * 店铺公开主页信息（第八十二轮）：店铺主页页头用。
+     *
+     * <p><b>公开只读</b>（网关白名单精确放行 {@code /api/users/stores/*}），无需登录。
+     * 只回店名与开店时间，不含资质材料 / 违规计数 / 停业原因等运营侧信息；
+     * 仅「营业中（APPROVED）」可查，其余状态 404（与「未过审商品不可见」同口径）。
+     */
+    @GetMapping("/stores/{ownerUserId:\\d+}")
+    public ApiResponse<com.duoduo.user.dto.MerchantDtos.StorePublicView> storeProfile(
+            @org.springframework.web.bind.annotation.PathVariable("ownerUserId") Long ownerUserId) {
+        return ApiResponse.ok(onboardingService.storeProfileOf(ownerUserId));
+    }
+
+    /**
      * 服务间读：批量取角色快照（第四十七轮）。
      *
      * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。

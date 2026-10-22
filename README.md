@@ -2059,6 +2059,37 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十九）· 店铺主页（参考淘宝店铺页）
+
+- **后端 · 用户域**：新增公开只读端点 `GET /api/users/stores/{ownerUserId}`（`StorePublicView`：
+  ownerUserId / name / openedAt）。仅 `APPROVED` 营业中店铺可查，其余状态 404 ——
+  与「未过审商品不可见」同口径；只回店名与开店时间，不含资质材料/违规计数/停业原因。
+- **网关**：白名单**两段精确**放行 `/api/users/stores/*`（Ant 的 `*` 不跨 `/`）；
+  `/api/users/**` 下其余路径（资料/地址/入驻申请/内部端点）仍强制登录。
+  单测补「免登放行」+「不连带放行 users 子树其它路径」两组断言。
+- **后端 · 商品域**：新增 `GET /api/products/store/{sellerId}?page=&pageSize=&sort=`。
+  两段路径避开 `/{spuId:\d+}` 单段详情。可见口径复用 `visibleSpuWrapper()`（在售 + 已过审）；
+  **刻意不进 ES**（ES 引擎无 sellerId 维度过滤器，复用 search() 会出现「开 ES 后店铺页展示别家商品」）。
+  **sellerId=0 按供货类型过滤**：`t_spu.seller_id` 对自营商品落的是客服账号 id（第七十三轮口径），
+  库中没有 0 号行 —— 按 0 过滤会得到空货架，故 0 走 `supply_type='self'`。
+  店铺名随 `ProductCard.storeName` 自动下发。
+- **前端**：新增路由 `/store/:sellerId`（公开，不套 RequireAuth）+ `Store.tsx` 页面
+  （页头：店名 + 自营徽标 + 开店时间/自营文案 + 在售计数；商品网格复用 `ProductCardView`；
+  「加载更多」分页）。入口三处：商品卡店名（span + stopPropagation，外层是 Link 不能嵌 a）、
+  商品详情页店名（Link，仅第三方）、购物车组头「进店 ›」（preventDefault + stopPropagation，
+  外层是 label 点它会切全选）。api-sdk 增 `productApi.storeProducts` / `userApi.storeInfo` / `StorePublicView`。
+- **移动端适配**：商品网格 `grid-template-columns: repeat(auto-fill, minmax(210px, 1fr))` 窄屏自动 2 列；
+  页头 flex + `min-width:0` 不溢出；「加载更多」按钮式分页不受软键盘/地址栏伸缩影响。
+- **数据修正**：测试店铺「喵星人旗舰店（测试）」`t_merchant.status` 脏值 `ACTIVE`（不在枚举内）→ 修为 `APPROVED`。
+- **验证**：e2e `store-page-ui-check.mjs` **17/17**（自营货架直开 / 进店跳转 / 页头信息 / 网格与详情跳转 /
+  分页 / 不存在店铺 404 兜底 / 裂图与 console 健康）；接口实测 `/api/users/stores/...` 200、
+  `/api/products/store/0` 返回自营商品、`/store/{第三方}` 返回该店 2 件商品；
+  回归 `cart-batch-ui-check` 全过、`product-detail-ui-check` 19/0；
+  单测网关 31/0（新增 2 组断言）、商品可见性 10/0（构造器补 StoreNameClient 桩）。
+- **部署坑（复现第八十轮的教训）**：镜像打的是本地 `target/*.jar` —— 只 `mvn compile` 后
+  `docker compose up --build` 仍会把**旧 jar** 打进镜像（构建产物没更新，Docker 层缓存“正确地”复用旧文件）。
+  必须先 `mvn package` 再 build。
+
 ### 2026-10-22（六十八）· 购物车按店铺分组 + 结算明细；店铺名可自助修改
 
 - **购物车按店铺分组**：以 `CartItemView.sellerId` 分组（自营恒 0，第三方为店主 userId），

@@ -106,6 +106,7 @@ import type {
   SettlementPage,
   SettlementView,
   ShipRequest,
+  StorePublicView,
   TrackListView,
   UsableCouponResult,
   UserView,
@@ -189,6 +190,13 @@ export const userApi = {
   /** 实名认证；身份证仅存掩码 */
   realName: (body: { realName: string; idCard: string }) =>
     api.post<UserView>('/api/users/me/realname', body),
+
+  /**
+   * 店铺公开主页信息（第八十二轮）：免登可查，仅营业中店铺返回、其余 404。
+   * ownerUserId 必须以 string 传入（18 位雪花 id）。
+   */
+  storeInfo: (ownerUserId: string) =>
+    api.get<StorePublicView>(`/api/users/stores/${ownerUserId}`),
 
   /**
    * C7 · 账号注销。
@@ -359,6 +367,15 @@ export const productApi = {
 
   /** 商品详情：SKU、适用属性聚合、同类与相关推荐 */
   detail: (spuId: string) => api.get<ProductDetail>(`/api/products/${spuId}`),
+
+  /**
+   * 店铺主页在售商品（第八十二轮）：按 sellerId（= 店主 userId）过滤的公开列表。
+   * sellerId=0 即「多多自营」货架。sellerId 必须以 string 传入（18 位雪花 id）。
+   */
+  storeProducts: (
+    sellerId: string,
+    query?: { sort?: string; page?: number; pageSize?: number; signal?: AbortSignal },
+  ) => api.get<PageResult<ProductCard>>(`/api/products/store/${sellerId}`, { query }),
 
   /**
    * C2C 闲置列表（只返回已上架且审核通过的）。

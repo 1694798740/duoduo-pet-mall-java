@@ -751,6 +751,24 @@ public class MerchantOnboardingService {
         return toView(entity);
     }
 
+    /**
+     * 店铺公开主页信息（第八十二轮）：仅「营业中（APPROVED）」可查。
+     *
+     * <p>为什么只放行 APPROVED：主页是「这家店在营业」的对外承诺——送审中/草稿/驳回/停业的店铺
+     * 对外展示会误导买家（商品都不可见了，店铺页却还在）。与商品域「公开读只认在售+已过审」同一口径。
+     * 其余状态一律抛 {@link com.duoduo.common.exception.BizException}（NOT_FOUND）。
+     */
+    public com.duoduo.user.dto.MerchantDtos.StorePublicView storeProfileOf(Long ownerUserId) {
+        MerchantEntity entity = findByOwner(java.util.Objects.requireNonNull(ownerUserId, "ownerUserId"));
+        if (entity == null || !MerchantStatus.APPROVED.name().equals(entity.getStatus())) {
+            throw BizException.notFound("店铺");
+        }
+        return new com.duoduo.user.dto.MerchantDtos.StorePublicView(
+                entity.getOwnerUserId(),
+                entity.getName(),
+                entity.getReviewedAt() == null ? null : entity.getReviewedAt().toString());
+    }
+
     private MerchantEntity findByOwner(Long userId) {
         return merchantMapper.selectOne(new LambdaQueryWrapper<MerchantEntity>()
                 .eq(MerchantEntity::getOwnerUserId, userId).last("LIMIT 1"));

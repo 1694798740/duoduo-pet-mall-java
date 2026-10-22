@@ -1654,6 +1654,18 @@ export interface UserProfileView {
   mutual: boolean;
 }
 
+// ---------- 店铺公开主页（第八十二轮，duoduo-user） ----------
+
+/** 店铺主页页头信息：仅营业中（APPROVED）的店铺可查，其余 404 */
+export interface StorePublicView {
+  /** 店主 userId（与 t_spu.seller_id 同键）；注意 18 位雪花 id，前端按 string 处理 */
+  ownerUserId: string;
+  /** 店铺名（全局唯一） */
+  name: string;
+  /** 开店时间（审核通过时刻，ISO-8601 UTC），可能为空 */
+  openedAt: string | null;
+}
+
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1，duoduo-fulfilment） ----------
 
 /** 分享条目：原创与转发共用（转发多出 parent* 引用字段） */

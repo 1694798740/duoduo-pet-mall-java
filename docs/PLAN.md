@@ -264,6 +264,21 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-22（六十一）· 店铺主页（参考淘宝店铺页）
+
+| 项 | 实现 |
+| --- | --- |
+| 用户域 | `GET /api/users/stores/{ownerUserId}` 公开只读 `StorePublicView(ownerUserId, name, openedAt)`；仅 APPROVED 可查、其余 404；不含资质/违规/停业等运营侧信息 |
+| 网关 | 白名单精确加 `/api/users/stores/*`（两段，Ant `*` 不跨 `/`）；单测补放行 + 不连带放行两组断言（31/0） |
+| 商品域 | `GET /api/products/store/{sellerId}`：`visibleSpuWrapper()` + sellerId 过滤 + `applySort` + 分页；**不进 ES**（无 sellerId 维度 filter，防越权展示）；**sellerId=0 走 `supply_type='self'`**（自营 seller_id 落客服账号 id，库中无 0 号行）；复用 `toCards` 店铺名自动带上 |
+| 前端 | 路由 `/store/:sellerId`（公开）+ `Store.tsx`（页头 + 网格 + 加载更多分页）；api-sdk 增 `storeProducts` / `storeInfo` / `StorePublicView` |
+| 入口三处 | 商品卡店名（span+stopPropagation，防嵌套 a）、详情页店名（Link，仅第三方）、购物车组头「进店 ›」（preventDefault+stopPropagation，防触发组全选） |
+| 移动端 | 网格 auto-fill 210px 窄屏自动 2 列；页头 flex 不溢出；按钮分页不受移动端视口伸缩影响 |
+| 数据修正 | 喵星人旗舰店（测试）`t_merchant.status` 脏值 `ACTIVE` → `APPROVED`（枚举外值导致公开主页 404） |
+| 验证 | e2e `store-page-ui-check.mjs` **17/17**；回归 `cart-batch-ui-check` 全过、`product-detail-ui-check` 19/0；单测网关 31/0、商品可见性 10/0 |
+| 部署坑 | 镜像打本地 `target/*.jar`：只 `compile` 不 `package` 时 `--build` 仍打进旧 jar —— 必须先 package（与第八十轮「force-recreate 不重建」同属「构建链断点」类陷阱） |
+| 边界 | 店铺 logo/简介/招牌图：`t_merchant` 无这些列，本期只展示店名+开店时间+在售计数，不做 DDL；小程序端店铺主页未做（同口径接口已就绪）；分页上限复用 MAX_PAGE_SIZE=100 / MAX_RESULT_WINDOW |
+
 ### 2026-10-22（六十）· 购物车按店铺分组 + 结算明细实时汇总优惠 + 店铺名可修改
 
 | 项 | 实现 |

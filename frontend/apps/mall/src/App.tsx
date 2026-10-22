@@ -56,6 +56,7 @@ import { ProductDetailPage } from './pages/ProductDetail';
 import { ReviewNewPage } from './pages/ReviewNew';
 import { MyReviewsPage } from './pages/MyReviews';
 import { SearchPage } from './pages/Search';
+import { StorePage } from './pages/Store';
 import { AfterSalesPage } from './pages/AfterSales';
 import { AfterSaleNewPage } from './pages/AfterSaleNew';
 import { AfterSaleDetailPage } from './pages/AfterSaleDetail';
@@ -109,6 +110,9 @@ export const App: React.FC = () => (
       {/* 他人主页（S6-D1 补缺）：关注/粉丝列表、闲置详情、分享圈三处入口都跳这里。
           后端接口小程序早就在用，本路由只做前端接线。 */}
       <Route path="/user/:id" element={<UserProfilePage />} />
+      {/* 店铺主页（第八十二轮）：商品卡/详情页店名/购物车组头跳这里。
+          公开可逛（不套 RequireAuth），sellerId=0 即自营货架。 */}
+      <Route path="/store/:sellerId" element={<StorePage />} />
       <Route path="/login" element={<LoginPage />} />
 
       {/* ---------- 我的闲置（C2C 管理，第六十六轮补齐 Web 端） ----------

@@ -18,7 +18,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { listingImage, productImage } from '@duoduo/api-sdk/images';
 import { formatDate, formatPrice, formatServerTime } from '@duoduo/api-sdk/client';
 import type { ListingCard, OrderStatus, ProductCard } from '@duoduo/api-sdk/types';
@@ -216,6 +216,15 @@ export const Modal: React.FC<{
  */
 export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
   const seckill = useSpuSeckill(item.id);
+  const navigate = useNavigate();
+  /** 卡内「进店」入口（第八十二轮）：整卡已被外层 <Link> 包住，不能嵌 <a>（非法 HTML），
+   *  所以用 span + stopPropagation —— 只拦「进店」这一次点击，其余点击照常进商品详情。 */
+  const canEnterStore = item.supplyType !== 'self' && item.sellerId != null && item.sellerId !== '';
+  const enterStore = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigate(`/store/${item.sellerId}`);
+  };
   return (
     <Link className="goods-card" to={`/product/${item.id}`}>
       <div className="goods-media">
@@ -228,7 +237,19 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
       <div className="goods-body">
         <div className="goods-title">{item.title}</div>
         <div className="goods-meta">
-          <StoreNameText supplyType={item.supplyType} storeName={item.storeName} />
+          {item.storeName && canEnterStore ? (
+            <span
+              className="small muted"
+              style={{ color: 'var(--primary)', cursor: 'pointer' }}
+              role="link"
+              aria-label={`进入 ${item.storeName} 店铺主页`}
+              onClick={enterStore}
+            >
+              {item.storeName} ›
+            </span>
+          ) : (
+            <StoreNameText supplyType={item.supplyType} storeName={item.storeName} />
+          )}
           {item.categoryName ? <span>{item.categoryName}</span> : null}
         </div>
         {item.ratingCount > 0 ? (

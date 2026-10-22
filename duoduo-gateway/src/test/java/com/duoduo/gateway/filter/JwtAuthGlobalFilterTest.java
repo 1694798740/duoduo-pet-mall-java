@@ -196,6 +196,18 @@ class JwtAuthGlobalFilterTest {
         assertThat(run(get("/api/listings/710000000000000001")).passed()).isTrue();
         assertThat(run(get("/api/shares/feed")).passed()).isTrue();
         assertThat(run(get("/api/home/banners")).passed()).isTrue();
+        // 店铺公开主页（第八十二轮）：两段精确路径，免登可看
+        assertThat(run(get("/api/users/stores/366609100332732416")).passed()).isTrue();
+    }
+
+    @Test
+    void 店铺主页白名单不连带放行users子树其它路径() {
+        // /api/users/** 下其余路径全部仍是需登录：资料、地址、入驻申请、内部端点
+        assertThat(run(get("/api/users/me")).passed()).isFalse();
+        assertThat(run(get("/api/users/me/merchant-application")).passed()).isFalse();
+        assertThat(run(get("/api/users/internal/store-names")).passed()).isFalse();
+        // Ant 的 * 不跨 /，三段路径落不进 /api/users/stores/*
+        assertThat(run(get("/api/users/stores/123/anything")).passed()).isFalse();
     }
 
     @Test

@@ -373,6 +373,34 @@ public class ProductService {
         return PageResult.of(toCards(page.getRecords()), page.getTotal(), pageNo, pageSize);
     }
 
+    /**
+     * 店铺主页在售商品列表（第八十二轮）：按 {@code sellerId}（= 店主 userId）过滤的公开只读查询。
+     *
+     * <p>刻意<b>不进 ES</b>：ES 引擎当前没有 sellerId 维度的过滤器
+     * （{@code EsSearchEngine} 的 filter 只覆盖类目/租户/关键词），
+     * 若复用 search() 的 ES 分支会出现「开 ES 后店铺页展示别的店的商品」的越权展示。
+     * 店铺页本身就是确定性的归属查询，MySQL 走索引足够。
+     *
+     * <p>可见口径与 {@link #searchByMysql} 一致：只认「在售 + 已过审」
+     * （{@link #visibleSpuWrapper()}），店铺名随 {@code ProductCard.storeName} 自动带上。
+     */
+    public PageResult<ProductCard> storeProducts(Long sellerId, String sort, int page, int pageSize) {
+        java.util.Objects.requireNonNull(sellerId, "sellerId");
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+
+        // 自营（0 号卖家）走供货类型过滤：t_spu.seller_id 对自营商品落的是客服账号 id
+        // （第七十三轮改判的口径），库中没有 seller_id=0 的行 —— 按 0 过滤会得到空货架。
+        LambdaQueryWrapper<SpuEntity> wrapper = sellerId == 0L
+                ? visibleSpuWrapper().eq(SpuEntity::getSupplyType, "self")
+                : visibleSpuWrapper().eq(SpuEntity::getSellerId, sellerId);
+        applySort(wrapper, sort);
+        wrapper.orderByDesc(SpuEntity::getId);
+
+        Page<SpuEntity> result = spuMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        return PageResult.of(toCards(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
     // ---------------- 详情 ----------------
 
     /**

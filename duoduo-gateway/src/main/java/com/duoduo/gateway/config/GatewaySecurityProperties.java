@@ -86,6 +86,12 @@ public class GatewaySecurityProperties {
             // 与商品评价同性质，未登录访客也应看得到。只放行这条精确路径（读接口，无副作用）；
             // 刷新回写走 /api/reviews/internal/**，不经网关，且由履约域 InternalTokenFilter 校验凭据。
             "/api/reviews/seller/*/credit",
+            // 店铺公开主页（第八十二轮）：与商品/评价同性质 —— 点进店铺页是下单前的决策动作，
+            // 未登录也要能看。只放行这一条**两段精确**路径（/api/users/stores/{ownerUserId}）：
+            // duoduo:user 域挂在 /api/users/** 下的其它路径（登录用户本人的资料/地址/入驻申请）
+            // 都是需登录的，绝不能写成 /api/users/** 或 /api/users/stores/**（Ant 的 * 不跨 /，
+            // 目前 /stores/ 子树也没有任何写路径；将来若在该子树挂写接口，必须另行显式列出并保持免登集合最小）。
+            "/api/users/stores/*",
             // 分享圈（第四十三轮）：分享是「带用户评价的商品口碑内容」，与商品评价同性质 ——
             // 未登录也要能逛信息流、能打开好友转发来的分享落地页，强制登录等于把传播链掐断。
             // 只放行这两条**只读**路径（feed = 信息流，/* = 分享详情）；

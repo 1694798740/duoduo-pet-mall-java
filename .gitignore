@@ -71,3 +71,6 @@ scripts/e2e/*.png
 
 # TypeScript 增量构建缓存（本地产物，不入库）
 *.tsbuildinfo
+
+# Vite dev server 临时时间戳文件
+frontend/apps/mall/vite.config.ts.timestamp-*.mjs
