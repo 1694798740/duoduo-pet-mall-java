@@ -161,6 +161,23 @@ duoduo:
       h5-wap-url: ${WECHAT_PAY_H5_WAP_URL:}
       h5-wap-name: ${WECHAT_PAY_H5_WAP_NAME:多多宠物商店}
       expire-minutes: ${WECHAT_PAY_EXPIRE_MINUTES:15}
+    alipay:
+      # 支付宝「电脑网站支付」（2026-10-22，Web 端）。与微信同一条铁律：
+      # 凭据只走环境变量，启用即自检必填项，缺一项启动失败（fail closed）。
+      # 沙箱网关 openapi-sandbox.dl.alipaydev.com（无需执照）；生产 openapi.alipay.com
+      # （需签约「电脑网站支付」，见 docs/payment-qualification-alipay-vs-wechat.md）。
+      enabled: ${ALIPAY_PAY_ENABLED:false}
+      app-id: ${ALIPAY_APP_ID:}
+      # 应用私钥（PKCS#8，裸 base64 或完整 PEM 均可）
+      private-key-pem: ${ALIPAY_PRIVATE_KEY_PEM:}
+      # 支付宝公钥（开放平台「应用信息 → 接口加签方式」处查看，非应用公钥）
+      alipay-public-key-pem: ${ALIPAY_PUBLIC_KEY_PEM:}
+      gateway: ${ALIPAY_GATEWAY:https://openapi-sandbox.dl.alipaydev.com/gateway.do}
+      # 异步回调：支付宝会 POST 表单到这个地址（公网可访问；沙箱不强制 https）
+      notify-url: ${ALIPAY_NOTIFY_URL:}
+      # 支付完成后的浏览器回跳地址（仅展示用，入账以 notify 为准）
+      return-url: ${ALIPAY_RETURN_URL:}
+      expire-minutes: ${ALIPAY_EXPIRE_MINUTES:15}
 
 management:
   endpoints:

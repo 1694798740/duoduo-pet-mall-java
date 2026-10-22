@@ -51,6 +51,7 @@ const DEFAULT_TTL_SECONDS = 30 * 60;
 
 const CHANNELS = [
   { value: 'SANDBOX', label: '沙箱扫码支付' },
+  { value: 'ALIPAY_PC', label: '支付宝' },
   { value: 'MOCK', label: '模拟即时支付' },
 ] as const;
 
@@ -71,7 +72,7 @@ export const OrderDetailPage: React.FC = () => {
 
   // ---- 支付弹窗状态 ----
   const [payOpen, setPayOpen] = useState(false);
-  const [channel, setChannel] = useState<'SANDBOX' | 'MOCK'>('SANDBOX');
+  const [channel, setChannel] = useState<'SANDBOX' | 'ALIPAY_PC' | 'MOCK'>('SANDBOX');
   const [payResult, setPayResult] = useState<PayResult | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
   const [payBusy, setPayBusy] = useState(false);
@@ -569,7 +570,7 @@ export const OrderDetailPage: React.FC = () => {
             <button className="btn btn-ghost" type="button" onClick={closePay}>
               {payResult?.payStatus === 'PENDING' ? '稍后再付' : '关闭'}
             </button>
-            {payResult?.payStatus === 'PENDING' && payResult.channel !== 'MOCK' ? (
+            {payResult?.payStatus === 'PENDING' && payResult.channel === 'SANDBOX' ? (
               <button className="btn btn-primary" type="button" disabled={payBusy} onClick={() => void simulateScan()}>
                 {payBusy ? '处理中…' : '本机模拟扫码'}
               </button>
@@ -590,7 +591,22 @@ export const OrderDetailPage: React.FC = () => {
 
             {payResult.payStatus === 'PENDING' ? (
               <>
-                {payResult.codeUrl ? (
+                {payResult.channel === 'ALIPAY_PC' && payResult.codeUrl ? (
+                  <div style={{ margin: '14px 0' }}>
+                    <a
+                      className="btn btn-pay"
+                      href={payResult.codeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      跳转支付宝付款
+                    </a>
+                    <div className="small muted" style={{ marginTop: 8 }}>
+                      将打开支付宝收银台完成付款；付款后本页会自动查到支付结果，
+                      入账以支付宝异步回调为准。
+                    </div>
+                  </div>
+                ) : payResult.codeUrl ? (
                   <div style={{ margin: '14px 0' }}>
                     <QRCode value={payResult.codeUrl} size={200} />
                     <div className="small muted" style={{ marginTop: 8 }}>

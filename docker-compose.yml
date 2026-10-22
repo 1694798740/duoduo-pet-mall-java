@@ -262,6 +262,16 @@ services:
       WECHAT_PAY_H5_WAP_URL: ${WECHAT_PAY_H5_WAP_URL:-}
       WECHAT_PAY_H5_WAP_NAME: ${WECHAT_PAY_H5_WAP_NAME:-多多宠物商店}
       WECHAT_PAY_EXPIRE_MINUTES: ${WECHAT_PAY_EXPIRE_MINUTES:-15}
+      # 支付宝电脑网站支付（2026-10-22）。启用：ALIPAY_PAY_ENABLED=true + 填齐凭据；
+      # 沙箱网关无需执照，生产网关需签约「电脑网站支付」。
+      ALIPAY_PAY_ENABLED: ${ALIPAY_PAY_ENABLED:-false}
+      ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
+      ALIPAY_PRIVATE_KEY_PEM: ${ALIPAY_PRIVATE_KEY_PEM:-}
+      ALIPAY_PUBLIC_KEY_PEM: ${ALIPAY_PUBLIC_KEY_PEM:-}
+      ALIPAY_GATEWAY: ${ALIPAY_GATEWAY:-https://openapi-sandbox.dl.alipaydev.com/gateway.do}
+      ALIPAY_NOTIFY_URL: ${ALIPAY_NOTIFY_URL:-}
+      ALIPAY_RETURN_URL: ${ALIPAY_RETURN_URL:-}
+      ALIPAY_EXPIRE_MINUTES: ${ALIPAY_EXPIRE_MINUTES:-15}
     ports:
       - '8083:8083'
     depends_on:
