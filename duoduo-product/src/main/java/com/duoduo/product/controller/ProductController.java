@@ -1,6 +1,7 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.product.service.ProductInteractionService;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.ProductCard;
@@ -28,9 +29,12 @@ import java.util.Map;
 public class ProductController {
 
     private final ProductService productService;
+    private final ProductInteractionService interactionService;
 
-    public ProductController(ProductService productService) {
+    public ProductController(ProductService productService,
+                             ProductInteractionService interactionService) {
         this.productService = productService;
+        this.interactionService = interactionService;
     }
 
     @GetMapping
@@ -76,6 +80,11 @@ public class ProductController {
      */
     @GetMapping("/{spuId:\\d+}")
     public ApiResponse<ProductDetail> detail(@PathVariable Long spuId) {
+        // 足迹旁路记录：已登录才记，失败不影响详情（recordView 内部吞异常）
+        com.duoduo.common.context.LoginUser user = com.duoduo.common.context.UserContext.get();
+        if (user != null) {
+            interactionService.recordView(user.userId(), spuId);
+        }
         return ApiResponse.ok(productService.detail(spuId));
     }
 

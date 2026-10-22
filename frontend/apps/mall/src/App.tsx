@@ -38,6 +38,9 @@ import { NotificationsPage } from './pages/Notifications';
 import { FollowPage } from './pages/Follow';
 import { MessagesPage } from './pages/Messages';
 import { ChatPage } from './pages/Chat';
+import { SupportPage } from './pages/Support';
+import { FavoritesPage } from './pages/Favorites';
+import { HistoryPage } from './pages/History';
 import { ShareCirclePage } from './pages/ShareCircle';
 import { ShareDetailPage } from './pages/ShareDetail';
 import { ShareMinePage } from './pages/ShareMine';
@@ -182,6 +185,33 @@ export const App: React.FC = () => (
         element={
           <RequireAuth>
             <ChatPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* 客服（第七十八轮从私信独立）：自营客服与商家客服共用一条通道，但不进私信列表 */}
+      <Route
+        path="/favorites"
+        element={
+          <RequireAuth>
+            <FavoritesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/history"
+        element={
+          <RequireAuth>
+            <HistoryPage />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/support"
+        element={
+          <RequireAuth>
+            <SupportPage />
           </RequireAuth>
         }
       />
