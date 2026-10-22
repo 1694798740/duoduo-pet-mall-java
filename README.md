@@ -5513,3 +5513,12 @@ ES 索引 `duoduo-search` 里有 **124 条 LISTING 文档、0 条 SPU**，
 - **凭据只走环境变量**（`ALIPAY_PAY_ENABLED / APP_ID / PRIVATE_KEY_PEM / PUBLIC_KEY_PEM / GATEWAY / NOTIFY_URL / RETURN_URL / EXPIRE_MINUTES`），compose 已透传，启用即启动自检缺项失败（fail closed）。
 - **前端**：订单详情「支付渠道」新增「支付宝」——预下单后展示「跳转支付宝付款」按钮，付款后本页轮询 `GET /api/payments/{payNo}` 自动入账；「本机模拟扫码」收窄为沙箱渠道专用。
 - 已知边界：个人主体无照**只能跑沙箱**（正式收款必须执照签约，见 `docs/payment-qualification-alipay-vs-wechat.md`）；回调地址网关白名单 `/api/payments/callback/**` 已覆盖，无需新增。
+
+## 六十五（2026-10-22）：支付宝沙箱全链路打通（密钥配对 + 签名口径修正）
+
+- **密钥配对**：沙箱控制台「接口加签方式」上传与本地应用私钥配对的应用公钥（由私钥用 `openssl pkey -pubout` 推导生成），配对后签名即被网关接受。
+- **签名口径实测修正**：沙箱网关错误页会展示它构造的验签串——逐字节比对发现**验签串包含 `sign_type`**（只剔除 `sign` 与空值），与部分旧文档「剔除 sign_type」的说法不同。`AlipayCrypto.signContent` 已修正，回调验签同口径。
+- **排查方法沉淀**：验签失败先查请求内容再怀疑密钥（官方原则）；用 openssl/python 建第二套独立签名实现做差分，把 charset/format/参数位置逐一排除；网关错误页的「验签字符串」是逐字节比对的权威依据。
+- **联调修复合集**：① 表单公共参数（含 charset）必须在 action 查询串、body 只放 biz_content；② `t_payment.code_url` 加宽为 MEDIUMTEXT（增量 41）；③ 回调应答纯文本 success/failure；④ `alipay.trade.query` 查询兜底进补偿调度。
+- **验证**：单测 12/12；端到端：登录→下单→`pay(ALIPAY_PC)`→表单提交沙箱网关→返回真实收银台页（61KB，含扫码/付款元素）。
+- 生产切换：仅换 `ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do` + 正式密钥（需执照签约「电脑网站支付」）。
