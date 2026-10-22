@@ -67,6 +67,21 @@ public enum MerchantStatus {
         return this == APPROVED || this == SUSPENDED;
     }
 
+    /**
+     * 能否修改店名（第八十一轮）。
+     *
+     * <p>只有<b>营业中（APPROVED）</b>的店铺可以改名：草稿 / 被驳回阶段改名走
+     * {@link #canEditMaterials()} 的材料路径（改名本来就是改材料的一部分）；
+     * 送审中（SUBMITTED / REVIEWING）改名 = 边审边换「送审的样本」，禁止；
+     * 停业（SUSPENDED）先补办续期再谈改名 —— 恢复营业的路径里自然会再核一遍主体。
+     *
+     * <p>改名<b>不需要重新审核</b>：店铺名不是资质材料（证照、类目才是），
+     * 全局唯一约束 + 敏感词校验足够；但要记审计（谁在什么时候把店名从什么改成了什么）。
+     */
+    public boolean canRenameStore() {
+        return this == APPROVED;
+    }
+
     /** 审核起点：只有 SUBMITTED 能开始审核 */
     public static final Set<MerchantStatus> REVIEWABLE = Set.of(SUBMITTED, REVIEWING);
 }

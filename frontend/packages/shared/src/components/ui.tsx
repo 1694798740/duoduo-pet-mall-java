@@ -83,6 +83,19 @@ export const SupplyTag: React.FC<{ supplyType: string }> = ({ supplyType }) => {
   return <span className="tag tag-self">多多自营</span>;
 };
 
+/**
+ * 店铺名（第八十一轮）：优先显示商家自有店名（storeName，随卡片实时下发），
+ * 没有时回退供货类型标签的文案。第三方店铺改名后这里立即显示新名 ——
+ * 卡片不落店铺名副本，每次渲染都用接口返回的最新值。
+ */
+export const StoreNameText: React.FC<{ supplyType: string; storeName?: string | null }> = ({
+  supplyType,
+  storeName,
+}) => {
+  if (storeName) return <span className="small muted">{storeName}</span>;
+  return <SupplyTag supplyType={supplyType} />;
+};
+
 export const Stars: React.FC<{ value: number; showValue?: boolean }> = ({ value, showValue }) => {
   const rounded = Math.max(0, Math.min(5, Math.round(value)));
   return (
@@ -215,7 +228,7 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
       <div className="goods-body">
         <div className="goods-title">{item.title}</div>
         <div className="goods-meta">
-          {item.brandName ? <span>{item.brandName}</span> : null}
+          <StoreNameText supplyType={item.supplyType} storeName={item.storeName} />
           {item.categoryName ? <span>{item.categoryName}</span> : null}
         </div>
         {item.ratingCount > 0 ? (

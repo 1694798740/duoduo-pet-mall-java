@@ -74,6 +74,10 @@ public class ProductService {
     private final CatalogLookup catalogLookup;
     private final BannedWordGuard bannedWordGuard;
     private final ObjectMapper objectMapper;
+    /** 第八十一轮 · 店铺名跨域客户端（购物车按店分组 / 商品卡自有店名） */
+    private final com.duoduo.product.client.StoreNameClient storeNameClient;
+    /** 平台自营的展示名（与 C 端其它位置的 SupplyTag 文案同源） */
+    public static final String SELF_STORE_NAME = "多多自营";
     /** A10 · ES 检索引擎（可选：开关关闭时 bean 不存在，检索一律走 MySQL） */
     private final org.springframework.beans.factory.ObjectProvider<
             com.duoduo.product.support.search.EsSearchEngine> esSearchProvider;
@@ -84,6 +88,7 @@ public class ProductService {
                           CatalogLookup catalogLookup,
                           BannedWordGuard bannedWordGuard,
                           ObjectMapper objectMapper,
+                          com.duoduo.product.client.StoreNameClient storeNameClient,
                           org.springframework.beans.factory.ObjectProvider<
                                   com.duoduo.product.support.search.EsSearchEngine> esSearchProvider) {
         this.spuMapper = spuMapper;
@@ -92,6 +97,7 @@ public class ProductService {
         this.catalogLookup = catalogLookup;
         this.bannedWordGuard = bannedWordGuard;
         this.objectMapper = objectMapper;
+        this.storeNameClient = storeNameClient;
         this.esSearchProvider = esSearchProvider;
     }
 
@@ -586,6 +592,15 @@ public class ProductService {
                 : spuMapper.selectBatchIds(spuIds).stream()
                         .collect(Collectors.toMap(SpuEntity::getId, s -> s, (a, b) -> a));
 
+        // 店铺名一次批量取（第八十一轮）：第三方按店主 userId 跨域查 t_merchant.name；
+        // 自营不查（固定「多多自营」）。查询失败降级为 null —— 店铺名是展示信息，
+        // 不能因为用户域抖动把整个购物车/商品列表打挂。
+        Map<Long, String> storeNames = loadStoreNames(spuMap.values().stream()
+                .filter(s -> !"self".equals(s.getSupplyType()))
+                .map(SpuEntity::getSellerId)
+                .filter(id -> id != null && id != 0L)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new)));
+
         return skus.stream().map(sku -> {
             SpuEntity spu = spuMap.get(sku.getSpuId());
             int stock = sku.getStock() == null ? 0 : sku.getStock();
@@ -625,8 +640,44 @@ public class ProductService {
                     // 入驻（merchant）商品仍透传归属卖家，订单进卖家自己的商家端。
                     spu == null ? 0L
                             : ("self".equals(spu.getSupplyType()) ? 0L
-                                : (spu.getSellerId() == null ? 0L : spu.getSellerId())));
+                                : (spu.getSellerId() == null ? 0L : spu.getSellerId())),
+                    storeNameOf(spu, storeNames));
         }).toList();
+    }
+
+    /** 自营固定「多多自营」；第三方按店主 userId 查批量结果，查不到为 null（前端降级） */
+    private static String storeNameOf(SpuEntity spu, Map<Long, String> storeNames) {
+        if (spu == null) {
+            return null;
+        }
+        if ("self".equals(spu.getSupplyType())) {
+            return SELF_STORE_NAME;
+        }
+        return spu.getSellerId() == null ? null : storeNames.get(spu.getSellerId());
+    }
+
+    /** 批量跨域取店铺名；失败降级为空 Map（店铺名是展示信息，不值得为它打挂主流程） */
+    private Map<Long, String> loadStoreNames(java.util.Collection<Long> ownerUserIds) {
+        if (ownerUserIds == null || ownerUserIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            String csv = ownerUserIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+            com.duoduo.common.api.ApiResponse<java.util.List<com.duoduo.product.client.dto.StoreBrief>> resp =
+                    storeNameClient.batch(csv);
+            if (resp == null || resp.data() == null) {
+                return Map.of();
+            }
+            return resp.data().stream()
+                    .filter(b -> b != null && b.ownerUserId() != null && b.name() != null)
+                    .collect(Collectors.toMap(
+                            com.duoduo.product.client.dto.StoreBrief::ownerUserId,
+                            com.duoduo.product.client.dto.StoreBrief::name,
+                            (a, b) -> a));
+        } catch (Exception e) {
+            log.warn("批量取店铺名失败，降级为通用标识: {}", e.getMessage());
+            return Map.of();
+        }
     }
 
     /**
@@ -714,6 +765,13 @@ public class ProductService {
                 spus.stream().map(SpuEntity::getCategoryId).toList());
         Map<Long, String> brandNames = catalogLookup.brandNames(
                 spus.stream().map(SpuEntity::getBrandId).toList());
+        // 店铺名一次批量取（第八十一轮）：第三方查用户域，自营固定「多多自营」；
+        // 注意自营在卡片上的 sellerId 是客服账号（咨询归属口径），不能拿它查店铺 —— 必须按 supplyType 分流。
+        Map<Long, String> storeNames = loadStoreNames(spus.stream()
+                .filter(s -> !"self".equals(s.getSupplyType()))
+                .map(SpuEntity::getSellerId)
+                .filter(id -> id != null && id != 0L)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new)));
 
         return spus.stream()
                 .map(spu -> new ProductCard(
@@ -738,7 +796,8 @@ public class ProductService {
                         spu.getRating() == null ? 0d : spu.getRating().doubleValue(),
                         spu.getRatingCount() == null ? 0 : spu.getRatingCount(),
                         Boolean.TRUE.equals(inStock.get(spu.getId())),
-                        spu.getSellerId() == null ? 0L : spu.getSellerId()))
+                        spu.getSellerId() == null ? 0L : spu.getSellerId(),
+                        storeNameOf(spu, storeNames)))
                 .toList();
     }
 

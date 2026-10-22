@@ -121,7 +121,10 @@ public class CartService {
                     snap == null ? 0 : snap.availableStock(),
                     selected,
                     valid,
-                    reason));
+                    reason,
+                    rowSellerId(snap),
+                    snap == null ? null : snap.storeName(),
+                    com.duoduo.common.seller.SellerOwnership.isSelfSeller(rowSellerId(snap))));
         }
         return new CartView(List.copyOf(views), views.size(), totalQuantity,
                 selectedCount, selectedAmount, List.copyOf(invalidReasons));
@@ -362,7 +365,15 @@ public class CartService {
                 snap == null ? 0 : snap.availableStock(),
                 isSelected(row),
                 valid,
-                reason);
+                reason,
+                rowSellerId(snap),
+                snap == null ? null : snap.storeName(),
+                com.duoduo.common.seller.SellerOwnership.isSelfSeller(rowSellerId(snap)));
+    }
+
+    /** 快照缺失（商品已物理删除）时归属不可知，回 null 而不是 0 —— 0 会被当成自营 */
+    private static Long rowSellerId(SkuSnapshot snap) {
+        return snap == null ? null : snap.sellerId();
     }
 
     private static int safeQuantity(CartItemEntity row) {

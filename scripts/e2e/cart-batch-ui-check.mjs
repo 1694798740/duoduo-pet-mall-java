@@ -33,10 +33,18 @@ try {
   await page.goto(BASE + '/cart', { waitUntil: 'networkidle' });
   await page.waitForSelector('.stack .card', { timeout: 15000 });
 
-  const rowCount = () => page.locator('.stack .card').count();
+  const rowCount = () => page.locator('section .stack .card').count();
+  /** 店铺组头（第八十一轮）：每组显示真实店铺名，自营组带「自营」徽标 */
+  const groupHeads = async () => {
+    const heads = page.locator('section .row-between label span');
+    const n = await heads.count();
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(((await heads.nth(i).textContent()) || '').trim());
+    return out;
+  };
   /** 每行的商品标题序列 —— 顺序断言靠它（全选/取消全选前后必须完全一致） */
   const rowTitles = async () => {
-    const cards = page.locator('.stack .card');
+    const cards = page.locator('section .stack .card');
     const n = await cards.count();
     const out = [];
     for (let i = 0; i < n; i++) {
@@ -61,6 +69,21 @@ try {
   console.log('  基线顺序：', baseOrder.join(' | '));
   if (baseOrder.filter(Boolean).length === before) pass('基线顺序已取到全部标题');
   else fail(`基线顺序取标题异常：${JSON.stringify(baseOrder)}`);
+
+  // ── 店铺分组（第八十一轮）：组头显示真实店铺名；结算明细显示优惠与应付 ──
+  const heads = await groupHeads();
+  console.log('  店铺分组：', heads.join(' | '));
+  if (heads.includes('多多自营')) pass('自营组显示「多多自营」');
+  else fail(`自营组头异常：${JSON.stringify(heads)}`);
+  if (heads.some((h) => h && h !== '多多自营' && h !== '品牌入驻'))
+    pass(`第三方组显示商家自有店名（${heads.filter((h) => h !== '多多自营').join('/')}）`);
+  else console.log('  [跳过] 当前购物车没有第三方商品，跳过自有店名断言');
+  const detailText = ((await page.locator('div.card').filter({ hasText: '结算明细' }).first().textContent()) || '').replace(/\s+/g, ' ');
+  if (/商品总价/.test(detailText) && /合计/.test(detailText)) pass('结算明细面板存在（商品总价 + 合计）');
+  else fail(`结算明细面板异常：${detailText.slice(0, 120)}`);
+  const settledAmount = Number((detailText.match(/合计：\s*¥([\d,]+\.\d{2})/) || [])[1]?.replace(/,/g, ''));
+  if (!Number.isNaN(settledAmount) && settledAmount >= 0) pass(`结算明细合计 ¥${settledAmount.toFixed(2)}`);
+  else fail('结算明细合计未取到');
   const assertOrder = async (label) => {
     const now = await rowTitles();
     if (now.length === baseOrder.length && now.every((t, i) => t === baseOrder[i])) {
@@ -112,7 +135,7 @@ try {
   }
 
   // ── 单条删除：确认框拦截，取消不删 ──────────────────────────
-  await page.locator('.stack .card').first().locator('button', { hasText: '删除' }).click();
+  await page.locator('section .stack .card').first().locator('button', { hasText: '删除' }).click();
   await page.waitForSelector('text=移出购物车', { timeout: 5000 });
   pass('单条删除弹出确认框');
   await page.locator('button', { hasText: '取消' }).click();
@@ -124,7 +147,7 @@ try {
   await allBox.click();
   await page.waitForTimeout(1800);
   const amountBefore = money(await bottomText());
-  const qtyInput = page.locator('.stack .card').first().locator('input[aria-label="数量"]');
+  const qtyInput = page.locator('section .stack .card').first().locator('input[aria-label="数量"]');
   const qtyBefore = Number(await qtyInput.inputValue());
   await qtyInput.fill(String(qtyBefore + 1));
   await qtyInput.blur();
@@ -155,7 +178,7 @@ try {
   // ── 勾选 1 件 → 删除已选 → 确认 → 行数减 1、已选归零 ─────────
   await allBox.click(); // 取消全选
   await page.waitForTimeout(1800);
-  await page.locator('.stack .card').first().locator('input[type="checkbox"]').click();
+  await page.locator('section .stack .card').first().locator('input[type="checkbox"]').click();
   await page.waitForTimeout(1000);
   await delBtn.click();
   await page.waitForSelector('text=删除已选商品', { timeout: 5000 });

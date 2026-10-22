@@ -2059,6 +2059,35 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十八）· 购物车按店铺分组 + 结算明细；店铺名可自助修改
+
+- **购物车按店铺分组**：以 `CartItemView.sellerId` 分组（自营恒 0，第三方为店主 userId），
+  每组一个 `section`：店级复选框（部分选中显示半选）+ **店铺名称** + 自营徽标 + 「N 件 · 已选 ¥x」。
+  分组基于 `orderedItems`，与第六十七轮的顺序快照护栏叠加，全选/取消不会打乱组内外顺序。
+- **真实店铺名打通（原先是前端写死「第三方入驻」）**：
+  `t_merchant.name` → `GET /api/users/internal/store-names?ownerIds=`（user 域，内部令牌校验）
+  → `StoreNameClient`（product 域 Feign，`contextId=productStoreNameClient`）
+  → `SkuPurchaseView.storeName` / `ProductCard.storeName` → trade 域透传进 `CartItemView.storeName`。
+  自营固定 `ProductService.SELF_STORE_NAME = "多多自营"` 不查库；user 域异常时降级为 `null`，
+  前端回退原「品牌入驻」标识，不阻断渲染。
+- **结算明细（参考淘宝）**：勾选金额驱动 `GET /api/coupons/mine/usable?amount=`，取 `bestCouponCode`
+  对应券算 `payableAmount = selectedAmount - discountAmount`（下限 0）；面板列「商品总价 / 优惠券 /
+  优惠共减 / 合计」，吸底栏共用该值并显示「已优惠 ¥x」。金额不在前端累加，一律用服务端 `selectedAmount`。
+  面板注明「实际优惠金额以下单页为准」。
+- **店铺名可自助修改（新能力）**：此前 `canEditMaterials()` 仅 DRAFT/REJECTED 可用，APPROVED **无任何改名入口**。
+  新增 `PATCH /api/users/me/merchant-application/store-name`：`MerchantStatus.canRenameStore()` 仅 `APPROVED`；
+  `validateStoreName` 复用；撞名 → `DuplicateKeyException` → 「店铺名已被使用」；审计 `MERCHANT_STORE_RENAME`
+  记 before/after；同值幂等。改名不涉及资质材料，不触发重审。商家端 `Account.tsx` 新增 `StoreRenamePanel`。
+- **展示场景**：`ProductCardView` 的 `goods-meta` 以新增 `StoreNameText` 替换品牌名，`ProductDetail`、
+  `Cart` 组头、`Checkout`（按 sellerId 分组，文案更正为「按店拆单、券按比例分摊（R60 口径）」）同步。
+- **验证**：`cart-batch-ui-check.mjs` **29/29**（新增组名/自营徽标/结算明细面板/明细合计断言，保留 10 次顺序断言）；
+  `GET /api/cart` 返回 `{"store":"喵星人旗舰店（测试）","self":false}` 与 `{"store":"多多自营","self":true}`；
+  改名 `小李宠物用品 ↔ 小李宠物用品旗舰店` 两次 200 且审计两条；`GET /api/products` 卡片带 `store`。
+- **边界**：营销域券表无 `merchant_id/scope`，暂无「店铺优惠」维度（结算明细已预留累加点）；小程序端商家无改名入口；
+  改名未限频；店名不进订单快照。
+- **部署坑**：monorepo 连续 `npm run build` 偶发第三个应用 `emptyDir` 失败，单独重跑该应用即可；
+  核对 `merchant.localhost:8091` 需 `NO_PROXY=*`（系统代理不解析该域名，会返回 502）。
+
 ### 2026-10-22（六十七）· 修复：全选/取消全选后购物车商品顺序被打乱
 
 - **现象**：初始「麦富迪 → 卫仕 → 未卡」，点全选再取消，变成「卫仕 → 未卡 → 麦富迪」，

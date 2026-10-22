@@ -218,6 +218,11 @@ export interface ProductCard {
    * 而不是把它当成自营（那会把第三方商家的商品错标成平台自营的信用）。
    */
   sellerId?: string | null;
+  /**
+   * 店铺名（第八十一轮）：第三方 = 商家自有店名；自营 = 多多自营；取名失败/老后端 = undefined。
+   * 首页/列表/购物车据此显示真实店铺，而不是千篇一律的「品牌入驻」。
+   */
+  storeName?: string | null;
 }
 
 export interface Suitability {
@@ -302,6 +307,12 @@ export interface CartItemView {
   selected: boolean;
   valid: boolean;
   invalidReason: CartInvalidReason | null;
+  /** 卖家归属（店主 userId；0 = 平台自营）——购物车按店铺分组的键 */
+  sellerId: string | null;
+  /** 店铺名（第三方 = 商家自有店名；自营 = 多多自营；取名失败 = null） */
+  storeName: string | null;
+  /** 是否平台自营 */
+  selfOwned: boolean;
 }
 
 export interface CartView {

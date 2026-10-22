@@ -244,4 +244,25 @@ public final class MerchantDtos {
             boolean suspended
     ) {
     }
+
+    /**
+     * 店铺名简称（内部端点批量下发）：商品域组装「购物车按店铺分组 / 商品卡显示自有店名」用。
+     *
+     * <p>键是<b>店主 userId</b>（{@code t_merchant.owner_user_id}），与商品归属
+     * {@code t_spu.seller_id} 同一个键 —— 店铺主键不是 {@code t_merchant.id}（E20 口径）。
+     * 查不到的 id 直接不返回，调用方按「未知店铺」降级，不抛异常。
+     */
+    public record StoreBrief(
+            Long ownerUserId,
+            /** 店铺名（t_merchant.name，全局唯一） */
+            String name
+    ) {
+    }
+
+    /** 营业中店铺改名请求（第八十一轮） */
+    public record RenameStoreRequest(
+            @jakarta.validation.constraints.NotBlank(message = "店铺名称不能为空")
+            String storeName
+    ) {
+    }
 }

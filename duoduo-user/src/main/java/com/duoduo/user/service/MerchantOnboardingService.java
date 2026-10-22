@@ -699,9 +699,79 @@ public class MerchantOnboardingService {
         return entity;
     }
 
+    /**
+     * 营业中店铺改名（第八十一轮）。
+     *
+     * <p>为什么敢开这个口子（此前 APPROVED 一律冻结）：店铺名不是资质材料 ——
+     * 证照、类目、有效期才是「送审的样本」；店名只要满足全局唯一 + 长度/占位校验，
+     * 改名不构成「边审边换材料」。但**必须留审计**：谁在什么时候把店名从什么改成了什么，
+     * before/after 都要能查 —— 店名出现在订单、售后、结算等所有交易链路上，
+     * 没有留痕的改名等于给「洗身份」开后门。
+     *
+     * <p>只允许 APPROVED（{@code canRenameStore}）：草稿/被驳回走 saveDraft 的材料路径；
+     * 送审中改名会破坏「审核结论 ↔ 材料」对应关系；停业先走续期恢复营业。
+     *
+     * <p>改名即时生效：购物车分组、商品卡片、结算页显示的店名都是**实时查**
+     * {@code t_merchant.name}（按店主 userId），不存在需要失效的缓存或快照副本 ——
+     * 这是「展示字段不落副本」纪律的直接收益。
+     */
+    @Transactional
+    public ApplicationView renameStore(Long userId, String newName) {
+        MerchantEntity entity = requireOwned(userId);
+        MerchantStatus status = MerchantStatus.valueOf(entity.getStatus());
+        if (!status.canRenameStore()) {
+            throw BizException.businessRule("当前状态（" + status + "）不能修改店铺名称；"
+                    + "仅营业中的店铺支持改名，草稿/被驳回请在申请材料里修改");
+        }
+        validateStoreName(newName);
+        String trimmed = newName.trim();
+        String before = entity.getName();
+        if (trimmed.equals(before)) {
+            return toView(entity);   // 改成原名：幂等返回，不写库不留痕
+        }
+        entity.setName(trimmed);
+        entity.setUpdatedAt(now());
+        try {
+            merchantMapper.updateById(entity);
+        } catch (DuplicateKeyException ex) {
+            throw BizException.conflict("店铺名已被使用，请换一个");
+        }
+        try {
+            auditLogService.record(new AuditLogRecord(
+                    userId, "",
+                    "MERCHANT_STORE_RENAME", "MERCHANT",
+                    AuditOutcome.SUCCESS.name(),
+                    entity.getId(), "MERCHANT",
+                    entity.getOwnerUserId() == null ? 0L : entity.getOwnerUserId(),
+                    before, trimmed, null, com.duoduo.common.api.RequestIdHolder.get(),
+                    "店铺改名", LocalDateTime.now(ZoneOffset.UTC).toString()));
+        } catch (Exception ex) {
+            log.error("店铺改名留痕失败 merchantId={} owner={}", entity.getId(), userId, ex);
+        }
+        return toView(entity);
+    }
+
     private MerchantEntity findByOwner(Long userId) {
         return merchantMapper.selectOne(new LambdaQueryWrapper<MerchantEntity>()
                 .eq(MerchantEntity::getOwnerUserId, userId).last("LIMIT 1"));
+    }
+
+    /**
+     * 批量取店铺名（内部端点）：按店主 userId 查 {@code t_merchant.name}。
+     *
+     * <p>为什么是批量：购物车一页可能涉及好几家店，逐店一次 Feign 就是 N+1 的跨进程版本。
+     * 查不到的 id 直接跳过（自营 / 从未入驻的 userId 本就不该有店铺），调用方降级展示，
+     * 不在这里抛 404 —— 批量接口逐个抛会把好请求一起拖死（与 {@code userBriefs} 同一口径）。
+     */
+    public java.util.List<com.duoduo.user.dto.MerchantDtos.StoreBrief> storeNamesOf(java.util.Collection<Long> ownerUserIds) {
+        if (ownerUserIds == null || ownerUserIds.isEmpty()) {
+            return java.util.List.of();
+        }
+        return merchantMapper.selectList(new LambdaQueryWrapper<MerchantEntity>()
+                        .in(MerchantEntity::getOwnerUserId, ownerUserIds))
+                .stream()
+                .map(e -> new com.duoduo.user.dto.MerchantDtos.StoreBrief(e.getOwnerUserId(), e.getName()))
+                .toList();
     }
 
     private com.duoduo.user.entity.MerchantMemberEntity findMember(Long merchantId, Long userId) {

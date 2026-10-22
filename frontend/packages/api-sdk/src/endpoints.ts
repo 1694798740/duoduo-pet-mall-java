@@ -251,6 +251,14 @@ export const userApi = {
   submitMerchantApplication: () =>
     api.post<MerchantApplicationView>('/api/users/me/merchant-application/submit'),
 
+  /**
+   * 营业中店铺改名（第八十一轮）。仅 APPROVED 可改；全局唯一，重名报业务冲突；
+   * 改名即时生效（购物车分组 / 商品卡片实时查店名，无缓存）。
+   */
+  renameStore: (storeName: string) =>
+    api.patch<MerchantApplicationView>('/api/users/me/merchant-application/store-name',
+      { storeName }),
+
   /** 激活（审核通过后）：返回重签的访问令牌（入口固定商家侧）；浏览器通道同时写 Cookie */
   activateMerchant: () =>
     api.post<{ accessToken: string; expiresInSeconds: number }>(

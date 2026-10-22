@@ -449,36 +449,43 @@ export const CheckoutPage: React.FC = () => {
 
           <div className="card card-pad" style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 12 }}>商品清单</h3>
-            <div className="stack">
-              {selected.map((item) => (
-                <div className="row-between row-wrap" key={item.skuId}>
-                  <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
-                    {item.image ? (
-                      <img
-                        src={skuImage(item.skuId, item.spuId, item.image)}
-                        alt={item.title}
-                        style={{
-                          width: 48,
-                          height: 48,
-                          objectFit: 'cover',
-                          borderRadius: 8,
-                          flex: '0 0 auto',
-                        }}
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : null}
-                    <div style={{ minWidth: 0 }}>
-                      <div className="goods-title">{item.title}</div>
-                      <div className="small muted">
-                        {item.specText ?? '默认规格'} · × {item.quantity}
+            {/* 按店铺分组展示（第八十一轮）：与购物车同一套 sellerId 分组口径 */}
+            {[...new Map(selected.map((item) => [item.sellerId ?? 'unknown', item.storeName
+              ?? (item.selfOwned ? '多多自营' : '品牌入驻')])).entries()].map(([key, name]) => (
+              <div key={key} style={{ marginBottom: 14 }}>
+                <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>{name}</div>
+                <div className="stack">
+                  {selected.filter((i) => (i.sellerId ?? 'unknown') === key).map((item) => (
+                    <div className="row-between row-wrap" key={item.skuId}>
+                      <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+                        {item.image ? (
+                          <img
+                            src={skuImage(item.skuId, item.spuId, item.image)}
+                            alt={item.title}
+                            style={{
+                              width: 48,
+                              height: 48,
+                              objectFit: 'cover',
+                              borderRadius: 8,
+                              flex: '0 0 auto',
+                            }}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        ) : null}
+                        <div style={{ minWidth: 0 }}>
+                          <div className="goods-title">{item.title}</div>
+                          <div className="small muted">
+                            {item.specText ?? '默认规格'} · × {item.quantity}
+                          </div>
+                        </div>
                       </div>
+                      <span style={{ color: 'var(--danger)' }}>{formatPrice(item.amount)}</span>
                     </div>
-                  </div>
-                  <span style={{ color: 'var(--danger)' }}>{formatPrice(item.amount)}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -577,7 +584,7 @@ export const CheckoutPage: React.FC = () => {
             <div className="small muted">
               收费口径：金额单位为「分」，展示时统一折算为元。
               下单时<b>券被锁定</b>（此时还不能给别人用），支付成功才核销、取消订单自动退回；
-              购物车含多家卖家时，一张券只作用在<b>商品总额最大</b>的那一单（v1 口径）。
+              购物车含多家卖家时会按店拆单，券的抵扣按各子单商品金额<b>比例分摊</b>（R60 口径）。
             </div>
           </div>
         </div>

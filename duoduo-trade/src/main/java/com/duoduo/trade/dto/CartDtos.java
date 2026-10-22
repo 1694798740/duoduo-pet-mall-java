@@ -38,7 +38,16 @@ public final class CartDtos {
             /** 是否可参与结算；false 时 invalidReason 必有值 */
             boolean valid,
             /** 失效原因码：SKU_NOT_FOUND / OFF_SHELF / OUT_OF_STOCK / STOCK_NOT_ENOUGH */
-            String invalidReason
+            String invalidReason,
+            /**
+             * 卖家归属（t_user.id；0 = 平台自营，第八十一轮随店铺分组下发）。
+             * 前端按它 + storeName 分组展示；结算页按店拆单也用同一口径。
+             */
+            Long sellerId,
+            /** 店铺名（第三方 = 商家自有店名；自营 = 「多多自营」；取名失败 = null） */
+            String storeName,
+            /** 是否平台自营（sellerId == 0 推导，前端免得再写字面量比较） */
+            boolean selfOwned
     ) {
     }
 

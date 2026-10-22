@@ -21,6 +21,9 @@ package com.duoduo.trade.client.dto;
  * @param sellerId       卖家归属（t_user.id；0 = 平台自营）。下单拆单按它分组 ——
  *                       之前商品域没有归属字段，拆单只能全部写 0；现在补上，
  *                       第三方商家的订单才能正确落进商家端（M5-9 / M9）
+ * @param storeName      店铺名（第八十一轮）：第三方 = t_merchant.name；自营 = 「多多自营」。
+ *                       商品域批量跨域取名后随快照下发，购物车按店铺分组直接用；
+ *                       商品域取名失败时为 null，前端降级为通用标识
  */
 public record SkuSnapshot(
         Long skuId,
@@ -41,6 +44,7 @@ public record SkuSnapshot(
         boolean sellable,
         String spuStatus,
         String skuStatus,
-        Long sellerId
+        Long sellerId,
+        String storeName
 ) {
 }

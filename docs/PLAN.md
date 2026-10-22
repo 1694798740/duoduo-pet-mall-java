@@ -264,6 +264,23 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-22（六十）· 购物车按店铺分组 + 结算明细实时汇总优惠 + 店铺名可修改
+
+| 项 | 实现 |
+| --- | --- |
+| 分组键 | `CartItemView.sellerId`（自营恒 0，第三方为店主 userId）；分组基于 `orderedItems`，第五十九轮的顺序快照护栏对分组同样生效 |
+| 分组 UI | 每组一个 `section`：店级复选框（indeterminate 半选）+ 店名 + 自营徽标 + 「N 件 · 已选 ¥x」；组内 `CartRow` 包 `.stack` |
+| 店名通道 | user 域 `GET /api/users/internal/store-names?ownerIds=` → product 域 `StoreNameClient`（`contextId=productStoreNameClient`）→ `SkuPurchaseView.storeName` / `ProductCard.storeName` → trade 域透传进 `CartItemView.storeName` |
+| 自营店名 | `ProductService.SELF_STORE_NAME = "多多自营"`（自营不查库）；第三方取 `t_merchant.name`，查不到降级为 `null`、前端回退「品牌入驻」 |
+| 结算明细 | `couponApi.usable(selectedAmount)` 实时查询 → 取 `bestCouponCode` 券 → `payableAmount = selectedAmount - discountAmount`（下限 0）；吸底栏共用该值并显示「已优惠 ¥x」 |
+| 口径 | 金额不在前端累加，`selectedAmount` 一律取服务端值；面板标注「实际优惠金额以下单页为准」 |
+| 店名可改 | `PATCH /api/users/me/merchant-application/store-name`；`MerchantStatus.canRenameStore()` 仅 `APPROVED`；`validateStoreName` 复用；撞名 → `DuplicateKeyException` → 「店铺名已被使用」；审计 `MERCHANT_STORE_RENAME` 含 before/after；同值幂等 |
+| 商家端 | `Account.tsx` 新增 `StoreRenamePanel`（APPROVED 才显示「修改店名」，改后 `refreshMe`） |
+| 展示场景 | 商品卡 `StoreNameText`（`ProductCardView` 的 `goods-meta` 用店名替换品牌名）、`ProductDetail`、`Cart` 组头、`Checkout` 按 sellerId 分组 + 文案更正为「按店拆单、券按比例分摊（R60）」 |
+| 验证 | `cart-batch-ui-check.mjs` 扩至 **29 项全过**（新增自营/第三方组名、结算明细面板、明细合计 ¥0.00 / ¥913.00）；`GET /api/cart` 返回 `store` 字段正确；改名两次均 200 且审计两条；`GET /api/products` 卡片带 `store` |
+| 边界 | 券无 `merchant_id/scope`，暂无「店铺优惠」维度（预留累加点）；小程序端商家无改名入口；改名未限频；店名不进订单快照 |
+| 部署坑 | 商家端 `build:merchant` 在 monorepo 连续构建下偶发 `emptyDir` 失败，单独重跑即恢复；`merchant.localhost:8091` 走系统代理会 502（代理不解析该域名），核对须 `NO_PROXY=*` |
+
 ### 2026-10-22（五十九）· 修复购物车「全选后顺序被打乱」
 
 | 项 | 实现 |

@@ -292,7 +292,12 @@ export const ProductDetailPage: React.FC = () => {
           <div className="pd-price-block">
             <div className="row-between row-wrap">
               <span className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
-                <SupplyTag supplyType={card.supplyType} />
+                {/* 店铺名优先（第八十一轮）：第三方显示商家自有店名，改名后立即生效 */}
+                {card.storeName ? (
+                  <span className="small" style={{ fontWeight: 600 }}>{card.storeName}</span>
+                ) : (
+                  <SupplyTag supplyType={card.supplyType} />
+                )}
                 {/* 信用分是「卖家」的可信度：只对入驻商品展示（第七十三轮起自营商品 sellerId=0，
                     平台自营没有单一卖家，不再挂官方客服账号的信用徽章） */}
                 {card.supplyType !== 'self' && card.sellerId != null && card.sellerId !== '' ? (

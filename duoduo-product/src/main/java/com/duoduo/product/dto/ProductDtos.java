@@ -222,7 +222,13 @@ public final class ProductDtos {
              * 交易服务下单时用它做「按卖家拆单」——之前全部写 0（自营），
              * 是因为商品域还没有归属字段；现在补上，第三方商家的订单才能正确落到商家端。
              */
-            Long sellerId
+            Long sellerId,
+            /**
+             * 店铺名（第八十一轮）：第三方 = t_merchant.name（按 sellerId=店主 userId 跨域取名）；
+             * 自营 = 固定「多多自营」。查不到店铺时为 null，调用方降级为通用标识。
+             * 购物车按店铺分组、商品卡显示自有店名都靠它。
+             */
+            String storeName
     ) {
     }
 
@@ -411,7 +417,13 @@ public final class ProductDtos {
              * 而不是商品的属性，因此必须随卡片带出来；缺了它前端只能一律按自营展示，
              * 第三方商家的信用就永远露不出来。
              */
-            Long sellerId
+            Long sellerId,
+            /**
+             * 店铺名（第八十一轮）：第三方 = 商家自有店名（t_merchant.name）；
+             * 自营 = 「多多自营」。首页 / 列表 / 购物车据此显示真实店铺，
+             * 而不是千篇一律的「品牌入驻」。
+             */
+            String storeName
     ) {
     }
 

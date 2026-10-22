@@ -222,6 +222,25 @@ public class UserController {
     }
 
     /**
+     * 服务间读：批量取店铺名（按店主 userId，键口径 = {@code t_spu.seller_id}）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。
+     * 调用方是商品域：购物车按店铺分组、商品卡片显示「自有店名」都需要店铺名，
+     * 而店铺名在用户域 {@code t_merchant.name} —— 商品域没有也不该有自己的店铺表。
+     * 查不到的 id 不返回（自营 = 0 号卖家，调用方自行显示「多多自营」）。
+     */
+    @GetMapping("/internal/store-names")
+    public ApiResponse<java.util.List<com.duoduo.user.dto.MerchantDtos.StoreBrief>> storeNames(
+            @org.springframework.web.bind.annotation.RequestParam("ownerIds") String ownerIds) {
+        java.util.List<Long> ids = java.util.Arrays.stream(ownerIds.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Long::valueOf)
+                .toList();
+        return ApiResponse.ok(onboardingService.storeNamesOf(ids));
+    }
+
+    /**
      * 服务间读：批量取角色快照（第四十七轮）。
      *
      * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。

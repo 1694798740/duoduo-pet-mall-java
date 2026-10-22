@@ -19,8 +19,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { skuImage } from '@duoduo/api-sdk/images';
-import { cartApi } from '@duoduo/api-sdk/endpoints';
-import type { CartItemView, CartView } from '@duoduo/api-sdk/types';
+import { cartApi, couponApi } from '@duoduo/api-sdk/endpoints';
+import type { CartItemView, CartView, UsableCouponResult } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Empty, LoadingBlock, Modal, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
@@ -30,6 +30,34 @@ const INVALID_REASON_TEXT: Record<string, string> = {
   OFF_SHELF: '商品已下架',
   OUT_OF_STOCK: '已售罄',
   STOCK_NOT_ENOUGH: '库存不足',
+};
+
+/** 店铺分组（第八十一轮）：按 sellerId 分组；键为 null（快照缺失）时归入「未知店铺」 */
+interface StoreGroup {
+  key: string;
+  /** 店铺显示名：第三方 = 商家自有店名；自营 = 多多自营；取名失败降级通用标识 */
+  name: string;
+  selfOwned: boolean;
+  items: CartItemView[];
+}
+
+const groupByStore = (items: CartItemView[]): StoreGroup[] => {
+  const map = new Map<string, StoreGroup>();
+  for (const item of items) {
+    const key = item.sellerId ?? 'unknown';
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        name: item.storeName ?? (item.selfOwned ? '多多自营' : '品牌入驻'),
+        selfOwned: item.selfOwned,
+        items: [],
+      };
+      map.set(key, group);
+    }
+    group.items.push(item);
+  }
+  return [...map.values()];
 };
 
 /**
@@ -216,6 +244,21 @@ export const CartPage: React.FC = () => {
   const allSelected = validItems.length > 0 && validItems.every((i) => i.selected);
   const someSelected = validItems.some((i) => i.selected);
   const selectedCount = data?.selectedCount ?? 0;
+  /** 店铺分组：直接依赖 orderedItems，顺序快照护栏对分组同样生效 */
+  const storeGroups = useMemo(() => groupByStore(orderedItems), [orderedItems]);
+
+  // ── 结算明细（参考淘宝）：勾选金额实时驱动可用券查询，优惠即时汇总到应付 ──
+  const usableFetcher = useCallback(
+    () => (data && data.selectedAmount > 0
+      ? couponApi.usable(data.selectedAmount)
+      : Promise.resolve(null)),
+    [data?.selectedAmount],
+  );
+  const { data: usable } = useAsync<UsableCouponResult | null>(usableFetcher);
+  const bestCoupon = usable?.coupons?.find((c) => c.code === usable?.bestCouponCode && c.usable) ?? null;
+  /** 优惠共减 = 当前最优可用券的抵扣（店铺优惠/平台优惠体系落地后在此累加） */
+  const couponDiscount = bestCoupon?.discountAmount ?? 0;
+  const payableAmount = Math.max(0, (data?.selectedAmount ?? 0) - couponDiscount);
 
   // 只选了一部分时，全选框显示为「半选」——否则用户以为没选
   useEffect(() => {
@@ -357,17 +400,111 @@ export const CartPage: React.FC = () => {
         </div>
       ) : null}
 
-      <div className="stack">
-        {orderedItems.map((item) => (
-          <CartRow
-            key={item.skuId}
-            item={item}
-            pending={pendingSku === item.skuId}
-            onQuantity={(skuId, q) => void changeQuantity(skuId, q)}
-            onSelect={(skuId, s) => void changeSelection(skuId, s)}
-            onRemove={() => setConfirm({ kind: 'item', skuId: item.skuId, title: item.title })}
-          />
-        ))}
+      {/* 按店铺分组（参考淘宝）：每组 = 店铺名 + 组级全选 + 组内商品 */}
+      {storeGroups.map((group) => {
+        const groupValid = group.items.filter((i) => i.valid);
+        const groupAllSelected = groupValid.length > 0 && groupValid.every((i) => i.selected);
+        const groupSomeSelected = groupValid.some((i) => i.selected);
+        const groupAmount = groupValid
+          .filter((i) => i.selected)
+          .reduce((sum, i) => sum + i.amount, 0);
+        const selectGroup = async () => {
+          const target = !groupAllSelected;
+          setActionError(null);
+          setBusy(true);
+          try {
+            for (const item of groupValid) {
+              if (item.selected !== target) await cartApi.setSelected(item.skuId, target);
+            }
+            await afterMutation();
+          } catch (err) {
+            setActionError(toFriendlyMessage(err));
+          } finally {
+            setBusy(false);
+          }
+        };
+        return (
+          <section key={group.key} className="card" style={{ padding: '12px 16px 16px' }}>
+            <div className="row-between" style={{ marginBottom: 10 }}>
+              <label className="row small" style={{ gap: 6, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={groupAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = groupSomeSelected && !groupAllSelected;
+                  }}
+                  disabled={groupValid.length === 0 || busy}
+                  onChange={() => void selectGroup()}
+                  aria-label={`选择 ${group.name} 全部商品`}
+                />
+                <span>{group.name}</span>
+                {group.selfOwned ? (
+                  <span
+                    className="small"
+                    style={{ color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 4, padding: '0 4px' }}
+                  >
+                    自营
+                  </span>
+                ) : null}
+              </label>
+              <span className="small muted">
+                {group.items.length} 件{groupAmount > 0 ? ` · 已选 ${formatPrice(groupAmount)}` : ''}
+              </span>
+            </div>
+            <div className="stack">
+              {group.items.map((item) => (
+                <CartRow
+                  key={item.skuId}
+                  item={item}
+                  pending={pendingSku === item.skuId}
+                  onQuantity={(skuId, q) => void changeQuantity(skuId, q)}
+                  onSelect={(skuId, s) => void changeSelection(skuId, s)}
+                  onRemove={() => setConfirm({ kind: 'item', skuId: item.skuId, title: item.title })}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+
+      {/* 结算明细（参考淘宝）：优惠实时汇总，应付金额随勾选与券动态更新 */}
+      <div className="card card-pad" style={{ marginTop: 18 }}>
+        <h3 className="section-title" style={{ fontSize: 16, marginBottom: 10 }}>
+          结算明细
+          <span className="small muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+            实际优惠金额以下单页为准
+          </span>
+        </h3>
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="row-between small">
+            <span className="muted">商品总价（已选 {selectedCount} 件）</span>
+            <span>{formatPrice(data.selectedAmount)}</span>
+          </div>
+          <div className="row-between small">
+            <span className="muted">优惠券</span>
+            {couponDiscount > 0 ? (
+              <span style={{ color: 'var(--danger)' }}>
+                {bestCoupon!.name} -{formatPrice(couponDiscount)}
+              </span>
+            ) : usable && usable.coupons.length > 0 ? (
+              <span className="muted">暂无达门槛可用的券</span>
+            ) : (
+              <span className="muted">暂无可用优惠券</span>
+            )}
+          </div>
+          {couponDiscount > 0 ? (
+            <div className="row-between small" style={{ color: 'var(--danger)' }}>
+              <span>优惠共减</span>
+              <span>-{formatPrice(couponDiscount)}</span>
+            </div>
+          ) : null}
+          <div className="row-between" style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4 }}>
+            <span style={{ fontWeight: 600 }}>合计：</span>
+            <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--danger)' }}>
+              {formatPrice(payableAmount)}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="card card-pad" style={{ marginTop: 18, position: 'sticky', bottom: 12 }}>
@@ -402,14 +539,19 @@ export const CartPage: React.FC = () => {
 
           <div className="row row-wrap" style={{ marginLeft: 'auto' }}>
             <span className="small muted">
-              已选 {data.selectedCount} 件 · 合计
+              已选 {selectedCount} 件 · 合计
             </span>
             <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
-              {formatPrice(data.selectedAmount)}
+              {formatPrice(payableAmount)}
             </span>
+            {couponDiscount > 0 ? (
+              <span className="small" style={{ color: 'var(--danger)' }}>
+                （已优惠 {formatPrice(couponDiscount)}）
+              </span>
+            ) : null}
             <button
               className="btn btn-primary"
-              disabled={data.selectedCount === 0}
+              disabled={selectedCount === 0}
               onClick={() => navigate('/checkout')}
             >
               去结算

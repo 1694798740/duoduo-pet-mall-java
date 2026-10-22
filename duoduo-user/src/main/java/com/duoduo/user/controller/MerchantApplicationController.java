@@ -58,6 +58,19 @@ public class MerchantApplicationController {
     }
 
     /**
+     * 营业中店铺改名（第八十一轮）。
+     *
+     * <p>仅 APPROVED 可改；全局唯一，重名返回 409 语义的业务冲突；
+     * 每次改名落审计（before/after）。改名即时生效 —— 店铺名在购物车分组、
+     * 商品卡片、结算页都是实时查用户域 {@code t_merchant.name}，无缓存副本需要失效。
+     */
+    @org.springframework.web.bind.annotation.PatchMapping("/store-name")
+    public ApiResponse<ApplicationView> renameStore(
+            @RequestBody com.duoduo.user.dto.MerchantDtos.RenameStoreRequest request) {
+        return ApiResponse.ok(onboardingService.renameStore(UserContext.requireUserId(), request.storeName()));
+    }
+
+    /**
      * 激活（审核通过后调用）：返回重签的访问令牌（入口固定商家侧，与入驻重签同一语义）。
      * 小程序 / Bearer 形态的端侧用响应体里的令牌覆盖本地；浏览器通道走 Cookie。
      */
