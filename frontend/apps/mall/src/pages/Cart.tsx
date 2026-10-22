@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { skuImage } from '@duoduo/api-sdk/images';
 import { cartApi } from '@duoduo/api-sdk/endpoints';
 import type { CartItemView, CartView } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
@@ -80,7 +81,7 @@ const CartRow: React.FC<{
       >
         {item.image ? (
           <img
-            src={item.image}
+            src={skuImage(item.skuId, item.spuId, item.image)}
             alt={item.title}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             loading="lazy"

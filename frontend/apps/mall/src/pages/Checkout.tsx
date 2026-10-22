@@ -29,6 +29,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { skuImage } from '@duoduo/api-sdk/images';
 import { addressApi, cartApi, couponApi, orderApi } from '@duoduo/api-sdk/endpoints';
 import type { AddressView, CartView, PlaceOrderResult, UsableCouponResult } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
@@ -454,7 +455,7 @@ export const CheckoutPage: React.FC = () => {
                   <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
                     {item.image ? (
                       <img
-                        src={item.image}
+                        src={skuImage(item.skuId, item.spuId, item.image)}
                         alt={item.title}
                         style={{
                           width: 48,
