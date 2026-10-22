@@ -1198,6 +1198,48 @@ public class OrderService {
     }
 
     /**
+     * 渠道查询兜底：对 PENDING 支付单向渠道侧主动查一次真实状态。
+     *
+     * <p>只处理「渠道实现了 {@link PaymentChannel#queryStatus}」的支付单
+     * （默认实现返回 null，天然跳过 MOCK / 沙箱 / 微信）。
+     * 查到成功且金额一致的，走与回调<b>完全相同</b>的校验与入账路径
+     * （状态 CAS + 金额核对 + 订单状态机）——查询兜底不能绕过任何一道防线。
+     */
+    private int channelQuerySync(LocalDateTime now) {
+        List<PaymentEntity> pendings = paymentMapper.selectList(new LambdaQueryWrapper<PaymentEntity>()
+                .eq(PaymentEntity::getStatus, PaymentEntity.STATUS_PENDING)
+                .gt(PaymentEntity::getExpireAt, now)
+                .last("LIMIT " + Math.max(1, sweepBatchSize)));
+        int synced = 0;
+        for (PaymentEntity payment : pendings) {
+            try {
+                PaymentChannel channel = channelRegistry.require(payment.getChannel());
+                PaymentChannel.CallbackPayload payload = channel.queryStatus(payment.getPayNo());
+                if (payload == null) {
+                    continue;
+                }
+                OrderEntity order = orderMapper.selectById(payment.getOrderId());
+                if (order == null || !"SUCCESS".equals(payload.status())
+                        || payload.amount() != nz(payment.getAmount())) {
+                    continue;
+                }
+                OrderStatus current = OrderStatus.of(order.getStatus());
+                if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
+                    continue;
+                }
+                completePayment(order, payment, payload.channelTradeNo(), payload.paidAt(), false);
+                log.info("支付单经渠道查询补入账（异步通知可能丢失）：payNo={} channel={}",
+                        payment.getPayNo(), payment.getChannel());
+                synced++;
+            } catch (RuntimeException e) {
+                // 单张支付单查询失败不拖垮整轮调度
+                log.warn("渠道查询兜底失败：payNo={} err={}", payment.getPayNo(), e.getMessage());
+            }
+        }
+        return synced;
+    }
+
+    /**
      * 沙箱收银台的「模拟支付」动作：构造一条与真实渠道回调**格式完全相同**的签名报文，
      * 再交给 {@link #handleChannelCallback} 走同一套验签与入账 ——
      * 验签路径因此是被真实使用的，而不是摆着好看的死代码。
@@ -1812,6 +1854,12 @@ public class OrderService {
             seckillService.onOrderClosed(order);
             closed++;
         }
+
+        // 1.4) 渠道查询兜底（支付宝官方规范：未收到异步通知时必须调查询接口确认）。
+        // 对仍处于 PENDING、且渠道支持主动查询的支付单，向渠道侧查一次真实状态：
+        // 已支付但通知丢失的单子在这里被补入账；渠道侧无此单的返回 null 直接跳过。
+        // 放在「支付单过期」之前：先救活，再考虑作废，避免"已付款但被置为 EXPIRED"。
+        channelQuerySync(now);
 
         // 1.5) 支付单过期：PENDING 且已过自身过期时间的，二维码作废。
         // 只动 PENDING（CAS），已成功 / 已作废的不受影响；过期支付单对应的订单

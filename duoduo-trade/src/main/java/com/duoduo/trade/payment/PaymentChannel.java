@@ -74,7 +74,7 @@ public interface PaymentChannel {
      */
     record PrepayCommand(String payNo, String orderNo, long amount, String subject,
                          String openId, String clientIp) {
-        PrepayCommand(String payNo, String orderNo, long amount, String subject) {
+        public PrepayCommand(String payNo, String orderNo, long amount, String subject) {
             this(payNo, orderNo, amount, subject, null, null);
         }
     }
@@ -94,6 +94,19 @@ public interface PaymentChannel {
 
     /** 渠道回调的有效载荷（已通过验签） */
     record CallbackPayload(String payNo, String channelTradeNo, long amount, String status, LocalDateTime paidAt) {
+    }
+
+    /**
+     * 主动查询渠道侧交易状态（2026-10-22 新增，异步通知丢失时的兜底）。
+     *
+     * <p>支付宝规范要求：未收到异步通知时<b>必须</b>调用查询接口确认订单状态，
+     * 不能只依赖回调。补偿调度会对 PENDING 支付单轮询本方法，
+     * 返回 {@code null} 表示「渠道不支持查询 / 渠道侧查无此单」，跳过即可。
+     *
+     * <p>默认返回 null：只有实现了真实查询接口的渠道才需要覆写。
+     */
+    default CallbackPayload queryStatus(String payNo) {
+        return null;
     }
 
     /** 退款参数 */

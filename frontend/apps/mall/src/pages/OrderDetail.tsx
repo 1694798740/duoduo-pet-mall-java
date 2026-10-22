@@ -55,6 +55,23 @@ const CHANNELS = [
   { value: 'MOCK', label: '模拟即时支付' },
 ] as const;
 
+/**
+ * 支付宝 page.pay 的正确打开方式（官方规范）：
+ * 服务端返回的是「自动提交的 HTML 表单」而不是 URL —— 注入 DOM、
+ * 以新标签提交（收银台在新页打开，原页轮询继续），禁止用 URL 直接跳转。
+ */
+const submitAlipayForm = (formHtml: string) => {
+  const container = document.createElement('div');
+  container.style.display = 'none';
+  container.innerHTML = formHtml;
+  document.body.appendChild(container);
+  const form = container.querySelector('form');
+  if (form) {
+    form.target = '_blank';
+    form.submit();
+  }
+};
+
 const SETTLEMENT_TEXT: Record<string, { label: string; kind: 'info' | 'success' | 'warn' }> = {
   CUSTODY: { label: '资金托管中：货款暂存平台，确认收货后结算给卖家', kind: 'warn' },
   RELEASED: { label: '已放款：货款已结算给卖家', kind: 'success' },
@@ -593,14 +610,15 @@ export const OrderDetailPage: React.FC = () => {
               <>
                 {payResult.channel === 'ALIPAY_PC' && payResult.codeUrl ? (
                   <div style={{ margin: '14px 0' }}>
-                    <a
+                    {/* 支付宝 page.pay 返回的是自动提交表单 HTML（不是 URL）：
+                        注入 DOM 后以新标签提交，收银台在新页打开，本页轮询不受影响 */}
+                    <button
                       className="btn btn-pay"
-                      href={payResult.codeUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      type="button"
+                      onClick={() => submitAlipayForm(payResult.codeUrl ?? '')}
                     >
                       跳转支付宝付款
-                    </a>
+                    </button>
                     <div className="small muted" style={{ marginTop: 8 }}>
                       将打开支付宝收银台完成付款；付款后本页会自动查到支付结果，
                       入账以支付宝异步回调为准。

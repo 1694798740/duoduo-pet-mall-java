@@ -46,12 +46,28 @@ public class PaymentController {
      *
      * <p>读的是<b>原始报文体</b>而不是反序列化对象：签名是对原始字节算的，
      * 先交给 Jackson 反序列化再拼回去验签，任何字段顺序 / 空白差异都会让验签必然失败。
+     *
+     * <p><b>支付宝渠道的特殊应答</b>（官方异步通知规范）：处理成功必须返回纯文本
+     * {@code success}（仅此 7 个字符），否则支付宝会按退避策略持续重试；
+     * 处理失败返回其他内容（同样 200），由支付宝重试。微信/沙箱渠道保持 JSON 应答不变。
      */
     @PostMapping("/api/payments/callback/{channel}")
-    public ApiResponse<PayResult> callback(@PathVariable("channel") String channel,
-                                           @RequestBody String rawBody,
-                                           @RequestHeader Map<String, String> headers) {
-        return ApiResponse.ok(orderService.handleChannelCallback(channel, rawBody, headers));
+    public ResponseEntity<?> callback(@PathVariable("channel") String channel,
+                                      @RequestBody String rawBody,
+                                      @RequestHeader Map<String, String> headers) {
+        if (channel != null && channel.toUpperCase().startsWith("ALIPAY")) {
+            String body;
+            try {
+                orderService.handleChannelCallback(channel, rawBody, headers);
+                body = "success";
+            } catch (RuntimeException e) {
+                body = "failure";
+            }
+            return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .body(body);
+        }
+        return ResponseEntity.ok(ApiResponse.ok(orderService.handleChannelCallback(channel, rawBody, headers)));
     }
 
     /** 沙箱收银台「模拟支付」动作（走同一套验签与入账路径） */

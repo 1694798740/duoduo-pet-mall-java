@@ -3,6 +3,7 @@ package com.duoduo.trade.payment.alipay;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.trade.payment.PaymentChannel;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,21 +20,25 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * 支付宝「电脑网站支付」渠道（2026-10-22，Web 端）。
+ * 支付宝「电脑网站支付」渠道（2026-10-22，Web 端；按支付宝官方接入规范校准）。
  *
- * <h2>产品形态</h2>
- * {@code alipay.trade.page.pay}：预下单不调 HTTP 接口，而是把签名后的参数拼在
- * <b>支付宝收银台 URL</b> 上交给前端，前端整页跳转（或二维码扫码）进入支付宝付款；
- * 支付结果由支付宝 {@code notify_url} 异步 POST 表单回调 —— 与微信 Native 的
- * 「预下单拿 code_url + 服务端回调入账」形态完全同构，所以能装进同一个
- * {@link PaymentChannel} 骨架：{@code codeUrl} = 收银台 URL。
+ * <h2>产品形态（pageExecute POST 等价实现）</h2>
+ * {@code alipay.trade.page.pay} 是<b>页面跳转类 API</b>：官方 SDK 用
+ * {@code pageExecute(request, "POST")} 生成一段<b>自动提交的 HTML 表单</b>，
+ * 由前端渲染并提交到网关 —— <b>禁止拼 URL 直接跳转</b>（大参数场景只会显示参数、无法跳转支付宝）。
+ * 本项目为避免引入 alipay-sdk 的传递依赖，按 SDK 的行为自实现了等价的表单生成：
+ * 服务端签名后返回完整 form HTML（hidden inputs + 提交按钮），前端注入 DOM 后提交。
+ * 签名内容规则与 SDK 完全一致：字典序拼串、剔除 sign/sign_type/空值、SHA256withRSA（RSA2）。
  *
- * <h2>钱到没到只以回调为准</h2>
- * 预下单只是生成跳转链接，订单入账仍由 {@code POST /api/payments/callback/ALIPAY_PC}
- * 完成（网关白名单 {@code /api/payments/callback/**} 已覆盖）。
- * 回调是 {@code application/x-www-form-urlencoded} 表单，验签用支付宝公钥 RSA2；
- * 验签失败必须抛错，重放防护依赖「支付单状态 CAS + 金额核对」而不是时间戳
- * （支付宝 notify 无时间戳头，幂等由库内支付单状态机兜住）。
+ * <h2>规范要点（来自支付宝官方接入文档）</h2>
+ * <ul>
+ *   <li>时间戳格式必须 {@code yyyy-MM-dd HH:mm:ss}（非 ISO）；</li>
+ *   <li>{@code product_code} 固定 {@code FAST_INSTANT_TRADE_PAY}；</li>
+ *   <li>金额单位是「元」（两位小数），不是微信的「分」；</li>
+ *   <li>支付结果以异步通知 / 查询接口为准，同步跳转（return_url）不可信；</li>
+ *   <li>异步通知必须验签，并核对 {@code app_id / out_trade_no / total_amount}；</li>
+ *   <li>未收到异步通知时必须调用 {@code alipay.trade.query} 兜底（见 {@link #queryStatus}）。</li>
+ * </ul>
  *
  * <h2>沙箱 / 生产</h2>
  * 代码零差别，只换 {@code duoduo.pay.alipay.gateway} 与密钥：
@@ -73,23 +78,30 @@ public class AlipayPagePayChannel implements PaymentChannel {
         params.put("method", "alipay.trade.page.pay");
         params.put("return_url", config.returnUrl());
         params.put("notify_url", config.notifyUrl());
-        // biz_content 单独作为 JSON：这是支付宝的约定，金额单位是「元」（两位小数字符串），
-        // 而不是微信的「分」—— 单位换算错一位就是 100 倍差异，写在这里做显式换算。
+        params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        // biz_content 单独作为 JSON；金额单位是「元」（两位小数），分→元换算只发生在这里
         Map<String, Object> biz = new LinkedHashMap<>();
         biz.put("out_trade_no", command.payNo());
         biz.put("total_amount", yuan(command.amount()));
         biz.put("subject", command.subject());
         biz.put("product_code", "FAST_INSTANT_TRADE_PAY");
         params.put("biz_content", toJson(biz));
-        params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         params.put("sign", AlipayCrypto.sign(params, config.privateKeyPem()));
 
-        String query = params.entrySet().stream()
-                .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
-                .collect(java.util.stream.Collectors.joining("&"));
-        String cashierUrl = config.gateway() + "?" + query;
-        log.info("支付宝电脑网站支付预下单完成：payNo={} amount={}分", command.payNo(), command.amount());
-        return new PrepayResult(cashierUrl, null, LocalDateTime.now().plusMinutes(config.expireMinutes()));
+        // 与官方 SDK pageExecute(request, "POST") 同构：完整表单 HTML 交给前端渲染提交。
+        // 刻意不带 <script> 自动提交脚本：前端（React）负责注入 DOM 并控制提交时机。
+        StringBuilder form = new StringBuilder();
+        form.append("<form name=\"punchout_form\" method=\"post\" action=\"")
+                .append(htmlEscape(config.gateway()))
+                .append("\" accept-charset=\"utf-8\">");
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            form.append("<input type=\"hidden\" name=\"").append(e.getKey())
+                    .append("\" value=\"").append(htmlEscape(e.getValue())).append("\"/>");
+        }
+        form.append("<input type=\"submit\" value=\"立即支付\" style=\"display:none\">");
+        form.append("</form>");
+        log.info("支付宝电脑网站支付预下单完成（表单形态）：payNo={} amount={}分", command.payNo(), command.amount());
+        return new PrepayResult(form.toString(), null, LocalDateTime.now().plusMinutes(config.expireMinutes()));
     }
 
     @Override
@@ -107,13 +119,19 @@ public class AlipayPagePayChannel implements PaymentChannel {
         if (!AlipayCrypto.verify(form, config.alipayPublicKeyPem())) {
             throw new BizException(ErrorCode.PAYMENT_SIGNATURE_INVALID, "支付宝回调验签失败");
         }
+        // 官方规范：验签通过后必须核对 app_id / out_trade_no / total_amount 是否为本应用订单
+        String appId = form.get("app_id");
+        if (appId == null || !config.appId().equals(appId)) {
+            throw new BizException(ErrorCode.PAYMENT_SIGNATURE_INVALID,
+                    "回调 app_id 与配置不符（回调 " + appId + "）");
+        }
         String payNo = form.get("out_trade_no");
         String tradeNo = form.get("trade_no");
         String tradeStatus = form.get("trade_status");
         if (payNo == null || tradeStatus == null) {
             throw new BizException(ErrorCode.PAYMENT_SIGNATURE_INVALID, "回调缺少 out_trade_no / trade_status");
         }
-        // 只有这两态表示钱已到账；WAIT_BUYER_PAY 等状态一律按"未成功"拒绝入账，
+        // 只有 TRADE_SUCCESS / TRADE_FINISHED 表示钱已到账；其余状态按"未成功"返回，
         // 让上层状态机保持 PENDING，等真正的成功回调再来
         if (!"TRADE_SUCCESS".equals(tradeStatus) && !"TRADE_FINISHED".equals(tradeStatus)) {
             log.info("支付宝回调非成功状态，不入账：payNo={} status={}", payNo, tradeStatus);
@@ -130,6 +148,54 @@ public class AlipayPagePayChannel implements PaymentChannel {
         LocalDateTime paidAt = parsePaidAt(form.get("gmt_payment"));
         log.info("支付宝回调验签通过：payNo={} tradeNo={} amount={}分", payNo, tradeNo, amountFen);
         return new CallbackPayload(payNo, tradeNo == null ? "" : tradeNo, amountFen, "SUCCESS", paidAt);
+    }
+
+    /**
+     * 主动查询渠道侧交易状态（{@code alipay.trade.query}，同步返回 JSON）。
+     *
+     * <p>官方规范：未收到异步通知时必须用查询接口兜底。补偿调度对 PENDING 支付单
+     * 轮询本方法；渠道侧查无此单（{@code ACQ.TRADE_NOT_EXIST}）返回 null 跳过。
+     */
+    @Override
+    public CallbackPayload queryStatus(String payNo) {
+        config.assertComplete();
+        Map<String, String> params = baseParams();
+        params.put("method", "alipay.trade.query");
+        Map<String, Object> biz = new LinkedHashMap<>();
+        biz.put("out_trade_no", payNo);
+        params.put("biz_content", toJson(biz));
+        params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        params.put("sign", AlipayCrypto.sign(params, config.privateKeyPem()));
+
+        String query = params.entrySet().stream()
+                .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .collect(java.util.stream.Collectors.joining("&"));
+        JsonNode resp = httpGetJson(config.gateway() + "?" + query);
+        JsonNode body = resp.path("alipay_trade_query_response");
+        String code = body.path("code").asText("");
+        if ("40004".equals(code) && "ACQ.TRADE_NOT_EXIST".equals(body.path("sub_code").asText(""))) {
+            return null; // 渠道侧还没有这笔单（用户还没到收银台），交给下一轮
+        }
+        if (!"10000".equals(code)) {
+            log.warn("支付宝查询接口返回异常：payNo={} code={} msg={}", payNo, code, body.path("msg").asText(""));
+            return null;
+        }
+        String tradeStatus = body.path("trade_status").asText("");
+        String tradeNo = body.path("trade_no").asText("");
+        if (!"TRADE_SUCCESS".equals(tradeStatus) && !"TRADE_FINISHED".equals(tradeStatus)) {
+            return new CallbackPayload(payNo, tradeNo, 0L, "PENDING", null);
+        }
+        long amountFen;
+        try {
+            amountFen = new BigDecimal(body.path("total_amount").asText("0"))
+                    .movePointRight(2).longValueExact();
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.PAYMENT_CHANNEL_ERROR,
+                    "查询返回金额不是合法金额：" + body.path("total_amount").asText());
+        }
+        LocalDateTime paidAt = parsePaidAt(body.path("gmt_payment").asText(""));
+        log.info("支付宝查询确认支付成功：payNo={} tradeNo={} amount={}分", payNo, tradeNo, amountFen);
+        return new CallbackPayload(payNo, tradeNo, amountFen, "SUCCESS", paidAt);
     }
 
     @Override
@@ -151,17 +217,17 @@ public class AlipayPagePayChannel implements PaymentChannel {
         String query = params.entrySet().stream()
                 .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
                 .collect(java.util.stream.Collectors.joining("&"));
-        // 退款是同步返回 JSON 的接口（GET 网关），不走回调
-        com.fasterxml.jackson.databind.JsonNode resp = httpGetJson(config.gateway() + "?" + query);
-        String code = resp.path("alipay_trade_refund_response").path("code").asText("");
+        // 退款是同步返回 JSON 的接口（exec 语义），不走回调
+        JsonNode resp = httpGetJson(config.gateway() + "?" + query);
+        JsonNode body = resp.path("alipay_trade_refund_response");
+        String code = body.path("code").asText("");
         boolean ok = "10000".equals(code);
-        String fundChange = resp.path("alipay_trade_refund_response").path("fund_change").asText("");
+        String fundChange = body.path("fund_change").asText("");
         log.info("支付宝退款：refundNo={} payNo={} code={} fundChange={}",
                 command.refundNo(), command.payNo(), code, fundChange);
-        // fund_change=Y 表示本次产生了真实退款资金流；同步接口成功即终态
-        return new RefundResult(command.refundNo(),
-                resp.path("alipay_trade_refund_response").path("trade_no").asText(""),
-                ok ? ("Y".equals(fundChange) ? "SUCCESS" : "SUCCESS") : "FAILED", ok);
+        // 官方规范：fund_change=Y 表示本次产生了真实退款资金流；同步接口成功即终态
+        return new RefundResult(command.refundNo(), body.path("trade_no").asText(""),
+                ok ? "SUCCESS" : "FAILED", ok);
     }
 
     // ---------------- 小工具 ----------------
@@ -189,7 +255,7 @@ public class AlipayPagePayChannel implements PaymentChannel {
         }
     }
 
-    private com.fasterxml.jackson.databind.JsonNode httpGetJson(String url) {
+    private JsonNode httpGetJson(String url) {
         try {
             var response = java.net.http.HttpClient.newHttpClient()
                     .send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).GET().build(),
@@ -198,6 +264,12 @@ public class AlipayPagePayChannel implements PaymentChannel {
         } catch (Exception e) {
             throw new BizException(ErrorCode.PAYMENT_CHANNEL_ERROR, "调用支付宝网关失败：" + e.getMessage());
         }
+    }
+
+    /** 表单值 HTML 转义：签名后的参数含 base64 的 +/=，必须防属性注入 */
+    private static String htmlEscape(String value) {
+        return value.replace("&", "&amp;").replace("\"", "&quot;")
+                .replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static String urlDecode(String value) {
