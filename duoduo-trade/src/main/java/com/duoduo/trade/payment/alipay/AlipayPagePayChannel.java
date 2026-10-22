@@ -88,16 +88,22 @@ public class AlipayPagePayChannel implements PaymentChannel {
         params.put("biz_content", toJson(biz));
         params.put("sign", AlipayCrypto.sign(params, config.privateKeyPem()));
 
-        // 与官方 SDK pageExecute(request, "POST") 同构：完整表单 HTML 交给前端渲染提交。
+        // 与官方 SDK pageExecute(request, "POST") 生成的表单完全同构：
+        // 公共参数（含 charset）放在 **action 的 URL 查询串**，body 里只有 biz_content ——
+        // 网关强制要求 charset 位于查询串，全部塞进 POST body 会报 invalid-signature
+        // （错误说明原文："请确认 charset 参数放在了 URL 查询字符串中"）。
         // 刻意不带 <script> 自动提交脚本：前端（React）负责注入 DOM 并控制提交时机。
+        String query = params.entrySet().stream()
+                .filter(e -> !"biz_content".equals(e.getKey()))
+                .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .collect(java.util.stream.Collectors.joining("&"));
         StringBuilder form = new StringBuilder();
         form.append("<form name=\"punchout_form\" method=\"post\" action=\"")
                 .append(htmlEscape(config.gateway()))
+                .append("?").append(htmlEscape(query))
                 .append("\" accept-charset=\"utf-8\">");
-        for (Map.Entry<String, String> e : params.entrySet()) {
-            form.append("<input type=\"hidden\" name=\"").append(e.getKey())
-                    .append("\" value=\"").append(htmlEscape(e.getValue())).append("\"/>");
-        }
+        form.append("<input type=\"hidden\" name=\"biz_content\" value=\"")
+                .append(htmlEscape(params.get("biz_content"))).append("\"/>");
         form.append("<input type=\"submit\" value=\"立即支付\" style=\"display:none\">");
         form.append("</form>");
         log.info("支付宝电脑网站支付预下单完成（表单形态）：payNo={} amount={}分", command.payNo(), command.amount());

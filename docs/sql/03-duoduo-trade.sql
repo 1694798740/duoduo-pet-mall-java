@@ -171,7 +171,7 @@ CREATE TABLE t_payment (
     status            VARCHAR(20)  NOT NULL,
     idempotent_key    VARCHAR(64)  NOT NULL,
     channel_trade_no  VARCHAR(64),
-    code_url          VARCHAR(500),
+    code_url          MEDIUMTEXT,
     fail_reason       VARCHAR(200),
     expire_at         TIMESTAMP,
     paid_at           TIMESTAMP,

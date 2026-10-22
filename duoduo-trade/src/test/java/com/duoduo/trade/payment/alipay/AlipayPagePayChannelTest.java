@@ -79,12 +79,16 @@ class AlipayPagePayChannelTest {
         com.duoduo.trade.payment.PaymentChannel.PrepayResult result = channel.prepay(new com.duoduo.trade.payment.PaymentChannel.PrepayCommand(
                 "PAY20261022001", "ORD20261022001", 15800L, "多多宠物商店商品"));
         String form = result.codeUrl();
-        // Skill 规范：页面跳转类 API 必须是「表单 + hidden inputs」，不能是拼参 URL
+        // 官方规范：页面跳转类 API 返回「表单」，公共参数（含 charset）在 action 查询串，
+        // body 只有 biz_content —— 全塞进 body 会被网关以 invalid-signature 拒绝
         assertTrue(form.startsWith("<form"), "codeUrl 必须是完整 form HTML");
         assertTrue(form.contains("method=\"post\""), "必须是 POST 表单");
-        assertTrue(form.contains("action=\"https://openapi-sandbox.dl.alipaydev.com/gateway.do\""),
-                "表单 action 必须是网关地址本身，不带查询串");
+        assertTrue(form.contains("action=\"https://openapi-sandbox.dl.alipaydev.com/gateway.do?"),
+                "action 必须是网关地址 + 查询串");
+        assertTrue(form.contains("charset="), "charset 必须在 action 查询串中");
         assertTrue(form.contains("name=\"biz_content\""), "biz_content 必须作为 hidden 字段");
+        assertTrue(form.indexOf("name=\"biz_content\"") == form.lastIndexOf("name=\""),
+                "body 里只能有 biz_content 一个 hidden 字段（与官方 SDK 表单同构）");
         assertTrue(form.contains("FAST_INSTANT_TRADE_PAY"), "product_code 固定 FAST_INSTANT_TRADE_PAY");
         assertTrue(formFields(form).get("biz_content").contains("158.00"), "金额必须是「元」两位小数");
         assertTrue(!form.contains("<script"), "不应自带自动提交脚本（由前端控制时机）");
@@ -94,7 +98,10 @@ class AlipayPagePayChannelTest {
     void prepaySignatureVerifiesAgainstFields() {
         com.duoduo.trade.payment.PaymentChannel.PrepayResult result = channel.prepay(new com.duoduo.trade.payment.PaymentChannel.PrepayCommand(
                 "PAY20261022002", "ORD20261022002", 100L, "商品"));
-        Map<String, String> fields = formFields(result.codeUrl());
+        String form = result.codeUrl();
+        // 合并 action 查询串参数与 body hidden 字段（浏览器提交时网关两侧都能拿到）
+        Map<String, String> fields = new TreeMap<>(queryParams(form));
+        fields.putAll(formFields(form));
         // 用支付宝"公钥"（本项目测试里即同一密钥对的公钥）验签，模拟网关侧校验
         assertTrue(AlipayCrypto.verify(fields, alipayPublicKeyPem), "表单字段必须能通过 RSA2 验签");
         assertEquals(APP_ID, fields.get("app_id"));
@@ -102,6 +109,23 @@ class AlipayPagePayChannelTest {
         // 时间戳必须是 yyyy-MM-dd HH:mm:ss（空格分隔，非 ISO）
         assertTrue(fields.get("timestamp").matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}"),
                 "时间戳格式必须是 yyyy-MM-dd HH:mm:ss");
+    }
+
+    /** 从 action 查询串解析参数（URL 解码后） */
+    private static Map<String, String> queryParams(String formHtml) {
+        Matcher action = Pattern.compile("action=\"[^\"]*\\?([^\"]+)\"").matcher(formHtml);
+        TreeMap<String, String> out = new TreeMap<>();
+        if (action.find()) {
+            // 先还原 HTML 转义（分隔符 & 本身被转义成 &amp;），再按 & 切分
+            String raw = htmlUnescape(action.group(1));
+            for (String pair : raw.split("&")) {
+                int eq = pair.indexOf('=');
+                out.put(htmlUnescape(pair.substring(0, eq)),
+                        java.net.URLDecoder.decode(htmlUnescape(pair.substring(eq + 1)),
+                                java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        return out;
     }
 
     @Test
