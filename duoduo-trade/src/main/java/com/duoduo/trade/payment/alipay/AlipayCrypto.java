@@ -34,11 +34,18 @@ public final class AlipayCrypto {
     private AlipayCrypto() {
     }
 
-    /** 按支付宝规则拼接待签名文本：字典序、剔除 sign/sign_type、剔除空值 */
+    /**
+     * 按支付宝规则拼接待签名文本：字典序、剔除 sign 与空值。
+     *
+     * <p>★ 实测结论（2026-10-22 沙箱联调，网关错误页会展示它构造的验签串）：
+     * <b>sign_type 参与签名</b>（只剔除 sign 与空值）——与部分旧文档「剔除 sign_type」
+     * 的说法不同。以网关实际构造的验签串为准：包含 sign_type 才能通过，
+     * 异步通知验签同理（sign_type 也参与）。
+     */
     public static String signContent(Map<String, String> params) {
         return params.entrySet().stream()
                 .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
-                .filter(e -> !"sign".equals(e.getKey()) && !"sign_type".equals(e.getKey()))
+                .filter(e -> !"sign".equals(e.getKey()))
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> e.getKey() + "=" + e.getValue())
                 .collect(Collectors.joining("&"));

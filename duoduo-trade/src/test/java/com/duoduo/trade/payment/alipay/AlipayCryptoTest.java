@@ -86,7 +86,8 @@ class AlipayCryptoTest {
     void signContentExcludesSignAndEmptyValues() {
         Map<String, String> params = notifyParams();
         String content = AlipayCrypto.signContent(params);
-        assertFalse(content.contains("sign_type="), "sign_type 不参与签名");
+        // 实测（沙箱网关错误页展示的验签串）：sign_type 参与签名，只有 sign 与空值被剔除
+        assertTrue(content.contains("sign_type=RSA2"), "sign_type 必须参与签名（网关验签串包含它）");
         assertFalse(content.contains("foo_empty="), "空值不参与签名");
         assertTrue(content.startsWith("app_id=2021000100000000"), "必须按字典序排列（app_id 最前）");
         assertEquals(-1, content.indexOf("\n"), "签名文本不允许换行");
