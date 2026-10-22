@@ -15,7 +15,7 @@
  *    避免与后端口径出现分毫差异
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { skuImage } from '@duoduo/api-sdk/images';
@@ -180,8 +180,39 @@ export const CartPage: React.FC = () => {
   const { data, loading, error, reload } = useAsync<CartView>(fetcher);
 
   // 派生状态放在 hooks 区（组件有 early return，hooks 不能在其后）
-  const items = data?.items ?? [];
-  const validItems = items.filter((i) => i.valid);
+  /**
+   * 渲染顺序「一次锁定」：首次拿到列表时把 skuId 顺序记下来，后续 reload 一律按这个序重排。
+   *
+   * 后端已改成按 created_at 固定排序，这里再加一层前端护栏：
+   * 勾选/改数量是「更新行」的操作，任何一次接口顺序抖动都不该让用户在视觉上看到商品跳位。
+   * 新加入购物车的商品先按后端新顺序补齐，再按快照前缀保住老商品的相对位置。
+   */
+  const orderRef = useRef<string[]>([]);
+  const orderedItems = useMemo(() => {
+    const incoming = data?.items ?? [];
+    if (!orderRef.current.length) {
+      orderRef.current = incoming.map((i) => i.skuId);
+      return incoming;
+    }
+    const rank = new Map(orderRef.current.map((skuId, idx) => [skuId, idx]));
+    // 未知（新加购）的排在后面，保持后端给的相对顺序
+    return [...incoming].sort((a, b) => {
+      const ra = rank.get(a.skuId) ?? Number.MAX_SAFE_INTEGER;
+      const rb = rank.get(b.skuId) ?? Number.MAX_SAFE_INTEGER;
+      return ra - rb;
+    });
+  }, [data?.items]);
+  useEffect(() => {
+    if (!data) return;
+    const current = orderRef.current;
+    const present = new Set(data.items.map((i) => i.skuId));
+    // 只保留仍在购物车里的，并把新出现的追加到尾部
+    const next = current.filter((skuId) => present.has(skuId));
+    for (const item of data.items) if (!next.includes(item.skuId)) next.push(item.skuId);
+    orderRef.current = next;
+  }, [data]);
+
+  const validItems = orderedItems.filter((i) => i.valid);
   const allSelected = validItems.length > 0 && validItems.every((i) => i.selected);
   const someSelected = validItems.some((i) => i.selected);
   const selectedCount = data?.selectedCount ?? 0;
@@ -327,7 +358,7 @@ export const CartPage: React.FC = () => {
       ) : null}
 
       <div className="stack">
-        {data.items.map((item) => (
+        {orderedItems.map((item) => (
           <CartRow
             key={item.skuId}
             item={item}

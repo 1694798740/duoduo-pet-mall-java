@@ -264,6 +264,17 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-22（五十九）· 修复购物车「全选后顺序被打乱」
+
+| 项 | 实现 |
+| --- | --- |
+| 根因 | `CartService.list()` 按 `updated_at DESC` 排序，而 `updateSelected()` / `updateQuantity()` 都会写 `updated_at` → 勾选这个纯选择动作改写了排序键；前端逐条串行 PATCH + 每次重取列表，最后一条被 PATCH 的必被顶到最前 |
+| 后端修复 | 排序改为 `created_at DESC, id DESC`（只依赖加入购物车时间，雪花 id 兜底同毫秒）——`CartService.list()` 一行改动 |
+| 前端护栏 | `Cart.tsx` 新增 `orderRef` 顺序快照：首次渲染锁定 skuId 序列，后续 reload 一律按该序列重排，新加购追加尾部 |
+| 验证 | `cart-batch-ui-check.mjs` 扩至 **23 项全过**（新增 10 次逐字顺序断言：基线 / 全选 / 取消 / 全选×3 轮 / 改数量） |
+| 反向验证 | 临时改回 `updated_at` + 旁路前端护栏 → 第 3 轮全选恰好抓到顺序漂移（仅该条红）；恢复后核对容器内 `CartService.class` 为 `getCreatedAt` |
+| 部署坑 | `docker compose up -d --force-recreate` 不重建镜像，必须 `--build`；核对要解包 `/app/app.jar` 的 `BOOT-INF/classes` |
+
 ### 2026-10-22（五十八）· 购物车批量操作与删除确认
 
 | 项 | 实现 |

@@ -2059,6 +2059,29 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十七）· 修复：全选/取消全选后购物车商品顺序被打乱
+
+- **现象**：初始「麦富迪 → 卫仕 → 未卡」，点全选再取消，变成「卫仕 → 未卡 → 麦富迪」，
+  看起来像随机打乱。
+- **根因（代码路径）**：`CartService.list()` 用 `ORDER BY updated_at DESC, id DESC`；
+  而「勾选 / 取消勾选」走 `updateSelected()` → `row.setUpdatedAt(nowUtc())` → `updateById`
+  ——**勾选这个纯选择动作改写了排序键**。前端 `selectAll()` 逐条串行 PATCH（没有批量接口），
+  每轮 `afterMutation()` → `reload()` 重取列表，于是最后一次被 PATCH 的 SKU 必被顶到最前，
+  与用户「1、2、3」的初始顺序脱钩。改数量的 `updateQuantity()` 同样写 `updated_at`，同一个坑。
+- **修复（后端，根因）**：排序改为 `ORDER BY created_at DESC, id DESC` ——
+  只依赖「加入购物车的时间」，任何勾选/改数量都不再影响位置；`created_at` 同毫秒时用雪花 `id` 兜底，
+  每行位置绝对确定。
+- **修复（前端，护栏）**：`Cart.tsx` 增加顺序快照 `orderRef`——首次拿到列表记下 skuId 顺序，
+  之后每次 `reload()` 都按该序列重排；新加购的商品追加到尾部（不会插队）。
+  即使将来后端排序再被动过，用户也看不到商品跳位。
+- **验证**：`scripts/e2e/cart-batch-ui-check.mjs` 扩到 **23 项全过**——新增「基线顺序 + 全选/取消 ×3 轮
+  + 改数量」共 10 次顺序断言，全部逐字比对标题序列。
+- **反向验证**：把后端临时改回 `updated_at` 并旁路前端护栏，**第 3 轮全选恰好抓到顺序被打乱**
+  （仅这一条红，其余仍绿）；随后恢复正式版，容器内字节码核对为 `getCreatedAt`。
+- **踩坑记录**：`docker compose up -d --force-recreate` **不会重建镜像**，
+  `image:` + `build.args JAR_FILE` 的组合必须带 `--build`，否则容器里跑的还是旧 jar
+  （表现为「代码改了、测试没变」）。核对方式：解包 `/app/app.jar` 里的 `BOOT-INF/classes` 看字段名。
+
 ### 2026-10-22（六十六）· 购物车批量操作：全选半选 + 删除已选 + 确认弹窗
 
 - **删除已选**：底部工具栏新增「删除已选（n）」（danger 色，0 件禁用）→ 复用已有

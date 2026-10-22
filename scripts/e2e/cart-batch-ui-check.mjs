@@ -34,6 +34,17 @@ try {
   await page.waitForSelector('.stack .card', { timeout: 15000 });
 
   const rowCount = () => page.locator('.stack .card').count();
+  /** 每行的商品标题序列 —— 顺序断言靠它（全选/取消全选前后必须完全一致） */
+  const rowTitles = async () => {
+    const cards = page.locator('.stack .card');
+    const n = await cards.count();
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const t = (await cards.nth(i).locator('.goods-title').first().textContent().catch(() => '')) || '';
+      out.push(t.replace(/\s+/g, ' ').trim());
+    }
+    return out;
+  };
   const bottomText = async () => (await page.locator('div.card').last().textContent()) || '';
   const allBox = page.locator('label', { hasText: '全选（' }).locator('input');
   const delBtn = page.locator('button', { hasText: '删除已选' }).first();
@@ -44,6 +55,21 @@ try {
   };
   const before = await rowCount();
   pass(`购物车 ${before} 行`);
+
+  // 顺序基线：后续每一次勾选/取消勾选，商品排列都必须与它完全一致
+  const baseOrder = await rowTitles();
+  console.log('  基线顺序：', baseOrder.join(' | '));
+  if (baseOrder.filter(Boolean).length === before) pass('基线顺序已取到全部标题');
+  else fail(`基线顺序取标题异常：${JSON.stringify(baseOrder)}`);
+  const assertOrder = async (label) => {
+    const now = await rowTitles();
+    if (now.length === baseOrder.length && now.every((t, i) => t === baseOrder[i])) {
+      pass(`${label}后顺序不变（${now.join(' | ')}）`);
+      return true;
+    }
+    fail(`${label}后顺序被打乱：期望 ${baseOrder.join(' | ')}，实际 ${now.join(' | ')}`);
+    return false;
+  };
 
   // 归一化：从「全部未选」开始
   if (await allBox.isChecked()) {
@@ -64,6 +90,7 @@ try {
   if ((await delBtn.textContent())?.includes(`（${before}）`) && !(await delBtn.isDisabled()))
     pass('「删除已选（n）」可点且计数正确');
   else fail('「删除已选」按钮状态异常');
+  await assertOrder('全选');
 
   // ── 取消全选 ──────────────────────────────────────────────
   await allBox.click();
@@ -72,6 +99,17 @@ try {
   else fail(`取消全选后状态异常（已选 ${await selectedCount()}）`);
   if (await delBtn.isDisabled()) pass('0 件时「删除已选」禁用');
   else fail('0 件时按钮仍可点');
+  await assertOrder('取消全选');
+
+  // ── 反复全选/取消 3 轮，顺序必须始终稳定（用户报的就是这个场景）──────
+  for (let round = 1; round <= 3; round++) {
+    await allBox.click();
+    await page.waitForTimeout(1500);
+    await assertOrder(`第 ${round} 轮全选`);
+    await allBox.click();
+    await page.waitForTimeout(1500);
+    await assertOrder(`第 ${round} 轮取消全选`);
+  }
 
   // ── 单条删除：确认框拦截，取消不删 ──────────────────────────
   await page.locator('.stack .card').first().locator('button', { hasText: '删除' }).click();
@@ -95,6 +133,8 @@ try {
   if (amountAfter !== amountBefore)
     pass(`数量 ${qtyBefore}→${qtyBefore + 1} 后合计 ¥${amountBefore.toFixed(2)} → ¥${amountAfter.toFixed(2)}`);
   else fail('数量变化后合计未联动');
+  // 改数量也会写 updated_at —— 顺序必须仍然不变
+  await assertOrder('改数量');
 
   // ── 全选 → 删除已选 → 文案升级为「全部删除」→ 取消 ──────────
   if (!(await allBox.isChecked())) {

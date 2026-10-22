@@ -65,12 +65,20 @@ public class CartService {
 
     // ---------------- 查询 ----------------
 
-    /** 购物车列表：带商品实时价格、可售库存与失效原因 */
+    /**
+     * 购物车列表：带商品实时价格、可售库存与失效原因。
+     *
+     * <p>排序锁定为「加入购物车时间倒序」，**只按 created_at，不掺 updated_at**。
+     * 曾经用 {@code orderByDesc(updated_at)}，结果是「勾选 / 改数量」这类与顺序无关的操作
+     * 会把商品顶到最前面 —— 用户看到的就是「点一下全选，列表被随机打乱」。
+     * 展示顺序必须只依赖一个从不因操作而变动的字段。
+     * created_at 同毫秒时用 id 兜底（雪花有序），保证每行位置绝对确定。
+     */
     public CartView list() {
         Long userId = UserContext.requireUserId();
         List<CartItemEntity> rows = cartItemMapper.selectList(new LambdaQueryWrapper<CartItemEntity>()
                 .eq(CartItemEntity::getUserId, userId)
-                .orderByDesc(CartItemEntity::getUpdatedAt)
+                .orderByDesc(CartItemEntity::getCreatedAt)
                 .orderByDesc(CartItemEntity::getId));
         if (rows.isEmpty()) {
             return new CartView(List.of(), 0, 0, 0, 0L, List.of());
