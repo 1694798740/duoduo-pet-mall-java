@@ -334,7 +334,8 @@ export interface ProductQuery {
    */
   categoryId?: string;
   brandId?: string;
-  supplyType?: 'self' | 'merchant';
+  /** self 自营 / third 第三方（与 t_spu.supply_type 真实取值一致；merchant 为历史别名，库中不存在） */
+  supplyType?: 'self' | 'third';
   minPrice?: number;
   maxPrice?: number;
   species?: 'cat' | 'dog';

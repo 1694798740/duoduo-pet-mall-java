@@ -49,8 +49,11 @@ public class MetaController {
                         new DictItem("GOOD", "成色良好"),
                         new DictItem("FAIR", "有明显使用痕迹")),
                 "supplyType", List.of(
+                        // ★ 第八十二轮修正：code 必须与 t_spu.supply_type 的真实取值一致
+                        //   （select distinct 实测 = self / third）。此前写的是 'merchant'，
+                        //   搜索页选「第三方商家」发 merchant → 库里没有这个值 → 空结果（静默失败）。
                         new DictItem("self", "自营保真"),
-                        new DictItem("merchant", "第三方商家")),
+                        new DictItem("third", "第三方商家")),
                 "sort", List.of(
                         new DictItem("default", "综合"),
                         new DictItem("sales", "销量优先"),

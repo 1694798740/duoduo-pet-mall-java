@@ -153,7 +153,7 @@ export const SearchPage: React.FC = () => {
           <div className="row row-wrap">
             {(dicts?.supplyType ?? [
               { code: 'self', label: '自营保真' },
-              { code: 'merchant', label: '第三方商家' },
+              { code: 'third', label: '第三方商家' },
             ]).map((opt) => (
               <button
                 key={opt.code}

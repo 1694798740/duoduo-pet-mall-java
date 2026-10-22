@@ -2059,6 +2059,28 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（七十）· 修复：第三方商品错挂「多多自营」徽标；自营补进店入口
+
+- **用户报障（附截图）**：「喵星人旗舰店（测试）」的商品卡徽标显示「多多自营」；且多多自营没有独立进店入口。
+- **根因①（标签映射）**：`SupplyTag` 只认 `supplyType === 'merchant'`，而数据库
+  `t_spu.supply_type` 的真实取值是 **`self` / `third`**（select distinct 实测）——
+  所有第三方商品都落进 else 分支被挂上「多多自营」，与店名「喵星人旗舰店」同框。
+  判断改为**以 `self` 为白名单**（是自营才显示自营），`secondhand` 单列「个人闲置」
+  （首页闲置区此前同样被错挂「多多自营」）。小程序 `product.wxml` 同一份判断、同一处错，已同步修。
+- **根因②（字典与数据脱节，连坐 bug）**：`MetaController` 供货类型字典写的是
+  `self` / `merchant`，`ProductService.search()` 校验也只认 `merchant` ——
+  搜索页选「第三方商家」发 `merchant` → 库里无此值 → **空结果**（静默失败）；
+  而正确的 `third` 反而被 422。字典、校验、前端 `ProductQuery` 类型与本地兜底字典
+  全部统一到 `self` / `third`。
+- **自营进店入口（第八十二轮补全）**：自营商品卡/详情页/购物车组头的「多多自营」
+  现在也可点 → `/store/0` 自营货架（第三方跳 `/store/{sellerId}`，sellerId 是店主 userId；
+  自营卡片的 sellerId 是客服账号 id，不能当店主 id，故固定跳 0 号货架）。
+- **验证**：新增 e2e `supply-tag-ui-check.mjs` **15/15**（第三方卡「品牌入驻」且不含「多多自营」/
+  自营卡「多多自营」且店名可点跳 /store/0 / 搜索 third 口径反向验证 / 裂图与 console 健康）；
+  回归 `cart-batch-ui-check` 29 项 ×2 轮全过、`product-detail-ui-check` 19/0、`store-page-ui-check` 17/0。
+- **测试数据**：`cart-batch-ui-check` 每轮净删 1 行，连续多轮后购物车被清空导致该套件
+  起手即超时（非代码回归）——已按 SKU 3010/3020/92001 补回夹具。
+
 ### 2026-10-22（六十九）· 店铺主页（参考淘宝店铺页）
 
 - **后端 · 用户域**：新增公开只读端点 `GET /api/users/stores/{ownerUserId}`（`StorePublicView`：

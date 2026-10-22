@@ -440,17 +440,18 @@ export const CartPage: React.FC = () => {
                 <span>{group.name}</span>
                 {/* 第八十二轮：店名可点 → 店铺主页。外层是 <label>（点它会切全选框），
                     必须 preventDefault + stopPropagation，否则跳转会连带切换整组勾选。
-                    自营（0 号卖家没有独立店铺主页数据）与「未知店铺」（快照缺失）不生成链接。 */}
-                {!group.selfOwned && group.key !== 'unknown' ? (
+                    第三方跳 /store/{sellerId}（快照缺失的 unknown 组不生成链接）；
+                    自营跳 /store/0 自营货架。 */}
+                {group.key !== 'unknown' ? (
                   <a
-                    href={`/store/${group.key}`}
+                    href={group.selfOwned ? '/store/0' : `/store/${group.key}`}
                     className="small"
                     style={{ color: 'var(--primary)' }}
                     aria-label={`进入 ${group.name} 店铺主页`}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      navigate(`/store/${group.key}`);
+                      navigate(group.selfOwned ? '/store/0' : `/store/${group.key}`);
                     }}
                   >
                     进店 ›

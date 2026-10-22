@@ -278,8 +278,10 @@ public class ProductService {
             throw BizException.validation("最低价不能高于最高价");
         }
         if (query.supplyType() != null && !query.supplyType().isBlank()
-                && !Set.of("self", "merchant").contains(query.supplyType().trim())) {
-            throw BizException.validation("supplyType 仅支持 self 或 merchant");
+                // ★ 第八十二轮修正：库中真实取值是 self / third（此前校验只认 merchant，
+                //   正确的 third 反而被 422；错误的 merchant 却放行后查出空结果）
+                && !Set.of("self", "third").contains(query.supplyType().trim())) {
+            throw BizException.validation("supplyType 仅支持 self 或 third");
         }
         bannedWordGuard.rejectIfHit(query.keyword(), "搜索词");
 

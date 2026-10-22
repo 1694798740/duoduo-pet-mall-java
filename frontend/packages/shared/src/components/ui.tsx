@@ -77,10 +77,18 @@ export const Alert: React.FC<{
   children: React.ReactNode;
 }> = ({ kind = 'info', children }) => <div className={`alert alert-${kind}`}>{children}</div>;
 
-/** 供货类型标签：self 自营 / merchant 品牌入驻 */
+/**
+ * 供货类型标签：self 多多自营 / third(=merchant,兼容旧值) 品牌入驻 / secondhand 个人闲置。
+ *
+ * ★ 第八十二轮修正：数据库 `t_spu.supply_type` 的真实取值是 **self / third**
+ *   （select distinct 实测），此前只认 'merchant' —— 于是所有第三方商品都落进
+ *   else 分支被挂上「多多自营」徽标，用户看到「多多自营」+「喵星人旗舰店」同框。
+ *   判断一律以 **'self' 为白名单**（是自营才显示自营），而不是「不是 merchant 就当自营」。
+ */
 export const SupplyTag: React.FC<{ supplyType: string }> = ({ supplyType }) => {
-  if (supplyType === 'merchant') return <span className="tag">品牌入驻</span>;
-  return <span className="tag tag-self">多多自营</span>;
+  if (supplyType === 'self') return <span className="tag tag-self">多多自营</span>;
+  if (supplyType === 'secondhand') return <span className="tag tag-second">个人闲置</span>;
+  return <span className="tag">品牌入驻</span>;
 };
 
 /**
@@ -218,12 +226,19 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
   const seckill = useSpuSeckill(item.id);
   const navigate = useNavigate();
   /** 卡内「进店」入口（第八十二轮）：整卡已被外层 <Link> 包住，不能嵌 <a>（非法 HTML），
-   *  所以用 span + stopPropagation —— 只拦「进店」这一次点击，其余点击照常进商品详情。 */
-  const canEnterStore = item.supplyType !== 'self' && item.sellerId != null && item.sellerId !== '';
+   *  所以用 span + stopPropagation —— 只拦「进店」这一次点击，其余点击照常进商品详情。
+   *  第八十二轮补：自营也可进店 —— 自营货架是 /store/0（第三方 sellerId 是店主 userId，
+   *  自营卡片的 sellerId 是客服账号 id，不能拿它当店主 id，故自营固定跳 0 号货架）。 */
+  const storeHref =
+    item.supplyType === 'self'
+      ? '/store/0'
+      : item.sellerId != null && item.sellerId !== ''
+        ? `/store/${item.sellerId}`
+        : null;
   const enterStore = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    navigate(`/store/${item.sellerId}`);
+    if (storeHref) navigate(storeHref);
   };
   return (
     <Link className="goods-card" to={`/product/${item.id}`}>
@@ -237,7 +252,7 @@ export const ProductCardView: React.FC<{ item: ProductCard }> = ({ item }) => {
       <div className="goods-body">
         <div className="goods-title">{item.title}</div>
         <div className="goods-meta">
-          {item.storeName && canEnterStore ? (
+          {item.storeName && storeHref ? (
             <span
               className="small muted"
               style={{ color: 'var(--primary)', cursor: 'pointer' }}

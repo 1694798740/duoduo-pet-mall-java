@@ -202,7 +202,7 @@ export interface ProductCard {
   categoryName: string | null;
   brandId: string | null;
   brandName: string | null;
-  /** self 自营 / merchant 第三方 */
+  /** self 自营 / third 第三方（库中真实取值；merchant 为历史别名） */
   supplyType: string;
   mainImage: string | null;
   minPrice: number;

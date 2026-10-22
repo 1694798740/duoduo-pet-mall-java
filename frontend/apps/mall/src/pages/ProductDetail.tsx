@@ -292,22 +292,18 @@ export const ProductDetailPage: React.FC = () => {
           <div className="pd-price-block">
             <div className="row-between row-wrap">
               <span className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
-                {/* 店铺名优先（第八十一轮）：第三方显示商家自有店名，改名后立即生效。
-                    第八十二轮起店名可点 → 店铺主页 /store/{sellerId}；自营不跳（自营货架用 /store/0 也可达，
-                    但自营 sellerId 对卡片下发的是客服账号 id，不能拿它当店主 id —— 只对 merchant 开链接）。 */}
+                {/* 店铺名优先（第八十一轮）；第八十二轮起店名可点 → 店铺主页。
+                    第三方跳 /store/{sellerId}（sellerId=店主 userId）；
+                    自营跳 /store/0 自营货架（自营卡片的 sellerId 是客服账号 id，不能当店主 id）。 */}
                 {card.storeName ? (
-                  card.supplyType !== 'self' && card.sellerId != null && card.sellerId !== '' ? (
-                    <Link
-                      className="small"
-                      style={{ fontWeight: 600, color: 'var(--primary)' }}
-                      to={`/store/${card.sellerId}`}
-                      aria-label={`进入 ${card.storeName} 店铺主页`}
-                    >
-                      {card.storeName} ›
-                    </Link>
-                  ) : (
-                    <span className="small" style={{ fontWeight: 600 }}>{card.storeName}</span>
-                  )
+                  <Link
+                    className="small"
+                    style={{ fontWeight: 600, color: 'var(--primary)' }}
+                    to={card.supplyType === 'self' ? '/store/0' : `/store/${card.sellerId}`}
+                    aria-label={`进入 ${card.storeName} 店铺主页`}
+                  >
+                    {card.storeName} ›
+                  </Link>
                 ) : (
                   <SupplyTag supplyType={card.supplyType} />
                 )}
