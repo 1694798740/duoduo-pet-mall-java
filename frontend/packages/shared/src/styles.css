@@ -3251,3 +3251,51 @@ button.tag:active:not(:disabled),
 .sup-card-price {
   color: var(--accent-strong);
 }
+
+/* ── 我的足迹：按天分组（2026-10-22）────────────────────────── */
+.history-day {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 10;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 14px 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.history-day-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-2);
+}
+.history-card {
+  position: relative;
+}
+.history-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+.history-off {
+  opacity: 0.55;
+}
+.history-off-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--text-2);
+}

@@ -76,6 +76,37 @@ def main():
     check("viewedAt 是 UTC ISO（带 Z）", all(s and s.endswith("Z") for s in stamps), stamps)
     check("viewedAt 时间递减（倒序）", all(stamps[i] >= stamps[i + 1] for i in range(len(stamps) - 1)), stamps)
 
+    # ── 删除专项（批量 / 单条 / 越权）───────────────────────────
+    total_before = (r.get("data") or {}).get("total", 0)
+    st, r = call("DELETE", "/api/history/batch?ids=1101,1102", token=token)
+    check("批量删除返回 200 且删了 2 条", st == 200 and int(str(r.get("data") or "0")) == 2, (st, r))
+    st, r = call("GET", "/api/history/products?page=1&pageSize=10", token=token)
+    ids = [str(i.get("id")) for i in (r.get("data") or {}).get("items", [])]
+    total_after = (r.get("data") or {}).get("total", 0)
+    check("批量删除后列表减 2 且不含被删 id",
+          total_after == total_before - 2 and "1101" not in ids and "1102" not in ids,
+          (total_before, total_after, ids[:5]))
+
+    st, r = call("DELETE", "/api/history/1002", token=token)
+    check("单条删除成功", st == 200 and int(str(r.get("data") or "0")) == 1, (st, r))
+    st, r = call("GET", "/api/history/products?page=1&pageSize=10", token=token)
+    ids = [str(i.get("id")) for i in (r.get("data") or {}).get("items", [])]
+    check("单条删除后不含该 id", "1002" not in ids, ids[:5])
+
+    # 越权：B 删 A 的足迹 → B 视角 0 条，A 的仍在
+    call("GET", "/api/products/1101", token=token)  # A 重新留一条足迹
+    st, r = call("POST", "/api/auth/login/token", {"phone": "13600001111", "password": "duoduo12345"})
+    token_b = (r.get("data") or {}).get("accessToken") if st == 200 else None
+    if token_b:
+        st, r = call("DELETE", "/api/history/batch?ids=1101", token=token_b)
+        check("越权删除：B 删 A 的足迹返回 0 条", st == 200 and int(str(r.get("data") or "-1")) == 0, (st, r))
+        st, r = call("GET", "/api/history/products?page=1&pageSize=10", token=token)
+        ids = [str(i.get("id")) for i in (r.get("data") or {}).get("items", [])]
+        check("越权删除后 A 的足迹仍在", "1101" in ids, ids[:5])
+        call("DELETE", "/api/history/batch?ids=1101", token=token)  # 清理 A 的测试数据
+    else:
+        check("越权删除：买家账号登录", False, st)
+
     print("结果：", passed, "通过 /", failed, "失败")
     return 0 if failed == 0 else 1
 

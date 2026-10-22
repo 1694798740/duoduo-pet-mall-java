@@ -1361,6 +1361,11 @@ export const historyApi = {
   list: (query?: { page?: number; pageSize?: number }) =>
     api.get<PageResult<PickerProduct>>('/api/history/products', { query }),
   clear: () => api.del<number>('/api/history'),
+  /** 删除单条足迹（幂等） */
+  remove: (spuId: string) => api.del<number>(`/api/history/${spuId}`),
+  /** 批量删除足迹（服务端只删本人数据） */
+  removeBatch: (spuIds: string[]) =>
+    api.del<number>(`/api/history/batch?ids=${spuIds.join(',')}`),
 };
 
 export const purchasedApi = {

@@ -1,4 +1,4 @@
-// 足迹页 UI 验证：登录买家 → /history → 断言「浏览于」时间戳可见且最新在前 → 截图
+// 足迹页 UI 验证（2026-10-22 分组版）：登录买家 → /history → 断言分组标题/搜索/勾选/批量按钮 → 截图
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,7 +9,6 @@ const pw = await import(
 const { chromium } = pw;
 
 const BASE = 'http://localhost:5173';
-const out = 'scripts/e2e/verify-history-time.png';
 let ok = true;
 const fail = (m) => { ok = false; console.log('  [失败]', m); };
 const pass = (m) => console.log('  [通过]', m);
@@ -23,24 +22,33 @@ try {
   await page.click('button[type="submit"]');
   await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15000 }).catch(async () => {
     await page.screenshot({ path: 'scripts/e2e/history-login-debug.png' });
-    const toast = await page.textContent('body');
-    fail('登录未跳转，页面文本片段: ' + toast.slice(0, 300));
+    fail('登录未跳转');
   });
-  await page.goto(BASE + '/history');
-  await page.waitForSelector('.card', { timeout: 15000 });
 
-  const stamps = await page.$$eval('.card', (cards) =>
-    cards.map((c) => c.textContent || '').filter((t) => t.includes('浏览于'))
-  );
-  if (stamps.length === 0) fail('没有看到「浏览于」时间戳');
-  else pass(`时间戳可见：${stamps.length} 条，首条=「${(stamps[0].match(/浏览于[^¥]*/) || [''])[0].trim()}」`);
+  await page.goto(BASE + '/history', { waitUntil: 'networkidle' });
+  await page.waitForSelector('.history-day', { timeout: 15000 });
 
-  const body = await page.textContent('body');
-  if (/浏览于\s*(今天|昨天|\d{2}-\d{2}|\d{4}-\d{2}-\d{2})\s*\d{2}:\d{2}/.test(body)) pass('时间格式：日期/今天昨天 + HH:mm');
-  else fail('时间格式不符合「(今天|昨天|日期) HH:mm」');
+  const dayLabels = await page.$$eval('.history-day', (els) => els.map((e) => e.textContent.trim()));
+  if (dayLabels.length === 0) fail('没有分组标题');
+  else pass(`分组标题 ${dayLabels.length} 组：${dayLabels.join(' / ')}`);
+  if (dayLabels.some((t) => /今天|昨天|\d+月\d+日/.test(t))) pass('组标题含相对称呼或日期');
+  else fail('组标题格式不符');
 
-  await page.screenshot({ path: out, fullPage: false });
-  pass('截图 ' + out);
+  if (await page.locator('input[placeholder="搜索商品标题"]').count()) pass('搜索框存在');
+  else fail('搜索框不存在');
+
+  // 勾选第一张卡片 → 批量按钮出现计数
+  await page.locator('.history-check').first().check();
+  const btnText = await page.locator('button', { hasText: '删除所选' }).first().textContent();
+  if (/删除所选（1）/.test(btnText || '')) pass('勾选后出现「删除所选（1）」');
+  else fail(`批量按钮异常：${btnText}`);
+
+  // 全选已加载
+  await page.locator('label', { hasText: '全选已加载' }).locator('input').check();
+  pass('全选已加载可用');
+
+  await page.screenshot({ path: 'scripts/e2e/verify-history-grouped.png' });
+  pass('截图 scripts/e2e/verify-history-grouped.png');
 } catch (e) {
   fail(e.message);
 } finally {

@@ -2059,6 +2059,18 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 
 ## 十二、变更记录
 
+### 2026-10-22（六十四）· 足迹页对标淘宝：按天分组 + 分页 + 批量删除 + 搜索
+
+- **分组**：接口返回扁平倒序列表，前端按**北京自然日**分组（`bjDateKey`，不能拿 UTC 串截日期）；
+  组标题「今天 / 昨天 / M月D日（N件）」，相对称呼只给近两天，与淘宝同口径；组标题吸顶。
+- **分页**：每页 50 条，滚到底自动加载（IntersectionObserver）+ 按钮兜底；前端按 id 兜底去重。
+- **删除**：新增 `DELETE /api/history/{spuId}` 与 `DELETE /api/history/batch?ids=`（恒带 userId 条件，
+  越权静默无效）；卡片勾选 → 「删除所选（n）」→ Modal 确认；「清空」同样加确认。
+- **搜索**：标题本地过滤（不动后端），空结果有专用空态。
+- **视觉**：下架商品置灰 + 角标；空态补「去逛逛」按钮；样式全走语义变量（暗夜模式自动适配）。
+- **验证**：接口专项 `history-order-verify.py` 15/0（倒序/UTC/批量/单删/越权反向）；媒体+收藏回归
+  15/0；UI `history-ui-verify.mjs` 6/0（真实页面两组「今天/昨天」+ 勾选 + 批量按钮截图）。
+
 ### 2026-10-22（六十三）· 足迹时间戳：卡片直接显示「哪天看的」
 
 - **后端**：`/api/history/products` 每条卡片随下发 `viewedAt`（UTC ISO，带 Z）；

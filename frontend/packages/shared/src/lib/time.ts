@@ -70,3 +70,26 @@ export function formatBjDate(iso: string | null | undefined): string {
   const p = parts(iso);
   return p ? `${p.y}-${p.m}-${p.d}` : '';
 }
+
+/** 足迹等按自然日分组时的组 key：北京时间下的 YYYY-MM-DD（不能拿 UTC 串 slice(0,10)） */
+export function bjDateKey(iso: string): string {
+  return formatBjDate(iso);
+}
+
+function bjDayKey(offsetDays: number): string {
+  return formatBjDate(new Date(Date.now() - offsetDays * 86_400_000).toISOString());
+}
+
+/**
+ * 足迹分组标题：今天 / 昨天 / M月D日（跨年带年份）。
+ * 与淘宝同口径：相对称呼只给近两天，更早一律具体日期，不搞「3天前」。
+ */
+export function historyGroupLabel(iso: string): string {
+  const p = parts(iso);
+  if (!p) return '';
+  const key = `${p.y}-${p.m}-${p.d}`;
+  if (key === bjDayKey(0)) return '今天';
+  if (key === bjDayKey(1)) return '昨天';
+  const monthDay = `${Number(p.m)}月${Number(p.d)}日`;
+  return p.y === bjDayKey(0).slice(0, 4) ? monthDay : `${p.y}年${monthDay}`;
+}

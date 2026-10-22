@@ -72,4 +72,19 @@ public class ProductInteractionController {
     public ApiResponse<Long> clearHistory() {
         return ApiResponse.ok(service.clearViews(UserContext.requireUserId()));
     }
+
+    /** 删除单条足迹（只删本人；幂等，不存在也算成功） */
+    @DeleteMapping("/api/history/{spuId}")
+    public ApiResponse<Long> deleteHistory(@PathVariable Long spuId) {
+        Long userId = UserContext.requireUserId();
+        return ApiResponse.ok(service.deleteViews(userId, List.of(spuId)));
+    }
+
+    /** 批量删除足迹（ids 逗号分隔；只删本人的，别人的 id 静默无效） */
+    @DeleteMapping("/api/history/batch")
+    public ApiResponse<Long> deleteHistoryBatch(@RequestParam String ids) {
+        List<Long> spuIds = Arrays.stream(ids.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).map(Long::valueOf).toList();
+        return ApiResponse.ok(service.deleteViews(UserContext.requireUserId(), spuIds));
+    }
 }

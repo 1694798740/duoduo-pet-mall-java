@@ -151,6 +151,16 @@ public class ProductInteractionService {
                 .eq(ProductViewEntity::getUserId, userId));
     }
 
+    /** 删除指定足迹；恒定带 userId 条件（越权纪律：别人的 spuId 静默无效） */
+    public long deleteViews(Long userId, List<Long> spuIds) {
+        if (spuIds == null || spuIds.isEmpty()) {
+            return 0L;
+        }
+        return viewMapper.delete(new LambdaQueryWrapper<ProductViewEntity>()
+                .eq(ProductViewEntity::getUserId, userId)
+                .in(ProductViewEntity::getSpuId, spuIds));
+    }
+
     /** 把 spuId 列表补成可展示的商品卡（顺序保持不变；viewedAt 仅足迹有值） */
     private List<PickerProduct> enrich(List<Long> spuIds, Map<Long, LocalDateTime> viewedAt) {
         if (spuIds.isEmpty()) {
