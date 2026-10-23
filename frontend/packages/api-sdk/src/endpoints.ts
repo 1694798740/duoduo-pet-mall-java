@@ -1278,6 +1278,14 @@ export const supportApi = {
   }) => api.post<SupportMessageView>('/api/support/messages', body),
   markRead: (sessionId: string) =>
     api.post<number>('/api/support/read', undefined, { query: { sessionId } }),
+  /**
+   * 结束本次咨询（仅买家）。
+   *
+   * 语义是「我这边问完了」，不是禁止再发：买家再发消息服务端会自动重开，
+   * 因此端侧**不展示任何关闭状态**（服务端也把 status 抹成 null 了）。
+   */
+  close: (sessionId: string) =>
+    api.post<void>('/api/support/close', undefined, { query: { sessionId } }),
   unreadCount: () => api.get<number>('/api/support/unread-count'),
 };
 
@@ -1288,9 +1296,19 @@ export const supportApi = {
  * 自营客服账号以 SELLER 身份登录时，这里就是它的接待台 —— 平台运营端不参与私信。
  */
 export const sellerSupportApi = {
-  /** onlyUnread=true 只看未读（工作台「未读」筛选） */
-  sessions: (query?: { status?: string; onlyUnread?: boolean; page?: number; pageSize?: number }) =>
-    api.get<PageResult<SupportSessionView>>('/api/seller/support/sessions', { query }),
+  /**
+   * 会话列表。
+   *
+   * filter（2026-10-23 扩展）：ALL / UNREAD / ANSWERED（已处理=没有待回）/ CLOSED。
+   * `onlyUnread` 保留给老调用点，等价于 filter=UNREAD。
+   */
+  sessions: (query?: {
+    status?: string;
+    filter?: 'ALL' | 'UNREAD' | 'ANSWERED' | 'CLOSED';
+    onlyUnread?: boolean;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<PageResult<SupportSessionView>>('/api/seller/support/sessions', { query }),
   messages: (id: string, query?: { page?: number; pageSize?: number }) =>
     api.get<SupportThreadView>(`/api/seller/support/sessions/${id}/messages`, { query }),
   reply: (id: string, payload: {
@@ -1303,8 +1321,7 @@ export const sellerSupportApi = {
     durationMs?: number;
   }) => api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages`, payload),
   markRead: (id: string) => api.post<number>(`/api/seller/support/sessions/${id}/read`),
-  setStatus: (id: string, value: 'OPEN' | 'CLOSED') =>
-    api.post<void>(`/api/seller/support/sessions/${id}/status`, undefined, { query: { value } }),
+  // 关闭 / 重开已下线（2026-10-23）：关闭权只在买家手里，客服侧调用恒返回 403
   unreadCount: () => api.get<number>('/api/seller/support/unread-count'),
 };
 

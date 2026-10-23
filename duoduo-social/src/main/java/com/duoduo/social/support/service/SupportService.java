@@ -204,15 +204,18 @@ public class SupportService {
         }
 
         SupportSessionEntity session = ensureSession(target, userId);
-        // 会话被商家关闭后，买家再发消息自动重开：否则用户卡在「已关闭」里问不下去，
-        // 而重开本来也不产生任何数据风险（状态字段而已）。
+        // 会话关闭后买家再发消息自动重开（2026-10-23 规则收紧后仍然保留）：
+        // 关闭只是**客服侧**的收尾标记，买家全程无感；他能继续发，就说明咨询还没结束。
         if ("CLOSED".equalsIgnoreCase(session.getStatus())) {
-            SupportSessionEntity reopen = new SupportSessionEntity();
-            reopen.setId(session.getId());
-            reopen.setStatus("OPEN");
-            reopen.setUpdatedAt(now());
-            sessionMapper.updateById(reopen);
+            sessionMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SupportSessionEntity>()
+                    .eq(SupportSessionEntity::getId, session.getId())
+                    .set(SupportSessionEntity::getStatus, "OPEN")
+                    // ★ 必须显式置 null：MP 的 updateById 会跳过 null 字段，闭合时间就永远清不掉，
+                    //   30 天清理会把这个「其实还在用」的会话删掉
+                    .set(SupportSessionEntity::getClosedAt, null)
+                    .set(SupportSessionEntity::getUpdatedAt, now()));
             session.setStatus("OPEN");
+            session.setClosedAt(null);
         }
         if (messageMapper.countSentInWindow(session.getId(), userId, RATE_WINDOW_SECONDS) >= USER_RATE_LIMIT) {
             throw new BizException(ErrorCode.RATE_LIMITED, "发送太频繁，请稍后再试");
@@ -270,6 +273,35 @@ public class SupportService {
         return sessionMapper.sumUnreadForUser(userId);
     }
 
+    /**
+     * 买家主动结束本次咨询（2026-10-23）。
+     *
+     * <h2>为什么只有买家能关</h2>
+     * 关闭是「用户这边问完了」的表达，不是客服驱逐用户的手段 —— 客服一旦有关闭权，
+     * 就会出现「不想答就关会话」的操作空间。客服侧只保留**看见**状态与**筛选**能力。
+     *
+     * <h2>关闭后买家无感</h2>
+     * 买家侧接口一律不回 status（见 {@link #toSessionView}），前端也没有任何关闭提示；
+     * 他随时可以继续发消息，发送时服务端自动重开。
+     *
+     * <p>幂等：已关闭时重复调用不再刷新 {@code closed_at} ——
+     * 否则用户反复点「结束咨询」就能把 30 天清理窗口无限推后。
+     */
+    public void closeByUser(Long userId, Long sessionId) {
+        SupportSessionEntity session = requireSession(sessionId);
+        if (!Objects.equals(session.getUserId(), userId)) {
+            throw BizException.forbidden("该会话不属于当前账号");
+        }
+        LocalDateTime now = now();
+        sessionMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SupportSessionEntity>()
+                        .eq(SupportSessionEntity::getId, sessionId)
+                        .eq(SupportSessionEntity::getStatus, "OPEN")
+                        .set(SupportSessionEntity::getStatus, "CLOSED")
+                        .set(SupportSessionEntity::getClosedAt, now)
+                        .set(SupportSessionEntity::getUpdatedAt, now));
+    }
+
     // ---------------- 商家侧（工作台） ----------------
 
     /**
@@ -277,9 +309,21 @@ public class SupportService {
      *
      * <p>{@code sellerId} 由调用方从登录态推导（控制器负责），本方法不做「我是谁」判断 ——
      * 这样它也能被内部对账脚本按指定店铺复用，而权限仍只有一处（控制器）。
+     *
+     * <h2>筛选（2026-10-23 扩展）</h2>
+     * <ul>
+     *   <li>{@code ALL}：全部；</li>
+     *   <li>{@code UNREAD}：还有待回（{@code unread_for_seller > 0}）；</li>
+     *   <li>{@code ANSWERED}：已处理 —— 没有待回（{@code unread_for_seller = 0}），含已关闭的；</li>
+     *   <li>{@code CLOSED}：已关闭（仅客服可见的状态视图）。</li>
+     * </ul>
+     * 「已处理」按「是否还有待回」判定，而不是按「有没有回复过」：
+     * 后者要再查一次消息表，且「买家又追问了一句」之后仍会被算作已处理 —— 与运营心智相反。
+     *
+     * @param filter 兼容旧参数：{@code onlyUnread=true} 等价于 {@code UNREAD}（老前端不发 filter）
      */
-    public PageResult<SessionView> listForSeller(Long sellerId, String status, boolean onlyUnread,
-                                                 int page, int pageSize) {
+    public PageResult<SessionView> listForSeller(Long sellerId, String status, String filter,
+                                                 boolean onlyUnread, int page, int pageSize) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
         LambdaQueryWrapper<SupportSessionEntity> wrapper = new LambdaQueryWrapper<SupportSessionEntity>()
@@ -290,8 +334,14 @@ public class SupportService {
         if (!st.isEmpty()) {
             wrapper.eq(SupportSessionEntity::getStatus, st);
         }
-        if (onlyUnread) {
-            wrapper.gt(SupportSessionEntity::getUnreadForSeller, 0);
+        String f = filter == null || filter.isBlank()
+                ? (onlyUnread ? "UNREAD" : "ALL")
+                : filter.trim().toUpperCase();
+        switch (f) {
+            case "UNREAD" -> wrapper.gt(SupportSessionEntity::getUnreadForSeller, 0);
+            case "ANSWERED" -> wrapper.eq(SupportSessionEntity::getUnreadForSeller, 0);
+            case "CLOSED" -> wrapper.eq(SupportSessionEntity::getStatus, "CLOSED");
+            default -> { /* ALL */ }
         }
         Page<SupportSessionEntity> result = sessionMapper.selectPage(new Page<>(p, size), wrapper);
         Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
@@ -303,6 +353,12 @@ public class SupportService {
                                 .map(SupportSessionEntity::getSellerId).toList()),
                         false)).toList();
         return PageResult.of(views, result.getTotal(), p, size);
+    }
+
+    /** 兼容旧签名的重载（内部脚本/旧调用点不传 filter） */
+    public PageResult<SessionView> listForSeller(Long sellerId, String status, boolean onlyUnread,
+                                                 int page, int pageSize) {
+        return listForSeller(sellerId, status, null, onlyUnread, page, pageSize);
     }
 
     public ThreadView sellerThread(Long sellerId, Long sessionId, int page, int pageSize) {
@@ -362,16 +418,13 @@ public class SupportService {
         return sessionMapper.sumUnreadForSeller(sellerId);
     }
 
-    /** 关闭 / 重开会话（商家侧；用户再发消息会自动保持关闭，需商家重开） */
-    public void setStatus(Long sellerId, Long sessionId, String status) {
-        SupportSessionEntity session = requireOwnedSession(sellerId, sessionId);
-        String st = "OPEN".equalsIgnoreCase(status) ? "OPEN" : "CLOSED";
-        SupportSessionEntity patch = new SupportSessionEntity();
-        patch.setId(session.getId());
-        patch.setStatus(st);
-        patch.setUpdatedAt(now());
-        sessionMapper.updateById(patch);
-    }
+    /**
+     * 关闭 / 重开会话 —— **已移除**（2026-10-23）。
+     *
+     * <p>关闭权归买家：客服一旦能关，就有「不想答就关掉」的空间。买家关闭后，
+     * 他再发消息会自动重开（{@link #sendByUser}），因此客服侧也不需要「重开」。
+     * 控制器保留旧路径并返回 403，文案说明口径变化。
+     */
 
     // ---------------- 内部 ----------------
 
@@ -474,7 +527,9 @@ public class SupportService {
         long peerCursor = userSide ? nzLong(raw.getSellerLastReadId()) : nzLong(raw.getUserLastReadId());
         long myUnread = messageMapper.countSentAfter(session.id(), viewerId, peerCursor);
         return new ThreadView(session.id(), session.sellerId(), session.sellerName(), session.sellerAvatar(),
-                session.userId(), session.userName(), session.userAvatar(), session.status(),
+                session.userId(), session.userName(), session.userAvatar(),
+                // 同 toSessionView：会话状态只对客服可见，买家侧恒为 null
+                userSide ? null : session.status(),
                 peerCursor, myUnread, items, result.getTotal(), p, size);
     }
 
@@ -577,7 +632,10 @@ public class SupportService {
                 s.getLastMessagePreview(),
                 s.getLastMessageAt() == null ? null : s.getLastMessageAt().toInstant(ZoneOffset.UTC).toString(),
                 unread,
-                s.getStatus());
+                // ★ 买家侧不回状态（2026-10-23）：关闭只是客服侧的收尾标记，对用户必须全程无感。
+                //   在**服务端**抹掉而不是靠前端「不显示」，这样任何客户端都拿不到这个字段，
+                //   也不会有人手滑把「已关闭」渲染出来。
+                userSide ? null : s.getStatus());
     }
 
     /**

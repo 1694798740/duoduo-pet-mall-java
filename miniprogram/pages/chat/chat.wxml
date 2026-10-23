@@ -63,10 +63,11 @@
             wx:elif="{{item.bizType === 'VIDEO'}}"
             class="msg-media"
             src="{{item.mediaUrl}}"
+            poster="{{item.thumbUrl}}"
             object-fit="contain"
           />
           <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
-          <view class="t3 msg-time">{{item.timeText}}{{item.mine && !item.read ? ' · 未读' : ''}}</view>
+          <view class="t3 msg-time">{{item.timeText}}<text wx:if="{{item.mine && !item.read}}" class="msg-unread"> · 未读</text></view>
         </view>
       </view>
       <view style="height: 20rpx"></view>
@@ -77,6 +78,7 @@
 
     <!-- 输入条 -->
     <view class="chat-input-bar">
+      <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>
       <input
         class="chat-input"
@@ -97,6 +99,30 @@
       >
         发送
       </button>
+    </view>
+
+    <!-- 表情 / 贴纸面板：与 Web、客服页同一清单（56 + 12） -->
+    <view wx:if="{{emojiOpen}}" class="emoji-panel">
+      <view class="emoji-tabs">
+        <view class="emoji-tab {{emojiTab === 'emoji' ? 'on' : ''}}" data-tab="emoji" bindtap="switchEmojiTab">表情</view>
+        <view wx:if="{{stickers.length}}" class="emoji-tab {{emojiTab === 'sticker' ? 'on' : ''}}" data-tab="sticker" bindtap="switchEmojiTab">贴纸</view>
+      </view>
+      <scroll-view scroll-y class="emoji-scroll">
+        <view wx:if="{{emojiTab === 'emoji'}}" class="emoji-grid">
+          <view wx:for="{{emojis}}" wx:key="*this" class="emoji-cell" data-e="{{item}}" bindtap="pickEmoji">{{item}}</view>
+        </view>
+        <view wx:else class="emoji-grid sticker-grid">
+          <image
+            wx:for="{{stickers}}"
+            wx:key="*this"
+            class="sticker-cell"
+            src="{{item}}"
+            mode="aspectFit"
+            data-url="{{item}}"
+            bindtap="pickSticker"
+          />
+        </view>
+      </scroll-view>
     </view>
   </view>
 </block>

@@ -25,3 +25,18 @@
   border-radius: 16rpx;
   background: #f1f2f6;
 }
+
+/* 结束咨询：弱化入口，不和头像抢视觉；语义上只是「我这边问完了」 */
+.chat-end {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid #e3e5ec;
+  color: #7a8091;
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+.chat-end:active {
+  background: #f1f2f6;
+}

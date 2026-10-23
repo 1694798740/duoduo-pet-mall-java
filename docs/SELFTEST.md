@@ -416,6 +416,26 @@ Q4 店员可见本店会话、Q5 未读为纯文字/时间行/琥珀色、Q6 面
 > 症状看起来像「缩放坏了」；
 > ③ 全屏下关闭按钮的命中判定用 `closest('button')`（按钮内含 SVG，命中的是 `path`）。
 
+### 4.6g 客服会话生命周期套件（第 88 轮新增）
+
+```bash
+NO_PROXY="*" python scripts/support-lifecycle-smoke.py                       # 32 项：关闭权/筛选/自动结束/清理
+NO_PROXY="*" node scripts/e2e/support-session-ui-check.mjs                   # 25 项：封面/定位/无关闭痕迹/四档筛选
+```
+
+**前置**：容器已起；MySQL 容器名 `duoduo-mysql`（脚本用 `docker exec` 造 25h/31 天的时间偏移）；
+社交域 8087 端口已映射（内部 sweep 直连，不经网关）。
+
+**预期**：`32 通过 / 0 失败` 与 `25 通过 / 0 失败`。
+
+> ★ 四个坑（都踩过）：
+> ① **清理用例会物理删除会话**，必须用临时注册账号，绝不能拿固定测试号当靶子；
+> ② 页面内 `fetch` 造数会被商城 nginx 注入的 `X-Duoduo-Entry: mall` 锁死身份，
+>    用商城令牌调商家接口一律 403「当前登录入口无权访问该接口」→ 跨端造数走 Node 直连 8080；
+> ③ 气泡里现在也有 `<video>`（无封面时的首帧兜底），`document.querySelector('video')`
+>    会命中气泡，全屏断言必须写 `[role="dialog"] video`；
+> ④ 清理断言要同时验「图片 URL 变 404」和「静态贴纸仍 200」，只验前者证明不了前缀守卫。
+
 ### 4.7 性能压测
 
 ```bash

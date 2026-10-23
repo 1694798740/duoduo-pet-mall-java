@@ -13,6 +13,28 @@ const MAX_SECONDS = 60;
 /** 低于此体积不压缩：等压缩不如直接传 */
 const COMPRESS_THRESHOLD = 6 * 1024 * 1024;
 
+const api = require('./api');
+
+/**
+ * 上传视频封面（2026-10-23）。
+ *
+ * <p>`wx.chooseMedia` 对视频会额外给一个 `thumbTempFilePath`（首帧缩略图）。
+ * 之前这个字段被丢掉了，于是接收方只有 video 组件自己解码首帧才能看到画面 ——
+ * 弱网/未预加载时就是一块黑色底。把它当作普通图片上传，随消息一起落 `thumb_url`，
+ * 接收端气泡立刻有封面，播放器也能用它做 poster。
+ *
+ * <p>失败返回空串：封面是增强项，绝不能因为它拦住消息发送。
+ */
+function uploadPoster(file) {
+  if (!file || !file.thumbTempFilePath) {
+    return Promise.resolve('');
+  }
+  return api
+    .upload(file.thumbTempFilePath)
+    .then((data) => (data && data.url) || '')
+    .catch(() => '');
+}
+
 function getVideoInfo(src) {
   return new Promise((resolve, reject) => {
     wx.getVideoInfo({
@@ -66,4 +88,5 @@ function prepareVideo(file) {
 module.exports = {
   MAX_SECONDS,
   prepareVideo,
+  uploadPoster,
 };

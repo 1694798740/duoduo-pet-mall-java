@@ -15,6 +15,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -393,6 +394,74 @@ public class UploadController {
             return base;
         }
         return base + imageSuffix;
+    }
+
+    /**
+     * 内部接口：按 URL 批量删除上传对象（2026-10-23，供社交域的会话过期清理调用）。
+     *
+     * <h2>为什么删对象这件事必须留在本域</h2>
+     * 存储选型（local / COS）、桶、公共域名都在这里。让别的域自己配一套凭据去删，
+     * 一旦只改一处配置，就会出现「删的是另一个桶 / 本地空目录」这种静默失败。
+     * 调用方只表达「这些 URL 可以删」，怎么删由本域决定。
+     *
+     * <h2>安全边界</h2>
+     * <ul>
+     *   <li>只处理路径里含 {@code /uploads/} 的 URL：资质材料（{@code materials/}）、
+     *       贴纸（{@code /stickers/*.svg}）这类静态资源一律跳过；</li>
+     *   <li>对象不存在视为已删除（{@code ObjectStorage.delete} 幂等），因此可重复调用；</li>
+     *   <li>接口挂 {@code /api/uploads/internal/} 前缀，由 {@code InternalTokenFilter} 校验服务间签名，
+     *       网关不暴露（网关只转发 {@code /api/uploads}，不带 internal 段）。</li>
+     * </ul>
+     */
+    @PostMapping("/api/uploads/internal/delete")
+    public ApiResponse<Integer> internalDelete(@RequestBody(required = false) List<String> urls) {
+        if (urls == null || urls.isEmpty()) {
+            return ApiResponse.ok(0);
+        }
+        int deleted = 0;
+        for (String url : urls) {
+            String key = publicKeyOf(url);
+            if (key == null) {
+                continue;
+            }
+            try {
+                if (storage.exists(key)) {
+                    storage.delete(key);
+                    deleted++;
+                }
+            } catch (Exception e) {
+                // 单个对象失败不影响其余：调用方据「返回条数 < 请求条数」决定是否重试整批
+                log.warn("删除上传对象失败 key={}", key, e);
+            }
+        }
+        return ApiResponse.ok(deleted);
+    }
+
+    /**
+     * 对外 URL → 桶内对象 key（{@code uploads/<uuid>.<ext>}）。
+     *
+     * <p>必须按 {@code /uploads/} 定位而不是取最后一段：图片 URL 带 {@code imageMogr2} 查询串，
+     * 用整串找 key 会带着参数去删，必然删不掉（而且看起来"成功"）。
+     * 不是本域上传目录的地址返回 {@code null}，调用方按跳过处理。
+     */
+    private String publicKeyOf(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        String noQuery = url.trim();
+        int q = noQuery.indexOf('?');
+        if (q >= 0) {
+            noQuery = noQuery.substring(0, q);
+        }
+        int idx = noQuery.indexOf("/uploads/");
+        if (idx < 0) {
+            return null;
+        }
+        String key = noQuery.substring(idx + 1); // 去掉前导 '/'
+        if (key.length() <= ObjectStorage.PREFIX_PUBLIC.length() || key.contains("..")) {
+            return null;
+        }
+        return key;
     }
 
     /**

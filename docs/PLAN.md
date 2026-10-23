@@ -286,6 +286,21 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理 / 小程序对齐
+
+| 项 | 实现 |
+| --- | --- |
+| 视频封面 | 根因：`uploadChatMedia()` 从不产出 `thumbUrl`，`t_support_message.thumb_url` 恒空。修：`captureVideoPoster()` 解码视频 → seek 0.1s（避开首帧黑场）→ canvas 缩至 ≤520 宽 → JPEG 0.82 → 走同一上传接口；`MediaBubble` 无封面时用 `<video src="{url}#t=0.1">` 画首帧兜底（历史消息零回填）。小程序用 `chooseMedia` 的 `thumbTempFilePath`（`media.uploadPoster`） |
+| 定位最新未读 | 根因两层：① `.sup-body` 是内部滚动容器，旧实现「条数变化滚到底」常滚到窗口；② 新实现首版失效 —— `loading=true` 时渲染 `LoadingBlock`，`bodyRef` 为空，等 `setLoading(false)` 后依赖 `[thread?.sessionId]` 没变不重跑（诊断钩子实测 `hasBody:false`）。修：依赖加 `loading`；第一条未读打 `data-first-unread`，`scrollIntoView({block:'center'})`；`atBottomRef` 让轮询只在底部时跟随 |
+| 商家四档筛选 | `listForSeller` 增 `filter`：ALL / UNREAD（`unread_for_seller>0`）/ ANSWERED（`=0`，含已关闭）/ CLOSED；`onlyUnread` 旧参数兼容。商家端按钮改常量四档，空态分档文案 |
+| 关闭规则 | 新增 `closed_at`（增量 43）；`POST /api/support/close` 仅买家可用；商家旧 status 接口保留路径但恒 403（404 会让人以为接口消失）；关闭后客服回复 422；买家侧 `status` 由**服务端**抹成 null（不是前端不显示）；`sendByUser` 重开时用 `LambdaUpdateWrapper.set(closedAt,null)` 显式清空（MP `updateById` 跳过 null 字段）；`SupportMaintenanceService` 每 5 分钟 `UPDATE ... WHERE status='OPEN' AND last_message_at < now-24h`，条件在 SQL 里所以多实例幂等 |
+| 30 天清理 | 判据 `status='CLOSED' AND closed_at < now-30d AND last_message_at < now-30d`；顺序：收集 `/uploads/` URL → 调履约域批量删对象 → **全部成功才删库**（失败保留行下轮重试，反之会留孤儿文件）→ 删消息 → 带条件删会话。履约域新增 `POST /api/uploads/internal/delete`（`publicKeyOf` 剥 query、只认 `/uploads/`、拒 `..`），内部前缀同步登记进 `InternalTokenFilter` |
+| 手动触发 | `POST /api/socials/internal/support-sweep?close=&cleanup=`（内网签名），供运维补跑与自测 |
+| 小程序对齐 | 去掉 3 处「会话已关闭」+ 输入禁用；加「结束咨询」；`scrollToLatest`；视频 `poster`；未读改 `.msg-unread` 琥珀；新增表情/贴纸面板（`utils/emoji.js` 56+12，`config.STATIC_BASE` 指向 Web 静态资源） |
+| 后续 IM 设计 | `docs/support-im-followup-design.md`：语音（格式矩阵与两方案取舍）/ 引用（`meta_json` 快照 + `around` 定位）/ 撤回（软撤回 + 未读收敛 + 通知残留），含变更清单与验收 |
+| 验证 | 新增 `support-lifecycle-smoke.py` **32/0**、`e2e/support-session-ui-check.mjs` **25/0**；回归 `support-ux-ui-check` 47/0、`support-read` 24/0、`support-split` 22/0、`notice-chat-follow` 50/0、`seller` 40/0；两模块 mvn package 通过，四容器重建 healthy |
+| 教训 | ① React 里「数据到了但容器还没挂载」会让 effect 空跑一次且不再重试 —— 依赖里必须带上"挂载条件"（本例是 `loading`）；② 页面内 `fetch` 造数会被 nginx 注入的 `X-Duoduo-Entry` 锁死身份（商城令牌访问商家接口一律 403「当前登录入口无权访问该接口」），跨端造数必须走 Node 直连网关；③ 气泡里新增 `<video>` 后，`document.querySelector('video')` 会先命中气泡，全屏断言必须限定 `[role="dialog"] video`；④ `open(p,'w')` 会在校验参数前就截断文件 —— 脚本改文件一律用 Edit，不用 open/write |
+
 ### 2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺归属 / 媒体体验（二次验收 Q1~Q10 复盘）
 
 | 项 | 实现 |

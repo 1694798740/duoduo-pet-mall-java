@@ -71,6 +71,19 @@ public class SupportController {
         return ApiResponse.ok(supportService.markReadByUser(UserContext.requireUserId(), sessionId));
     }
 
+    /**
+     * 结束本次咨询（仅买家）。
+     *
+     * <p>语义是「我这边问完了」，不是「禁止再发」：买家随时可以继续发消息，服务端会自动重开。
+     * 因此端侧**不展示任何关闭状态**，这个接口只影响客服工作台的收尾与筛选。
+     * 客服侧没有对应接口 —— 关闭权只在买家手里（2026-10-23）。
+     */
+    @PostMapping("/api/support/close")
+    public ApiResponse<Void> close(@RequestParam Long sessionId) {
+        supportService.closeByUser(UserContext.requireUserId(), sessionId);
+        return ApiResponse.ok(null);
+    }
+
     /** 我的客服未读总数（角标合并口径的一项） */
     @GetMapping("/api/support/unread-count")
     public ApiResponse<Long> unreadCount() {

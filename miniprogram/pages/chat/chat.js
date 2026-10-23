@@ -16,6 +16,7 @@
 const api = require('../../utils/api');
 const media = require('../../utils/media');
 const images = require('../../utils/images');
+const { EMOJIS, STICKERS } = require('../../utils/emoji');
 const { getNavMetrics } = require('../../utils/nav');
 
 const PAGE_SIZE = 20;
@@ -37,6 +38,11 @@ Page({
     scrollInto: '',
     canSend: true,
     hint: '',
+    // 表情 / 贴纸面板（2026-10-23 · 与 Web、客服页同一清单）
+    emojiOpen: false,
+    emojiTab: 'emoji',
+    emojis: EMOJIS,
+    stickers: STICKERS,
   },
 
   onLoad(query) {
@@ -129,9 +135,9 @@ Page({
         };
         const prevCount = this.data.items.length;
         this.setData(patch, () => {
-          if (reset || items.length !== prevCount) {
-            this.scrollToBottom();
-          }
+          // 打开会话定位到最新未读；轮询新增消息时才滚到底（2026-10-23 与客服页对齐）
+          if (reset) this.scrollToLatest(items);
+          else if (items.length !== prevCount) this.scrollToBottom();
         });
         if (hasNew) {
           api.social.message
@@ -152,6 +158,14 @@ Page({
     this.setData({ scrollInto: 'msg-' + items[items.length - 1].id });
   },
 
+  /** 打开会话的定位点：最新一条「对方发来、我还没读」的消息；没有未读则到底 */
+  scrollToLatest(items) {
+    if (!items || !items.length) return;
+    const firstUnread = items.find((m) => !m.mine && !m.read);
+    const target = firstUnread || items[items.length - 1];
+    if (target) this.setData({ scrollInto: 'msg-' + target.id });
+  },
+
   retry() {
     this.setData({ loading: true });
     this.fetchThread(true);
@@ -161,6 +175,43 @@ Page({
 
   onInput(e) {
     this.setData({ input: e.detail.value });
+  },
+
+  /** 表情面板：与 Web/客服页同一清单；点表情拼进输入框，点贴纸直接发 */
+  toggleEmoji() {
+    this.setData({ emojiOpen: !this.data.emojiOpen });
+  },
+
+  switchEmojiTab(e) {
+    this.setData({ emojiTab: e.currentTarget.dataset.tab || 'emoji' });
+  },
+
+  pickEmoji(e) {
+    const emoji = e.currentTarget.dataset.e || '';
+    this.setData({ input: (this.data.input || '') + emoji });
+  },
+
+  pickSticker(e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url || this.data.sending || !this.data.canSend) return;
+    this.setData({ sending: true });
+    api.social.message
+      .sendMedia(
+        this.data.peerId,
+        'EMOJI',
+        url,
+        this.data.productId || null,
+        this.data.listingId || null,
+        {}
+      )
+      .then(() => {
+        this.setData({ sending: false, emojiOpen: false });
+        this.fetchThread(false);
+      })
+      .catch((err) => {
+        this.setData({ sending: false });
+        wx.showToast({ title: (err && err.message) || '发送失败', icon: 'none' });
+      });
   },
 
   send() {
@@ -207,12 +258,14 @@ Page({
         if (!file) return;
         const isVideo = res.type === 'video';
         const prepared = isVideo ? media.prepareVideo(file) : Promise.resolve(null);
-        prepared
-          .then((p) => {
+        // 封面：chooseMedia 给的首帧缩略图，与视频上传并行
+        const poster = isVideo ? media.uploadPoster(file) : Promise.resolve('');
+        Promise.all([prepared, poster])
+          .then(([p, thumb]) => {
             wx.showLoading({ title: isVideo && p && p.compressed ? '上传压缩视频…' : '上传中…', mask: true });
-            return api.upload(isVideo ? p.path : file.tempFilePath).then((data) => ({ data, p }));
+            return api.upload(isVideo ? p.path : file.tempFilePath).then((data) => ({ data, p, thumb }));
           })
-          .then(({ data, p }) => {
+          .then(({ data, p, thumb }) => {
             const url = data && data.url;
             if (!url) throw { message: '上传失败' };
             const extra = {};
@@ -225,6 +278,7 @@ Page({
               if (file.height) extra.height = file.height;
               if (file.duration) extra.durationMs = Math.round(file.duration * 1000);
             }
+            if (thumb) extra.thumbUrl = thumb;
             return api.social.message.sendMedia(
               this.data.peerId,
               isVideo ? 'VIDEO' : 'IMAGE',

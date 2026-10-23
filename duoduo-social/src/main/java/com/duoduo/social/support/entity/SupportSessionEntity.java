@@ -34,6 +34,15 @@ public class SupportSessionEntity {
     /** OPEN / CLOSED */
     private String status;
 
+    /**
+     * 关闭时刻（2026-10-23）。
+     *
+     * <p>不能拿 {@code last_message_at} 代替：「关闭」这个动作本身不产生消息，
+     * 两个时间点必然不同；30 天清理的判据是「关闭满 30 天」，必须有自己的时间戳。
+     * 买家再发消息会**清空**它（会话重新打开）。
+     */
+    private LocalDateTime closedAt;
+
     private LocalDateTime lastMessageAt;
     private String lastMessagePreview;
 
@@ -84,6 +93,14 @@ public class SupportSessionEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public LocalDateTime getClosedAt() {
+        return closedAt;
+    }
+
+    public void setClosedAt(LocalDateTime closedAt) {
+        this.closedAt = closedAt;
     }
 
     public LocalDateTime getLastMessageAt() {

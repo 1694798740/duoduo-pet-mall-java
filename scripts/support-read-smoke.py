@@ -133,17 +133,33 @@ def main():
           thread.get("myUnreadCount"))
 
     st, r = call("GET", "/api/socials/notices?category=MERCHANT&page=1&pageSize=10", token=buyer)
-    support_notices = [n for n in ((r.get("data") or {}).get("items") or []) if n.get("bizType") == "SUPPORT"]
+    # 只看**本会话**的通知：同一账号还有其它客服会话，它们的通知本来就可能是未读的，
+    # 用「页面里所有 SUPPORT 都读」当判据会假红（2026-10-23 实测踩到）
+    my_notices = [n for n in ((r.get("data") or {}).get("items") or [])
+                  if n.get("bizType") == "SUPPORT" and str(n.get("bizId")) == str(sid)]
     check("买家打开会话后客服通知同步已读",
-          bool(support_notices) and all(n.get("read") for n in support_notices),
-          [n.get("read") for n in support_notices])
+          bool(my_notices) and all(n.get("read") for n in my_notices),
+          [n.get("read") for n in my_notices])
 
-    # 5) 关闭后商家不能回复
+    # 5) 关闭规则（2026-10-23）：只有买家能关；客服关不掉；关闭后客服不能回复
     st, r = call("POST", "/api/seller/support/sessions/%s/status?value=CLOSED" % sid, token=seller)
-    check("商家关闭会话", st == 200 and r.get("code") == "SUCCESS", r)
+    check("客服无权关闭会话（403）", st == 403 and r.get("code") == "FORBIDDEN", (st, r.get("code")))
+
+    st, r = call("POST", "/api/support/close?sessionId=%s" % sid, token=buyer)
+    check("买家结束会话成功", st == 200 and r.get("code") == "SUCCESS", r)
+
+    st, r = call("GET", "/api/support/messages?sellerId=%s&page=1&pageSize=5" % session.get("sellerId"),
+                 token=buyer)
+    check("买家侧接口不回会话状态（status=null）", (r.get("data") or {}).get("status") is None,
+          (r.get("data") or {}).get("status"))
+
     st, r = call("POST", "/api/seller/support/sessions/%s/messages" % sid,
                  {"content": "关闭后回复"}, token=seller)
     check("关闭后商家回复被拒", st in (400, 422), (st, r.get("code")))
+
+    st, r = call("GET", "/api/seller/support/sessions?filter=CLOSED&page=1&pageSize=50", token=seller)
+    closed_ids = [x["id"] for x in (r.get("data") or {}).get("items", [])]
+    check("商家「已关闭」筛选包含该会话", sid in closed_ids, closed_ids[:5])
 
     # 6) 买家再发消息 → 自动重开
     st, r = call("POST", "/api/support/messages", {"content": "关闭后再问 " + stamp}, token=buyer)
@@ -155,6 +171,12 @@ def main():
           None if row is None else row.get("status"))
     check("自动重开后商家侧又出现未读", row is not None and float(row.get("unread") or 0) > 0,
           None if row is None else row.get("unread"))
+
+    # 7) 已处理筛选：读完后没有待回 → 命中 ANSWERED
+    call("POST", "/api/seller/support/sessions/%s/read" % sid, token=seller)
+    st, r = call("GET", "/api/seller/support/sessions?filter=ANSWERED&page=1&pageSize=50", token=seller)
+    answered_ids = [x["id"] for x in (r.get("data") or {}).get("items", [])]
+    check("商家「已处理」筛选包含已读会话", sid in answered_ids, answered_ids[:5])
 
     # 收尾：把未读读掉，避免污染人工验收
     call("POST", "/api/support/read?sessionId=%s" % sid, token=buyer)

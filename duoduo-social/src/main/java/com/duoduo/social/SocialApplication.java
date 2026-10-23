@@ -36,6 +36,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 @EnableDiscoveryClient
 @EnableFeignClients
 @MapperScan("com.duoduo.social.mapper")
+@org.springframework.scheduling.annotation.EnableScheduling
 public class SocialApplication {
 
     public static void main(String[] args) {

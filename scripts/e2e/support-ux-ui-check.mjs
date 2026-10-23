@@ -96,6 +96,17 @@ try {
         });
       }
       const selfThread = await thread('0');
+      // 「未读」样式的用例需要一条**我发出、对方还没读**的消息。种子是幂等的（存在就不发），
+      // 而客服侧冒烟脚本会周期性把会话读掉，所以这里按状态判定、缺了就补一条 ——
+      // 不补的话整套会在 `.sup-unread` 上超时（2026-10-23 实测）。
+      const hasUnreadMine = (selfThread?.items ?? []).some((m) => m.mine && !m.read);
+      if (!hasUnreadMine) {
+        await fetch('/api/support/messages', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ sellerId: 0, content: '未读样式校验 ' + Date.now() }),
+        });
+      }
       // 真实图片种子：历史上聊天里的图片是 69 字节的假 PNG（InvalidImageFormat），
       // 灯箱无法验证。这里用 canvas 生成一张 480x320 的真图走完整上传链路。
       const hasImage = (selfThread?.items ?? []).some((m) => m.content === 'E2E 图片');
@@ -297,10 +308,22 @@ try {
   check('按住拖动进度条生效（跳到更早位置）', dragged < seeked && dragged > 5, { seeked, dragged });
   // 全屏
   await page.getByTitle('全屏').click();
-  await page.waitForTimeout(800);
+  // 等「真正进入全屏 + 尺寸生效」再量：固定 sleep 在 CI 上偶发只等到一半（2026-10-23 实测 1 次假红）
+  await page
+    .waitForFunction(
+      () => {
+        // ★ 必须是**播放器内**的 video：气泡里现在也有 <video> 做封面兜底，
+        //   直接 querySelector('video') 会量到气泡那个（高度只有一百多像素）
+        const v = document.querySelector('[role="dialog"] video');
+        return Boolean(document.fullscreenElement && v && v.getBoundingClientRect().height / window.innerHeight >= 0.85);
+      },
+      { timeout: 5000 },
+    )
+    .catch(() => undefined);
+  await page.waitForTimeout(300);
   const fs = await page.evaluate(() => {
     const el = document.fullscreenElement;
-    const v = document.querySelector('video');
+    const v = document.querySelector('[role="dialog"] video');
     if (!el || !v) return { fullscreen: Boolean(el), ratio: 0 };
     const r = v.getBoundingClientRect();
     return { fullscreen: true, ratio: r.height / window.innerHeight };

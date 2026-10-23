@@ -4,6 +4,23 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理**
+
+- **视频封面**：`uploadChatMedia` 端侧抓帧（seek 0.1s 避开黑场 → canvas ≤520 宽 → JPEG）随消息落 `thumb_url`；
+  历史消息用 `<video src="{url}#t=0.1">` 画首帧兜底；小程序用 `chooseMedia` 的 `thumbTempFilePath`。
+- **定位最新未读**：`.sup-body` 是内部滚动容器，改为「第一条未读 `scrollIntoView` + 无未读到底」，
+  并修正「`loading` 期间容器未挂载导致 effect 空跑」的问题（依赖补 `loading`）。
+- **商家四档筛选**：全部 / 未读 / **已处理（没有待回，含已关闭）** / **已关闭**。
+- **关闭规则**：新增 `closed_at`；只有买家能关（客服接口恒 403）；关闭后客服禁发；
+  买家侧 `status` 由服务端抹成 `null`（全程无感）；再发自动重开并清空关闭时间；24h 静默自动结束。
+- **30 天清理**：关闭满 30 天且无往来 → 删除会话与消息，并调履约域删 COS 对象；
+  **对象删干净才删库**，失败留待下轮；静态贴纸等非 `/uploads/` 资源不会被误删。
+- **小程序对齐**：去掉关闭文案与禁用、加「结束咨询」、`scrollToLatest`、视频 `poster`、
+  未读琥珀色、新增表情/贴纸面板（56+12，与 Web 同一清单）。
+- **后续 IM 设计**：`docs/support-im-followup-design.md`（语音 / 引用 / 5 分钟撤回，本期不实现）。
+- **验证**：`support-lifecycle-smoke.py` **32/0**、`e2e/support-session-ui-check.mjs` **25/0**；
+  回归 support-ux-ui 47/0、support-read 24/0、support-split 22/0、notice-chat-follow 50/0、seller 40/0。
+
 **2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺维度归属 / 媒体体验**
 
 - **Q1 精确定位会话**：`sellerId=0` 之前被前端当「不是店铺」丢弃，自营入口只能落到列表页；
@@ -2246,6 +2263,21 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 - **踩坑记录**：`docker compose up -d --force-recreate` **不会重建镜像**，
   `image:` + `build.args JAR_FILE` 的组合必须带 `--build`，否则容器里跑的还是旧 jar
   （表现为「代码改了、测试没变」）。核对方式：解包 `/app/app.jar` 里的 `BOOT-INF/classes` 看字段名。
+
+### 2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理
+
+- **视频封面**：`captureVideoPoster`（seek 0.1s → canvas ≤520 → JPEG）→ 与视频一起上传 → `thumbUrl`；
+  `MediaBubble` 无封面时用媒体片段 `#t=0.1` 渲染首帧；小程序上传 `thumbTempFilePath`。
+- **定位最新未读**：`data-first-unread` + `scrollIntoView`，无未读才落底；effect 依赖补 `loading`
+  （首屏 `LoadingBlock` 期间容器尚未挂载）。
+- **商家筛选**：`filter=ALL|UNREAD|ANSWERED|CLOSED`；「已处理」= `unread_for_seller=0`。
+- **关闭规则**：`closed_at` + `POST /api/support/close`（仅买家）；商家 status 接口 403；
+  买家侧 status 服务端置 null；重开用 `LambdaUpdateWrapper` 显式清空 `closed_at`；
+  24h 静默由 `UPDATE ... WHERE` 批量结束（多实例幂等）。
+- **清理**：`SupportMaintenanceService` 每日 04:20；先删对象再删库，失败跳过下轮重试；
+  履约域新增 `POST /api/uploads/internal/delete`（只认 `/uploads/`）。
+- **小程序**：关闭文案清零、结束咨询、定位未读、视频 poster、未读琥珀、表情/贴纸面板。
+- **验证**：32/0 + 25/0 新增，五套回归全绿。
 
 ### 2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺归属 / 媒体体验
 

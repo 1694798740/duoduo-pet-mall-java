@@ -8,13 +8,15 @@
 
 <block wx:else>
   <view class="chat-page" style="height: calc(100vh - {{navTotal}}px)">
-    <!-- 会话头部：接待方（自营客服 / 某商家客服） -->
+    <!-- 会话头部：接待方（自营客服 / 某商家客服）
+         ★ 2026-10-23：不再显示任何会话状态 —— 关闭只是客服侧的收尾标记。 -->
     <view class="chat-head">
       <image class="chat-avatar" src="{{sellerAvatar || '/images/category/default.png'}}" mode="aspectFill" />
       <view class="chat-head-info">
         <view class="chat-nick">{{sellerName}}</view>
-        <view class="t3">{{status === 'CLOSED' ? '会话已关闭' : '客服消息 · 不受互相关注限制'}}</view>
+        <view class="t3">客服消息 · 不受互相关注限制</view>
       </view>
+      <view wx:if="{{items.length}}" class="chat-end" bindtap="endConsult">结束咨询</view>
     </view>
 
     <scroll-view class="chat-body" scroll-y scroll-into-view="{{scrollInto}}" scroll-with-animation>
@@ -56,36 +58,61 @@
             wx:elif="{{item.bizType === 'VIDEO'}}"
             class="msg-media"
             src="{{item.mediaUrl}}"
+            poster="{{item.thumbUrl}}"
             object-fit="contain"
           />
           <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
-          <view class="t3 msg-time">{{item.timeText}}</view>
+          <view class="t3 msg-time">{{item.timeText}}<text wx:if="{{item.mine && !item.read}}" class="msg-unread"> · 未读</text></view>
         </view>
       </view>
       <view style="height: 20rpx"></view>
     </scroll-view>
 
     <view class="chat-input-bar">
+      <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>
       <input
         class="chat-input"
         value="{{input}}"
-        placeholder="{{status === 'CLOSED' ? '会话已关闭' : '描述你的问题…'}}"
+        placeholder="描述你的问题…"
         placeholder-class="chat-ph"
         confirm-type="send"
         bindinput="onInput"
         bindconfirm="send"
-        disabled="{{status === 'CLOSED'}}"
       />
       <button
         class="btn btn-accent chat-send"
         size="mini"
         bindtap="send"
-        disabled="{{status === 'CLOSED' || sending || !input}}"
+        disabled="{{sending || !input}}"
         loading="{{sending}}"
       >
         发送
       </button>
+    </view>
+
+    <!-- 表情 / 贴纸面板：与 Web 同一清单（56 + 12），点表情拼进输入框 -->
+    <view wx:if="{{emojiOpen}}" class="emoji-panel">
+      <view class="emoji-tabs">
+        <view class="emoji-tab {{emojiTab === 'emoji' ? 'on' : ''}}" data-tab="emoji" bindtap="switchEmojiTab">表情</view>
+        <view wx:if="{{stickers.length}}" class="emoji-tab {{emojiTab === 'sticker' ? 'on' : ''}}" data-tab="sticker" bindtap="switchEmojiTab">贴纸</view>
+      </view>
+      <scroll-view scroll-y class="emoji-scroll">
+        <view wx:if="{{emojiTab === 'emoji'}}" class="emoji-grid">
+          <view wx:for="{{emojis}}" wx:key="*this" class="emoji-cell" data-e="{{item}}" bindtap="pickEmoji">{{item}}</view>
+        </view>
+        <view wx:else class="emoji-grid sticker-grid">
+          <image
+            wx:for="{{stickers}}"
+            wx:key="*this"
+            class="sticker-cell"
+            src="{{item}}"
+            mode="aspectFit"
+            data-url="{{item}}"
+            bindtap="pickSticker"
+          />
+        </view>
+      </scroll-view>
     </view>
   </view>
 </block>

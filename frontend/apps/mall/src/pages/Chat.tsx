@@ -41,6 +41,7 @@ export const ChatPage: React.FC = () => {
   const [sendError, setSendError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const ctx = useCallback(
     () => ({ productId, listingId, page, pageSize: PAGE_SIZE }),
@@ -62,9 +63,21 @@ export const ChatPage: React.FC = () => {
     void messageApi.markRead(peerId, { productId, listingId }).catch(() => undefined);
   }, [peerId, productId, listingId]);
 
-  // 新消息进来滚到底部（消息按时间正序，最新在最下）
+  // 打开会话定位到最新未读（2026-10-23 与客服页同一口径）
   useEffect(() => {
+    if (!items.length) return;
+    const target = bodyRef.current?.querySelector('[data-first-unread="1"]');
+    if (target) target.scrollIntoView({ block: 'center' });
+    else bottomRef.current?.scrollIntoView({ block: 'end' });
+    // 首屏 data 到达前列表还没渲染（bodyRef 为空），必须等它变成有数据再定位一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerId, productId, listingId, Boolean(data)]);
+
+  // 新消息进来滚到底部（消息按时间正序，最新在最下）—— 私信页是整页滚动，不打断阅读
+  useEffect(() => {
+    if (!items.length) return;
     bottomRef.current?.scrollIntoView({ block: 'end' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length]);
 
   /** 私信只允许发送「当前咨询的商品」卡，不提供收藏/购物车等来源 */
@@ -114,6 +127,7 @@ export const ChatPage: React.FC = () => {
         productId,
         listingId,
         mediaUrl: payload.mediaUrl,
+        thumbUrl: payload.thumbUrl,
         width: payload.width,
         height: payload.height,
         durationMs: payload.durationMs,
@@ -174,12 +188,15 @@ export const ChatPage: React.FC = () => {
       {items.length === 0 ? (
         <Empty icon="💬" title="还没有消息" desc="发一条打个招呼吧" />
       ) : (
-        <div className="col" style={{ gap: 8, marginTop: 8 }}>
-          {items.map((m) => (
+        <div className="col" ref={bodyRef} style={{ gap: 8, marginTop: 8 }}>
+          {items.map((m, idx) => (
             <div
               key={m.id}
               className="row"
               style={{ justifyContent: m.mine ? 'flex-end' : 'flex-start' }}
+              data-first-unread={
+                !m.mine && !m.read && !items.slice(0, idx).some((x) => !x.mine && !x.read) ? '1' : undefined
+              }
             >
               <div
                 className="card card-pad"

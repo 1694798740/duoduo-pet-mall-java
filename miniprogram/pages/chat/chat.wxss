@@ -172,3 +172,59 @@
   border-radius: 16rpx;
   background: #f1f2f6;
 }
+
+/* ── 表情 / 贴纸面板（2026-10-23 · 与 Web 对齐） ── */
+.emoji-btn {
+  font-size: 32rpx;
+}
+.emoji-panel {
+  flex: none;
+  background: var(--card);
+  border-top: 1rpx solid #eef0f5;
+  padding: 8rpx 0 calc(8rpx + env(safe-area-inset-bottom));
+}
+.emoji-tabs {
+  display: flex;
+  gap: 24rpx;
+  padding: 8rpx 24rpx 12rpx;
+}
+.emoji-tab {
+  font-size: 24rpx;
+  color: #8b90a0;
+  padding: 6rpx 4rpx;
+  border-bottom: 4rpx solid transparent;
+}
+.emoji-tab.on {
+  color: #3d4353;
+  font-weight: 600;
+  border-bottom-color: #ff7a45;
+}
+.emoji-scroll {
+  height: 320rpx;
+}
+.emoji-grid {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0 16rpx;
+}
+.emoji-cell {
+  width: 12.5%;
+  height: 74rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40rpx;
+}
+.sticker-grid {
+  padding: 8rpx 16rpx;
+}
+.sticker-cell {
+  width: 25%;
+  height: 132rpx;
+  padding: 8rpx;
+  box-sizing: border-box;
+}
+/* 逐条「未读」：纯文字 + 琥珀色，与 Web 端一致 */
+.msg-unread {
+  color: #b26a00;
+}

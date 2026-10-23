@@ -72,6 +72,62 @@ function even(n: number): number {
   return v % 2 === 0 ? v : v - 1;
 }
 
+/**
+ * 从视频里抓一帧当封面（2026-10-23）。
+ *
+ * <h2>为什么要端侧抓帧</h2>
+ * 上传接口只回一个 URL，视频消息此前**从来没有封面**：接收方看到的就是一块深色底 + 播放按钮，
+ * 分不清是风景、宠物还是误发（截图里那张就是这样）。服务端抓帧要引入 ffmpeg 或
+ * 数据万象的视频截帧能力，成本与运维面都大；而端侧本来就为了压缩解码过一遍视频，
+ * 多画一帧 canvas 几乎不增加等待。
+ *
+ * <p>取 0.1s 而不是第 0 帧：不少视频首帧是黑场/淡入，抓出来是一张纯黑图，
+ * 比"没有封面"更像 bug。
+ *
+ * <p>失败一律返回 null（不抛）：封面是锦上添花，不能因为它拦住消息发送。
+ */
+async function captureVideoPoster(file: File): Promise<Blob | null> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error('视频解码失败'));
+      // 某些容器（如损坏的 moov）会一直不触发事件，不能无限等
+      setTimeout(() => reject(new Error('视频加载超时')), 8000);
+    });
+    const target = Math.min(0.1, Math.max(0, (video.duration || 0) / 2));
+    if (target > 0) {
+      video.currentTime = target;
+      await new Promise<void>((resolve) => {
+        video.onseeked = () => resolve();
+        setTimeout(resolve, 1500); // seek 失败也继续，画的是当前帧
+      });
+    }
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    // 气泡最多 260px 宽，按 2x 屏取 520 已足够清晰，再大只是浪费流量
+    const scale = Math.min(1, 520 / vw);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(2, Math.round(vw * scale));
+    canvas.height = Math.max(2, Math.round(vh * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+    video.removeAttribute('src');
+  }
+}
+
 /** 选一个当前浏览器真的能录的封装；都不支持返回 null（→ 回退原视频） */
 function pickRecorderMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -227,6 +283,7 @@ export async function uploadChatMedia(
   let height: number | undefined;
   let durationMs: number | undefined;
   let compressed = false;
+  let thumbUrl: string | undefined;
 
   if (isVideo) {
     if (file.type !== 'video/mp4' && file.type !== 'video/webm') {
@@ -254,6 +311,21 @@ export async function uploadChatMedia(
       }
       // result 为 null = 没压成，静默回退原视频（需求要求的行为）
     }
+
+    // 封面：抓上传文件的一帧（压缩后抓，保证封面与真正上传的画面对得上）
+    const poster = await captureVideoPoster(target);
+    if (poster) {
+      const posterForm = new FormData();
+      posterForm.append('file', new File([poster], 'poster.jpg', { type: 'image/jpeg' }));
+      try {
+        const uploaded = await uploadWithProgress(posterForm);
+        if (uploaded.code === 'SUCCESS' && uploaded.data?.url) {
+          thumbUrl = uploaded.data.url;
+        }
+      } catch {
+        // 封面失败不影响消息本身：接收端还有「视频首帧」兜底
+      }
+    }
   } else if (file.size > 5 * 1024 * 1024) {
     throw new Error('图片不能超过 5MB');
   }
@@ -267,7 +339,7 @@ export async function uploadChatMedia(
   if (body.code !== 'SUCCESS' || !body.data?.url) {
     throw new Error(body.message || '上传失败，请稍后再试');
   }
-  return { mediaUrl: body.data.url, width, height, durationMs, compressed };
+  return { mediaUrl: body.data.url, thumbUrl, width, height, durationMs, compressed };
 }
 
 /** 判断是否纯 emoji（只有 emoji 时气泡放大显示，模拟「表情包」的观感） */
@@ -1046,14 +1118,22 @@ export const MediaBubble: React.FC<{
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           ) : (
-            <span
+            /**
+             * 历史消息（2026-10-23 之前发送的）没有 thumb_url。
+             * 用 `<video>` 自身画首帧兜底：`#t=0.1` 是媒体片段语法，浏览器会 seek 到 0.1s 并渲染那一帧，
+             * 比纯色占位强得多，也不需要服务端补数据。`pointerEvents:none` 让点击穿透到外层按钮。
+             */
+            <video
+              src={`${url}#t=0.1`}
+              muted
+              playsInline
+              preload="metadata"
+              aria-hidden
               style={{
-                position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-                color: '#6b7280', fontSize: 12,
+                width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+                pointerEvents: 'none', background: '#1c2130',
               }}
-            >
-              视频
-            </span>
+            />
           )}
           {/* 自绘播放按钮：白色半透明圆底 + 三角，不用原生控件 */}
           <span

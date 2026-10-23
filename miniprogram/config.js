@@ -20,6 +20,16 @@ module.exports = {
   ENV: CURRENT_ENV,
   BASE_URL: ENV[CURRENT_ENV],
 
+  /**
+   * 静态资源站点（2026-10-23）。
+   *
+   * <p>贴纸是 Web 站点的静态文件（`/stickers/*.svg`），聊天消息里的 mediaUrl 必须是
+   * **对方也能访问的绝对地址** —— 打进小程序包里的图片没有 URL，发出去对方看不到。
+   * 因此这里单独配一个静态站点基址；上线时换成 Web 站点的 HTTPS 域名（需加入
+   * 「downloadFile 合法域名」）。留空则小程序侧只提供 emoji，不下发贴纸。
+   */
+  STATIC_BASE: 'http://localhost:8088',
+
   // 微信登录（code2Session）开关：
   //  - true  → wx.login 的 code 换令牌（/api/auth/wechat/token）；
   //            未绑定微信的账号会返回 422，此时登录页会引导走手机号登录/注册；

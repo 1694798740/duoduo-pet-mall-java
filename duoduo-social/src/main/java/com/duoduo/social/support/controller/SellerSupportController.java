@@ -53,14 +53,16 @@ public class SellerSupportController {
         this.userClient = userClient;
     }
 
-    /** 本店客服会话（按最后消息倒序，可按 OPEN/CLOSED 过滤） */
+    /** 本店客服会话（按最后消息倒序）；filter = ALL / UNREAD / ANSWERED / CLOSED */
     @GetMapping("/api/seller/support/sessions")
     public ApiResponse<PageResult<SessionView>> sessions(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String filter,
             @RequestParam(defaultValue = "false") boolean onlyUnread,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(supportService.listForSeller(requireStoreOwnerId(), status, onlyUnread, page, pageSize));
+        return ApiResponse.ok(supportService.listForSeller(requireStoreOwnerId(), status, filter,
+                onlyUnread, page, pageSize));
     }
 
     @GetMapping("/api/seller/support/sessions/{id}/messages")
@@ -87,11 +89,17 @@ public class SellerSupportController {
         return ApiResponse.ok(supportService.markReadBySeller(requireStoreOwnerId(), id));
     }
 
-    /** 关闭 / 重开会话：{@code value=CLOSED|OPEN} */
+    /**
+     * 【已下线】关闭 / 重开会话（2026-10-23）。
+     *
+     * <p>关闭权只在买家手里：客服若能关会话，就存在「不想答就关掉」的操作空间。
+     * 这里保留路径并固定返回 403，而不是直接删掉路由 —— 删掉会变成 404，
+     * 老客户端/脚本只会看到「接口不见了」，而 403 + 明确文案能直接说清口径变化。
+     */
+    @Deprecated
     @PostMapping("/api/seller/support/sessions/{id}/status")
     public ApiResponse<Void> status(@PathVariable Long id, @RequestParam String value) {
-        supportService.setStatus(requireStoreOwnerId(), id, value);
-        return ApiResponse.ok(null);
+        throw BizException.forbidden("会话只能由买家结束，客服无权关闭或重开");
     }
 
     /** 工作台页签角标 */

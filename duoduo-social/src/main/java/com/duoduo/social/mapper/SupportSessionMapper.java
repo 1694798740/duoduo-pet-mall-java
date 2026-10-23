@@ -6,6 +6,8 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDateTime;
+
 /**
  * 客服会话 Mapper。
  *
@@ -49,4 +51,44 @@ public interface SupportSessionMapper extends BaseMapper<SupportSessionEntity> {
             WHERE id = #{id}
             """)
     int bumpUnreadForSeller(@Param("id") Long id, @Param("delta") int delta);
+
+    /**
+     * 自动关闭：双方超过 {@code hours} 小时没有新消息的 OPEN 会话。
+     *
+     * <p>用「一条 UPDATE + WHERE」而不是「查出来再逐条改」：
+     * 扫描是分钟级任务，逐条写会把一次扫描变成上千次往返；而且条件写在 WHERE 里，
+     * 多实例同时跑也只会有一个生效（另一个 affected=0），天然幂等，不需要分布式锁。
+     *
+     * <p>{@code closed_at} 用 {@code COALESCE} 保护：已经是「关→买家重开→再超时」的会话，
+     * 重开时已清空该列，这里写入新时刻；极端并发下也不会把已存在的关闭时间改小。
+     */
+    @Update("""
+            UPDATE t_support_session
+            SET status = 'CLOSED', closed_at = COALESCE(closed_at, #{now}), updated_at = #{now}
+            WHERE status = 'OPEN' AND last_message_at < #{threshold}
+            """)
+    int closeIdleSessions(@Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
+
+    /**
+     * 清理候选：已关闭且关闭时间早于阈值（= 关闭满 N 天）。
+     *
+     * <p>额外要求 {@code last_message_at} 也早于阈值 —— 关闭后若还有消息（数据被旁路写入），
+     * 它就不算「双方无往来」，不删。宁可少删一条，也不删掉还在用的会话。
+     */
+    @Select("""
+            SELECT * FROM t_support_session
+            WHERE status = 'CLOSED' AND closed_at IS NOT NULL AND closed_at < #{threshold}
+              AND last_message_at < #{threshold}
+            ORDER BY closed_at ASC
+            LIMIT #{limit}
+            """)
+    java.util.List<SupportSessionEntity> selectExpired(@Param("threshold") LocalDateTime threshold,
+                                                       @Param("limit") int limit);
+
+    /** 物理删除时的二次校验：只有仍处于「已关闭且过期」状态才允许删（防与重开并发） */
+    @org.apache.ibatis.annotations.Delete("""
+            DELETE FROM t_support_session
+            WHERE id = #{id} AND status = 'CLOSED' AND closed_at IS NOT NULL AND closed_at < #{threshold}
+            """)
+    int deleteExpired(@Param("id") Long id, @Param("threshold") LocalDateTime threshold);
 }

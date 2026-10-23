@@ -65,6 +65,9 @@ export const SupportPage: React.FC = () => {
   const currentProductId = search.get('productId');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const activeItemRef = useRef<HTMLButtonElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  /** 当前是否停在底部：决定「新消息到达时要不要跟着滚」 */
+  const atBottomRef = useRef(true);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -135,8 +138,38 @@ export const SupportPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [activeSellerId, loadThread]);
 
+  /**
+   * 打开会话后的定位（2026-10-23）。
+   *
+   * <p>此前的实现只有「条数变化就滚到底」，而 `.sup-body` 是内部滚动容器：
+   * `scrollIntoView` 在首次渲染时经常滚的是窗口而不是容器，结果页面停在第一条历史消息。
+   *
+   * <p>现在的顺序是：**先找最新未读，没有未读再到底**。
+   * 定位点在渲染时打 `data-first-unread` 标记，这里用 querySelector 找它 ——
+   * 逐条挂 ref 数组在长会话里既啰嗦又容易错位。
+   * 依赖只放 sessionId：轮询刷新不该把正在往回翻历史的用户拽回底部。
+   */
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' });
+    if (!thread?.items.length) return;
+    const container = bodyRef.current;
+    const target = container?.querySelector('[data-first-unread="1"]');
+    if (target) {
+      target.scrollIntoView({ block: 'center' });
+    } else {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+    }
+    atBottomRef.current = !target;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.sessionId, loading]);
+
+  // 会话内新增消息：只有本来就在底部（或自己刚发出）时才跟着滚，避免打断向上翻页
+  useEffect(() => {
+    if (!thread?.items.length) return;
+    const last = thread.items[thread.items.length - 1];
+    if (last?.mine || atBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread?.items.length]);
 
   const switchTo = async (sellerId: string) => {
@@ -153,6 +186,7 @@ export const SupportPage: React.FC = () => {
         content: '',
         type: kind,
         mediaUrl: payload.mediaUrl,
+        thumbUrl: payload.thumbUrl,
         width: payload.width,
         height: payload.height,
         durationMs: payload.durationMs,
@@ -210,10 +244,25 @@ export const SupportPage: React.FC = () => {
     }
   };
 
+  /** 结束本次咨询：只影响客服侧的收尾与筛选；买家侧不出现任何「已关闭」字样 */
+  const endConsult = async () => {
+    if (!thread?.sessionId) return;
+    try {
+      await supportApi.close(thread.sessionId);
+      push('已结束本次咨询，需要时可以继续发送消息', 'success');
+      void loadSessions();
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+
   const active = useMemo(
     () => sessions.find((s) => s.sellerId === activeSellerId) ?? null,
     [sessions, activeSellerId],
   );
+
+  /** 打开会话要定位的那一条：最新一条「对方发来、我还没读」的消息 */
+  const firstUnreadId = thread?.items.find((m) => !m.mine && !m.read)?.id;
 
   if (loading) return <LoadingBlock text="正在接通客服…" />;
 
@@ -273,12 +322,24 @@ export const SupportPage: React.FC = () => {
         <section className="card sup-thread">
           <header className="sup-thread-head">
             <strong>{active ? peerOf(active) : thread?.sellerName || '客服'}</strong>
-            <span className="small muted">
-              {active?.status === 'CLOSED' ? '会话已关闭' : '工作时间外可能回复较慢'}
+            <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <span className="small muted">工作时间外可能回复较慢</span>
+              {activeSellerId && thread?.items.length ? (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => void endConsult()}>
+                  结束咨询
+                </button>
+              ) : null}
             </span>
           </header>
 
-          <div className="sup-body">
+          <div
+            className="sup-body"
+            ref={bodyRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+            }}
+          >
             {!activeSellerId ? (
               <Empty
                 title="请选择一个会话"
@@ -294,6 +355,7 @@ export const SupportPage: React.FC = () => {
                     key={m.id}
                     message={m}
                     unreadTag={m.mine && !m.read}
+                    firstUnread={m.id === firstUnreadId}
                     receipt={
                       isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
@@ -317,7 +379,7 @@ export const SupportPage: React.FC = () => {
                 onSticker={(url) => void sendSticker(url)}
                 onProduct={() => setPickerOpen(true)}
                 onError={(msg) => push(msg, 'error')}
-                disabled={sending || active?.status === 'CLOSED'}
+                disabled={sending}
               />
               <input
                 className="input"
@@ -331,22 +393,17 @@ export const SupportPage: React.FC = () => {
                     void send();
                   }
                 }}
-                disabled={sending || active?.status === 'CLOSED'}
+                disabled={sending}
               />
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void send()}
-                disabled={sending || !draft.trim() || active?.status === 'CLOSED'}
+                disabled={sending || !draft.trim()}
               >
                 {sending ? '发送中…' : '发送'}
               </button>
             </div>
-            )}
-            {activeSellerId && active?.status === 'CLOSED' && (
-              <p className="small muted" style={{ marginTop: 8 }}>
-                该会话已被商家关闭，可重新发起咨询。
-              </p>
             )}
           </footer>
         </section>
@@ -400,9 +457,11 @@ const Bubble: React.FC<{
   message: SupportMessageView;
   /** 我发出、对方还没读的消息：时间行右侧显示琥珀色「未读」，与「已读」同位置 */
   unreadTag?: boolean;
+  /** 打开会话时的定位锚点（最新未读） */
+  firstUnread?: boolean;
   receipt: string | null;
-}> = ({ message, unreadTag, receipt }) => (
-  <div className={`sup-row${message.mine ? ' mine' : ''}`}>
+}> = ({ message, unreadTag, firstUnread, receipt }) => (
+  <div className={`sup-row${message.mine ? ' mine' : ''}`} data-first-unread={firstUnread ? '1' : undefined}>
     <div className="sup-col">
       {renderContent(message)}
       {message.card && (

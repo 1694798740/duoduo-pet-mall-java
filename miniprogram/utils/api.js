@@ -796,6 +796,13 @@ const social = {
     markRead(sessionId) {
       return req.post('/api/support/read?sessionId=' + String(sessionId));
     },
+    /**
+     * 结束本次咨询（仅买家，2026-10-23）。
+     * 关闭只是客服侧的收尾标记：买家再发消息会自动重开，页面不展示任何状态。
+     */
+    close(sessionId) {
+      return req.post('/api/support/close?sessionId=' + String(sessionId));
+    },
     unreadCount() {
       return req.get('/api/support/unread-count');
     },

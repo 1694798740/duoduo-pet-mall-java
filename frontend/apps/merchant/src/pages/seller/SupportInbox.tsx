@@ -34,8 +34,19 @@ import { OrderCard } from '@duoduo/shared/components/order-card';
 const POLL_MS = 5000;
 const PAGE_SIZE = 30;
 
-/** 只看未读 / 全部 —— 不再按会话状态筛 */
-type Filter = 'ALL' | 'UNREAD';
+/**
+ * 会话筛选（2026-10-23 扩展）。
+ *
+ * ALL 全部 / UNREAD 还有待回 / ANSWERED 已处理（没有待回，含已关闭）/ CLOSED 已关闭。
+ */
+type Filter = 'ALL' | 'UNREAD' | 'ANSWERED' | 'CLOSED';
+
+const FILTERS: { value: Filter; label: string; hint: string }[] = [
+  { value: 'ALL', label: '全部', hint: '本店全部客服会话' },
+  { value: 'UNREAD', label: '未读', hint: '还有买家消息没处理' },
+  { value: 'ANSWERED', label: '已处理', hint: '没有待回复的会话（已读）' },
+  { value: 'CLOSED', label: '已关闭', hint: '买家已结束的会话' },
+];
 
 export const SellerSupportPage: React.FC = () => {
   const { push } = useToast();
@@ -51,11 +62,13 @@ export const SellerSupportPage: React.FC = () => {
   const [denied, setDenied] = useState(false);
   const [card, setCard] = useState<SupportProductCard | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const atBottomRef = useRef(true);
 
   const loadSessions = useCallback(async () => {
     try {
       const page = await sellerSupportApi.sessions({
-        onlyUnread: filter === 'UNREAD' ? true : undefined,
+        filter,
         page: 1,
         pageSize: 50,
       });
@@ -109,8 +122,34 @@ export const SellerSupportPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [activeId, loadThread]);
 
+  /**
+   * 打开会话先定位到最新未读（2026-10-23）。
+   *
+   * 之前只有「条数变化滚到底」，而 `.sup-body` 是内部滚动容器，首次渲染时
+   * `scrollIntoView` 很容易滚到窗口上，表现为「点开还停在很早的消息」。
+   * 这里按 data-first-unread 标记定位；没有未读就落到底部。
+   * 依赖只放 sessionId —— 轮询不该把正在翻历史的接待员拽回底部。
+   */
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' });
+    if (!thread?.items.length) return;
+    const target = bodyRef.current?.querySelector('[data-first-unread="1"]');
+    if (target) {
+      target.scrollIntoView({ block: 'center' });
+      atBottomRef.current = false;
+    } else {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+      atBottomRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.sessionId]);
+
+  useEffect(() => {
+    if (!thread?.items.length) return;
+    const last = thread.items[thread.items.length - 1];
+    if (last?.mine || atBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread?.items.length]);
 
   const select = async (id: string) => {
@@ -144,6 +183,7 @@ export const SellerSupportPage: React.FC = () => {
         content: '',
         type: kind,
         mediaUrl: payload.mediaUrl,
+        thumbUrl: payload.thumbUrl,
         width: payload.width,
         height: payload.height,
         durationMs: payload.durationMs,
@@ -167,17 +207,8 @@ export const SellerSupportPage: React.FC = () => {
   };
 
 
-  const toggleStatus = async () => {
-    if (!activeId || !thread) return;
-    const next = thread.status === 'CLOSED' ? 'OPEN' : 'CLOSED';
-    try {
-      await sellerSupportApi.setStatus(activeId, next);
-      await loadThread(activeId);
-      await loadSessions();
-    } catch (e) {
-      push(toFriendlyMessage(e), 'error');
-    }
-  };
+  // 说明：关闭 / 重开会话的按钮已下线（2026-10-23）—— 会话只能由买家结束，
+  // 客服侧只保留「看见状态」与「按状态筛选」的能力。买家再发消息会自动重开。
 
   // ★ 数字必须显式转 Number：接口把 long 序列化成字符串
   const unreadTotal = useMemo(
@@ -219,15 +250,11 @@ export const SellerSupportPage: React.FC = () => {
       {error && <Alert kind="error">{error}</Alert>}
 
       <div className="row" style={{ gap: 8, marginBottom: 12 }}>
-        {(
-          [
-            { value: 'ALL', label: '全部' },
-            { value: 'UNREAD', label: '未读' },
-          ] as { value: Filter; label: string }[]
-        ).map((f) => (
+        {FILTERS.map((f) => (
           <button
             key={f.value}
             type="button"
+            title={f.hint}
             className={`btn btn-sm ${filter === f.value ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => {
               setFilter(f.value);
@@ -244,7 +271,13 @@ export const SellerSupportPage: React.FC = () => {
         <aside className="card sup-list">
           {sessions.length === 0 ? (
             <p className="small muted" style={{ padding: 12 }}>
-              {filter === 'UNREAD' ? '没有未读会话' : '暂无会话'}
+              {filter === 'UNREAD'
+                ? '没有未读会话'
+                : filter === 'ANSWERED'
+                  ? '还没有已处理的会话'
+                  : filter === 'CLOSED'
+                    ? '还没有已关闭的会话'
+                    : '暂无会话'}
             </p>
           ) : (
             sessions.map((s) => {
@@ -278,28 +311,38 @@ export const SellerSupportPage: React.FC = () => {
           <header className="sup-thread-head">
             <strong>{thread ? thread.userName || `用户${thread.userId}` : '选择左侧会话'}</strong>
             {thread && (
-              <span className="row" style={{ gap: 8 }}>
+              <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                {thread.status === 'CLOSED' ? (
+                  <span className="tag tag-warn" style={{ fontSize: 11 }}>已关闭</span>
+                ) : null}
                 <span className="small muted">
                   {formatBjShort(thread.items[thread.items.length - 1]?.createdAt)}
                 </span>
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => void toggleStatus()}>
-                  {thread.status === 'CLOSED' ? '重新开启' : '关闭会话'}
-                </button>
               </span>
             )}
           </header>
 
-          <div className="sup-body">
+          <div
+            className="sup-body"
+            ref={bodyRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+            }}
+          >
             {!thread || thread.items.length === 0 ? (
               <Empty title="没有消息" desc="买家还没有发来咨询" />
             ) : (
               thread.items.map((m, idx) => {
                 const isLastMine = m.mine && !thread.items.slice(idx + 1).some((x) => x.mine);
+                const firstUnread =
+                  !m.mine && !m.read && !thread.items.slice(0, idx).some((x) => !x.mine && !x.read);
                 return (
                   <Bubble
                     key={m.id}
                     message={m}
                     unreadTag={m.mine && !m.read}
+                    firstUnread={firstUnread}
                     receipt={
                       isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
@@ -430,10 +473,12 @@ const Bubble: React.FC<{
   message: SupportMessageView;
   /** 我发出、对方还没读的消息：时间行右侧显示琥珀色「未读」，与「已读」同位置 */
   unreadTag?: boolean;
+  /** 打开会话时的定位锚点（最新未读） */
+  firstUnread?: boolean;
   receipt: string | null;
   onOpenCard: (card: SupportProductCard) => void;
-}> = ({ message, unreadTag, receipt, onOpenCard }) => (
-  <div className={`sup-row${message.mine ? ' mine' : ''}`}>
+}> = ({ message, unreadTag, firstUnread, receipt, onOpenCard }) => (
+  <div className={`sup-row${message.mine ? ' mine' : ''}`} data-first-unread={firstUnread ? '1' : undefined}>
     <div className="sup-col">
       {renderContent(message)}
       {message.card && (

@@ -12,6 +12,7 @@
 const api = require('../../utils/api');
 const media = require('../../utils/media');
 const images = require('../../utils/images');
+const { EMOJIS, STICKERS } = require('../../utils/emoji');
 const { getNavMetrics } = require('../../utils/nav');
 
 const PAGE_SIZE = 20;
@@ -32,6 +33,11 @@ Page({
     loading: true,
     error: '',
     scrollInto: '',
+    // 表情 / 贴纸面板（2026-10-23 · 与 Web 对齐）
+    emojiOpen: false,
+    emojiTab: 'emoji',
+    emojis: EMOJIS,
+    stickers: STICKERS,
   },
 
   onLoad(query) {
@@ -100,7 +106,9 @@ Page({
             items,
           },
           () => {
-            if (reset || items.length !== prevCount) this.scrollToBottom();
+            // 打开会话：定位到最新未读（没有未读就到底）；轮询新增消息时才滚到底
+            if (reset) this.scrollToLatest(items);
+            else if (items.length !== prevCount) this.scrollToBottom();
           }
         );
 
@@ -123,6 +131,36 @@ Page({
     this.setData({ scrollInto: 'msg-' + items[items.length - 1].id });
   },
 
+  /**
+   * 打开会话的定位点（2026-10-23）：最新一条「对方发来、我还没读」的消息。
+   *
+   * <p>之前一律滚到底：卖家连发几条时，用户第一眼看到的是最后一句，
+   * 前面的上下文要自己往上翻。有未读时停在第一条未读，符合微信的阅读顺序。
+   */
+  scrollToLatest(items) {
+    if (!items || !items.length) return;
+    const firstUnread = items.find((m) => !m.mine && !m.read);
+    const target = firstUnread || items[items.length - 1];
+    if (target) this.setData({ scrollInto: 'msg-' + target.id });
+  },
+
+  /** 结束本次咨询：只影响客服侧收尾，页面上不出现任何「已关闭」字样 */
+  endConsult() {
+    const sid = this.data.sessionId;
+    if (!sid) return;
+    wx.showModal({
+      title: '结束咨询',
+      content: '结束后仍可继续发送消息，客服会重新收到。',
+      success: (res) => {
+        if (!res.confirm) return;
+        api.support
+          .close(sid)
+          .then(() => wx.showToast({ title: '已结束', icon: 'none' }))
+          .catch((err) => wx.showToast({ title: (err && err.message) || '操作失败', icon: 'none' }));
+      },
+    });
+  },
+
   retry() {
     this.setData({ loading: true });
     this.fetchThread(true);
@@ -132,13 +170,40 @@ Page({
     this.setData({ input: e.detail.value });
   },
 
+  /** 表情面板：与 Web 同一个清单（56 表情 + 12 贴纸），点表情拼进输入框，点贴纸直接发 */
+  toggleEmoji() {
+    this.setData({ emojiOpen: !this.data.emojiOpen });
+  },
+
+  switchEmojiTab(e) {
+    this.setData({ emojiTab: e.currentTarget.dataset.tab || 'emoji' });
+  },
+
+  pickEmoji(e) {
+    const emoji = e.currentTarget.dataset.e || '';
+    this.setData({ input: (this.data.input || '') + emoji });
+  },
+
+  pickSticker(e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url || this.data.sending) return;
+    this.setData({ sending: true });
+    api.support
+      .sendMedia(this.data.sellerId || null, 'EMOJI', url, {})
+      .then(() => {
+        this.setData({ sending: false, emojiOpen: false });
+        this.fetchThread(false);
+      })
+      .catch((err) => {
+        this.setData({ sending: false });
+        wx.showToast({ title: (err && err.message) || '发送失败', icon: 'none' });
+      });
+  },
+
   send() {
     const content = (this.data.input || '').trim();
     if (!content || this.data.sending) return;
-    if (this.data.status === 'CLOSED') {
-      wx.showToast({ title: '会话已关闭，请让商家重新开启', icon: 'none' });
-      return;
-    }
+    // 2026-10-23：不再因会话「关闭」而拦截 —— 关闭只是客服侧标记，发送会自动重开
     this.setData({ sending: true });
     api.support
       .send(content, this.data.sellerId || null, this.data.productId || null)
@@ -155,10 +220,6 @@ Page({
 
   /** B 批：拍摄或从相册选图/视频（不写 requiredPrivateInfos，避免模拟器起不来） */
   pickMedia() {
-    if (this.data.status === 'CLOSED') {
-      wx.showToast({ title: '会话已关闭', icon: 'none' });
-      return;
-    }
     wx.chooseMedia({
       count: 1,
       mediaType: ['image', 'video'],
@@ -170,12 +231,14 @@ Page({
         const isVideo = res.type === 'video';
         // 时长是唯一硬约束；超过 6MB 先压缩，压缩失败自动回退原视频（media.js 内处理）
         const prepared = isVideo ? media.prepareVideo(file) : Promise.resolve(null);
-        prepared
-          .then((p) => {
+        // 封面与压缩并行：封面来自 chooseMedia 的 thumbTempFilePath，不占用户等待时间
+        const poster = isVideo ? media.uploadPoster(file) : Promise.resolve('');
+        Promise.all([prepared, poster])
+          .then(([p, thumb]) => {
             wx.showLoading({ title: isVideo && p && p.compressed ? '上传压缩视频…' : '上传中…', mask: true });
-            return api.upload(isVideo ? p.path : file.tempFilePath).then((data) => ({ data, p }));
+            return api.upload(isVideo ? p.path : file.tempFilePath).then((data) => ({ data, p, thumb }));
           })
-          .then(({ data, p }) => {
+          .then(({ data, p, thumb }) => {
             const url = data && data.url;
             if (!url) throw { message: '上传失败' };
             const extra = {};
@@ -188,6 +251,7 @@ Page({
               if (file.height) extra.height = file.height;
               if (file.duration) extra.durationMs = Math.round(file.duration * 1000);
             }
+            if (thumb) extra.thumbUrl = thumb;
             return api.support.sendMedia(
               this.data.sellerId || null,
               isVideo ? 'VIDEO' : 'IMAGE',

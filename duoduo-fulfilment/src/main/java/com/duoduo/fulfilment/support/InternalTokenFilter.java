@@ -44,7 +44,9 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     private static final List<String> INTERNAL_PREFIXES = List.of(
             "/api/logistics/internal/",
             "/api/reviews/internal/",
-            "/api/aftersales/internal/");
+            "/api/aftersales/internal/",
+            // 2026-10-23：社交域清理过期客服会话时，代为删除 uploads/ 下的图片与视频
+            "/api/uploads/internal/");
 
     private final InternalCallAuth internalCallAuth;
     private final ObjectMapper objectMapper;
