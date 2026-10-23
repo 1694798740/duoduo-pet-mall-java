@@ -62,6 +62,13 @@ export const SupportPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * 本次打开期间「已结束」的会话 id（2026-10-23）。
+   *
+   * <p>只放在本地：服务端对买家**不回** status（关闭对用户无感），所以刷新后无法得知。
+   * 这也符合"结束"的语义 —— 它只是给客服侧的收尾信号，用户随时可以再发。
+   */
+  const [endedSessionId, setEndedSessionId] = useState<string | null>(null);
   const currentProductId = search.get('productId');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const activeItemRef = useRef<HTMLButtonElement | null>(null);
@@ -162,7 +169,13 @@ export const SupportPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread?.sessionId, loading]);
 
-  // 会话内新增消息：只有本来就在底部（或自己刚发出）时才跟着滚，避免打断向上翻页
+  /**
+   * 会话内新增消息：只有本来就在底部（或自己刚发出）时才跟着滚，避免打断向上翻页。
+   *
+   * <p>★ 依赖必须是**最后一条消息的 id**，不能是 `items.length`：
+   * 分页窗口固定 30 条，长会话里再发一条，数组长度仍然是 30（挤掉最老的一条），
+   * 长度不变 → effect 不跑 → 视图停在原处（这就是「发送后不定位」的根因）。
+   */
   useEffect(() => {
     if (!thread?.items.length) return;
     const last = thread.items[thread.items.length - 1];
@@ -170,7 +183,7 @@ export const SupportPage: React.FC = () => {
       bottomRef.current?.scrollIntoView({ block: 'end' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread?.items.length]);
+  }, [thread?.items[thread.items.length - 1]?.id]);
 
   const switchTo = async (sellerId: string) => {
     setActiveSellerId(sellerId);
@@ -235,6 +248,8 @@ export const SupportPage: React.FC = () => {
     try {
       await supportApi.send({ sellerId: activeSellerId, content });
       setDraft('');
+      // 再次发消息 = 会话重开：按钮恢复可点（服务端在发送时已把状态置回 OPEN）
+      setEndedSessionId(null);
       await loadThread(activeSellerId);
       void loadSessions();
     } catch (e) {
@@ -244,12 +259,13 @@ export const SupportPage: React.FC = () => {
     }
   };
 
-  /** 结束本次咨询：只影响客服侧的收尾与筛选；买家侧不出现任何「已关闭」字样 */
+  /** 结束本次咨询：只影响客服侧的收尾与筛选；买家侧只在会话流里留一行小字，不出现「关闭」字样 */
   const endConsult = async () => {
-    if (!thread?.sessionId) return;
+    if (!thread?.sessionId || ended) return;
     try {
       await supportApi.close(thread.sessionId);
-      push('已结束本次咨询，需要时可以继续发送消息', 'success');
+      // 立即隐藏按钮 + 在会话流里落一条系统提示（不再用 toast：toast 会消失，用户看不到"已结束"的痕迹）
+      setEndedSessionId(thread.sessionId);
       void loadSessions();
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
@@ -263,6 +279,8 @@ export const SupportPage: React.FC = () => {
 
   /** 打开会话要定位的那一条：最新一条「对方发来、我还没读」的消息 */
   const firstUnreadId = thread?.items.find((m) => !m.mine && !m.read)?.id;
+  /** 当前会话是否已被本人在本次会话中结束（结束后按钮隐藏，直到再次发消息） */
+  const ended = Boolean(thread?.sessionId && endedSessionId === thread.sessionId);
 
   if (loading) return <LoadingBlock text="正在接通客服…" />;
 
@@ -324,7 +342,7 @@ export const SupportPage: React.FC = () => {
             <strong>{active ? peerOf(active) : thread?.sellerName || '客服'}</strong>
             <span className="row" style={{ gap: 8, alignItems: 'center' }}>
               <span className="small muted">工作时间外可能回复较慢</span>
-              {activeSellerId && thread?.items.length ? (
+              {activeSellerId && thread?.items.length && !ended ? (
                 <button type="button" className="btn btn-sm btn-ghost" onClick={() => void endConsult()}>
                   结束咨询
                 </button>
@@ -363,6 +381,8 @@ export const SupportPage: React.FC = () => {
                 );
               })
             )}
+            {/* 结束后只在会话流里留一行系统小字：不弹 toast（会消失）、不出现「关闭」字样 */}
+            {ended ? <div className="sup-system">当前会话已结束</div> : null}
             <div ref={bottomRef} />
           </div>
 

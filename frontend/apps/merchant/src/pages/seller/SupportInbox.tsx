@@ -143,6 +143,9 @@ export const SellerSupportPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread?.sessionId]);
 
+  // 会话内新增消息：只有本来就在底部（或自己刚回复）时才跟着滚。
+  // ★ 依赖用最后一条消息 id 而不是 items.length：分页窗口固定 30 条，
+  //   长会话里再发一条长度仍是 30（挤掉最老的），长度不变 effect 就不跑（2026-10-23 实测）。
   useEffect(() => {
     if (!thread?.items.length) return;
     const last = thread.items[thread.items.length - 1];
@@ -150,7 +153,7 @@ export const SellerSupportPage: React.FC = () => {
       bottomRef.current?.scrollIntoView({ block: 'end' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread?.items.length]);
+  }, [thread?.items[thread.items.length - 1]?.id]);
 
   const select = async (id: string) => {
     setActiveId(id);

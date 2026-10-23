@@ -38,6 +38,8 @@ Page({
     emojiTab: 'emoji',
     emojis: EMOJIS,
     stickers: STICKERS,
+    /** 本次会话已结束：按钮隐藏，仅在流里留一行小字；再次发送后恢复 */
+    ended: false,
   },
 
   onLoad(query) {
@@ -94,7 +96,9 @@ Page({
         const hasNew = lastIncomingId && lastIncomingId !== this._lastIncomingId;
         this._lastIncomingId = lastIncomingId;
 
-        const prevCount = this.data.items.length;
+        // ★ 用最后一条 id 判「有没有新消息」：分页窗口固定，长会话里条数不变（2026-10-23）
+        const prevLastId = this.data.items.length ? String(this.data.items[this.data.items.length - 1].id) : '';
+        const lastId = items.length ? String(items[items.length - 1].id) : '';
         this.setData(
           {
             loading: false,
@@ -108,7 +112,7 @@ Page({
           () => {
             // 打开会话：定位到最新未读（没有未读就到底）；轮询新增消息时才滚到底
             if (reset) this.scrollToLatest(items);
-            else if (items.length !== prevCount) this.scrollToBottom();
+            else if (lastId !== prevLastId) this.scrollToBottom();
           }
         );
 
@@ -144,10 +148,10 @@ Page({
     if (target) this.setData({ scrollInto: 'msg-' + target.id });
   },
 
-  /** 结束本次咨询：只影响客服侧收尾，页面上不出现任何「已关闭」字样 */
+  /** 结束本次咨询：按钮立即隐藏 + 会话流里落一行系统小字；再次发消息后按钮恢复 */
   endConsult() {
     const sid = this.data.sessionId;
-    if (!sid) return;
+    if (!sid || this.data.ended) return;
     wx.showModal({
       title: '结束咨询',
       content: '结束后仍可继续发送消息，客服会重新收到。',
@@ -155,7 +159,7 @@ Page({
         if (!res.confirm) return;
         api.support
           .close(sid)
-          .then(() => wx.showToast({ title: '已结束', icon: 'none' }))
+          .then(() => this.setData({ ended: true }))
           .catch((err) => wx.showToast({ title: (err && err.message) || '操作失败', icon: 'none' }));
       },
     });
@@ -191,7 +195,7 @@ Page({
     api.support
       .sendMedia(this.data.sellerId || null, 'EMOJI', url, {})
       .then(() => {
-        this.setData({ sending: false, emojiOpen: false });
+        this.setData({ sending: false, emojiOpen: false, ended: false });
         this.fetchThread(false);
       })
       .catch((err) => {
@@ -209,7 +213,8 @@ Page({
       .send(content, this.data.sellerId || null, this.data.productId || null)
       .then(() => {
         // 商品卡只在首条附带，发完即清，避免后面每句话都挂一张卡
-        this.setData({ sending: false, input: '', productId: '' });
+        // 再发消息 = 会话重开：「结束咨询」按钮恢复
+        this.setData({ sending: false, input: '', productId: '', ended: false });
         this.fetchThread(false);
       })
       .catch((err) => {
@@ -261,6 +266,8 @@ Page({
           })
           .then(() => {
             wx.hideLoading();
+            // 发消息即重开：结束提示撤下、按钮恢复
+            this.setData({ ended: false });
             this.fetchThread(false);
           })
           .catch((err) => {

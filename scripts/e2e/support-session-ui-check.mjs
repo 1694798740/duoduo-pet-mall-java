@@ -97,7 +97,7 @@ try {
   });
   check('临时账号注册成功', reg.status === 200 && reg.body?.code === 'SUCCESS', reg.status);
 
-  step('造数据：买家 1 条 + 客服 20 条（读掉）+ 客服 3 条未读');
+  step('造数据：买家 1 条 + 客服 35 条（读掉）+ 客服 3 条未读');
   const buyerTok = await loginToken(phone);
   const csTok = await loginToken(CS.phone);
   check('买家与官方客服均可登录', Boolean(buyerTok) && Boolean(csTok), null);
@@ -108,12 +108,13 @@ try {
     const sid = s.body?.data?.id;
     let failedReply = 0;
     if (sid) {
-      for (let i = 1; i <= 20; i++) {
+      // 35 条历史：超过一页（30）才能覆盖「分页窗口滑动导致条数不变」的定位 bug
+      for (let i = 1; i <= 35; i++) {
         const r = await apiCall('POST', `/api/seller/support/sessions/${sid}/messages`,
           { body: { content: `历史消息 #${i}` }, token: csTok });
         if (r.status !== 200) failedReply++;
       }
-      // 读掉这 20 条，让后面 3 条成为「最新未读」，定位点因此落在会话末尾附近
+      // 读掉这 35 条，让后面 3 条成为「最新未读」，定位点因此落在会话末尾附近
       await apiCall('POST', `/api/support/read?sessionId=${sid}`, { token: buyerTok });
       for (let i = 1; i <= 3; i++) {
         const r = await apiCall('POST', `/api/seller/support/sessions/${sid}/messages`,
@@ -124,7 +125,7 @@ try {
     seed = { sid: sid ? String(sid) : null, failedReply };
   }
   const sid = seed?.sid;
-  check('会话与 23 条消息已就绪', Boolean(sid) && seed?.failedReply === 0, seed);
+  check('会话与 39 条消息已就绪', Boolean(sid) && seed?.failedReply === 0, seed);
 
   // 页面登录（浏览器上下文只负责 UI 交互）
   await page.getByPlaceholder('11 位手机号').fill(phone);
@@ -154,6 +155,28 @@ try {
   });
   check('会话容器已向下滚动（scrollTop>0）', Boolean(pos) && pos.scrollTop > 0, pos);
   check('第一条未读落在可视区内', Boolean(pos) && pos.visible, pos);
+
+  // ── ②b 发送后立即定位（分页窗口固定 30 条时最容易失效）──
+  step('发送后立即定位到刚发出的消息');
+  await page.locator('.sup-body').evaluate((el) => { el.scrollTop = 0; });
+  await page.locator('.sup-foot input.input').fill('发送定位校验');
+  await page.locator('.sup-foot input.input').press('Enter');
+  await page.waitForFunction(() => document.body.innerText.includes('发送定位校验'), { timeout: 15000 });
+  await page.waitForTimeout(900);
+  const sendPos = await page.evaluate(() => {
+    const b = document.querySelector('.sup-body');
+    const rows = document.querySelectorAll('.sup-row');
+    const last = rows[rows.length - 1];
+    if (!b || !last) return null;
+    const bb = b.getBoundingClientRect();
+    const lb = last.getBoundingClientRect();
+    return {
+      scrollTop: Math.round(b.scrollTop),
+      visible: lb.bottom <= bb.bottom + 6 && lb.top >= bb.top - 6,
+      text: last.innerText.slice(0, 16),
+    };
+  });
+  check('发送后滚动到底部并露出新消息', Boolean(sendPos?.visible) && sendPos.scrollTop > 0, sendPos);
 
   // ── ① 视频封面（真实上传链路）───────────────────────
   step('视频封面：选文件 → 抓帧 → 上传封面 → 发送');
@@ -213,19 +236,37 @@ try {
   check('关闭后买家仍能发送（自动重开）', (await page.locator('.sup-bubble').last().innerText()) !== beforeSend, null);
 
   // ── ⑤ 结束咨询 ────────────────────────────────────
-  step('买家「结束咨询」');
+  step('买家「结束咨询」：按钮消失 + 会话流留小字 + 再发恢复');
   const endBtn = page.getByRole('button', { name: '结束咨询' });
   check('存在「结束咨询」按钮', (await endBtn.count()) === 1, await endBtn.count());
   await endBtn.click();
-  await page.waitForTimeout(1200);
-  const toastText = await page.locator('body').innerText();
-  check('结束提示不含「关闭」字样', !toastText.includes('会话已关闭'), null);
+  await page.waitForTimeout(900);
+  check('结束后按钮立即消失', (await page.getByRole('button', { name: '结束咨询' }).count()) === 0,
+    await page.getByRole('button', { name: '结束咨询' }).count());
+  const systemLine = page.locator('.sup-system');
+  check('会话流出现「当前会话已结束」小字', (await systemLine.count()) === 1, await systemLine.count());
+  check('小字文案正确', (await systemLine.innerText()).trim() === '当前会话已结束',
+    (await systemLine.innerText()).trim());
+  const afterEndText = await page.locator('body').innerText();
+  check('结束提示不含「关闭」字样', !afterEndText.includes('已关闭'), null);
 
   const closedList = await apiCall('GET', '/api/seller/support/sessions?filter=CLOSED&page=1&pageSize=50', {
     token: csTok,
   });
   const closedInSeller = (closedList.body?.data?.items ?? []).some((x) => String(x.id) === String(sid));
   check('结束后商家侧「已关闭」可见该会话', closedInSeller, closedList.status);
+
+  // 再次发消息 → 会话重开，按钮恢复、系统小字撤下
+  step('结束后再发消息：按钮恢复');
+  await page.locator('.sup-foot input.input').fill('结束后再问一句');
+  await page.locator('.sup-foot input.input').press('Enter');
+  await page.waitForFunction(() => document.body.innerText.includes('结束后再问一句'), { timeout: 15000 });
+  await page.waitForTimeout(800);
+  check('发送后「结束咨询」按钮恢复',
+    (await page.getByRole('button', { name: '结束咨询' }).count()) === 1,
+    await page.getByRole('button', { name: '结束咨询' }).count());
+  check('发送后系统小字撤下', (await page.locator('.sup-system').count()) === 0,
+    await page.locator('.sup-system').count());
 
   // ── ④ 商家端筛选 ─────────────────────────────────
   step('商家工作台：四档筛选 + 无关闭按钮');

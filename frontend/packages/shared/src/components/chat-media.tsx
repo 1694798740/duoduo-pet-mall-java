@@ -16,7 +16,7 @@
  *   <li>录制是实时的（60 秒素材约等 60 秒），所以必须有进度提示，不能假装瞬间完成。</li>
  * </ul>
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 /** 端侧硬约束：时长；体积不设限 */
 export const VIDEO_MAX_SECONDS = 60;
@@ -880,6 +880,22 @@ const VideoPlayerModal: React.FC<{
   const [duration, setDuration] = useState(0);
   const [isFs, setIsFs] = useState(false);
   const [dragging, setDragging] = useState(false);
+  /** 控制条显隐（2026-10-23）：五秒无操作渐隐，移动鼠标/触摸/点击重新出现 */
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimer = useRef<number | null>(null);
+
+  const wake = useCallback(() => {
+    setControlsVisible(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setControlsVisible(false), 5000);
+  }, []);
+
+  useEffect(() => {
+    wake();
+    return () => {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, [wake]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -950,18 +966,25 @@ const VideoPlayerModal: React.FC<{
   };
 
   const ratio = duration > 0 ? Math.min(1, current / duration) : 0;
-  const controlWidth = isFs ? '100%' : 'min(92vw, 1100px)';
 
   return (
     <Overlay onClose={onClose}>
       <div
         ref={boxRef}
+        onPointerMove={wake}
+        onPointerDown={wake}
         style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          gap: isFs ? 0 : 10,
+          // ★ 控制条改**绝对定位浮在画面上**（2026-10-23）：不再占据垂直空间，
+          //   视频因此能完整铺满容器；磨砂由「半透明渐变 + backdropFilter」实现。
+          position: 'relative',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
           width: isFs ? '100%' : 'auto',
           height: isFs ? '100%' : 'auto',
+          maxWidth: '100%', maxHeight: '100%',
           background: isFs ? '#000' : 'transparent',
+          borderRadius: isFs ? 0 : 10,
+          overflow: 'hidden',
+          cursor: controlsVisible ? 'default' : 'none',
         }}
       >
         <video
@@ -969,13 +992,17 @@ const VideoPlayerModal: React.FC<{
           src={url}
           poster={poster ?? undefined}
           playsInline
-          onClick={togglePlay}
+          onClick={() => {
+            wake();
+            togglePlay();
+          }}
           style={{
             display: 'block', background: '#000',
             width: isFs ? '100%' : 'auto',
             maxWidth: isFs ? '100%' : 'min(92vw, 1100px)',
-            height: isFs ? 'calc(100vh - 56px)' : 'auto',
-            maxHeight: isFs ? 'calc(100vh - 56px)' : '84vh',
+            // 全屏铺满整屏（控制条浮层不占位），非全屏按比例自适应
+            height: isFs ? '100%' : 'auto',
+            maxHeight: isFs ? 'none' : '84vh',
             objectFit: 'contain',
             borderRadius: isFs ? 0 : 8,
             boxShadow: isFs ? 'none' : '0 16px 56px rgba(0,0,0,0.5)',
@@ -987,14 +1014,22 @@ const VideoPlayerModal: React.FC<{
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
         />
 
-        {/* 半透明浮条：不构成“弹窗里的卡片”，只是叠在画面下方的一层控件 */}
+        {/* 悬浮磨砂控制条：底部渐变 + 背景模糊，五秒无操作渐隐 */}
         <div
+          data-testid="video-controls"
           style={{
-            width: controlWidth, display: 'flex', alignItems: 'center', gap: 10,
-            padding: '6px 12px', borderRadius: isFs ? 0 : 999,
-            background: isFs ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.55)',
-            backdropFilter: 'blur(8px)', color: '#fff',
-            height: 44, boxSizing: 'border-box',
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: isFs ? '20px 18px 14px' : '16px 12px 10px',
+            background:
+              'linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.48) 55%, rgba(0,0,0,0) 100%)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            color: '#fff',
+            opacity: controlsVisible ? 1 : 0,
+            transform: controlsVisible ? 'translateY(0)' : 'translateY(8px)',
+            transition: 'opacity 260ms ease, transform 260ms ease',
+            pointerEvents: controlsVisible ? 'auto' : 'none',
           }}
         >
           <button type="button" className="btn btn-sm btn-ghost" style={darkGhost} onClick={togglePlay} aria-label={playing ? '暂停' : '播放'}>
@@ -1013,6 +1048,7 @@ const VideoPlayerModal: React.FC<{
             aria-valuenow={Math.round(current)}
             onPointerDown={(e) => {
               e.preventDefault();
+              wake();
               seekTo(e.clientX);
               setDragging(true);
             }}

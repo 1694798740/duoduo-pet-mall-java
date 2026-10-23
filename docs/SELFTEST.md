@@ -420,13 +420,19 @@ Q4 店员可见本店会话、Q5 未读为纯文字/时间行/琥珀色、Q6 面
 
 ```bash
 NO_PROXY="*" python scripts/support-lifecycle-smoke.py                       # 32 项：关闭权/筛选/自动结束/清理
-NO_PROXY="*" node scripts/e2e/support-session-ui-check.mjs                   # 25 项：封面/定位/无关闭痕迹/四档筛选
+NO_PROXY="*" node scripts/e2e/support-session-ui-check.mjs                   # 31 项：封面/定位/发送后定位/无关闭痕迹/四档筛选/结束咨询
 ```
 
 **前置**：容器已起；MySQL 容器名 `duoduo-mysql`（脚本用 `docker exec` 造 25h/31 天的时间偏移）；
 社交域 8087 端口已映射（内部 sweep 直连，不经网关）。
 
-**预期**：`32 通过 / 0 失败` 与 `25 通过 / 0 失败`。
+**预期**：`32 通过 / 0 失败` 与 `31 通过 / 0 失败`。
+
+> ★ 会话定位的两个坑：
+> ① 打开会话的 effect 依赖必须带 `loading` —— 首屏 `LoadingBlock` 期间 `.sup-body` 尚未挂载，
+>    `bodyRef` 为空，等 `loading` 变 false 后 `thread.sessionId` 没变就不会重跑；
+> ② 「有没有新消息」不能看 `items.length`：分页窗口固定 30 条，长会话里条数恒定，
+>    必须用**末条消息 id** 做依赖（发送后不定位就是这么来的）。
 
 > ★ 四个坑（都踩过）：
 > ① **清理用例会物理删除会话**，必须用临时注册账号，绝不能拿固定测试号当靶子；
@@ -435,6 +441,8 @@ NO_PROXY="*" node scripts/e2e/support-session-ui-check.mjs                   # 2
 > ③ 气泡里现在也有 `<video>`（无封面时的首帧兜底），`document.querySelector('video')`
 >    会命中气泡，全屏断言必须写 `[role="dialog"] video`；
 > ④ 清理断言要同时验「图片 URL 变 404」和「静态贴纸仍 200」，只验前者证明不了前缀守卫。
+> ⑤ 视频控制条 5 秒无操作会渐隐（`pointer-events:none`），点进度条/全屏前先 `mouse.move`
+>    到视频上唤醒，否则 click 会落到 `<video>` 上（表现为"点不动"而不是报错）。
 
 ### 4.7 性能压测
 

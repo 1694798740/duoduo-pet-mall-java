@@ -73,12 +73,13 @@ export const ChatPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerId, productId, listingId, Boolean(data)]);
 
-  // 新消息进来滚到底部（消息按时间正序，最新在最下）—— 私信页是整页滚动，不打断阅读
+  // 新消息进来滚到底部（消息按时间正序，最新在最下）。
+  // ★ 依赖用最后一条 id：分页窗口固定，长会话里条数不变但内容已滑动（2026-10-23）
   useEffect(() => {
     if (!items.length) return;
     bottomRef.current?.scrollIntoView({ block: 'end' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length]);
+  }, [items[items.length - 1]?.id]);
 
   /** 私信只允许发送「当前咨询的商品」卡，不提供收藏/购物车等来源 */
   const sendSticker = async (url: string) => {

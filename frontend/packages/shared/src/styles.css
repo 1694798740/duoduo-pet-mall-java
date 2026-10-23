@@ -3237,6 +3237,15 @@ button.tag:active:not(:disabled),
 .sup-unread {
   color: var(--warn);
 }
+/* 会话内系统提示（2026-10-23）：居中小字，用于「当前会话已结束」这类**
+   只对本次会话有效、不需要用户操作**的提示。刻意不做成气泡、不弹 toast。 */
+.sup-system {
+  margin: 10px auto 2px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
 /* 订单卡头部：店铺名是跳转入口，› 只作视觉引导（读屏不重复播报） */
 .sup-store-link {
   color: var(--brand-strong);

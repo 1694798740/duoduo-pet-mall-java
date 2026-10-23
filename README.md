@@ -4,6 +4,18 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-23（六十九）· 客服二期跟进：发送后定位 / 视频控制条悬浮磨砂 / 结束咨询交互**
+
+- **发送后立即定位**：分页窗口固定 30 条，长会话里再发一条**数组长度不变**（挤掉最老一条），
+  旧 effect 依赖 `items.length` 因此不触发。改为依赖**最后一条消息 id**（5 处：商城客服/私信/
+  商家工作台/小程序两页），发送后立刻滚到新消息。
+- **视频控制条**：由「占位的底栏」改为**绝对定位浮层**（底部渐变 + `backdrop-filter: blur(10px)`），
+  视频铺满整个容器；5 秒无操作渐隐（`opacity/pointer-events` 过渡），移动鼠标、触摸或点击视频重新出现。
+- **结束咨询**：点击后按钮**立即消失**且不可重复点击；会话流内插入居中小字「当前会话已结束」
+  （不再用会消失的 toast）；用户再次发送消息后按钮恢复、提示撤下。小程序同口径。
+- **验证**：`support-session-ui-check` **31/0**、`support-ux-ui-check` **53/0**；
+  回归 support-read 24/0、seller 40/0、notice-chat-follow 50/0。
+
 **2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理**
 
 - **视频封面**：`uploadChatMedia` 端侧抓帧（seek 0.1s 避开黑场 → canvas ≤520 宽 → JPEG）随消息落 `thumb_url`；
@@ -2263,6 +2275,15 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 - **踩坑记录**：`docker compose up -d --force-recreate` **不会重建镜像**，
   `image:` + `build.args JAR_FILE` 的组合必须带 `--build`，否则容器里跑的还是旧 jar
   （表现为「代码改了、测试没变」）。核对方式：解包 `/app/app.jar` 里的 `BOOT-INF/classes` 看字段名。
+
+### 2026-10-23（六十九）· 客服二期跟进：发送后定位 / 视频控制条悬浮 / 结束咨询交互
+
+- **发送定位**：`items.length` → **末条消息 id** 作为 effect 依赖（分页窗口滑动时长度恒定）；
+  商城客服/私信/商家/小程序两页共 5 处。
+- **视频控制条**：`position:absolute` + 渐变 + `blur(10px)` 浮层，视频全屏 `height:100%`；
+  `wake()` 5 秒定时器控制 `opacity` 与 `pointerEvents`，指针移动/按下唤醒。
+- **结束咨询**：`endedSessionId` → 按钮消失 + `.sup-system` 小字；发送成功清状态并恢复。
+- **验证**：31/0 + 53/0，三套回归全绿。
 
 ### 2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理
 

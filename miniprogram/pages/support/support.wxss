@@ -40,3 +40,11 @@
 .chat-end:active {
   background: #f1f2f6;
 }
+
+/* 结束后的系统小字：居中、弱化，与 Web 端 .sup-system 同口径 */
+.chat-system {
+  text-align: center;
+  font-size: 22rpx;
+  color: #9aa0b0;
+  padding: 16rpx 0 8rpx;
+}

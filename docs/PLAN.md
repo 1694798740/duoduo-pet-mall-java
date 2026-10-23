@@ -286,6 +286,16 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-23（六十九）· 客服二期跟进：发送后定位 / 视频控制条悬浮 / 「结束咨询」交互
+
+| 项 | 实现 |
+| --- | --- |
+| 发送后不定位 | 根因：分页窗口固定 30 条，长会话里再发一条数组长度仍是 30（挤掉最老一条），上一版用 `items.length` 做 effect 依赖 → 不触发。修：依赖改为**最后一条消息 id**（商城客服 / 商家工作台 / 私信 / 小程序两端共 5 处）。复现脚本用 41 条消息验证：修复前 `n=30, lastVisible=false`，修复后 `lastVisible=true` |
+| 视频控制条 | 控制条由 flex 子项改为 `position:absolute; bottom:0` 浮层：`linear-gradient` + `backdropFilter:blur(10px)` 磨砂，不再占视频高度；视频全屏 `height:100%` 铺满整屏。新增 `controlsVisible` + `wake()`：5 秒无操作 `opacity:0; pointerEvents:none`，`pointermove/pointerdown/点击视频` 重新显示 |
+| 结束咨询交互 | 点击后不再弹 toast、不再可重复点击：`endedSessionId` 记录本次结束的会话 → 按钮立即消失 + 会话流插入 `.sup-system`「当前会话已结束」；`send()` 成功即清空该状态（服务端此时已重开），按钮与提示一并恢复。小程序同口径（`ended` + `.chat-system`） |
+| 验证 | `support-session-ui-check` **31/0**（新增发送定位、结束咨询三步断言）、`support-ux-ui-check` **53/0**（新增控制条定位/遮挡/模糊/渐隐/唤醒 6 项）；回归 support-read 24/0、seller 40/0、notice-chat-follow 50/0 |
+| 教训 | 分页列表的「有没有新消息」不能用长度判断 —— 窗口滑动会让长度恒定；要用**末条 id**（与上次记录对比）。这条同样适用于小程序 `setData` 后的滚动判据 |
+
 ### 2026-10-23（六十八）· 客服会话二期：视频封面 / 定位未读 / 四档筛选 / 关闭规则 / 30 天清理 / 小程序对齐
 
 | 项 | 实现 |

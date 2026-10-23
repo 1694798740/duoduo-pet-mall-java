@@ -293,6 +293,8 @@ try {
     { timeout: 15000 },
   );
   const sBox = await slider.boundingBox();
+  // 控制条是悬浮且 5 秒自动渐隐的：每次交互前先动一下鼠标唤醒（模拟真实用户）
+  await page.mouse.move(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
   // 点击 80% 位置
   await page.mouse.click(sBox.x + sBox.width * 0.8, sBox.y + sBox.height / 2);
   await page.waitForTimeout(300);
@@ -306,7 +308,44 @@ try {
   await page.waitForTimeout(300);
   const dragged = Number(await slider.getAttribute('aria-valuenow'));
   check('按住拖动进度条生效（跳到更早位置）', dragged < seeked && dragged > 5, { seeked, dragged });
-  // 全屏
+
+  // 悬浮磨砂控制条：不占视频空间（浮层），五秒无操作渐隐，动鼠标恢复
+  const controls = page.locator('[data-testid="video-controls"]');
+  const layout = await page.evaluate(() => {
+    const bar = document.querySelector('[data-testid="video-controls"]');
+    const v = document.querySelector('[role="dialog"] video');
+    if (!bar || !v) return null;
+    const bs = getComputedStyle(bar);
+    const bb = bar.getBoundingClientRect();
+    const vb = v.getBoundingClientRect();
+    const center = document.elementFromPoint(vb.x + vb.width / 2, vb.y + vb.height / 2);
+    return {
+      position: bs.position,
+      backdrop: bs.backdropFilter || bs.webkitBackdropFilter || '',
+      insideVideo: bb.top >= vb.top - 1 && bb.bottom <= vb.bottom + 1,
+      centerHitsVideo: center?.tagName === 'VIDEO',
+      barTop: Math.round(bb.top),
+      videoBottom: Math.round(vb.bottom),
+    };
+  });
+  check('控制条为绝对定位浮层（不占视频空间）', layout?.position === 'absolute', layout);
+  check('控制条落在视频画面内（叠在底部）', Boolean(layout?.insideVideo), layout);
+  check('视频中心未被控制条遮挡', Boolean(layout?.centerHitsVideo), layout);
+  check('控制条启用背景模糊（磨砂）', /blur/.test(layout?.backdrop ?? ''), layout?.backdrop);
+  // 5 秒无操作 → 渐隐
+  await page.waitForTimeout(5600);
+  const hiddenOpacity = await controls.evaluate((el) => getComputedStyle(el).opacity);
+  check('5 秒无操作后控制条渐隐', Number(hiddenOpacity) < 0.1, hiddenOpacity);
+  // 移动鼠标 → 重新出现（必须落在播放器盒子上，事件挂在盒子上）
+  const vBox = await page.locator('[role="dialog"] video').boundingBox();
+  await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
+  await page.waitForTimeout(400);
+  const shownOpacity = await controls.evaluate((el) => getComputedStyle(el).opacity);
+  check('移动鼠标后控制条重新出现', Number(shownOpacity) > 0.9, shownOpacity);
+
+  // 全屏（先唤醒控制条，再点）
+  await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
+  await page.waitForTimeout(200);
   await page.getByTitle('全屏').click();
   // 等「真正进入全屏 + 尺寸生效」再量：固定 sleep 在 CI 上偶发只等到一半（2026-10-23 实测 1 次假红）
   await page

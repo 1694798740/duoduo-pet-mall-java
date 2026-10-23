@@ -133,11 +133,13 @@ Page({
           // canSend=false 只可能是「非互关 + 非咨询 + 我已发过一条」的组合
           hint: data.canSend ? '' : '已发送过 1 条消息，等 TA 回复或互相关注后继续聊',
         };
-        const prevCount = this.data.items.length;
+        // ★ 用最后一条 id 判「有没有新消息」：分页窗口固定，长会话里条数不变（2026-10-23）
+        const prevLastId = this.data.items.length ? String(this.data.items[this.data.items.length - 1].id) : '';
+        const lastId = items.length ? String(items[items.length - 1].id) : '';
         this.setData(patch, () => {
           // 打开会话定位到最新未读；轮询新增消息时才滚到底（2026-10-23 与客服页对齐）
           if (reset) this.scrollToLatest(items);
-          else if (items.length !== prevCount) this.scrollToBottom();
+          else if (lastId !== prevLastId) this.scrollToBottom();
         });
         if (hasNew) {
           api.social.message
