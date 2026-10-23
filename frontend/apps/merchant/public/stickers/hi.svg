@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#e8f1ff" stroke="#2563eb" stroke-width="6"/>
+  <path d="M116 44 q14 -10 18 -24" stroke="#2563eb" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M126 58 q16 -4 22 -14" stroke="#2563eb" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <circle cx="64" cy="62" r="6" fill="#2563eb"/>
+  <circle cx="96" cy="62" r="6" fill="#2563eb"/>
+  <path d="M56 94 Q80 114 104 94" stroke="#2563eb" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <text x="80" y="142" font-size="20" font-weight="600" font-family="system-ui,-apple-system,sans-serif" fill="#2563eb" text-anchor="middle">HI</text>
+</svg>

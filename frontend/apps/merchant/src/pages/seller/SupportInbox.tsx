@@ -193,15 +193,15 @@ export const SellerSupportPage: React.FC = () => {
         <h2 className="section-title">客服信息</h2>
         <div className="card card-pad" style={{ marginTop: 12 }}>
           <p style={{ marginTop: 0 }}>
-            当前账号不是店铺主体，无法接待客服会话。
+            当前账号不是任何店铺的有效成员，无法接待客服会话。
           </p>
           <ul className="small muted" style={{ lineHeight: 1.9, paddingLeft: 18 }}>
-            <li>客服会话由**店铺账号**接待：自营 = 多多官方客服账号，第三方 = 各店铺店主。</li>
-            <li>平台运营/管理员只处理平台级事务（审核、仲裁、干预），不读买卖双方会话内容。</li>
-            <li>如你是店员，接待能力需店主在「店员管理」中开通（后续版本）。</li>
+            <li>客服会话按**店铺**归属：店主与在职店员看到的是同一份列表（2026-10-23 起）。</li>
+            <li>平台运营 / 管理员只处理平台级事务（审核、仲裁、干预），不读买卖双方会话内容。</li>
+            <li>若你刚被加入店铺，请确认入驻状态为「已通过」且成员状态为「在职」。</li>
           </ul>
           <p className="small muted" style={{ marginBottom: 0 }}>
-            如需查看某家店铺的客服记录，请让该店铺账号登录商家工作台；平台后台不承载客服接待。
+            如需查看某家店铺的客服记录，请让该店铺的店主或店员登录商家工作台。
           </p>
         </div>
       </div>
@@ -312,6 +312,11 @@ export const SellerSupportPage: React.FC = () => {
           </div>
 
           <footer className="sup-foot">
+            {!thread ? (
+              <p className="small muted" style={{ margin: 0 }}>
+                选择左侧一个会话后才能回复买家。
+              </p>
+            ) : (
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -343,6 +348,7 @@ export const SellerSupportPage: React.FC = () => {
                 {sending ? '发送中…' : '回复'}
               </button>
             </div>
+            )}
           </footer>
         </section>
       </div>
@@ -422,21 +428,13 @@ function renderContent(message: SupportMessageView) {
 
 const Bubble: React.FC<{
   message: SupportMessageView;
-  /** 我发出、对方还没读的消息：气泡左侧挂「未读」标签（琥珀色，非红） */
+  /** 我发出、对方还没读的消息：时间行右侧显示琥珀色「未读」，与「已读」同位置 */
   unreadTag?: boolean;
   receipt: string | null;
   onOpenCard: (card: SupportProductCard) => void;
 }> = ({ message, unreadTag, receipt, onOpenCard }) => (
   <div className={`sup-row${message.mine ? ' mine' : ''}`}>
     <div className="sup-col">
-      {unreadTag && (
-        <span
-          className="tag tag-warn"
-          style={{ fontSize: 11, alignSelf: 'flex-end', marginBottom: 2 }}
-        >
-          未读
-        </span>
-      )}
       {renderContent(message)}
       {message.card && (
         <button
@@ -460,7 +458,11 @@ const Bubble: React.FC<{
       )}
       <div className="sup-time">
         {formatBjShort(message.createdAt)}
-        {receipt ? ` · ${receipt}` : ''}
+        {unreadTag ? (
+          <span className="sup-unread"> · 未读</span>
+        ) : receipt ? (
+          ` · ${receipt}`
+        ) : null}
       </div>
     </div>
   </div>

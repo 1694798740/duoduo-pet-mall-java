@@ -279,12 +279,28 @@ export function isEmojiOnly(text: string): boolean {
 }
 
 /** 内置贴纸（商城 public/stickers，商家端共享同一目录） */
-const STICKERS = ['ok', 'thanks', 'wait', 'cry', 'love', 'angry'];
+const STICKERS = [
+  'ok', 'thanks', 'wait', 'cry', 'love', 'angry',
+  'hi', 'sorry', 'busy', 'question', 'nice', 'bye',
+];
 
 const stickerUrl = (name: string) =>
   `${typeof window !== 'undefined' ? window.location.origin : ''}/stickers/${name}.svg`;
 
-const EMOJIS = ['😀', '😂', '🥹', '😍', '🤔', '😭', '😡', '👍', '👏', '🙏', '🎉', '❤️', '🐶', '🐱', '🐟', '🦴'];
+/**
+ * 表情面板（2026-10-23 扩容 16 → 56）。
+ * 只放「聊天常用」的一组，避免变成全量 emoji 选择器 —— 面板高度有限，
+ * 翻页成本比多放几十个冷门表情更高。
+ */
+const EMOJIS = [
+  '😀', '😄', '😁', '😊', '🥰', '😍', '😘', '😜',
+  '🤪', '😎', '🤗', '🤔', '😐', '😴', '🥱', '😪',
+  '😂', '🤣', '😅', '😇', '🙃', '😉', '😌', '😢',
+  '🥹', '😭', '😤', '😡', '🤬', '😱', '😨', '😰',
+  '👍', '👎', '👏', '🙏', '🤝', '💪', '✌️', '👌',
+  '🎉', '🎁', '🔥', '💯', '❤️', '💔', '⭐', '🌈',
+  '🐶', '🐱', '🐟', '🦴', '🐾', '🐹', '🐰', '🐦',
+];
 
 /**
  * 输入区「+」菜单（2026-10-22 二级化改造）。
@@ -309,12 +325,58 @@ export const ChatMediaMenu: React.FC<{
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<'root' | 'emoji'>('root');
   const [busy, setBusy] = useState('');
+  /** 弹层的视口锚点（fixed 定位，避免被 .sup-thread 的 overflow:hidden 裁切） */
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number; width: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLInputElement | null>(null);
 
+  /**
+   * 面板的受控关闭（2026-10-23 补）：
+   * 此前只有「再点一次 +」才能收起，Escape 和点击空白处都关不掉，面板会一直浮在页面上，
+   * 既挡住下方内容，也会吞掉落在它上面的滚轮事件（灯箱 Ctrl+滚轮缩放曾因此失效）。
+   */
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (wrapRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [open]);
+
+  /** 按当前面板宽度计算锚点：左边界贴住按钮、右边界不越出视口，向上展开 */
+  const place = (width: number) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    return { left, bottom: Math.max(8, window.innerHeight - rect.top + 8), width };
+  };
+
   const toggle = () => {
-    setOpen((v) => !v);
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setAnchor(place(panel === 'emoji' ? 336 : 232));
     setPanel('root');
+    setOpen(true);
+  };
+
+  const gotoEmoji = () => {
+    setPanel('emoji');
+    setAnchor(place(336));
   };
 
   const pick = async (file: File | null, kind: 'IMAGE' | 'VIDEO') => {
@@ -337,20 +399,35 @@ export const ChatMediaMenu: React.FC<{
   const entryStyle = { justifyContent: 'flex-start', width: '100%' } as const;
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={wrapRef} style={{ position: 'relative' }}>
       <button
         type="button"
         className="btn btn-ghost"
         title="发送图片 / 视频 / 表情 / 商品"
+        aria-expanded={open}
         onClick={toggle}
         disabled={disabled || Boolean(busy)}
       >
         {busy || '＋'}
       </button>
-      {open && !busy && (
+      {open && !busy && anchor && (
         <div
+          ref={panelRef}
           className="card"
-          style={{ position: 'absolute', bottom: '110%', left: 0, padding: 8, zIndex: 20, width: 232 }}
+          data-testid="chat-media-panel"
+          data-panel={panel}
+          style={{
+            position: 'fixed',
+            left: anchor.left,
+            bottom: anchor.bottom,
+            width: anchor.width,
+            maxHeight: 'min(58vh, 420px)',
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            padding: 10,
+            zIndex: 1200,
+            boxShadow: 'var(--shadow-lg, 0 16px 48px rgba(16,20,32,.18))',
+          }}
         >
           {panel === 'root' ? (
             <div className="col" style={{ gap: 4 }}>
@@ -360,7 +437,7 @@ export const ChatMediaMenu: React.FC<{
               <button type="button" className={entryBtn} style={entryStyle} onClick={() => videoRef.current?.click()}>
                 🎬 视频
               </button>
-              <button type="button" className={entryBtn} style={entryStyle} onClick={() => setPanel('emoji')}>
+              <button type="button" className={entryBtn} style={entryStyle} onClick={gotoEmoji}>
                 😀 表情
               </button>
               {onProduct && (
@@ -382,24 +459,33 @@ export const ChatMediaMenu: React.FC<{
             </div>
           ) : (
             <div>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                style={{ marginBottom: 6 }}
-                onClick={() => setPanel('root')}
-              >
-                ← 返回
-              </button>
-              <div className="small muted" style={{ marginBottom: 4 }}>
-                表情
+              <div className="row" style={{ alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => {
+                    setPanel('root');
+                    setAnchor(place(232));
+                  }}
+                >
+                  ← 返回
+                </button>
+                <span className="small muted">表情与贴纸</span>
               </div>
-              <div className="row row-wrap" style={{ gap: 2 }}>
+              <div
+                data-testid="emoji-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(8, minmax(0, 1fr))',
+                  gap: 2,
+                }}
+              >
                 {EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     className="btn btn-sm btn-ghost"
-                    style={{ fontSize: 18, padding: '2px 6px' }}
+                    style={{ fontSize: 18, padding: '2px 0', lineHeight: 1.6 }}
                     onClick={() => {
                       onEmoji(emoji);
                       setOpen(false);
@@ -409,10 +495,17 @@ export const ChatMediaMenu: React.FC<{
                   </button>
                 ))}
               </div>
-              <div className="small muted" style={{ margin: '8px 0 4px' }}>
+              <div className="small muted" style={{ margin: '10px 0 4px' }}>
                 贴纸
               </div>
-              <div className="row row-wrap" style={{ gap: 4 }}>
+              <div
+                data-testid="sticker-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                  gap: 6,
+                }}
+              >
                 {STICKERS.map((name) => (
                   <button
                     key={name}
@@ -424,7 +517,7 @@ export const ChatMediaMenu: React.FC<{
                       setOpen(false);
                     }}
                   >
-                    <img src={stickerUrl(name)} alt={name} style={{ width: 40, height: 40 }} />
+                    <img src={stickerUrl(name)} alt={name} style={{ width: 44, height: 44 }} />
                   </button>
                 ))}
               </div>
@@ -483,34 +576,120 @@ const fmtTime = (seconds: number): string => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
-/** 遮罩 + 居中容器（Lightbox 与视频弹窗共用，避免各自引 Modal 造成尺寸口径不一） */
-const Overlay: React.FC<{ onClose: () => void; children: React.ReactNode; maxWidth?: number }> = ({
-  onClose,
-  children,
-  maxWidth = 760,
-}) => (
+/** 轻量蒙层：只压暗背景，不再套一层白色卡片 —— 媒体本身就是主体 */
+const Overlay: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({ onClose, children }) => (
   <div
     role="dialog"
     aria-modal="true"
     onClick={onClose}
     style={{
       position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'rgba(10, 12, 18, 0.82)',
-      display: 'grid', placeItems: 'center', padding: 24,
+      background: 'rgba(6, 8, 12, 0.55)',
+      backdropFilter: 'blur(2px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 16,
     }}
   >
     <div
       onClick={(e) => e.stopPropagation()}
-      style={{ width: '100%', maxWidth, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+      style={{
+        position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        maxWidth: '100%', maxHeight: '100%',
+      }}
     >
       {children}
     </div>
   </div>
 );
 
-/** 图片灯箱：滚轮/按钮缩放 + 保存到本地 */
+/**
+ * 播放器图标（2026-10-23 补）。
+ *
+ * 此前用 `▶ ⏸ ⛶ ⤢` 这类字符：Windows 的默认中文字体对 U+26F6 / U+25B6 覆盖不全，
+ * 实测会渲染成「空心方块」（tofu），换成内联 SVG 后与字体无关，三端一致。
+ */
+const svgBase = {
+  width: 16,
+  height: 16,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true,
+};
+
+/**
+ * 暗色浮条上的按钮。
+ * `.btn-ghost` 只改边框和文字色、**背景仍是白色**（styles.css:679），直接放在深色播放条上
+ * 就是一块白方块，白色图标反而看不见。这里显式清掉底色与边框。
+ */
+const darkGhost = { color: '#fff', background: 'transparent', borderColor: 'transparent' } as const;
+
+const PlayIcon = () => (
+  <svg {...svgBase}><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none" /></svg>
+);
+const PauseIcon = () => (
+  <svg {...svgBase}>
+    <rect x="7" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none" />
+    <rect x="13.4" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+const VolumeOnIcon = () => (
+  <svg {...svgBase}>
+    <path d="M4 9.5h3l4-3.2v11.4l-4-3.2H4z" fill="currentColor" />
+    <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.7 7.7 0 0 1 0 11" />
+  </svg>
+);
+const VolumeOffIcon = () => (
+  <svg {...svgBase}>
+    <path d="M4 9.5h3l4-3.2v11.4l-4-3.2H4z" fill="currentColor" />
+    <path d="M16 9.5l4.5 5M20.5 9.5L16 14.5" />
+  </svg>
+);
+const FullscreenIcon = () => (
+  <svg {...svgBase}><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5" /></svg>
+);
+const ExitFullscreenIcon = () => (
+  <svg {...svgBase}><path d="M9 4v5H4M15 20v-5h5M20 9h-5V4M4 15h5v5" /></svg>
+);
+const DownloadIcon = () => (
+  <svg {...svgBase}><path d="M12 4v10M8 10l4 4 4-4M5 19h14" /></svg>
+);
+
+/** 浮在蒙层上的关闭按钮（不占媒体区域） */
+const CloseButton: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <button
+    type="button"
+    aria-label="关闭"
+    onClick={onClose}
+    style={{
+      position: 'fixed', top: 16, right: 16, width: 36, height: 36, borderRadius: '50%',
+      border: 'none', cursor: 'pointer', zIndex: 1010,
+      background: 'rgba(255,255,255,0.16)', color: '#fff', lineHeight: 1,
+      display: 'grid', placeItems: 'center',
+      backdropFilter: 'blur(6px)',
+    }}
+  >
+    <svg {...svgBase} width={18} height={18}><path d="M6 6l12 12M18 6L6 18" /></svg>
+  </button>
+);
+
+/**
+ * 图片灯箱（2026-10-23 改造）：
+ *  · **Ctrl + 滚轮缩放**（0.3x ~ 6x），缩放后按住拖动可平移，双击复位；
+ *  · 不再套白色容器：图片直接铺在轻量蒙层上，只有一圈阴影把它与背景分开；
+ *  · 缩放比例 / 下载 / 关闭都是浮动控件，不占据媒体区域。
+ */
 const ImageLightbox: React.FC<{ url: string; onClose: () => void }> = ({ url, onClose }) => {
   const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -519,51 +698,100 @@ const ImageLightbox: React.FC<{ url: string; onClose: () => void }> = ({ url, on
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // 原生监听 + passive:false：Ctrl+滚轮要阻止浏览器整页缩放，React 的合成事件做不到
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setScale((prev) => {
+        const next = Math.min(6, Math.max(0.3, prev * (1 - e.deltaY * 0.0015)));
+        const rounded = Math.round(next * 1000) / 1000;
+        if (rounded <= 1) setOffset({ x: 0, y: 0 });
+        return rounded;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const reset = () => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  };
+
   const filename = url.split('/').pop() || 'image';
   return (
-    <Overlay onClose={onClose} maxWidth={860}>
+    <Overlay onClose={onClose}>
       <div
-        style={{
-          background: 'var(--surface, #fff)', borderRadius: 12, padding: 10,
-          display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden',
+        ref={wrapRef}
+        onDoubleClick={reset}
+        onPointerDown={(e) => {
+          if (scale <= 1) return;
+          dragRef.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
+          setDragging(true);
+          e.currentTarget.setPointerCapture?.(e.pointerId);
         }}
+        onPointerMove={(e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          setOffset({ x: d.ox + (e.clientX - d.x), y: d.oy + (e.clientY - d.y) });
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+          setDragging(false);
+        }}
+        style={{ display: 'grid', placeItems: 'center', maxWidth: '94vw', maxHeight: '90vh', cursor: scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'default' }}
       >
-        <div style={{ overflow: 'auto', display: 'grid', placeItems: 'center', maxHeight: '70vh' }}>
+        <div ref={stageRef} style={{ overflow: 'hidden', maxWidth: '94vw', maxHeight: '88vh' }}>
           <img
             src={url}
             alt=""
+            draggable={false}
             style={{
-              transform: `scale(${scale})`, transformOrigin: 'center',
-              maxWidth: '100%', maxHeight: '68vh', objectFit: 'contain',
-              transition: 'transform 0.15s ease',
+              display: 'block', maxWidth: '94vw', maxHeight: '88vh', objectFit: 'contain',
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              transition: dragging ? 'none' : 'transform 0.12s ease',
+              boxShadow: '0 12px 48px rgba(0,0,0,0.45)',
+              borderRadius: 4,
+              userSelect: 'none',
             }}
           />
         </div>
-        <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setScale((s) => Math.max(0.4, +(s - 0.2).toFixed(2)))}>
-            － 缩小
-          </button>
-          <span className="small muted" style={{ minWidth: 48, textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setScale((s) => Math.min(4, +(s + 0.2).toFixed(2)))}>
-            ＋ 放大
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
-            onClick={() => void downloadMedia(url, filename)}
-          >
-            ⬇ 下载保存到本地
-          </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>关闭</button>
-        </div>
       </div>
+
+      <div
+        style={{
+          position: 'fixed', left: '50%', bottom: 20, transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px',
+          borderRadius: 999, background: 'rgba(0,0,0,0.55)', color: '#fff',
+          backdropFilter: 'blur(8px)', zIndex: 1010, fontSize: 12,
+        }}
+      >
+        <button type="button" className="btn btn-sm btn-ghost" style={darkGhost}
+          onClick={() => setScale((v) => Math.max(0.3, Math.round((v - 0.2) * 100) / 100))}>－</button>
+        <span style={{ minWidth: 46, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+          {Math.round(scale * 100)}%
+        </span>
+        <button type="button" className="btn btn-sm btn-ghost" style={darkGhost}
+          onClick={() => setScale((v) => Math.min(6, Math.round((v + 0.2) * 100) / 100))}>＋</button>
+        <span style={{ opacity: 0.75 }}>Ctrl + 滚轮缩放 · 双击复位</span>
+        <button type="button" className="btn btn-sm btn-primary"
+          onClick={() => void downloadMedia(url, filename)}><DownloadIcon /> 保存</button>
+      </div>
+      <CloseButton onClose={onClose} />
     </Overlay>
   );
 };
 
 /**
- * 视频播放弹窗：自绘控制条（播放/暂停、进度、音量、全屏、保存），
- * 不用原生 controls —— 气泡与弹窗两端都不出现系统播放器样式。
+ * 视频播放器（2026-10-23 改造）：
+ *  · 去掉白色容器，视频直接铺在轻量蒙层上，控制条是半透明浮条；
+ *  · 进度条支持**按住拖动**（pointer 事件 + 视口级监听，拖出条外也不断），
+ *    点击任意位置直接跳转；
+ *  · 全屏作用于整个播放器盒子，视频高度改为 100vh - 控制条高度，
+ *    不再受 maxHeight: 60vh 限制（此前全屏只铺满一半窗口就是这个原因）。
  */
 const VideoPlayerModal: React.FC<{
   url: string;
@@ -572,11 +800,43 @@ const VideoPlayerModal: React.FC<{
 }> = ({ url, poster, onClose }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isFs, setIsFs] = useState(false);
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // 全屏时先退全屏（真实浏览器会自己处理，这里兜住自动化/部分内嵌环境）
+      if (document.fullscreenElement) {
+        void document.exitFullscreen();
+        return;
+      }
+      onClose();
+    };
+    const onFsChange = () => setIsFs(Boolean(document.fullscreenElement));
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFsChange);
+    };
+  }, [onClose]);
+
+  /**
+   * 关闭播放器（2026-10-23 修）：
+   * 全屏时先退全屏 —— 全屏元素在浏览器顶层，元素之外的关闭按钮会被 `<video>` 盖住点不到。
+   * 现在关闭按钮本身渲染在播放器盒子内（见下方 JSX），全屏下也在顶层，可直接点。
+   */
+  const close = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    onClose();
+  };
 
   const togglePlay = () => {
     const v = videoRef.current;
@@ -585,13 +845,30 @@ const VideoPlayerModal: React.FC<{
     else v.pause();
   };
 
-  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+  const seekTo = (clientX: number) => {
+    const track = trackRef.current;
     const v = videoRef.current;
-    if (!v || !duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    v.currentTime = ratio * duration;
+    if (!track || !v || !duration) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const next = ratio * duration;
+    v.currentTime = next;
+    setCurrent(next);
   };
+
+  // 拖动期间监听 window：鼠标移出进度条甚至移到窗口外仍然跟手
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const move = (e: PointerEvent) => seekTo(e.clientX);
+    const up = () => setDragging(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging, duration]);
 
   const fullscreen = () => {
     const box = boxRef.current;
@@ -600,13 +877,19 @@ const VideoPlayerModal: React.FC<{
     else void box.requestFullscreen?.();
   };
 
+  const ratio = duration > 0 ? Math.min(1, current / duration) : 0;
+  const controlWidth = isFs ? '100%' : 'min(92vw, 1100px)';
+
   return (
-    <Overlay onClose={onClose} maxWidth={720}>
+    <Overlay onClose={onClose}>
       <div
         ref={boxRef}
         style={{
-          background: 'var(--surface, #fff)', borderRadius: 12, padding: 10,
-          display: 'flex', flexDirection: 'column', gap: 8,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: isFs ? 0 : 10,
+          width: isFs ? '100%' : 'auto',
+          height: isFs ? '100%' : 'auto',
+          background: isFs ? '#000' : 'transparent',
         }}
       >
         <video
@@ -614,45 +897,78 @@ const VideoPlayerModal: React.FC<{
           src={url}
           poster={poster ?? undefined}
           playsInline
-          style={{ width: '100%', maxHeight: '60vh', borderRadius: 8, background: '#000', display: 'block' }}
+          onClick={togglePlay}
+          style={{
+            display: 'block', background: '#000',
+            width: isFs ? '100%' : 'auto',
+            maxWidth: isFs ? '100%' : 'min(92vw, 1100px)',
+            height: isFs ? 'calc(100vh - 56px)' : 'auto',
+            maxHeight: isFs ? 'calc(100vh - 56px)' : '84vh',
+            objectFit: 'contain',
+            borderRadius: isFs ? 0 : 8,
+            boxShadow: isFs ? 'none' : '0 16px 56px rgba(0,0,0,0.5)',
+            cursor: 'pointer',
+          }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
         />
-        {/* 自绘控制条 */}
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={togglePlay}>
-            {playing ? '⏸' : '▶'}
+
+        {/* 半透明浮条：不构成“弹窗里的卡片”，只是叠在画面下方的一层控件 */}
+        <div
+          style={{
+            width: controlWidth, display: 'flex', alignItems: 'center', gap: 10,
+            padding: '6px 12px', borderRadius: isFs ? 0 : 999,
+            background: isFs ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.55)',
+            backdropFilter: 'blur(8px)', color: '#fff',
+            height: 44, boxSizing: 'border-box',
+          }}
+        >
+          <button type="button" className="btn btn-sm btn-ghost" style={darkGhost} onClick={togglePlay} aria-label={playing ? '暂停' : '播放'}>
+            {playing ? <PauseIcon /> : <PlayIcon />}
           </button>
-          <span className="small muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12, minWidth: 84 }}>
             {fmtTime(current)} / {fmtTime(duration)}
           </span>
+          {/* 进度条：外层 16px 命中区，内层 4px 视觉轨 */}
           <div
-            onClick={seek}
-            style={{
-              flex: 1, height: 6, borderRadius: 3, cursor: 'pointer',
-              background: 'var(--surface-2, #eee)', position: 'relative', minWidth: 120,
+            ref={trackRef}
+            role="slider"
+            aria-label="播放进度"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.round(current)}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              seekTo(e.clientX);
+              setDragging(true);
             }}
+            style={{ flex: 1, height: 16, display: 'flex', alignItems: 'center', cursor: 'pointer', minWidth: 120, touchAction: 'none' }}
           >
-            <div
-              style={{
-                position: 'absolute', inset: 0, width: duration ? `${(current / duration) * 100}%` : '0%',
-                borderRadius: 3, background: 'var(--primary, #4f6ef2)',
-              }}
-            />
+            <div style={{ position: 'relative', width: '100%', height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.28)' }}>
+              <div style={{ position: 'absolute', inset: 0, width: `${ratio * 100}%`, borderRadius: 2, background: 'var(--primary, #4f6ef2)' }} />
+              <div
+                style={{
+                  position: 'absolute', top: '50%', left: `${ratio * 100}%`, width: 12, height: 12,
+                  marginLeft: -6, marginTop: -6, borderRadius: '50%', background: '#fff',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.4)', transform: dragging ? 'scale(1.25)' : 'scale(1)',
+                  transition: 'transform 0.1s ease',
+                }}
+              />
+            </div>
           </div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+          <button type="button" className="btn btn-sm btn-ghost" style={darkGhost} aria-label={muted ? '取消静音' : '静音'} onClick={() => {
             const v = videoRef.current;
             if (!v) return;
             const next = !muted;
             v.muted = next;
             setMuted(next);
           }}>
-            {muted ? '🔇' : '🔊'}
+            {muted ? <VolumeOffIcon /> : <VolumeOnIcon />}
           </button>
           <input
-            type="range" min={0} max={1} step={0.05} value={volume} style={{ width: 72 }}
+            type="range" min={0} max={1} step={0.05} value={volume} style={{ width: 64, accentColor: '#fff' }}
             onChange={(e) => {
               const val = Number(e.target.value);
               setVolume(val);
@@ -665,16 +981,19 @@ const VideoPlayerModal: React.FC<{
             }}
             aria-label="音量"
           />
-          <button type="button" className="btn btn-sm btn-ghost" onClick={fullscreen} title="全屏">⛶</button>
+          <button type="button" className="btn btn-sm btn-ghost" style={darkGhost} onClick={fullscreen} title="全屏" aria-label={isFs ? '退出全屏' : '全屏'}>
+            {isFs ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+          </button>
           <button
             type="button"
             className="btn btn-sm btn-primary"
             onClick={() => void downloadMedia(url, url.split('/').pop() || 'video.mp4')}
           >
-            ⬇ 保存到本地
+            <DownloadIcon /> 保存
           </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>关闭</button>
         </div>
+        {/* 关闭按钮放在全屏元素内部：全屏时它也在顶层，不会被 video 盖住 */}
+        <CloseButton onClose={close} />
       </div>
     </Overlay>
   );
@@ -780,17 +1099,19 @@ export const MediaBubble: React.FC<{
   }
 
   const w = width && width > 0 ? Math.min(width, 260) : 220;
-  const h = height && width && height > 0 ? Math.round((w * height) / width) : undefined;
+  // ★ 消息里的图片可能没有宽高（上传接口只回 URL）：不能留 height:undefined + lazy ——
+  //   图片在滚动容器里没进入视口就永远不加载，元素高度为 0，用户看到的是「什么都没有」。
+  //   给一个稳定占位高度并去掉 lazy（会话内图片本就在可视区附近）。
+  const h = height && width && height > 0 ? Math.round((w * height) / width) : 180;
   return (
     <>
       <img
         src={url}
         alt=""
-        loading="lazy"
         onClick={() => setViewer('image')}
         style={{
-          width: w, height: h, maxHeight: 300, objectFit: 'cover', borderRadius: 10,
-          display: 'block', cursor: 'zoom-in',
+          width: w, height: Math.min(h, 300), maxHeight: 300, objectFit: 'cover', borderRadius: 10,
+          display: 'block', cursor: 'zoom-in', background: 'var(--surface-2)',
         }}
       />
       {viewer === 'image' && <ImageLightbox url={url} onClose={() => setViewer(null)} />}

@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 商家工作台 · 客服信息。
@@ -28,20 +30,27 @@ import org.springframework.web.bind.annotation.RestController;
  * 运营管平台级事务（审核、仲裁、干预），不介入买卖双方的沟通内容。
  *
  * <h2>为什么 sellerId 不由请求传</h2>
- * 会话归属从登录态推导（{@link LoginUser#isSeller()} → {@code userId}）。
+ * 会话归属从登录态推导（用户域 {@code /internal/merchant-membership}）。
  * 一旦允许调用方传 sellerId，「换个 id 看别家客服会话」这条路就出现了 ——
  * 这类越权在测试里很难覆盖，只能从接口契约上不给口子。
  *
- * <p>店员（role=USER + 店铺成员身份）本轮不在准入内：客服会话归属是店铺主体，
- * 店员的归属解析需要额外的成员域回源，等接入店员分权时一并处理。
+ * <h2>店铺维度（2026-10-23 修复）</h2>
+ * 会话的 {@code seller_id} 是**店铺主体**（店主 userId）。登录账号无论是店主还是店员，
+ * 都先解析出同一个 {@code ownerUserId} 再查会话 —— 否则店员登录后看到的是空列表，
+ * 同一家店换个账号接待就「会话消失」。自营客服账号没有入驻行，按自身 userId 兜底。
  */
 @RestController
 public class SellerSupportController {
 
-    private final SupportService supportService;
+    private static final Logger log = LoggerFactory.getLogger(SellerSupportController.class);
 
-    public SellerSupportController(SupportService supportService) {
+    private final SupportService supportService;
+    private final com.duoduo.social.client.UserClient userClient;
+
+    public SellerSupportController(SupportService supportService,
+                                   com.duoduo.social.client.UserClient userClient) {
         this.supportService = supportService;
+        this.userClient = userClient;
     }
 
     /** 本店客服会话（按最后消息倒序，可按 OPEN/CLOSED 过滤） */
@@ -51,14 +60,14 @@ public class SellerSupportController {
             @RequestParam(defaultValue = "false") boolean onlyUnread,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(supportService.listForSeller(requireSellerId(), status, onlyUnread, page, pageSize));
+        return ApiResponse.ok(supportService.listForSeller(requireStoreOwnerId(), status, onlyUnread, page, pageSize));
     }
 
     @GetMapping("/api/seller/support/sessions/{id}/messages")
     public ApiResponse<ThreadView> messages(@PathVariable Long id,
                                             @RequestParam(defaultValue = "1") int page,
                                             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(supportService.sellerThread(requireSellerId(), id, page, pageSize));
+        return ApiResponse.ok(supportService.sellerThread(requireStoreOwnerId(), id, page, pageSize));
     }
 
     /**
@@ -70,32 +79,52 @@ public class SellerSupportController {
     @PostMapping("/api/seller/support/sessions/{id}/messages")
     public ApiResponse<MessageView> reply(@PathVariable Long id,
                                           @Valid @RequestBody SellerSendRequest request) {
-        return ApiResponse.ok(supportService.sendBySeller(requireSellerId(), id, request));
+        return ApiResponse.ok(supportService.sendBySeller(requireStoreOwnerId(), id, request));
     }
 
     @PostMapping("/api/seller/support/sessions/{id}/read")
     public ApiResponse<Long> read(@PathVariable Long id) {
-        return ApiResponse.ok(supportService.markReadBySeller(requireSellerId(), id));
+        return ApiResponse.ok(supportService.markReadBySeller(requireStoreOwnerId(), id));
     }
 
     /** 关闭 / 重开会话：{@code value=CLOSED|OPEN} */
     @PostMapping("/api/seller/support/sessions/{id}/status")
     public ApiResponse<Void> status(@PathVariable Long id, @RequestParam String value) {
-        supportService.setStatus(requireSellerId(), id, value);
+        supportService.setStatus(requireStoreOwnerId(), id, value);
         return ApiResponse.ok(null);
     }
 
     /** 工作台页签角标 */
     @GetMapping("/api/seller/support/unread-count")
     public ApiResponse<Long> unreadCount() {
-        return ApiResponse.ok(supportService.unreadForSeller(requireSellerId()));
+        return ApiResponse.ok(supportService.unreadForSeller(requireStoreOwnerId()));
     }
 
-    private Long requireSellerId() {
+    /**
+     * 登录账号 → 店铺主体 id。
+     *
+     * <p>顺序：成员身份优先（店主/店员都归到 ownerUserId）；查不到时，
+     * 仅 {@code SELLER} 角色按自身 userId 兜底（自营客服账号没有入驻行，这是它唯一的路径）。
+     * 其他账号（平台运营、普通用户）一律 403 —— 运营不介入买卖双方会话内容。
+     */
+    private Long requireStoreOwnerId() {
         LoginUser user = UserContext.require();
-        if (user == null || !user.isSeller()) {
-            throw BizException.forbidden("仅店铺主体账号可处理客服消息");
+        if (user == null) {
+            throw BizException.forbidden("仅店铺成员可处理客服消息");
         }
-        return user.userId();
+        try {
+            var resp = userClient.merchantMembership(user.userId());
+            var membership = resp == null ? null : resp.data();
+            if (membership != null && membership.ownerUserId() != null && !membership.ownerUserId().isBlank()) {
+                return Long.valueOf(membership.ownerUserId());
+            }
+        } catch (Exception e) {
+            // 用户域暂时不可用时不让整个工作台 500：退回角色判断，店主仍可接待。
+            log.warn("解析店铺归属失败 userId={}", user.userId(), e);
+        }
+        if (user.isSeller()) {
+            return user.userId();
+        }
+        throw BizException.forbidden("仅店铺成员可处理客服消息");
     }
 }

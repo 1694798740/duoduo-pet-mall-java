@@ -538,10 +538,11 @@ export const ProductDetailPage: React.FC = () => {
                 </>
               )}
               {/* 统一入口：位置固定放在购买动作右侧，售罄时同样可用（买不到也需要问）
-                  自营商品不传 sellerId（服务端落到自营客服）；入驻商品带上卖家与商品上下文 */}
+                  自营商品传 '0'（服务端落到自营客服，客服页据此直接选中该会话）；
+                  入驻商品带上卖家与商品上下文 */}
               <FavoriteButton spuId={String(card.id)} />
               <SupportEntry
-                sellerId={card.supplyType === 'self' ? undefined : card.sellerId || undefined}
+                sellerId={card.supplyType === 'self' ? '0' : card.sellerId || undefined}
                 productId={String(card.id)}
               />
             </div>

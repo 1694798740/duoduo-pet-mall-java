@@ -557,7 +557,7 @@ export const OrderDetailPage: React.FC = () => {
 
               {/* 位置与文案与订单列表一致：取消 → 问客服 → 其他写操作 → 刷新 */}
               <OrderConsultButton orderNo={order.orderNo} sellerId={order.sellerId} />
-              <SupportEntry />
+              <SupportEntry sellerId={order.sellerId != null ? String(order.sellerId) : undefined} />
 
               <button className="btn btn-ghost" disabled={acting} onClick={() => void reloadOrder()}>
                 刷新
@@ -680,8 +680,9 @@ const OrderConsultButton: React.FC<{ orderNo: string; sellerId?: string | number
   const navigate = useNavigate();
   const [busy, setBusy] = React.useState(false);
 
-  /** 自营订单 sellerId=0：0 不是店铺，不带参走自营客服（2026-10-22 修复「店铺不存在」） */
-  const sellerQuery = sellerId != null && String(sellerId) !== '0' && String(sellerId) !== ''
+  /** 自营订单 sellerId=0 也带上：服务端把它落到官方客服，客服页据此精确选中该会话
+   *  （2026-10-23：此前 0 被丢弃，只剩列表页，用户还要自己找） */
+  const sellerQuery = sellerId != null && String(sellerId) !== ''
     ? `?sellerId=${sellerId}`
     : '';
   const gotoSupport = () => navigate(`/support${sellerQuery}`);

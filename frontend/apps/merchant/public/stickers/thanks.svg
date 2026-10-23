@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#fff7ed" stroke="#ea580c" stroke-width="6"/>
+  <circle cx="58" cy="62" r="7" fill="#ea580c"/>
+  <circle cx="102" cy="62" r="7" fill="#ea580c"/>
+  <path d="M52 96 Q80 118 108 96" stroke="#ea580c" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <text x="80" y="142" font-size="20" font-family="system-ui,-apple-system,sans-serif" fill="#ea580c" text-anchor="middle">谢啦</text>
+</svg>

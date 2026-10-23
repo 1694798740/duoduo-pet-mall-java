@@ -286,6 +286,21 @@
 
 ## 6. 本轮变更记录
 
+### 2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺归属 / 媒体体验（二次验收 Q1~Q10 复盘）
+
+| 项 | 实现 |
+| --- | --- |
+| Q1 精确定位会话 | 根因两层：① `SupportEntry` 把 `sellerId=0` 当「不是店铺」丢弃，自营入口没带参；② `Support.tsx` 首屏 effect 依赖 `[]`，且只 `setActiveSellerId(入参)`，没拿服务端归一化后的真实 `sellerId` 回填。修：`0` 也带参；依赖改 `[sellerIdParam]`；`loadThread` 后用 `data.sellerId` 回填 + `loadSessions()` 补拉（首次咨询的会话是这次调用才创建的）；`activeItemRef` + `scrollIntoView({block:'nearest'})`。`OrderDetail` 的咨询按钮、`ProductDetail` 自营商品同步传 `'0'` |
+| Q3 订单卡 | 删除卡片上的订单号，店铺名前置为 `.sup-store-link` + `aria-hidden` 的 `›`；订单号只在详情页（`订单 {orderNo}`）出现。e2e 断言「卡片不含订单号**数值**」，不只断言标签 |
+| Q4 店铺维度归属 | 新增 `client/dto/MembershipBrief` + `UserClient.merchantMembership`；`SellerSupportController.requireSellerId` → `requireStoreOwnerId`：成员身份优先（店主/在职店员都解析到 `ownerUserId`），仅 `SELLER` 角色按自身 userId 兜底（自营客服无入驻行），其余 403；用户域异常降级 + warn。店员 `13952746517` 实测返回本店会话 1 条（`sellerId=370518346074034176`） |
+| Q5 未读样式 | 删 `tag tag-warn` 容器，改时间行内 ` · 未读`（`.sup-unread{color:var(--warn)}`），与「已读」同一行同一位置；买家端/商家端同步 |
+| Q6 会话高度 + 表情面板 | `.sup-body` 由 `max-height:52vh` 改 `height:clamp(320px,60vh,620px)`；`ChatMediaMenu` 面板改 `fixed` 锚点定位（绕开祖先 `overflow:hidden`）、`maxHeight:min(58vh,420px)`、`overflowY:auto`；表情 16→56、贴纸 6→12（两端 `public/stickers` 补齐）；补 `Escape` 与外部点击关闭 |
+| Q10 图片/视频 | 灯箱与播放器均去 `.card` 白容器，改 `rgba(6,8,12,.55)` + `blur(2px)` 轻蒙层；灯箱原生 `wheel`（`passive:false`）实现 Ctrl+滚轮 0.3x~6x、拖动平移、双击复位；进度条 16px 命中区 + window 级 `pointermove/pointerup` 跟手拖动；全屏作用于播放器盒子（`height:calc(100vh-56px)`、`objectFit:contain`），关闭按钮移入全屏元素内部（此前被 `<video>` 盖住点不到）；暗色浮条按钮显式透明底（`.btn-ghost` 背景是白的，白底白字）；`▶⏸⛶` 等字符换内联 SVG（Windows 字体渲染成 tofu） |
+| 未选会话禁发 | 根因：发送函数只判 `content`，服务端把 `sellerId=null` 口径兜底到官方客服，于是「没选会话」的消息进了「多多客服」。修：四个发送入口全部判 `activeSellerId`；未选中时不渲染输入区（正文 `Empty`「请选择一个会话」，底栏一行提示）；商家端 `SupportInbox` 同改 |
+| 私信排查 | 结论：无同类问题。路由必须 `:peerId`、页面判空、加载失败整页替换、服务端 `requireUserExists` 拒绝不存在的收件人。e2e 固化两条断言（列表页无输入区；对不存在 receiverId 发送返回非 SUCCESS） |
+| 验证 | 新增 `scripts/e2e/support-ux-ui-check.mjs` **47/0**；回归 `support-read` 20/0、`support-split` 22/0、`notice-chat-follow` 50/0、`seller` 40/0、`product-detail` 19/0、`store-page` 17/0、`cart-batch` 通过、`web10-batch-check` 9/0；三端 typecheck + build 通过；web/merchant 容器重建 healthy |
+| 教训 | ① 浮层不关掉会吞掉落在它上面的滚轮事件，症状看起来像「缩放功能坏了」，实则是**上一步没关面板**（e2e 必须先断言面板可关闭）；② 断言 `elementFromPoint` 的 `tagName` 在按钮内含 SVG 后会变 `path/svg`，要 `closest('button')` 回溯，否则把「修好了」判成红；③ 全屏元素在浏览器顶层，渲染在它之外的固定定位按钮会被盖住，必须放进全屏元素内部；④ `.btn-ghost` 不改背景色，暗色容器里必须显式透明底 |
+
 ### 2026-10-22（六十四）· 十问题批次：咨询/店铺/客服/未读体验改造（Q1~Q10）
 
 | 项 | 实现 |

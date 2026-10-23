@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#f3ecff" stroke="#7c3aed" stroke-width="6"/>
+  <circle cx="62" cy="64" r="6" fill="#7c3aed"/>
+  <circle cx="98" cy="64" r="6" fill="#7c3aed"/>
+  <path d="M58 100 h44" stroke="#7c3aed" stroke-width="7" stroke-linecap="round"/>
+  <path d="M122 58 q10 16 0 24 q-10 -8 0 -24" fill="#7c3aed" opacity="0.75"/>
+  <text x="80" y="142" font-size="20" font-weight="600" font-family="system-ui,-apple-system,sans-serif" fill="#7c3aed" text-anchor="middle">BUSY</text>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#fff4e5" stroke="#d97706" stroke-width="6"/>
+  <path d="M52 62 q8 -8 16 0" stroke="#d97706" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M92 62 q8 -8 16 0" stroke="#d97706" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M58 106 Q80 90 102 106" stroke="#d97706" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M118 78 q8 14 0 20 q-8 -6 0 -20" fill="#d97706" opacity="0.8"/>
+  <text x="80" y="142" font-size="20" font-weight="600" font-family="system-ui,-apple-system,sans-serif" fill="#d97706" text-anchor="middle">SORRY</text>
+</svg>

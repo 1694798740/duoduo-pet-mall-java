@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#e7f8f1" stroke="#059669" stroke-width="6"/>
+  <path d="M40 50 q-12 6 -14 18" stroke="#059669" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M120 50 q12 6 14 18" stroke="#059669" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <circle cx="62" cy="64" r="6" fill="#059669"/>
+  <circle cx="98" cy="64" r="6" fill="#059669"/>
+  <path d="M58 96 Q80 106 102 96" stroke="#059669" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <text x="80" y="142" font-size="20" font-weight="600" font-family="system-ui,-apple-system,sans-serif" fill="#059669" text-anchor="middle">BYE</text>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="#ffe9f3" stroke="#db2777" stroke-width="6"/>
+  <path d="M56 60 l6 10 12 2 -9 8 3 12 -12 -6 -12 6 3 -12 -9 -8 12 -2z" fill="#db2777" opacity="0.85"/>
+  <path d="M104 60 l6 10 12 2 -9 8 3 12 -12 -6 -12 6 3 -12 -9 -8 12 -2z" fill="#db2777" opacity="0.85"/>
+  <path d="M58 102 Q80 120 102 102" stroke="#db2777" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <text x="80" y="142" font-size="20" font-weight="600" font-family="system-ui,-apple-system,sans-serif" fill="#db2777" text-anchor="middle">NICE</text>
+</svg>

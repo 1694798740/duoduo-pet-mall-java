@@ -4,6 +4,25 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺维度归属 / 媒体体验**
+
+- **Q1 精确定位会话**：`sellerId=0` 之前被前端当「不是店铺」丢弃，自营入口只能落到列表页；
+  现在 `0` 也带参，进页后用服务端归一化的真实 `sellerId` 回填高亮、补拉会话列表并滚动到可见。
+- **Q3 订单卡**：卡片上的订单号移除，店铺名前置为链接 + `›`；订单号只在订单详情页出现。
+- **Q4 店铺维度归属**：商家端接待身份从「登录账号」改为「登录账号 → 店铺主体 `ownerUserId`」
+  （用户域 `/internal/merchant-membership` 回源），店主与在职店员共用同一份会话；运营/普通用户仍 403。
+- **Q5 未读样式**：去掉 `tag` 容器，改时间行内纯文字「 · 未读」，琥珀色，与「已读」同一位置（右下角）。
+- **Q6 会话区与表情面板**：会话区 `52vh → clamp(320px,60vh,620px)`；表情面板 `fixed` 锚点定位、
+  限高可滚动、`Esc`/点空白可关闭；表情 16→56、贴纸 6→12。
+- **Q10 图片/视频**：灯箱与播放器去掉白色容器，改轻量半透明蒙层；图片支持 `Ctrl+滚轮` 0.3x~6x 缩放、
+  拖动平移、双击复位；视频进度条可点击/按住拖动（window 级指针监听）、全屏铺满整屏、全屏下关闭按钮可点。
+- **未选会话禁发**：没选会话时不再渲染输入区（正文与底栏都给出提示），四个发送入口全部判空；
+  根因是服务端把 `sellerId=null` 兜底成「官方客服」，此前会把消息投进「多多客服」会话。
+- **私信排查**：无同类问题（路由必须带 `:peerId`、页面判空、服务端拒绝不存在的收件人），已加断言锁定。
+- **验证**：新增 `scripts/e2e/support-ux-ui-check.mjs` **47/0**；回归 support-read 20/0、support-split 22/0、
+  notice-chat-follow 50/0、seller 40/0、product-detail 19/0、store-page 17/0、cart-batch 通过、
+  web10-batch-check 9/0；三端 typecheck/build 通过，web 与 merchant 容器重建 healthy。
+
 **2026-10-22（六十四）· 十问题批次：咨询/店铺/客服/未读体验改造（Q1~Q10）**
 
 - **Q1 自营订单咨询报「店铺不存在」**：自营订单 `seller_id=0` 被当店铺 id 查询。修：social 侧
@@ -2227,6 +2246,23 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 - **踩坑记录**：`docker compose up -d --force-recreate` **不会重建镜像**，
   `image:` + `build.args JAR_FILE` 的组合必须带 `--build`，否则容器里跑的还是旧 jar
   （表现为「代码改了、测试没变」）。核对方式：解包 `/app/app.jar` 里的 `BOOT-INF/classes` 看字段名。
+
+### 2026-10-23（六十七）· 客服二次修复：精确会话 / 店铺归属 / 媒体体验
+
+- **Q1 精确选中**：`SupportEntry` 不再吞掉 `sellerId=0`；`Support.tsx` 依赖改为 `[sellerIdParam]`，
+  用服务端返回的 `data.sellerId` 回填（自营 0 → 官方客服 id），并补拉列表、滚动到可见。
+- **Q3 订单卡**：移除订单号，店名前置 + `›`（`aria-hidden`），详情页保留「订单 {orderNo}」。
+- **Q4 店铺归属**：新增 `MembershipBrief` + `UserClient.merchantMembership`，商家端接待身份统一解析到
+  `ownerUserId`；店员与店主同列表，其余 403。实测店员返回 `sellerId=370518346074034176`。
+- **Q5 未读**：` · 未读` 并入时间行（`.sup-unread`，`var(--warn)`），无容器。
+- **Q6 面板**：`.sup-body` 高度 `clamp(320px,60vh,620px)`；面板 `fixed` 定位 + `maxHeight:min(58vh,420px)`
+  + `overflowY:auto`；表情 56、贴纸 12；补 `Escape`/外部点击关闭。
+- **Q10 媒体**：去 `.card` 容器 → 轻蒙层；灯箱原生 `wheel` + `passive:false` 实现 Ctrl 缩放（0.3x~6x）、
+  拖动平移、双击复位；进度条 16px 命中区 + window 级 `pointermove/pointerup`；全屏改播放器盒子尺寸
+  （`calc(100vh - 56px)`），关闭按钮移入全屏元素（否则被 `<video>` 盖住）；暗色按钮显式透明底、
+  `▶⏸⛶` 换内联 SVG（Windows 字体缺字会渲染成方块）。
+- **未选会话禁发**：四个发送入口判 `activeSellerId`，未选中时不渲染输入区；商家端同改。
+- **验证**：`support-ux-ui-check.mjs` 47/0 + 八套回归全绿。
 
 ### 2026-10-22（六十六）· 购物车批量操作：全选半选 + 删除已选 + 确认弹窗
 

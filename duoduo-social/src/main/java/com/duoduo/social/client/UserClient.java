@@ -34,4 +34,12 @@ public interface UserClient {
      */
     @GetMapping("/internal/store-names")
     ApiResponse<List<com.duoduo.social.client.dto.StoreBrief>> storeNames(@RequestParam("ownerIds") String ownerIds);
+
+    /**
+     * 店铺成员身份（2026-10-23 · 客服归属到店铺维度）：
+     * 店主与店员都解析出同一个 {@code ownerUserId}，客服会话按它归属与查询。
+     * 无店铺 / 已停用 / 店铺未过审 → {@code data=null}，调用方按「非店铺成员」处理。
+     */
+    @GetMapping("/internal/merchant-membership")
+    ApiResponse<com.duoduo.social.client.dto.MembershipBrief> merchantMembership(@RequestParam("userId") Long userId);
 }

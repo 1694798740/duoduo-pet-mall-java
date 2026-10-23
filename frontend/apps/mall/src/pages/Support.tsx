@@ -64,6 +64,7 @@ export const SupportPage: React.FC = () => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const currentProductId = search.get('productId');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const activeItemRef = useRef<HTMLButtonElement | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -93,18 +94,24 @@ export const SupportPage: React.FC = () => {
     }
   }, []);
 
-  // 首次进入：拉会话列表 + 定位当前会话
+  // 首次进入 / 切换目标店铺：拉会话列表 + 精确定位到该店铺的会话
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
       await loadSessions();
       if (!alive) return;
-      // 从商品页进来时直接定位到该店铺（这是明确意图）；否则不自动选，
-      // 避免"没点开就被标已读"。
+      // 从商品页/订单页进来时直接定位（这是明确意图）；否则不自动选，
+      // 避免「没点开就被标已读」。
       if (sellerIdParam) {
         setActiveSellerId(sellerIdParam);
-        await loadThread(sellerIdParam);
+        const data = await loadThread(sellerIdParam);
+        if (!alive) return;
+        // sellerId=0 是自营口径，服务端把它落到官方客服账号：用返回的真实
+        // sellerId 回填，左栏才能高亮到对应会话（否则 active 永远匹配不上）。
+        if (data?.sellerId) setActiveSellerId(data.sellerId);
+        // 首次咨询时会话是这次调用才创建的，补拉一次列表让它出现在左栏
+        await loadSessions();
       }
       if (alive) setLoading(false);
     })();
@@ -112,7 +119,12 @@ export const SupportPage: React.FC = () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sellerIdParam]);
+
+  // 定位到的会话若在左栏可视区外，滚动到可见（block: nearest 不会整页跳动）
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeSellerId, sessions.length]);
 
   // 轮询：客服回复不像私信那么即时，5 秒足够，也避免把轮询变成压力
   useEffect(() => {
@@ -129,10 +141,12 @@ export const SupportPage: React.FC = () => {
 
   const switchTo = async (sellerId: string) => {
     setActiveSellerId(sellerId);
+    setThread(null);
     await loadThread(sellerId);
   };
 
   const sendMedia = async (payload: MediaPayload, kind: 'IMAGE' | 'VIDEO') => {
+    if (!activeSellerId) return;
     try {
       await supportApi.send({
         sellerId: activeSellerId,
@@ -153,6 +167,7 @@ export const SupportPage: React.FC = () => {
   /** 发送商品卡：从「当前浏览 / 购物车 / 收藏夹 / 已购买」四类来源里选 */
   const sendProduct = async (product: PickerProduct) => {
     setPickerOpen(false);
+    if (!activeSellerId) return;
     try {
       await supportApi.send({
         sellerId: activeSellerId,
@@ -168,6 +183,7 @@ export const SupportPage: React.FC = () => {
   };
 
   const sendSticker = async (url: string) => {
+    if (!activeSellerId) return;
     try {
       await supportApi.send({ sellerId: activeSellerId, content: '', type: 'EMOJI', mediaUrl: url });
       await loadThread(activeSellerId);
@@ -180,7 +196,7 @@ export const SupportPage: React.FC = () => {
 
   const send = async () => {
     const content = draft.trim();
-    if (!content || sending) return;
+    if (!content || sending || !activeSellerId) return;
     setSending(true);
     try {
       await supportApi.send({ sellerId: activeSellerId, content });
@@ -222,6 +238,7 @@ export const SupportPage: React.FC = () => {
               return (
                 <button
                   key={s.id}
+                  ref={isActive ? activeItemRef : undefined}
                   type="button"
                   onClick={() => void switchTo(s.sellerId)}
                   className={`sup-item${isActive ? ' active' : ''}`}
@@ -262,7 +279,12 @@ export const SupportPage: React.FC = () => {
           </header>
 
           <div className="sup-body">
-            {!thread || thread.items.length === 0 ? (
+            {!activeSellerId ? (
+              <Empty
+                title="请选择一个会话"
+                desc="从左侧选一家店铺的客服，或从商品 / 订单页点「问客服」直接进入"
+              />
+            ) : !thread || thread.items.length === 0 ? (
               <Empty title="还没有消息，说点什么吧" />
             ) : (
               thread.items.map((m, idx) => {
@@ -283,6 +305,11 @@ export const SupportPage: React.FC = () => {
           </div>
 
           <footer className="sup-foot">
+            {!activeSellerId ? (
+              <p className="small muted" style={{ margin: 0 }}>
+                选择一个会话后才能发送消息。
+              </p>
+            ) : (
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -315,7 +342,8 @@ export const SupportPage: React.FC = () => {
                 {sending ? '发送中…' : '发送'}
               </button>
             </div>
-            {active?.status === 'CLOSED' && (
+            )}
+            {activeSellerId && active?.status === 'CLOSED' && (
               <p className="small muted" style={{ marginTop: 8 }}>
                 该会话已被商家关闭，可重新发起咨询。
               </p>
@@ -370,20 +398,12 @@ function renderContent(message: SupportMessageView) {
 
 const Bubble: React.FC<{
   message: SupportMessageView;
-  /** 我发出、对方还没读的消息：气泡左侧挂「未读」标签（琥珀色，非红） */
+  /** 我发出、对方还没读的消息：时间行右侧显示琥珀色「未读」，与「已读」同位置 */
   unreadTag?: boolean;
   receipt: string | null;
 }> = ({ message, unreadTag, receipt }) => (
   <div className={`sup-row${message.mine ? ' mine' : ''}`}>
     <div className="sup-col">
-      {unreadTag && (
-        <span
-          className="tag tag-warn"
-          style={{ fontSize: 11, alignSelf: 'flex-end', marginBottom: 2 }}
-        >
-          未读
-        </span>
-      )}
       {renderContent(message)}
       {message.card && (
         <a href={`/product/${message.card.productId}`} className="card sup-card">
@@ -402,7 +422,11 @@ const Bubble: React.FC<{
       )}
       <div className="sup-time">
         {timeText(message.createdAt)}
-        {receipt ? ` · ${receipt}` : ''}
+        {unreadTag ? (
+          <span className="sup-unread"> · 未读</span>
+        ) : receipt ? (
+          ` · ${receipt}`
+        ) : null}
       </div>
     </div>
   </div>

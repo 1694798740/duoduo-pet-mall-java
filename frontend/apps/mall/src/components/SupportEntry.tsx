@@ -22,8 +22,9 @@ export const SupportEntry: React.FC<{ small?: boolean; sellerId?: string; produc
 
   const open = () => {
     const query = new URLSearchParams();
-    // sellerId=0（自营口径）不是店铺：不带参，由服务端落到自营客服
-    if (sellerId && sellerId !== '0') query.set('sellerId', sellerId);
+    // sellerId=0 是自营口径（不是店铺 id）：照样带上，服务端会把它落到官方客服。
+    // 只有「完全没传」才走列表页 —— 传 0 的语义是「我知道要找自营客服」。
+    if (sellerId) query.set('sellerId', sellerId);
     if (productId) query.set('productId', productId);
     const suffix = query.toString();
     navigate(suffix ? `/support?${suffix}` : '/support');

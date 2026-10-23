@@ -3189,7 +3189,10 @@ button.tag:active:not(:disabled),
   border-bottom: 1px solid var(--border);
 }
 .sup-body {
-  max-height: 52vh;
+  /* 2026-10-23：52vh 在 1080p 下只有 ~500px，表情弹层一开就被裁；
+     给一个更高的可视区（仍保留上限，长会话内部滚动） */
+  height: clamp(320px, 60vh, 620px);
+  max-height: 60vh;
   overflow-y: auto;
   padding: 16px;
 }
@@ -3228,6 +3231,23 @@ button.tag:active:not(:disabled),
 }
 .sup-row.mine .sup-time {
   text-align: right;
+}
+/* 逐条「未读」：纯文字，与「已读」同一行同一位置（右下角），仅颜色区分。
+   2026-10-23 之前用 tag 容器挂在气泡上方，视觉上像一条独立系统提示，已废弃。 */
+.sup-unread {
+  color: var(--warn);
+}
+/* 订单卡头部：店铺名是跳转入口，› 只作视觉引导（读屏不重复播报） */
+.sup-store-link {
+  color: var(--brand-strong);
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.sup-store-link:hover {
+  text-decoration: underline;
 }
 .sup-card {
   display: flex;

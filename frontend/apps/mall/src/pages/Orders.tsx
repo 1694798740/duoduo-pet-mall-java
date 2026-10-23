@@ -86,7 +86,7 @@ const OrderActions: React.FC<{
       </button>
     ) : null}
     {/* 客服入口放在「取消订单」之后、「售后/评价」之前：同一条问题处理动线 */}
-    <SupportEntry small />
+    <SupportEntry small sellerId={order.sellerId != null ? String(order.sellerId) : undefined} />
     {order.status === 'SHIPPED' || order.status === 'COMPLETED' ? (
       <Link className="btn btn-accent-outline btn-sm" to={`/after-sales/new?orderNo=${order.orderNo}`}>
         申请售后
@@ -315,20 +315,17 @@ export const OrdersPage: React.FC = () => {
               <div className="card card-pad" key={order.orderNo}>
                 <div className="row-between row-wrap">
                   <div className="row row-wrap">
-                    <strong className="small">订单号 {order.orderNo}</strong>
-                    {/* 店铺名 + 跳转（2026-10-22）：自营 sellerId=0 → /store/0 自营货架；
-                        第三方有店铺名才给链接（取名失败/夹具店铺不可跳 404 页，降级为纯文本） */}
+                    {/* 店铺名前置 + ›（2026-10-23）：卡片上不再显示订单号（订单号只在详情页），
+                        店铺名是卡片头部的第一信息，箭头明确「可点进店」。
+                        自营 sellerId=0 → /store/0 自营货架；第三方有店铺名才给链接
+                        （取名失败/夹具店铺不可跳 404 页，降级为纯文本） */}
                     {String(order.sellerId) === '0' ? (
-                      <Link to="/store/0" className="small" style={{ color: 'var(--brand-strong)' }}>
-                        {order.storeName || '多多自营'}
+                      <Link to="/store/0" className="small sup-store-link">
+                        {order.storeName || '多多自营'} <span aria-hidden>›</span>
                       </Link>
                     ) : order.storeName ? (
-                      <Link
-                        to={`/store/${order.sellerId}`}
-                        className="small"
-                        style={{ color: 'var(--brand-strong)' }}
-                      >
-                        {order.storeName}
+                      <Link to={`/store/${order.sellerId}`} className="small sup-store-link">
+                        {order.storeName} <span aria-hidden>›</span>
                       </Link>
                     ) : null}
                     <span className="tag">{order.statusLabel}</span>
