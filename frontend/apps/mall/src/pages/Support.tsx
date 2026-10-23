@@ -191,11 +191,38 @@ export const SupportPage: React.FC = () => {
     await loadThread(sellerId);
   };
 
-  const sendMedia = async (payload: MediaPayload, kind: 'IMAGE' | 'VIDEO') => {
+  /**
+   * 发送的**唯一成功出口**（2026-10-23 修复）。
+   *
+   * <p>为什么必须收敛到一个函数：文字 / 图片视频 / 表情包 / 商品卡是四条不同的调用路径，
+   * 而「发送成功 = 会话已被服务端重开」这件事对四者完全相同。此前把
+   * `setEndedSessionId(null)` 只写在文字那条分支里，于是非文字消息发出去后
+   * 底部仍挂着「当前会话已结束」、按钮也不回来 —— 典型的「状态清理只做了 1/N 条分支」。
+   *
+   * <p>现在四条路径都只调这里：新增消息类型时**不可能**忘记重置会话状态，
+   * 因为成功点只有一个。
+   */
+  const deliver = async (payload: {
+    content: string;
+    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI';
+    productId?: string;
+    mediaUrl?: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+  }) => {
     if (!activeSellerId) return;
+    await supportApi.send({ sellerId: activeSellerId, ...payload });
+    // 任意类型发送成功 → 服务端已把 CLOSED 置回 OPEN：撤下结束提示、恢复按钮
+    setEndedSessionId(null);
+    await loadThread(activeSellerId);
+    void loadSessions();
+  };
+
+  const sendMedia = async (payload: MediaPayload, kind: 'IMAGE' | 'VIDEO') => {
     try {
-      await supportApi.send({
-        sellerId: activeSellerId,
+      await deliver({
         content: '',
         type: kind,
         mediaUrl: payload.mediaUrl,
@@ -204,8 +231,6 @@ export const SupportPage: React.FC = () => {
         height: payload.height,
         durationMs: payload.durationMs,
       });
-      await loadThread(activeSellerId);
-      void loadSessions();
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
     }
@@ -214,27 +239,16 @@ export const SupportPage: React.FC = () => {
   /** 发送商品卡：从「当前浏览 / 购物车 / 收藏夹 / 已购买」四类来源里选 */
   const sendProduct = async (product: PickerProduct) => {
     setPickerOpen(false);
-    if (!activeSellerId) return;
     try {
-      await supportApi.send({
-        sellerId: activeSellerId,
-        content: '',
-        type: 'PRODUCT',
-        productId: product.id,
-      });
-      await loadThread(activeSellerId);
-      void loadSessions();
+      await deliver({ content: '', type: 'PRODUCT', productId: product.id });
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
     }
   };
 
   const sendSticker = async (url: string) => {
-    if (!activeSellerId) return;
     try {
-      await supportApi.send({ sellerId: activeSellerId, content: '', type: 'EMOJI', mediaUrl: url });
-      await loadThread(activeSellerId);
-      void loadSessions();
+      await deliver({ content: '', type: 'EMOJI', mediaUrl: url });
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
     }
@@ -246,12 +260,8 @@ export const SupportPage: React.FC = () => {
     if (!content || sending || !activeSellerId) return;
     setSending(true);
     try {
-      await supportApi.send({ sellerId: activeSellerId, content });
+      await deliver({ content });
       setDraft('');
-      // 再次发消息 = 会话重开：按钮恢复可点（服务端在发送时已把状态置回 OPEN）
-      setEndedSessionId(null);
-      await loadThread(activeSellerId);
-      void loadSessions();
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
     } finally {

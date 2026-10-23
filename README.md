@@ -4,6 +4,15 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-23（七十）· 修复：非文字消息发送后不恢复「结束咨询」**
+
+- 根因：`setEndedSessionId(null)` 只写在文字发送分支；图片 / 视频 / 表情包 / 商品卡三条路径各调各的
+  `supportApi.send`，漏了状态重置。
+- 修法：四条路径收敛到唯一成功出口 `deliver(payload)`（发送成功 → 撤下结束提示 → 刷新），
+  新增消息类型无法再漏。
+- 验证：新增 8 条断言（贴纸 / 图片各走「结束→发送→提示消失/按钮恢复/服务端 OPEN」）；
+  反向验证临时去掉重置会变红，恢复后 **39/0**。
+
 **2026-10-23（六十九）· 客服二期跟进：发送后定位 / 视频控制条悬浮磨砂 / 结束咨询交互**
 
 - **发送后立即定位**：分页窗口固定 30 条，长会话里再发一条**数组长度不变**（挤掉最老一条），
@@ -2275,6 +2284,11 @@ Feign `POST /api/products/internal/ratings/recompute`（`X-Internal-Token` HMAC 
 - **踩坑记录**：`docker compose up -d --force-recreate` **不会重建镜像**，
   `image:` + `build.args JAR_FILE` 的组合必须带 `--build`，否则容器里跑的还是旧 jar
   （表现为「代码改了、测试没变」）。核对方式：解包 `/app/app.jar` 里的 `BOOT-INF/classes` 看字段名。
+
+### 2026-10-23（七十）· 修复：非文字消息发送后不恢复「结束咨询」
+
+- 四条发送路径收敛到 `deliver()`：成功即 `setEndedSessionId(null)` + 刷新（此前只在文字分支清理）。
+- 验证加 8 条（贴纸/图片），反向验证会红 → 恢复后 39/0。
 
 ### 2026-10-23（六十九）· 客服二期跟进：发送后定位 / 视频控制条悬浮 / 结束咨询交互
 

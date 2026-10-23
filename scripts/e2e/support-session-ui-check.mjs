@@ -78,6 +78,17 @@ if (!fs.existsSync(tmpVideo) || fs.statSync(tmpVideo).size < 100_000) {
   if (!res.ok) throw new Error('测试视频下载失败 ' + res.status);
   fs.writeFileSync(tmpVideo, Buffer.from(await res.arrayBuffer()));
 }
+// 图片用例：1x1 PNG（真图头，上传接口会校验 MIME 与扩展名）
+const tmpPng = path.join(os.tmpdir(), 'duoduo-e2e-image.png');
+if (!fs.existsSync(tmpPng)) {
+  fs.writeFileSync(
+    tmpPng,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+}
 
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
 
@@ -267,6 +278,45 @@ try {
     await page.getByRole('button', { name: '结束咨询' }).count());
   check('发送后系统小字撤下', (await page.locator('.sup-system').count()) === 0,
     await page.locator('.sup-system').count());
+
+  // ── ⑤b 非文字消息同样要重开会话 ─────────────────────
+  // 本轮 bug：ended 状态只在文字分支里清，图片/表情包/商品卡发出去后按钮不回来。
+  step('结束后发非文字消息（贴纸 / 图片）：同样恢复按钮');
+  const openMenu = () => page.locator('button[title="发送图片 / 视频 / 表情 / 商品"]').click();
+  const endBtnAgain = () => page.getByRole('button', { name: '结束咨询' });
+
+  // 贴纸（EMOJI + mediaUrl）
+  await endBtnAgain().click();
+  await page.waitForTimeout(700);
+  check('再次结束后小字出现', (await page.locator('.sup-system').count()) === 1);
+  await openMenu();
+  await page.getByRole('button', { name: /表情/ }).click();
+  await page.locator('[data-testid="sticker-grid"] button').first().click();
+  await page.waitForFunction(() => document.querySelectorAll('.sup-system').length === 0, { timeout: 15000 });
+  check('发贴纸后结束提示消失', (await page.locator('.sup-system').count()) === 0);
+  check('发贴纸后「结束咨询」按钮恢复', (await endBtnAgain().count()) === 1,
+    await endBtnAgain().count());
+  const afterSticker = await apiCall('GET', `/api/seller/support/sessions/${sid}/messages?page=1&pageSize=5`, {
+    token: csTok,
+  });
+  check('发贴纸后服务端会话已重开', (afterSticker.body?.data?.status ?? null) === 'OPEN',
+    afterSticker.body?.data?.status);
+
+  // 图片（IMAGE + 上传）
+  await endBtnAgain().click();
+  await page.waitForTimeout(700);
+  check('再次结束后小字出现（图片用例）', (await page.locator('.sup-system').count()) === 1);
+  await openMenu();
+  await page.setInputFiles('input[type="file"][accept*="image"]', tmpPng);
+  await page.waitForFunction(() => document.querySelectorAll('.sup-system').length === 0, { timeout: 30000 });
+  check('发图片后结束提示消失', (await page.locator('.sup-system').count()) === 0);
+  check('发图片后「结束咨询」按钮恢复', (await endBtnAgain().count()) === 1,
+    await endBtnAgain().count());
+  const afterImage = await apiCall('GET', `/api/seller/support/sessions/${sid}/messages?page=1&pageSize=5`, {
+    token: csTok,
+  });
+  check('发图片后服务端会话已重开', (afterImage.body?.data?.status ?? null) === 'OPEN',
+    afterImage.body?.data?.status);
 
   // ── ④ 商家端筛选 ─────────────────────────────────
   step('商家工作台：四档筛选 + 无关闭按钮');
