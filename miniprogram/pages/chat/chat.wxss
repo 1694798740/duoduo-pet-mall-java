@@ -228,3 +228,11 @@
 .msg-unread {
   color: #b26a00;
 }
+
+/* 「对方正在输入…」：输入区上方的弱提示（2026-10-23），与 Web 端 .sup-typing 同口径 */
+.chat-typing {
+  flex: none;
+  padding: 8rpx 28rpx 0;
+  font-size: 22rpx;
+  color: #9aa0b0;
+}

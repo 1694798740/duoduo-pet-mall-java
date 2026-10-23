@@ -20,6 +20,7 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 
 const PAGE_SIZE = 30;
@@ -42,6 +43,9 @@ export const ChatPage: React.FC = () => {
   const [tick, setTick] = useState(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  /** 对方正在输入（2026-10-23） */
+  const [peerTyping, setPeerTyping] = useState(false);
+  const typingTimer = useRef<number | null>(null);
 
   const ctx = useCallback(
     () => ({ productId, listingId, page, pageSize: PAGE_SIZE }),
@@ -56,6 +60,29 @@ export const ChatPage: React.FC = () => {
 
   const items = data?.items ?? [];
   const canSend = data?.canSend !== false;
+
+  /**
+   * 实时事件（2026-10-23）：私信的新消息 / 已读回执 / 正在输入。
+   * 收到信号后只做一次重拉（tick+1），渲染仍由 HTTP 那一套负责 —— 避免两套消息格式。
+   */
+  useRealtime((event) => {
+    if (event.biz !== 'DIRECT') return;
+    const same = Boolean(data?.conversationId) && event.conversationId === data?.conversationId;
+    if (event.type === 'MESSAGE' && same) {
+      setPeerTyping(false);
+      setTick((v) => v + 1);
+      return;
+    }
+    if (event.type === 'READ' && same) {
+      setTick((v) => v + 1);
+      return;
+    }
+    if (event.type === 'TYPING' && same) {
+      setPeerTyping(true);
+      if (typingTimer.current) window.clearTimeout(typingTimer.current);
+      typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
+    }
+  });
 
   // 打开会话即标记已读（幂等、尽力而为：失败不影响阅读）
   useEffect(() => {
@@ -218,6 +245,7 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
+      {peerTyping ? <div className="sup-typing">对方正在输入…</div> : null}
       {sendError ? <Alert kind="error">{sendError}</Alert> : null}
 
       <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'flex-start' }}>
@@ -236,7 +264,10 @@ export const ChatPage: React.FC = () => {
           maxLength={500}
           placeholder={canSend ? '输入消息（最多 500 字）' : '对方尚未回关，你只能发一条（若已发过则无法再发）'}
           disabled={!canSend || busy}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (data?.conversationId) realtime.typing('DIRECT', { conversationId: data.conversationId });
+          }}
         />
         <button
           className="btn btn-primary"

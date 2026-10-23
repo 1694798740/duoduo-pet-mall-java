@@ -77,6 +77,8 @@ public class MessageService {
     private final int rateLimit;
     /** 自营商品的咨询收件人（官方客服账号，R48 建号；第七十三轮起由本域配置持有） */
     private final Long officialCsUserId;
+    /** 实时推送（2026-10-23）：私信送达与已读回执 */
+    private final com.duoduo.social.realtime.RealtimePublisher realtime;
 
     public MessageService(SocialMessageMapper messageMapper,
                           FollowService followService,
@@ -85,6 +87,7 @@ public class MessageService {
                           ListingClient listingClient,
                           SnowflakeIdGenerator idGenerator,
                           NoticeService noticeService,
+                          com.duoduo.social.realtime.RealtimePublisher realtime,
                           @Value("${duoduo.social.message.max-length:1000}") int maxLength,
                           @Value("${duoduo.social.message.rate-window-seconds:60}") int rateWindowSeconds,
                           @Value("${duoduo.social.message.rate-limit:10}") int rateLimit,
@@ -96,6 +99,7 @@ public class MessageService {
         this.listingClient = listingClient;
         this.idGenerator = idGenerator;
         this.noticeService = noticeService;
+        this.realtime = realtime;
         this.maxLength = maxLength;
         this.rateWindowSeconds = rateWindowSeconds;
         this.rateLimit = rateLimit;
@@ -240,8 +244,23 @@ public class MessageService {
         //  * 为什么在 social 内部而不是让前端再调一次：收件人的提醒不该依赖发送方的网络，
         //    前端多调一次就多一个「消息发出去了、通知没写」的失败窗口。
         notifyReceiverQuietly(entity);
+        pushRealtime(entity);
 
         return toView(entity, userId, cardView(bizType, bizId, product, listing));
+    }
+
+    /**
+     * 私信实时推送（2026-10-23）：只告诉对端「这条会话有新消息」，正文由客户端回源拉取。
+     *
+     * <p>best-effort：推送失败绝不能把发送判失败（消息已落库，判失败会让用户重发 → 对方收两条）。
+     */
+    private void pushRealtime(SocialMessageEntity entity) {
+        try {
+            realtime.publish(entity.getReceiverId(), com.duoduo.social.realtime.RealtimeEvent.message(
+                    "DIRECT", null, entity.getConversationId(), entity.getSenderId(), entity.getId()));
+        } catch (Exception e) {
+            log.warn("私信实时推送失败 messageId={}（不影响发送）", entity.getId(), e);
+        }
     }
 
     /**
@@ -390,19 +409,29 @@ public class MessageService {
                 peerId,
                 peer == null || peer.nickname() == null ? "用户" + peerId : peer.nickname(),
                 peer == null ? null : peer.avatar(),
-                mutual, canSend, consulting, keyContext.productId(), keyContext.listingId());
+                mutual, canSend, consulting, keyContext.productId(), keyContext.listingId(),
+                conversationId);
     }
 
     /** 打开会话：把「对方发给我、还没读」的批量置已读（幂等）；productId/listingId 语义同上 */
     public long markRead(Long userId, Long peerId, Long productId, Long listingId) {
+        String cid = conversationId(userId, peerId, productId != null ? ConvContext.product(productId)
+                : listingId != null ? ConvContext.listing(listingId) : ConvContext.none());
         SocialMessageEntity patch = new SocialMessageEntity();
         patch.setReadAt(LocalDateTime.now(ZoneOffset.UTC));
-        return messageMapper.update(patch, new LambdaQueryWrapper<SocialMessageEntity>()
-                .eq(SocialMessageEntity::getConversationId,
-                        conversationId(userId, peerId, productId != null ? ConvContext.product(productId)
-                                : listingId != null ? ConvContext.listing(listingId) : ConvContext.none()))
+        long n = messageMapper.update(patch, new LambdaQueryWrapper<SocialMessageEntity>()
+                .eq(SocialMessageEntity::getConversationId, cid)
                 .eq(SocialMessageEntity::getReceiverId, userId)
                 .isNull(SocialMessageEntity::getReadAt));
+        // 已读回执实时推给对方：他发出的最后一条立刻变「已读」
+        try {
+            long cursor = messageMapper.maxReadId(cid, userId);
+            realtime.publish(peerId, com.duoduo.social.realtime.RealtimeEvent.read(
+                    "DIRECT", null, cid, userId, cursor));
+        } catch (Exception e) {
+            log.warn("私信已读回执推送失败 conversationId={}（不影响已读）", cid, e);
+        }
+        return n;
     }
 
     /**

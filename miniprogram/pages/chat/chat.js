@@ -16,6 +16,7 @@
 const api = require('../../utils/api');
 const media = require('../../utils/media');
 const images = require('../../utils/images');
+const rt = require('../../utils/realtime');
 const { EMOJIS, STICKERS } = require('../../utils/emoji');
 const { getNavMetrics } = require('../../utils/nav');
 
@@ -43,6 +44,10 @@ Page({
     emojiTab: 'emoji',
     emojis: EMOJIS,
     stickers: STICKERS,
+    /** 会话键（2026-10-23）：实时事件按它匹配，来自服务端下发 */
+    conversationId: '',
+    /** 对方正在输入 */
+    typingVisible: false,
   },
 
   onLoad(query) {
@@ -62,14 +67,38 @@ Page({
 
   onShow() {
     this.startPolling();
+    rt.open((e) => this.onRealtime(e));
   },
 
   onHide() {
     this.stopPolling();
+    rt.close();
   },
 
   onUnload() {
     this.stopPolling();
+    rt.close();
+    if (this._typingTimer) clearTimeout(this._typingTimer);
+  },
+
+  /** 实时事件：私信的新消息 / 已读回执 / 正在输入（2026-10-23） */
+  onRealtime(event) {
+    if (!event || event.biz !== 'DIRECT') return;
+    const same = this.data.conversationId && event.conversationId === this.data.conversationId;
+    if (event.type === 'MESSAGE' && same) {
+      this.setData({ typingVisible: false });
+      this.fetchThread(false);
+      return;
+    }
+    if (event.type === 'READ' && same) {
+      this.fetchThread(false);
+      return;
+    }
+    if (event.type === 'TYPING' && same) {
+      this.setData({ typingVisible: true });
+      if (this._typingTimer) clearTimeout(this._typingTimer);
+      this._typingTimer = setTimeout(() => this.setData({ typingVisible: false }), 3000);
+    }
   },
 
   // ---------------- 轮询 ----------------
@@ -129,6 +158,7 @@ Page({
           loading: false,
           page: data,
           items,
+          conversationId: (data && data.conversationId) || this.data.conversationId,
           canSend: !!data.canSend,
           // canSend=false 只可能是「非互关 + 非咨询 + 我已发过一条」的组合
           hint: data.canSend ? '' : '已发送过 1 条消息，等 TA 回复或互相关注后继续聊',
@@ -177,6 +207,9 @@ Page({
 
   onInput(e) {
     this.setData({ input: e.detail.value });
+    if (this.data.conversationId) {
+      rt.typing('DIRECT', { conversationId: this.data.conversationId });
+    }
   },
 
   /** 表情面板：与 Web/客服页同一清单；点表情拼进输入框，点贴纸直接发 */

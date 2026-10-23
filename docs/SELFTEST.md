@@ -1,6 +1,16 @@
 # 多多宠物商店 · 完整自测手册
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
+
+## 实时消息冒烟（`scripts/realtime-smoke.mjs`，17 项，第八十九轮）
+
+```bash
+NO_PROXY="*" node scripts/realtime-smoke.mjs
+```
+
+前置：容器在跑（网关 :8080）。覆盖：票据建连/无效票据网关 401、消息推送 <1s（实测 32ms）、
+已读回执游标、双向正在输入、越权 TYPING 不转发、520 并发连接（≥500、10s 内建齐、
+服务端在线数一致、高并发下推送仍 <1s）。2026-10-23 实测 **17/0**。
 > 目标读者：需要在自己机器上**从头到尾把全站功能完整验一遍**的人
 > 配套：命令速查见 `docs/PLAN.md` §7；架构与不变式见 `docs/agent/03`
 

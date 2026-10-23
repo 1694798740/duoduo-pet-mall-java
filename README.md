@@ -4,6 +4,18 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-23（七十一）· 聊天实时化：WebSocket 推送 / 已读回执 / 正在输入（500+ 并发）**
+
+- 客服 + 私信聊天从轮询升级为**原生 WebSocket 实时推送**：`duoduo-social/.../realtime/`
+  （一次性 60s 票据鉴权、网关升级前 Redis 预检防假成功、纯信号推送——WS 只传信号，
+  前端收信号后走既有 HTTP 拉取，单渲染路径；Redis Pub/Sub 支持多实例扇出）。
+- 双向「正在输入」（服务端 700ms 节流 + 前端 3s 消失）、双向已读回执（`maxReadId` 游标）、
+  新消息零感知推送；web 三页 + 小程序两页全部接入（引用计数共享连接、指数退避重连）。
+- 迭代总方案（实时 + 语音 + 撤回 + 引用）见 [`docs/im-realtime-iteration-plan.md`](./docs/im-realtime-iteration-plan.md)。
+- 验证：新增 `scripts/realtime-smoke.mjs` **17/0**（含 520 并发连接 2.3s 建齐、推送 32ms、
+  越权不转发、无效票据网关拒绝）；回归 session-ui 39/0、ux 53/0、seller 40/0、
+  read 24/0、notice 50/0。
+
 **2026-10-23（七十）· 修复：非文字消息发送后不恢复「结束咨询」**
 
 - 根因：`setEndedSessionId(null)` 只写在文字发送分支；图片 / 视频 / 表情包 / 商品卡三条路径各调各的

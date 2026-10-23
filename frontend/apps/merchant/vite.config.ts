@@ -42,6 +42,12 @@ export default defineConfig({
     // 5190：与商城 5173、后台 5180 都错开
     port: 5190,
     proxy: {
+      // 实时通道（2026-10-23）：WebSocket 必须开 ws:true，否则 dev 下握手被当普通 HTTP → 1006
+      '/ws': {
+        target: devTarget,
+        changeOrigin: true,
+        ws: true,
+      },
       // E8 · 入口标识：开发态没有站点 nginx，由代理替它注入（与 nginx-merchant.conf 同一口径）
       '/api': {
         target: devTarget,

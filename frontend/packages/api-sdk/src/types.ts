@@ -1618,6 +1618,8 @@ export interface MessagePageData {
   peerAvatar: string | null;
   mutual: boolean;
   canSend: boolean;
+  /** 会话键（2026-10-23）：实时通道的「正在输入」原样回传，服务端据此定对端 */
+  conversationId?: string;
 }
 
 /** 关注/粉丝条目 */

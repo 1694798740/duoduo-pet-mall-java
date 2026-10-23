@@ -101,6 +101,13 @@ spring:
           uri: lb://duoduo-social
           predicates:
             - Path=/api/support/**,/api/seller/support/**
+        # 实时通道（2026-10-23）：WebSocket 升级走 lb:ws（Spring Cloud Gateway 会自动处理
+        # Upgrade 头）。鉴权不在网关做 —— 浏览器建 WS 带不了 Authorization 头，
+        # 改由社交域校验一次性票据（POST /api/socials/realtime/ticket 换取）。
+        - id: duoduo-social-ws
+          uri: lb:ws://duoduo-social
+          predicates:
+            - Path=/ws/**
         - id: duoduo-trade
           uri: lb://duoduo-trade
           predicates:

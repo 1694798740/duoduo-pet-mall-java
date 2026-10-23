@@ -435,6 +435,9 @@ services:
       NACOS_PASSWORD: nacos
       # 服务间调用共享密钥（交易域 / 履约域推送订单、售后、物流通知）
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
+      # 实时消息（2026-10-23）：WebSocket 事件的跨实例扇出（Pub/Sub），不是消息存储
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
       # 私信频控：同一会话窗口期内最多发送条数（防骚扰）
       SOCIAL_MSG_RATE_WINDOW: '60'
       SOCIAL_MSG_RATE_LIMIT: '10'

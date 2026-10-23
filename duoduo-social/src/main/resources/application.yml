@@ -15,6 +15,16 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+  # 实时消息（2026-10-23）：Redis 只用于 Pub/Sub 扇出（多实例时把事件广播到各实例），
+  # 不是消息存储 —— 消息本体始终在 MySQL，客户端收到信号后回源拉取。
+  # 超时必须给短：本机零依赖开发没起 Redis 时，不能让建连把请求链路拖住。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
+      connect-timeout: 500ms
+
   datasource:
     url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_social?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${DB_USERNAME:duoduo}

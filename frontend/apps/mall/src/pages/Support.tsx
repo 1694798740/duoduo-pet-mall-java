@@ -39,6 +39,7 @@ import { ProductPicker } from '@duoduo/shared/components/product-picker';
 import { OrderCard, parseOrderMeta } from '@duoduo/shared/components/order-card';
 import type { PickerProduct } from '@duoduo/api-sdk/endpoints';
 import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 
 const POLL_MS = 5000;
@@ -69,6 +70,9 @@ export const SupportPage: React.FC = () => {
    * 这也符合"结束"的语义 —— 它只是给客服侧的收尾信号，用户随时可以再发。
    */
   const [endedSessionId, setEndedSessionId] = useState<string | null>(null);
+  /** 对方正在输入（2026-10-23）：3 秒没有新的 TYPING 事件自动消失 */
+  const [peerTyping, setPeerTyping] = useState(false);
+  const typingTimer = useRef<number | null>(null);
   const currentProductId = search.get('productId');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const activeItemRef = useRef<HTMLButtonElement | null>(null);
@@ -135,6 +139,33 @@ export const SupportPage: React.FC = () => {
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeSellerId, sessions.length]);
+
+  /**
+   * 实时事件（2026-10-23）：WebSocket 只推信号，渲染仍走 HTTP。
+   *  · MESSAGE：当前会话 → 立即重拉；其它会话 → 只刷列表（未读角标）
+   *  · READ：对端已读 → 重拉（把我方消息的「未读」标记与已读回执一起刷新）
+   *  · TYPING：显示「对方正在输入…」，3 秒无新事件自动消失
+   * 轮询保留为兜底（WS 断开时仍能靠 5 秒轮询收到消息）。
+   */
+  useRealtime((event) => {
+    if (event.biz !== 'SUPPORT') return;
+    const same = Boolean(thread?.sessionId) && String(event.sessionId) === String(thread?.sessionId);
+    if (event.type === 'MESSAGE') {
+      if (same) void loadThread(activeSellerId);
+      void loadSessions();
+      if (same) setPeerTyping(false);
+      return;
+    }
+    if (event.type === 'READ' && same) {
+      void loadThread(activeSellerId);
+      return;
+    }
+    if (event.type === 'TYPING' && same) {
+      setPeerTyping(true);
+      if (typingTimer.current) window.clearTimeout(typingTimer.current);
+      typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
+    }
+  });
 
   // 轮询：客服回复不像私信那么即时，5 秒足够，也避免把轮询变成压力
   useEffect(() => {
@@ -402,6 +433,8 @@ export const SupportPage: React.FC = () => {
                 选择一个会话后才能发送消息。
               </p>
             ) : (
+            <>
+            {peerTyping ? <div className="sup-typing">对方正在输入…</div> : null}
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -416,7 +449,10 @@ export const SupportPage: React.FC = () => {
                 style={{ flex: 1 }}
                 placeholder="描述你的问题…"
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  if (thread?.sessionId) realtime.typing('SUPPORT', { sessionId: thread.sessionId });
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -434,6 +470,7 @@ export const SupportPage: React.FC = () => {
                 {sending ? '发送中…' : '发送'}
               </button>
             </div>
+            </>
             )}
           </footer>
         </section>

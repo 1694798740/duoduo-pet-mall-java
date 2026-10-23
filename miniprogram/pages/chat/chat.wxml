@@ -77,6 +77,8 @@
     <view wx:if="{{hint}}" class="chat-hint">{{hint}}</view>
 
     <!-- 输入条 -->
+    <view wx:if="{{typingVisible}}" class="chat-typing">对方正在输入…</view>
+
     <view class="chat-input-bar">
       <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>

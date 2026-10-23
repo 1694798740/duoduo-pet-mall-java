@@ -12,6 +12,7 @@
 const api = require('../../utils/api');
 const media = require('../../utils/media');
 const images = require('../../utils/images');
+const rt = require('../../utils/realtime');
 const { EMOJIS, STICKERS } = require('../../utils/emoji');
 const { getNavMetrics } = require('../../utils/nav');
 
@@ -40,6 +41,8 @@ Page({
     stickers: STICKERS,
     /** 本次会话已结束：按钮隐藏，仅在流里留一行小字；再次发送后恢复 */
     ended: false,
+    /** 对方正在输入（2026-10-23） */
+    typingVisible: false,
   },
 
   onLoad(query) {
@@ -53,14 +56,44 @@ Page({
 
   onShow() {
     this.startPolling();
+    // 实时通道：进前台建连（退后台会被微信静默掐断，必须显式重连）
+    rt.open((e) => this.onRealtime(e));
   },
 
   onHide() {
     this.stopPolling();
+    rt.close();
   },
 
   onUnload() {
     this.stopPolling();
+    rt.close();
+    if (this._typingTimer) clearTimeout(this._typingTimer);
+  },
+
+  /**
+   * 实时事件（2026-10-23）：新消息 / 已读回执 / 正在输入。
+   * 轮询保留为断线兜底；收到信号后仍走 HTTP 重拉，避免两套渲染口径。
+   */
+  onRealtime(event) {
+    if (!event || event.biz !== 'SUPPORT') return;
+    const same = this.data.sessionId && String(event.sessionId) === String(this.data.sessionId);
+    if (event.type === 'MESSAGE') {
+      if (same) {
+        this.setData({ typingVisible: false });
+        this.fetchThread(false);
+      }
+      return;
+    }
+    if (event.type === 'READ' && same) {
+      this.fetchThread(false);
+      return;
+    }
+    if (event.type === 'TYPING' && same) {
+      this.setData({ typingVisible: true });
+      if (this._typingTimer) clearTimeout(this._typingTimer);
+      this._typingTimer = setTimeout(() => this.setData({ typingVisible: false }), 3000);
+    }
   },
 
   startPolling() {
@@ -172,6 +205,8 @@ Page({
 
   onInput(e) {
     this.setData({ input: e.detail.value });
+    // 输入即上报「正在输入」（客户端 2 秒节流，服务端再限一次）
+    if (this.data.sessionId) rt.typing('SUPPORT', { sessionId: this.data.sessionId });
   },
 
   /** 表情面板：与 Web 同一个清单（56 表情 + 12 贴纸），点表情拼进输入框，点贴纸直接发 */

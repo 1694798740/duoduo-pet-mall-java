@@ -82,6 +82,7 @@ public class SupportService {
     private final SnowflakeIdGenerator idGenerator;
     private final NoticeService noticeService;
     private final OrderClient orderClient;
+    private final com.duoduo.social.realtime.RealtimePublisher realtime;
     private final Long officialCsUserId;
 
     public SupportService(SupportSessionMapper sessionMapper,
@@ -91,6 +92,7 @@ public class SupportService {
                           SnowflakeIdGenerator idGenerator,
                           NoticeService noticeService,
                           OrderClient orderClient,
+                          com.duoduo.social.realtime.RealtimePublisher realtime,
                           @Value("${duoduo.social.official-cs-user-id:710000000000000001}")
                           Long officialCsUserId) {
         this.sessionMapper = sessionMapper;
@@ -100,6 +102,7 @@ public class SupportService {
         this.idGenerator = idGenerator;
         this.noticeService = noticeService;
         this.orderClient = orderClient;
+        this.realtime = realtime;
         this.officialCsUserId = officialCsUserId;
     }
 
@@ -226,6 +229,8 @@ public class SupportService {
                 request.mediaUrl(), request.thumbUrl(),
                 request.width(), request.height(), request.durationMs(), orderSnapshot);
         touchSession(session, previewOf(type, text), true);
+        // 实时推送：只通知**对端**有新消息，正文由客户端回源拉取（见 RealtimeEvent 注释）
+        pushRealtime(target, "SUPPORT", session.getId(), null, userId, entity.getId());
         return toMessageView(entity, userId, product);
     }
 
@@ -250,6 +255,8 @@ public class SupportService {
         } catch (Exception e) {
             log.warn("同步客服通知已读失败 sessionId={}", sessionId, e);
         }
+        // 已读回执实时推给客服（对方聊天框里的「未读」立刻变「已读」）
+        pushRealtimeRead(session.getSellerId(), sessionId, userId, cursor);
         return n;
     }
 
@@ -390,6 +397,7 @@ public class SupportService {
                 request.mediaUrl(), request.thumbUrl(),
                 request.width(), request.height(), request.durationMs(), null);
         touchSession(session, previewOf(type, text), false);
+        pushRealtime(session.getUserId(), "SUPPORT", sessionId, null, sellerId, entity.getId());
         // 通知中心可见性：客服会话独立成表后，用户在通知中心看不到任何痕迹。
         // best-effort：通知写失败不能把「已发出的回复」判成失败（否则用户会重发）。
         try {
@@ -411,6 +419,8 @@ public class SupportService {
         patch.setUnreadForSeller(0);
         patch.setUpdatedAt(now());
         sessionMapper.updateById(patch);
+        // 已读回执实时推给买家：他发出的最后一条立刻变成「已读」
+        pushRealtimeRead(session.getUserId(), sessionId, sellerId, cursor);
         return n;
     }
 
@@ -427,6 +437,32 @@ public class SupportService {
      */
 
     // ---------------- 内部 ----------------
+
+    /**
+     * 推送一条「有新消息」信号（best-effort）。
+     *
+     * <p>推送失败**绝不能**影响发消息：消息已经落库，若因 Redis/连接问题把发送判失败，
+     * 用户会重发，对方就会收到两条一样的消息。实时通道是增强，不是主链路。
+     */
+    private void pushRealtime(Long toUserId, String biz, Long sessionId, String conversationId,
+                              Long fromUserId, Long messageId) {
+        try {
+            realtime.publish(toUserId, com.duoduo.social.realtime.RealtimeEvent.message(
+                    biz, sessionId == null ? null : String.valueOf(sessionId),
+                    conversationId, fromUserId, messageId));
+        } catch (Exception e) {
+            log.warn("实时消息推送失败 sessionId={} to={}（不影响发送）", sessionId, toUserId, e);
+        }
+    }
+
+    private void pushRealtimeRead(Long toUserId, Long sessionId, Long readerId, long lastReadId) {
+        try {
+            realtime.publish(toUserId, com.duoduo.social.realtime.RealtimeEvent.read(
+                    "SUPPORT", String.valueOf(sessionId), null, readerId, lastReadId));
+        } catch (Exception e) {
+            log.warn("已读回执推送失败 sessionId={} to={}（不影响已读）", sessionId, toUserId, e);
+        }
+    }
 
     private SupportSessionEntity ensureSession(Long sellerId, Long userId) {
         SupportSessionEntity existing = sessionMapper.selectByPair(sellerId, userId);

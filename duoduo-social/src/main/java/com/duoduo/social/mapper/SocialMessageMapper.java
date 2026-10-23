@@ -104,6 +104,19 @@ public interface SocialMessageMapper extends BaseMapper<SocialMessageEntity> {
             """)
     List<String> selectAskConversations(@Param("userId") Long userId);
 
+    /**
+     * 该会话里「我作为收件人」读过（read_at 非空）的最大消息 id。
+     *
+     * <p>已读回执的判据：对端只要知道"读到了哪一条"，就能把之前的全标已读。
+     * 用 MAX(id) 而不是 COUNT，是因为消息 id 单调递增，游标语义比条数更稳
+     * （重复调用不会因为重复计数而错位）。
+     */
+    @Select("""
+            SELECT COALESCE(MAX(id), 0) FROM t_social_message
+            WHERE conversation_id = #{conversationId} AND receiver_id = #{userId} AND read_at IS NOT NULL
+            """)
+    long maxReadId(@Param("conversationId") String conversationId, @Param("userId") Long userId);
+
     /** 未读行投影（列名 conversation_id 经 map-underscore-to-camel-case 映射到 conversationId） */
     class UnreadRow {
         private String conversationId;

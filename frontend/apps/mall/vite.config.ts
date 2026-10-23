@@ -51,6 +51,12 @@ export default defineConfig({
         changeOrigin: true,
         headers: { 'X-Duoduo-Entry': 'mall' },
       },
+      // 实时通道（2026-10-23）：WebSocket 必须开 ws:true，否则 dev 下握手被当普通 HTTP → 1006
+      '/ws': {
+        target: devTarget,
+        changeOrigin: true,
+        ws: true,
+      },
       // 沙箱收银台是服务端渲染页面，二维码指向网关的 /sandbox/pay/**
       '/sandbox': {
         target: devTarget,

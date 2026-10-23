@@ -1254,6 +1254,20 @@ export interface SupportThreadView {
   pageSize: number;
 }
 
+/**
+ * 实时通道（2026-10-23）。
+ *
+ * 浏览器建 WebSocket 带不了 Authorization 头，所以先换一张 60 秒、一次性、无权限的票，
+ * 再用 `/ws/chat?ticket=…` 建连。票据泄露也只能建一条连接，且用后即焚。
+ */
+export const realtimeApi = {
+  ticket: () => api.post<{ ticket: string; expiresIn: number; path: string }>(
+    '/api/socials/realtime/ticket',
+  ),
+  /** 本实例的连接规模（运维/自检用，多实例时是单实例口径） */
+  online: () => api.get<{ connections: number; users: number }>('/api/socials/realtime/online'),
+};
+
 export const supportApi = {
   /** 取或建「我 ↔ 某接待方」的会话；sellerId 缺省 = 自营客服 */
   session: (sellerId?: string) =>

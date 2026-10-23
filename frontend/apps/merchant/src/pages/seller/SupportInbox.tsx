@@ -29,6 +29,7 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { OrderCard } from '@duoduo/shared/components/order-card';
 
 const POLL_MS = 5000;
@@ -64,6 +65,9 @@ export const SellerSupportPage: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
+  /** 买家正在输入（2026-10-23）：3 秒无新事件自动消失 */
+  const [peerTyping, setPeerTyping] = useState(false);
+  const typingTimer = useRef<number | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -121,6 +125,30 @@ export const SellerSupportPage: React.FC = () => {
     const timer = window.setInterval(() => void loadThread(activeId), POLL_MS);
     return () => window.clearInterval(timer);
   }, [activeId, loadThread]);
+
+  /**
+   * 实时事件（2026-10-23）：新消息/已读/正在输入。
+   * 当前会话 → 立即重拉；其它会话只刷列表。轮询保留为断线兜底。
+   */
+  useRealtime((event) => {
+    if (event.biz !== 'SUPPORT') return;
+    const same = Boolean(activeId) && String(event.sessionId) === String(activeId);
+    if (event.type === 'MESSAGE') {
+      if (same) void loadThread(activeId as string);
+      void loadSessions();
+      if (same) setPeerTyping(false);
+      return;
+    }
+    if (event.type === 'READ' && same) {
+      void loadThread(activeId as string);
+      return;
+    }
+    if (event.type === 'TYPING' && same) {
+      setPeerTyping(true);
+      if (typingTimer.current) window.clearTimeout(typingTimer.current);
+      typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
+    }
+  });
 
   /**
    * 打开会话先定位到最新未读（2026-10-23）。
@@ -363,6 +391,8 @@ export const SellerSupportPage: React.FC = () => {
                 选择左侧一个会话后才能回复买家。
               </p>
             ) : (
+            <>
+            {peerTyping ? <div className="sup-typing">买家正在输入…</div> : null}
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -376,7 +406,10 @@ export const SellerSupportPage: React.FC = () => {
                 style={{ flex: 1 }}
                 placeholder={thread?.status === 'CLOSED' ? '会话已关闭（买家发消息会自动重开）' : '回复买家…'}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  if (activeId) realtime.typing('SUPPORT', { sessionId: activeId });
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -394,6 +427,7 @@ export const SellerSupportPage: React.FC = () => {
                 {sending ? '发送中…' : '回复'}
               </button>
             </div>
+            </>
             )}
           </footer>
         </section>

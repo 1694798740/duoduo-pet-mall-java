@@ -1,6 +1,16 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-22 · 第八十五轮）**：**十问题批次（用户逐题反馈的 Web 端体验改造）** ——
+> **最新一轮（2026-10-23 · 第八十九轮）**：**聊天实时化（WebSocket 大迭代）** ——
+> 客服 + 私信从轮询升级原生 WS 实时推送（`duoduo-social/.../realtime/`）：60s 一次性票据鉴权
+> + 网关升级前 Redis 预检（防 101 假成功）、纯信号推送（WS 只传 MESSAGE/READ/TYPING/READY，
+> 端侧收信号走既有 HTTP 拉取，单渲染路径）、Redis Pub/Sub 多实例扇出、对端库回源防越权。
+> 双向正在输入（700ms 服务端节流）、双向已读回执（maxReadId 游标）、零感知推送；
+> web 三页（Support/SupportInbox/Chat）+ 小程序两页接入（引用计数共享连接、指数退避重连）。
+> 迭代总方案（实时+语音+撤回+引用）见 `docs/im-realtime-iteration-plan.md`。
+> 验证：`scripts/realtime-smoke.mjs` **17/0**（520 并发 2.3s 建齐、推送 32ms、越权不转发、
+> 无效票据网关拒绝）；回归 session-ui 39/0、ux 53/0、seller 40/0、read 24/0、notice 50/0。
+
+> **上轮（2026-10-22 · 第八十五轮）**：**十问题批次（用户逐题反馈的 Web 端体验改造）** ——
 > ① 自营订单咨询不再报「店铺不存在」（sellerId=0/null 统一落官方客服，ORDER 卡分支同兜底）；
 > ② 店铺页补淘宝式排序（综合/销量/价格/最新）与店内关键词搜索（`storeProducts` 增 `keyword`，本店范围 like，不进 ES）；
 > ③ 订单卡片显示店铺名并可跳店铺（trade 经 Feign `tradeStoreNameClient` 批量取店名，自营固定「多多自营」，user 域只回 APPROVED 防夹具死链）；

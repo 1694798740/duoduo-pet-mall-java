@@ -294,7 +294,15 @@ public final class SocialDtos {
             /** 商品咨询会话的上下文商品（主会话为 null，第四十九轮） */
             Long productId,
             /** 闲置咨询会话的上下文闲置（主会话为 null，第五十三轮） */
-            Long listingId
+            Long listingId,
+            /**
+             * 本次会话的会话键（2026-10-23）。
+             *
+             * <p>实时通道的「正在输入」需要告诉服务端"哪段会话"：私信键由服务端拼装
+             * （lo:hi + 上下文段），前端无从得知，所以随详情一起下发，客户端原样回传。
+             * 它不含新信息 —— 由登录态 + 服务端定人保证必然包含自己。
+             */
+            String conversationId
     ) {
     }
 

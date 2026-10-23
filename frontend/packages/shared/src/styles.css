@@ -3328,3 +3328,10 @@ button.tag:active:not(:disabled),
   color: #fff;
   background: var(--text-2);
 }
+/* 「对方正在输入…」：聊天输入区上方的弱提示（2026-10-23）。
+   不做成气泡、不加动效 —— 它每几秒出现一次，动效反而干扰阅读。 */
+.sup-typing {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 4px 2px 6px;
+}

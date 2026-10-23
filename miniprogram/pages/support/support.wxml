@@ -70,6 +70,8 @@
       <view style="height: 20rpx"></view>
     </scroll-view>
 
+    <view wx:if="{{typingVisible}}" class="chat-typing">对方正在输入…</view>
+
     <view class="chat-input-bar">
       <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>

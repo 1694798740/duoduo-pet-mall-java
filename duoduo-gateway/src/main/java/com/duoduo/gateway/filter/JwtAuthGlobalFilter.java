@@ -118,6 +118,13 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // 实时通道（2026-10-23）：/ws/** 是 WebSocket 升级请求，浏览器发不出 Authorization 头，
+        // 因此令牌校验下沉到社交域的**一次性票据**（先用带 Bearer 的 HTTP 换票，再用票建连）。
+        // 这里只负责把请求转出去，不做身份判断 —— 否则所有 WS 建连都会被 401。
+        if (path.startsWith("/ws/")) {
+            return chain.filter(exchange);
+        }
+
         // 入口标识必须在取令牌之前解析：三个站点各用一套 Cookie 名
         // （dd_at / dd_at_m / dd_at_a）。Cookie 不区分端口，共用名字会让
         // localhost:8088 与 localhost:8091 互相覆盖登录态（2026-10-21 修复）。
