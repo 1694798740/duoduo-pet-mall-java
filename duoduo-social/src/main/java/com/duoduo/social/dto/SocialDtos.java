@@ -90,7 +90,10 @@ public final class SocialDtos {
             String thumbUrl,
             Integer width,
             Integer height,
-            Integer durationMs
+            Integer durationMs,
+
+            /** 引用的消息 id（2026-10-24）：必须同会话；服务端拼摘要，不信任端侧 */
+            Long replyToId
     ) {
     }
 
@@ -243,8 +246,18 @@ public final class SocialDtos {
             String createdAt,
             boolean mine,
             boolean read,
-            CardView card
+            CardView card,
+            /** 撤回时间（2026-10-24）；null=未撤回。撤回后 content 已是占位符、媒体已清空 */
+            String recalledAt,
+            /** 引用的消息 id；null=无引用 */
+            Long replyToId,
+            /** 服务端拼装的引用摘要（replyToId 非空时恒非 null，被引用消息已撤回时 excerpt=「原消息已撤回」） */
+            QuotedView quoted
     ) {
+    }
+
+    /** 引用摘要（2026-10-24）：服务端拼装；不递归嵌套 */
+    public record QuotedView(Long id, String bizType, String excerpt) {
     }
 
     /**

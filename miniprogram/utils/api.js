@@ -683,7 +683,7 @@ const social = {
       if (extra) Object.assign(payload, extra);
       return req.post('/api/socials/messages', payload);
     },
-    send(receiverId, content, bizType, bizId, contextProductId, contextListingId) {
+    send(receiverId, content, bizType, bizId, contextProductId, contextListingId, extra) {
       const payload = { content: content || '' };
       if (receiverId) payload.receiverId = String(receiverId);
       if (bizType) payload.bizType = bizType;
@@ -692,7 +692,12 @@ const social = {
       if (contextProductId) payload.productId = String(contextProductId);
       // 闲置咨询会话上下文（第五十三轮）：TEXT 带 listingId 落回该闲置的独立会话
       if (contextListingId) payload.listingId = String(contextListingId);
+      if (extra) Object.assign(payload, extra);
       return req.post('/api/socials/messages', payload);
+    },
+    /** 撤回自己 2 分钟内发出的私信（2026-10-24，幂等） */
+    recall(messageId) {
+      return req.post('/api/socials/messages/' + String(messageId) + '/recall');
     },
     /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
     conversations(page, pageSize) {
@@ -780,11 +785,16 @@ const social = {
       if (sellerId) qs.push('sellerId=' + String(sellerId));
       return req.get('/api/support/messages?' + qs.join('&'));
     },
-    send(content, sellerId, productId) {
+    send(content, sellerId, productId, extra) {
       const payload = { content: content || '' };
       if (sellerId) payload.sellerId = String(sellerId);
       if (productId) payload.productId = String(productId);
+      if (extra) Object.assign(payload, extra);
       return req.post('/api/support/messages', payload);
+    },
+    /** 撤回自己 2 分钟内发出的消息（2026-10-24，幂等） */
+    recall(messageId) {
+      return req.post('/api/support/messages/' + String(messageId) + '/recall');
     },
     /** B 批：发送图片/视频（mediaUrl 由 api.upload 产出） */
     sendMedia(sellerId, type, mediaUrl, extra) {

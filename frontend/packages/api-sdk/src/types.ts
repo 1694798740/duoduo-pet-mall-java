@@ -1606,6 +1606,19 @@ export interface ChatMessageView {
   /** 是否我发的（展示左右分列的依据；前端不再自己比 userId） */
   mine: boolean;
   read: boolean;
+  /** 撤回时间（2026-10-24）；null=未撤回。撤回后 content 已是占位符、媒体已清空 */
+  recalledAt?: string | null;
+  /** 引用的消息 id；null=无引用 */
+  replyToId?: string | null;
+  /** 服务端拼装的引用摘要 */
+  quoted?: QuotedView | null;
+}
+
+/** 引用摘要（2026-10-24）：服务端拼装，不信任端侧；不递归嵌套 */
+export interface QuotedView {
+  id: string;
+  bizType: string | null;
+  excerpt: string;
 }
 
 export interface MessagePageData {

@@ -48,6 +48,11 @@ Page({
     conversationId: '',
     /** 对方正在输入 */
     typingVisible: false,
+    // 撤回 / 引用 / 语音（2026-10-24）
+    replyTo: null,
+    replyText: '',
+    recording: false,
+    recordingTip: '',
   },
 
   onLoad(query) {
@@ -99,6 +104,11 @@ Page({
       if (this._typingTimer) clearTimeout(this._typingTimer);
       this._typingTimer = setTimeout(() => this.setData({ typingVisible: false }), 3000);
     }
+    // 撤回信号（2026-10-24）：回源刷新，灰字替换原气泡
+    if (event.type === 'RECALL' && same) {
+      this.fetchThread(false);
+      return;
+    }
   },
 
   // ---------------- 轮询 ----------------
@@ -128,7 +138,107 @@ Page({
           : images.productImage(msg.card.id, msg.card.image)
         : '',
       cardPriceText: msg.card && msg.card.minPrice ? api.fen2yuan(msg.card.minPrice) : '',
+      recalled: Boolean(msg.recalledAt),
+      voiceSecs: msg.bizType === 'VOICE' && msg.durationMs ? Math.max(1, Math.round(msg.durationMs / 1000)) : 0,
+      quotedExcerpt: msg.quoted ? msg.quoted.excerpt : '',
+      // 自己 2 分钟内发出的消息可撤回
+      canRecall: Boolean(msg.mine && !msg.recalledAt
+        && Date.now() - new Date(msg.createdAt).getTime() < 120000),
     });
+  },
+
+  // ---------------- 撤回 / 引用 / 语音（2026-10-24） ----------------
+
+  /** 长按消息 → 引用 / 撤回 */
+  onMsgLongPress(e) {
+    const msg = (e.currentTarget.dataset.msg) || {};
+    if (msg.recalled) return;
+    const options = ['引用'];
+    if (msg.canRecall) options.push('撤回');
+    wx.showActionSheet({
+      itemList: options,
+      success: (res) => {
+        const choice = options[res.tapIndex];
+        if (choice === '引用') {
+          this.setData({
+            replyTo: { id: String(msg.id) },
+            replyText: '引用：' + (msg.quotedExcerpt || msg.content || '[媒体消息]'),
+          });
+        } else if (choice === '撤回') {
+          this.recallMessage(msg);
+        }
+      },
+    });
+  },
+
+  recallMessage(msg) {
+    api.social.message
+      .recall(msg.id)
+      .then(() => this.fetchThread(false))
+      .catch((err) => wx.showToast({ title: (err && err.message) || '撤回失败', icon: 'none' }));
+  },
+
+  cancelQuote() {
+    this.setData({ replyTo: null, replyText: '' });
+  },
+
+  /** 语音播放：点击气泡播放/暂停（同一时刻只播一条） */
+  playVoice(e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url) return;
+    if (!this._audio) this._audio = wx.createInnerAudioContext();
+    if (this._audio.src === url && !this._audio.paused) {
+      this._audio.pause();
+      return;
+    }
+    this._audio.src = url;
+    this._audio.play();
+  },
+
+  /** 按住录音；松手上传并发送（type=VOICE，时长实测回传） */
+  voiceStart() {
+    if (!this.data.canSend) {
+      wx.showToast({ title: this.data.hint || '暂时不能发送', icon: 'none' });
+      return;
+    }
+    if (!this._recorder) {
+      this._recorder = media.createVoiceRecorder({
+        onStart: () => this.setData({ recording: true, recordingTip: '录音中… 松开发送（最长 60 秒）' }),
+        onReady: (path, durationMs) => {
+          this.setData({ recording: false, recordingTip: '' });
+          wx.showLoading({ title: '发送语音…', mask: true });
+          api.upload(path)
+            .then((data) => {
+              const url = data && data.url;
+              if (!url) throw { message: '上传失败' };
+              return api.social.message.sendMedia(
+                this.data.peerId, 'VOICE', url,
+                this.data.productId || null, this.data.listingId || null,
+                { durationMs: Math.round(durationMs),
+                  replyToId: this.data.replyTo ? this.data.replyTo.id : undefined }
+              );
+            })
+            .then(() => {
+              wx.hideLoading();
+              this.setData({ replyTo: null, replyText: '' });
+              this.fetchThread(false);
+            })
+            .catch((err) => {
+              wx.hideLoading();
+              wx.showToast({ title: (err && err.message) || '语音发送失败', icon: 'none' });
+            });
+        },
+        onError: (message) => {
+          this.setData({ recording: false, recordingTip: '' });
+          wx.showToast({ title: message, icon: 'none' });
+        },
+      });
+    }
+    this._recorder.start();
+  },
+
+  voiceEnd() {
+    if (this._recorder && this.data.recording) this._recorder.stop();
   },
 
   /**
@@ -265,10 +375,12 @@ Page({
         bizType,
         askBizId,
         this.data.productId || null,
-        this.data.listingId || null
+        this.data.listingId || null,
+        this.data.replyTo ? { replyToId: this.data.replyTo.id } : null
       )
       .then(() => {
-        this.setData({ sending: false, input: '', ask: askNow ? false : this.data.ask });
+        this.setData({ sending: false, input: '', ask: askNow ? false : this.data.ask,
+          replyTo: null, replyText: '' });
         this.fetchThread(false); // 拉最新一页，含自己刚发的这条
       })
       .catch((err) => {

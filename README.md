@@ -4,6 +4,22 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-24（七十二）· 消息撤回 / 引用 / 语音（im 迭代第二批）**
+
+- **撤回**：仅发送者本人 + 120 秒窗口 + 幂等；软删留痕（`recalled_at` 落库、content 覆写
+  「[消息已撤回]」、媒体字段置空——数据库层不可读，不靠前端隐藏）；WS 新增 `RECALL` 信号，
+  对端实时感知；会话摘要同步改撤回文案。客服 / 私信双通道 + 商家侧接口齐备。
+- **引用**：长按 / 悬停气泡「引用」→ 输入框上摘要条；`reply_to_id` 必须同会话（跨会话 400）；
+  摘要在**读取路径服务端拼装**（文本前 60 字、媒体用 `[图片]/[视频]/[表情]/[语音]/[卡片]` 占位、
+  已撤回显示「原消息已撤回」），端侧摘要不可注入、不递归。
+- **语音**：新 `VOICE` 类型（`durationMs` 1–60000ms 服务端校验）；上传白名单扩 aac/mp3 + 音频 MIME
+  （音频豁免体积上限）；web MediaRecorder 按住说话（<600ms 丢弃、60s 自动停），小程序
+  RecorderManager(aac) + InnerAudioContext 播放；气泡波形条 + 时长。
+- SQL：`docs/sql/incremental/44-message-recall-quote-voice.sql`（客服/私信两表加 `recalled_at`、`reply_to_id`）。
+- 验证：新增 `scripts/chat-recall-quote-voice-smoke.mjs` **25/0**（撤回留痕 / RECALL 信号 / 越权 /
+  幂等 / 引用摘要 / 跨会话拒绝 / 语音边界）；回归 session-ui 39/0、ux 53/0、seller 40/0、notice 50/0、
+  read 24/0、lifecycle 32/0、realtime 17/0；web 双端重建部署。
+
 **2026-10-23（七十一）· 聊天实时化：WebSocket 推送 / 已读回执 / 正在输入（500+ 并发）**
 
 - 客服 + 私信聊天从轮询升级为**原生 WebSocket 实时推送**：`duoduo-social/.../realtime/`
@@ -1802,6 +1818,9 @@ Chromium 断言全绿**（截图 `frontend/docs/screenshots/lg_*.png`）。
 | POST | `/api/socials/notices/{noticeId}/read` | 标记单条已读（幂等；他人 / 不存在 404，不区分以防枚举） | 需登录 |
 | POST | `/api/socials/notices/read-all` | 全部已读（幂等） | 需登录 |
 | GET | `/api/socials/messages/unread-count` | 私信未读数（**按条计**，对齐主流 App 的「3 条未读」语义） | 需登录 |
+| POST | `/api/socials/messages/{messageId}/recall` | **撤回私信**（2026-10-24）：仅发送者本人 + 2 分钟窗口 + 幂等；软删留痕、库内内容覆写 | 需登录 |
+| POST | `/api/support/messages/{messageId}/recall` | **撤回客服消息**（2026-10-24，同上口径）；对端经 WS `RECALL` 信号实时感知 | 需登录 |
+| POST | `/api/seller/support/sessions/{id}/messages/{messageId}/recall` | 商家侧撤回（同口径，仅本会话） | 商家 |
 
 **内部接口**（`X-Internal-Token` 保护，**只写不读、不进网关**，trade / fulfilment 直连 8087）：
 `POST /api/socials/internal/notices`（批量推送，返回本次落库条数 `accepted`）、

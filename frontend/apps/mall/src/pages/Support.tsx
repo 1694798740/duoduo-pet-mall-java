@@ -28,6 +28,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import {
   supportApi,
+  uploadApi,
   type SupportMessageView,
   type SupportSessionView,
   type SupportThreadView,
@@ -38,7 +39,8 @@ import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/
 import { ProductPicker } from '@duoduo/shared/components/product-picker';
 import { OrderCard, parseOrderMeta } from '@duoduo/shared/components/order-card';
 import type { PickerProduct } from '@duoduo/api-sdk/endpoints';
-import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
+  isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
 import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 
@@ -165,6 +167,11 @@ export const SupportPage: React.FC = () => {
       if (typingTimer.current) window.clearTimeout(typingTimer.current);
       typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
     }
+    // 撤回信号（2026-10-24）：对端撤回后回源刷新，灰字立刻替换原气泡
+    if (event.type === 'RECALL') {
+      if (same) void loadThread(activeSellerId);
+      void loadSessions();
+    }
   });
 
   // 轮询：客服回复不像私信那么即时，5 秒足够，也避免把轮询变成压力
@@ -235,21 +242,56 @@ export const SupportPage: React.FC = () => {
    */
   const deliver = async (payload: {
     content: string;
-    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI';
+    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'VOICE';
     productId?: string;
     mediaUrl?: string;
     thumbUrl?: string;
     width?: number;
     height?: number;
     durationMs?: number;
+    /** 引用的消息 id（2026-10-24）：随任意类型发送 */
+    replyToId?: string;
   }) => {
     if (!activeSellerId) return;
     await supportApi.send({ sellerId: activeSellerId, ...payload });
     // 任意类型发送成功 → 服务端已把 CLOSED 置回 OPEN：撤下结束提示、恢复按钮
     setEndedSessionId(null);
+    setReplyTo(null);
     await loadThread(activeSellerId);
     void loadSessions();
   };
+
+  // ---------------- 引用 / 撤回 / 语音（2026-10-24） ----------------
+  /** 正在引用的消息：输入框上方显示摘要条，随下一条消息一起发出 */
+  const [replyTo, setReplyTo] = useState<SupportMessageView | null>(null);
+  const recallWithinWindow = (m: SupportMessageView): boolean =>
+    m.mine && !m.recalledAt && Date.now() - new Date(m.createdAt).getTime() < 120_000;
+
+  const recallMessage = async (m: SupportMessageView) => {
+    if (!window.confirm('撤回这条消息？')) return;
+    try {
+      await supportApi.recall(m.id);
+      await loadThread(activeSellerId);
+      void loadSessions();
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+
+  const sendVoice = async (blob: Blob, durationMs: number) => {
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    try {
+      const file = new File([blob], `voice.${ext}`, { type: blob.type });
+      const { url } = await uploadApi.image(file);
+      await deliver({ content: '[语音]', type: 'VOICE', mediaUrl: url, durationMs });
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+  const recorder = useVoiceRecorder({
+    onReady: (blob, durationMs) => void sendVoice(blob, durationMs),
+    onError: (message) => push(message, 'error'),
+  });
 
   const sendMedia = async (payload: MediaPayload, kind: 'IMAGE' | 'VIDEO') => {
     try {
@@ -291,7 +333,7 @@ export const SupportPage: React.FC = () => {
     if (!content || sending || !activeSellerId) return;
     setSending(true);
     try {
-      await deliver({ content });
+      await deliver({ content, replyToId: replyTo?.id });
       setDraft('');
     } catch (e) {
       push(toFriendlyMessage(e), 'error');
@@ -418,6 +460,9 @@ export const SupportPage: React.FC = () => {
                     receipt={
                       isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
+                    onQuote={setReplyTo}
+                    onRecall={(mm) => void recallMessage(mm)}
+                    canRecall={recallWithinWindow(m)}
                   />
                 );
               })
@@ -435,6 +480,15 @@ export const SupportPage: React.FC = () => {
             ) : (
             <>
             {peerTyping ? <div className="sup-typing">对方正在输入…</div> : null}
+            {replyTo ? (
+              <div className="chat-quoted" role="button" onClick={() => setReplyTo(null)} title="点击取消引用">
+                引用 {replyTo.senderRole === 'USER' ? '我' : '对方'}：{replyTo.quoted?.excerpt ?? replyTo.content}
+                {'　✕'}
+              </div>
+            ) : null}
+            {recorder.recording ? (
+              <div className="recording-tip" role="status">录音中 {recorder.seconds}s … 松开发送（最长 60 秒）</div>
+            ) : null}
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -444,6 +498,18 @@ export const SupportPage: React.FC = () => {
                 onError={(msg) => push(msg, 'error')}
                 disabled={sending}
               />
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                disabled={sending}
+                style={recorder.recording ? { background: '#d03050', color: '#fff' } : undefined}
+                onPointerDown={(e) => { e.preventDefault(); recorder.start(); }}
+                onPointerUp={(e) => { e.preventDefault(); recorder.stop(); }}
+                onPointerLeave={() => { if (recorder.recording) recorder.stop(); }}
+                aria-label="按住说话"
+              >
+                {recorder.recording ? '松开发送' : '按住说话'}
+              </button>
               <input
                 className="input"
                 style={{ flex: 1 }}
@@ -492,6 +558,9 @@ function renderContent(message: SupportMessageView) {
     const meta = parseOrderMeta(message.metaJson);
     return <OrderCard metaJson={message.metaJson} href={meta?.orderNo ? `/orders/${meta.orderNo}` : null} />;
   }
+  if (message.bizType === 'VOICE') {
+    return <VoiceBubble url={message.mediaUrl || ''} durationMs={message.durationMs} />;
+  }
   const kind = message.bizType === 'IMAGE' || message.bizType === 'VIDEO' || message.bizType === 'EMOJI'
     ? message.bizType
     : null;
@@ -515,6 +584,7 @@ function renderContent(message: SupportMessageView) {
   const emojiOnly = isEmojiOnly(message.content);
   return (
     <div className="sup-bubble" style={emojiOnly ? { fontSize: 30, lineHeight: 1.25 } : undefined}>
+      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} /> : null}
       {message.content}
     </div>
   );
@@ -527,24 +597,37 @@ const Bubble: React.FC<{
   /** 打开会话时的定位锚点（最新未读） */
   firstUnread?: boolean;
   receipt: string | null;
-}> = ({ message, unreadTag, firstUnread, receipt }) => (
-  <div className={`sup-row${message.mine ? ' mine' : ''}`} data-first-unread={firstUnread ? '1' : undefined}>
+  onQuote?: (m: SupportMessageView) => void;
+  onRecall?: (m: SupportMessageView) => void;
+  canRecall?: boolean;
+}> = ({ message, unreadTag, firstUnread, receipt, onQuote, onRecall, canRecall }) => (
+  <div
+    className={`sup-row${message.mine ? ' mine' : ''}`}
+    data-first-unread={firstUnread ? '1' : undefined}
+    data-mid={message.id}
+  >
     <div className="sup-col">
-      {renderContent(message)}
-      {message.card && (
-        <a href={`/product/${message.card.productId}`} className="card sup-card">
-          <img
-            className="sup-card-img"
-            src={productImage(message.card.productId, message.card.image)}
-            alt=""
-          />
-          <span style={{ minWidth: 0 }}>
-            <span className="sup-card-title">{message.card.title}</span>
-            {message.card.price != null && (
-              <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
-            )}
-          </span>
-        </a>
+      {message.recalledAt ? (
+        <RecallLine mine={message.mine} />
+      ) : (
+        <>
+          {renderContent(message)}
+          {message.card && (
+            <a href={`/product/${message.card.productId}`} className="card sup-card">
+              <img
+                className="sup-card-img"
+                src={productImage(message.card.productId, message.card.image)}
+                alt=""
+              />
+              <span style={{ minWidth: 0 }}>
+                <span className="sup-card-title">{message.card.title}</span>
+                {message.card.price != null && (
+                  <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
+                )}
+              </span>
+            </a>
+          )}
+        </>
       )}
       <div className="sup-time">
         {timeText(message.createdAt)}
@@ -552,6 +635,16 @@ const Bubble: React.FC<{
           <span className="sup-unread"> · 未读</span>
         ) : receipt ? (
           ` · ${receipt}`
+        ) : null}
+        {!message.recalledAt && (onQuote || (onRecall && canRecall)) ? (
+          <span className="sup-acts">
+            {onQuote ? (
+              <button type="button" className="sup-act" onClick={() => onQuote(message)}>引用</button>
+            ) : null}
+            {onRecall && canRecall ? (
+              <button type="button" className="sup-act" onClick={() => onRecall(message)}>撤回</button>
+            ) : null}
+          </span>
         ) : null}
       </div>
     </div>

@@ -15,6 +15,7 @@ import com.duoduo.social.mapper.SupportMessageMapper;
 import com.duoduo.social.client.OrderClient;
 import com.duoduo.social.service.NoticeService;
 import com.duoduo.social.mapper.SupportSessionMapper;
+import com.duoduo.social.support.dto.SupportDtos;
 import com.duoduo.social.support.dto.SupportDtos.MessageView;
 import com.duoduo.social.support.dto.SupportDtos.ProductCard;
 import com.duoduo.social.support.dto.SupportDtos.SellerSendRequest;
@@ -150,7 +151,8 @@ public class SupportService {
     /** 用户发消息；{@code productId} 非空时附带商品卡上下文（自营/第三方商品都走这里） */
     public MessageView sendByUser(Long userId, SendRequest request) {
         String type = normalizeType(request.type());
-        boolean media = "IMAGE".equals(type) || "VIDEO".equals(type) || "EMOJI".equals(type);
+        boolean media = "IMAGE".equals(type) || "VIDEO".equals(type) || "EMOJI".equals(type)
+                || "VOICE".equals(type);
 
         Long sellerId = request.sellerId();
         Long target = (sellerId == null || sellerId == 0L) ? officialCsUserId : sellerId;
@@ -193,6 +195,18 @@ public class SupportService {
         if (media && !isSafeMediaUrl(request.mediaUrl())) {
             throw BizException.validation("媒体地址不合法");
         }
+        if ("VOICE".equals(type)) {
+            // 语音（2026-10-24）：时长由端侧实测回传，服务端只卡上限（60 秒）
+            if (request.durationMs() == null || request.durationMs() <= 0
+                    || request.durationMs() > VOICE_MAX_MS) {
+                throw BizException.validation("语音时长无效（最长 60 秒），请重新录制");
+            }
+            if (isBlank(request.content())) {
+                request = new SendRequest(request.sellerId(), "[语音]", request.productId(), request.type(),
+                        request.mediaUrl(), request.thumbUrl(), request.width(), request.height(),
+                        request.durationMs(), request.orderNo(), request.replyToId());
+            }
+        }
 
         String text = normalizeContent(request.content());
         // ORDER 的文案由订单号生成，这里不能按「空内容」拒绝
@@ -207,6 +221,8 @@ public class SupportService {
         }
 
         SupportSessionEntity session = ensureSession(target, userId);
+        // 引用（2026-10-24）：必须同会话，摘要由服务端拼装，不信任端侧
+        Long replyToId = requireReply(session.getId(), request.replyToId());
         // 会话关闭后买家再发消息自动重开（2026-10-23 规则收紧后仍然保留）：
         // 关闭只是**客服侧**的收尾标记，买家全程无感；他能继续发，就说明咨询还没结束。
         if ("CLOSED".equalsIgnoreCase(session.getStatus())) {
@@ -227,11 +243,11 @@ public class SupportService {
         SupportMessageEntity entity = insert(session.getId(), userId, "USER", text, type,
                 product == null ? null : product.id(),
                 request.mediaUrl(), request.thumbUrl(),
-                request.width(), request.height(), request.durationMs(), orderSnapshot);
+                request.width(), request.height(), request.durationMs(), orderSnapshot, replyToId);
         touchSession(session, previewOf(type, text), true);
         // 实时推送：只通知**对端**有新消息，正文由客户端回源拉取（见 RealtimeEvent 注释）
         pushRealtime(target, "SUPPORT", session.getId(), null, userId, entity.getId());
-        return toMessageView(entity, userId, product);
+        return toMessageView(entity, userId, product, null);
     }
 
     /** 用户标记已读 */
@@ -379,7 +395,8 @@ public class SupportService {
         SupportSessionEntity session = requireOwnedSession(sellerId, sessionId);
         requireNotClosed(session);
         String type = normalizeType(request.type());
-        boolean media = "IMAGE".equals(type) || "VIDEO".equals(type) || "EMOJI".equals(type);
+        boolean media = "IMAGE".equals(type) || "VIDEO".equals(type) || "EMOJI".equals(type)
+                || "VOICE".equals(type);
         String text = normalizeContent(request.content());
         if (text.isEmpty() && !media) {
             throw BizException.validation("回复内容不能为空");
@@ -390,12 +407,23 @@ public class SupportService {
         if (media && !isSafeMediaUrl(request.mediaUrl())) {
             throw BizException.validation("媒体地址不合法");
         }
+        if ("VOICE".equals(type)) {
+            if (request.durationMs() == null || request.durationMs() <= 0
+                    || request.durationMs() > VOICE_MAX_MS) {
+                throw BizException.validation("语音时长无效（最长 60 秒），请重新录制");
+            }
+            if (text.isEmpty()) {
+                text = "[语音]";
+            }
+        }
+        // 引用（2026-10-24）：必须同会话
+        Long replyToId = requireReply(sessionId, request.replyToId());
         if (messageMapper.countSentInWindow(sessionId, sellerId, RATE_WINDOW_SECONDS) >= SELLER_RATE_LIMIT) {
             throw new BizException(ErrorCode.RATE_LIMITED, "发送太频繁，请稍后再试");
         }
         SupportMessageEntity entity = insert(sessionId, sellerId, "SELLER", text, type, null,
                 request.mediaUrl(), request.thumbUrl(),
-                request.width(), request.height(), request.durationMs(), null);
+                request.width(), request.height(), request.durationMs(), null, replyToId);
         touchSession(session, previewOf(type, text), false);
         pushRealtime(session.getUserId(), "SUPPORT", sessionId, null, sellerId, entity.getId());
         // 通知中心可见性：客服会话独立成表后，用户在通知中心看不到任何痕迹。
@@ -406,7 +434,7 @@ public class SupportService {
         } catch (Exception e) {
             log.warn("客服通知写入失败 sessionId={}（不影响回复）", session.getId(), e);
         }
-        return toMessageView(entity, sellerId, null);
+        return toMessageView(entity, sellerId, null, null);
     }
 
     public long markReadBySeller(Long sellerId, Long sessionId) {
@@ -498,7 +526,7 @@ public class SupportService {
                                         String content, String bizType, Long bizId,
                                         String mediaUrl, String thumbUrl,
                                         Integer width, Integer height, Integer durationMs,
-                                        String metaJson) {
+                                        String metaJson, Long replyToId) {
         SupportMessageEntity entity = new SupportMessageEntity();
         entity.setId(idGenerator.nextId());
         entity.setSessionId(sessionId);
@@ -513,6 +541,7 @@ public class SupportService {
         entity.setHeight(height);
         entity.setDurationMs(durationMs);
         entity.setMetaJson(metaJson);
+        entity.setReplyToId(replyToId);
         entity.setCreatedAt(now());
         messageMapper.insert(entity);
         return entity;
@@ -553,9 +582,11 @@ public class SupportService {
         java.util.Collections.reverse(ordered); // 分页取最新一页，展示按时间正序
 
         Map<Long, ProductCardBrief> products = loadProducts(ordered);
+        Map<Long, SupportDtos.QuotedView> quoted = quotedOf(ordered);
         List<MessageView> items = ordered.stream()
                 .map(m -> toMessageView(m, viewerId,
-                        m.getBizId() == null ? null : products.get(m.getBizId())))
+                        m.getBizId() == null ? null : products.get(m.getBizId()),
+                        m.getReplyToId() == null ? null : quoted.get(m.getReplyToId())))
                 .toList();
         // 已读回执：对端读到哪条 + 我发出的还有几条没被读。
         // 游标在会话行上，这里按主键回读一次（PK 查询，轮询频率下可忽略）。
@@ -718,7 +749,8 @@ public class SupportService {
         }
     }
 
-    private MessageView toMessageView(SupportMessageEntity m, Long viewerId, ProductCardBrief product) {
+    private MessageView toMessageView(SupportMessageEntity m, Long viewerId, ProductCardBrief product,
+                                      SupportDtos.QuotedView quoted) {
         ProductCard card = product == null ? null
                 : new ProductCard(product.id(), product.title(), product.mainImage(), product.minPrice());
         return new MessageView(m.getId(), m.getSenderId(), m.getSenderRole(), m.getContent(),
@@ -726,7 +758,9 @@ public class SupportService {
                 m.getMediaUrl(), m.getThumbUrl(), m.getWidth(), m.getHeight(), m.getDurationMs(),
                 m.getMetaJson(),
                 m.getCreatedAt() == null ? null : m.getCreatedAt().toInstant(ZoneOffset.UTC).toString(),
-                Objects.equals(m.getSenderId(), viewerId), m.getReadAt() != null, card);
+                Objects.equals(m.getSenderId(), viewerId), m.getReadAt() != null, card,
+                m.getRecalledAt() == null ? null : m.getRecalledAt().toInstant(ZoneOffset.UTC).toString(),
+                m.getReplyToId(), quoted);
     }
 
     /** 取订单事实；交易域没有这张单时给 404 而不是 500 */
@@ -779,13 +813,149 @@ public class SupportService {
         }
     }
 
-    /** 消息类型白名单（缺省 TEXT）。只认这六种，其余直接 400，不做"宽容解析"。 */
+    /** 消息类型白名单（缺省 TEXT）。只认这七种，其余直接 400，不做"宽容解析"。 */
     private String normalizeType(String raw) {
         String type = raw == null || raw.isBlank() ? "TEXT" : raw.trim().toUpperCase();
         return switch (type) {
-            case "TEXT", "PRODUCT", "IMAGE", "VIDEO", "EMOJI", "ORDER" -> type;
+            case "TEXT", "PRODUCT", "IMAGE", "VIDEO", "EMOJI", "ORDER", "VOICE" -> type;
             default -> throw BizException.validation("不支持的消息类型");
         };
+    }
+
+    /** 语音上限 60 秒（与端侧录制限制一致，防直连接口灌长音频） */
+    private static final int VOICE_MAX_MS = 60_000;
+    /** 撤回窗口：2 分钟（与设计稿一致） */
+    private static final long RECALL_WINDOW_SECONDS = 120;
+    /** 撤回后的占位正文：预览/引用摘要有内容可显示，原始文本与媒体已被清除 */
+    private static final String RECALLED_PLACEHOLDER = "[消息已撤回]";
+
+    /**
+     * 校验并放行引用（2026-10-24）：被引用消息必须存在且属于同一会话。
+     * 摘要在读取路径服务端拼装（{@link #quotedOf}），这里只做资格校验。
+     */
+    private Long requireReply(Long sessionId, Long replyToId) {
+        if (replyToId == null) {
+            return null;
+        }
+        SupportMessageEntity quoted = messageMapper.selectById(replyToId);
+        if (quoted == null || !Objects.equals(quoted.getSessionId(), sessionId)) {
+            throw BizException.validation("引用的消息不存在或不属于当前会话");
+        }
+        return replyToId;
+    }
+
+    /**
+     * 撤回（2026-10-24）：仅发送者本人 + 2 分钟窗口 + 幂等。
+     *
+     * <p>软删：行保留（审计/对账要求指得出实物），content 覆写为占位符、
+     * 媒体与快照字段清空 —— 原文在数据库层就不可读，不依赖前端隐藏。
+     */
+    public MessageView recallByUser(Long userId, Long messageId) {
+        SupportMessageEntity msg = requireMessage(messageId);
+        SupportSessionEntity session = requireSession(msg.getSessionId());
+        if (!Objects.equals(session.getUserId(), userId)) {
+            throw BizException.forbidden("该会话不属于当前账号");
+        }
+        return doRecall(session, msg, userId, true);
+    }
+
+    public MessageView recallBySeller(Long sellerId, Long sessionId, Long messageId) {
+        requireOwnedSession(sellerId, sessionId);
+        SupportMessageEntity msg = requireMessage(messageId);
+        if (!Objects.equals(msg.getSessionId(), sessionId)) {
+            throw BizException.validation("该消息不属于当前会话");
+        }
+        return doRecall(requireSession(sessionId), msg, sellerId, false);
+    }
+
+    private MessageView doRecall(SupportSessionEntity session, SupportMessageEntity msg,
+                                 Long actorId, boolean userSide) {
+        if (!Objects.equals(msg.getSenderId(), actorId)) {
+            throw BizException.forbidden("只能撤回自己发送的消息");
+        }
+        if (msg.getRecalledAt() != null) {
+            // 幂等：重复撤回返回成功（消息已经是撤回态）
+            return toMessageView(msg, actorId, null, null);
+        }
+        if (msg.getCreatedAt() == null
+                || msg.getCreatedAt().isBefore(now().minusSeconds(RECALL_WINDOW_SECONDS))) {
+            throw BizException.businessRule("超过 2 分钟的消息不能再撤回");
+        }
+        Long peer = userSide ? session.getSellerId() : session.getUserId();
+        // 先推送再落库？不行 —— 推送只是信号，对端会立刻回源；必须先写后推。
+        messageMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SupportMessageEntity>()
+                .eq(SupportMessageEntity::getId, msg.getId())
+                // ★ eq(col, null) 会生成 `recalled_at = null` 永不匹配 → 更新 0 行，必须 isNull
+                .isNull(SupportMessageEntity::getRecalledAt)
+                .set(SupportMessageEntity::getRecalledAt, now())
+                .set(SupportMessageEntity::getContent, RECALLED_PLACEHOLDER)
+                .set(SupportMessageEntity::getMediaUrl, null)
+                .set(SupportMessageEntity::getThumbUrl, null)
+                .set(SupportMessageEntity::getMetaJson, null));
+        // 会话摘要同步为撤回文案（不改未读、不顶时间）
+        SupportSessionEntity patch = new SupportSessionEntity();
+        patch.setId(session.getId());
+        patch.setLastMessagePreview(RECALLED_PLACEHOLDER);
+        patch.setUpdatedAt(session.getUpdatedAt());
+        sessionMapper.updateById(patch);
+        msg.setRecalledAt(now());
+        msg.setContent(RECALLED_PLACEHOLDER);
+        msg.setMediaUrl(null);
+        msg.setThumbUrl(null);
+        msg.setMetaJson(null);
+        try {
+            realtime.publish(peer, com.duoduo.social.realtime.RealtimeEvent.recall(
+                    "SUPPORT", String.valueOf(session.getId()), null, actorId, msg.getId()));
+        } catch (Exception e) {
+            log.warn("撤回信号推送失败 messageId={}（不影响撤回）", msg.getId(), e);
+        }
+        return toMessageView(msg, actorId, null, null);
+    }
+
+    private SupportMessageEntity requireMessage(Long messageId) {
+        SupportMessageEntity msg = messageId == null ? null : messageMapper.selectById(messageId);
+        if (msg == null) {
+            throw BizException.notFound("消息");
+        }
+        return msg;
+    }
+
+    /**
+     * 引用摘要拼装（2026-10-24）：按当前页消息的 replyToId 批量回源，服务端生成摘要
+     * （文本前 60 字；媒体/卡片用类型占位）。被引用消息已撤回时摘要为「原消息已撤回」；
+     * 引用不存在/越权（理论不可能，requireReply 拦过）降级为 null。
+     * 不递归：被引用消息自身的引用不再展开。
+     */
+    private Map<Long, SupportDtos.QuotedView> quotedOf(List<SupportMessageEntity> messages) {
+        List<Long> ids = messages.stream()
+                .map(SupportMessageEntity::getReplyToId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, SupportDtos.QuotedView> map = new HashMap<>();
+        for (SupportMessageEntity q : messageMapper.selectBatchIds(ids)) {
+            String excerpt;
+            if (q.getRecalledAt() != null) {
+                excerpt = "原消息已撤回";
+            } else {
+                excerpt = switch (q.getBizType() == null ? "" : q.getBizType()) {
+                    case "IMAGE" -> "[图片]";
+                    case "VIDEO" -> "[视频]";
+                    case "EMOJI" -> "[表情]";
+                    case "VOICE" -> "[语音]";
+                    case "PRODUCT", "ORDER" -> "[卡片]";
+                    default -> {
+                        String text = q.getContent() == null ? "" : q.getContent();
+                        yield text.length() <= 60 ? text : text.substring(0, 60);
+                    }
+                };
+            }
+            map.put(q.getId(), new SupportDtos.QuotedView(q.getId(), q.getBizType(), excerpt));
+        }
+        return map;
     }
 
     /** 媒体地址必须是本站上传接口产出的 http(s) 地址（拒绝 javascript:/data: 之类） */
@@ -806,6 +976,9 @@ public class SupportService {
         }
         if ("EMOJI".equals(type)) {
             return "[表情]";
+        }
+        if ("VOICE".equals(type)) {
+            return "[语音]";
         }
         return text;
     }

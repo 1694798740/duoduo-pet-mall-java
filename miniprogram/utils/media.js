@@ -85,8 +85,41 @@ function prepareVideo(file) {
   });
 }
 
+/**
+ * 语音录制（2026-10-24）：RecorderManager 单例包装。
+ * 松手即回调临时文件与实测时长；<600ms 视为误触报错；60 秒自动 onStop。
+ */
+function createVoiceRecorder(callbacks) {
+  const rec = wx.getRecorderManager();
+  let startedAt = 0;
+  rec.onStart(() => {
+    startedAt = Date.now();
+    if (callbacks.onStart) callbacks.onStart();
+  });
+  rec.onStop((res) => {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs < 600) {
+      if (callbacks.onError) callbacks.onError('说话时间太短，再按久一点');
+      return;
+    }
+    if (callbacks.onReady) callbacks.onReady(res.tempFilePath, Math.min(durationMs, MAX_SECONDS * 1000));
+  });
+  rec.onError(() => {
+    if (callbacks.onError) callbacks.onError('录音失败，请重试');
+  });
+  return {
+    start() {
+      rec.start({ duration: MAX_SECONDS * 1000, format: 'aac', sampleRate: 44100, encodeBitRate: 96000 });
+    },
+    stop() {
+      rec.stop();
+    },
+  };
+}
+
 module.exports = {
   MAX_SECONDS,
   prepareVideo,
   uploadPoster,
+  createVoiceRecorder,
 };

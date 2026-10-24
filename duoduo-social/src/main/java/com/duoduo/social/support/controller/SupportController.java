@@ -9,6 +9,7 @@ import com.duoduo.social.support.dto.SupportDtos.ThreadView;
 import com.duoduo.social.support.service.SupportService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -69,6 +70,12 @@ public class SupportController {
     @PostMapping("/api/support/read")
     public ApiResponse<Long> read(@RequestParam Long sessionId) {
         return ApiResponse.ok(supportService.markReadByUser(UserContext.requireUserId(), sessionId));
+    }
+
+    /** 撤回自己 2 分钟内发出的消息（2026-10-24，幂等） */
+    @PostMapping("/api/support/messages/{messageId}/recall")
+    public ApiResponse<MessageView> recall(@PathVariable Long messageId) {
+        return ApiResponse.ok(supportService.recallByUser(UserContext.requireUserId(), messageId));
     }
 
     /**

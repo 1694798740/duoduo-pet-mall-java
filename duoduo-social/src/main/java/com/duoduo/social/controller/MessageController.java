@@ -76,6 +76,12 @@ public class MessageController {
                 messageService.markRead(UserContext.requireUserId(), peerId, productId, listingId));
     }
 
+    /** 撤回自己 2 分钟内发出的私信（2026-10-24，幂等） */
+    @PostMapping("/api/socials/messages/{messageId}/recall")
+    public ApiResponse<MessageView> recall(@PathVariable Long messageId) {
+        return ApiResponse.ok(messageService.recall(UserContext.requireUserId(), messageId));
+    }
+
     /**
      * 我的私信未读总数（第五十五轮）：一个 COUNT，而不是让前端拉一页会话自己求和。
      *

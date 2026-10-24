@@ -236,3 +236,40 @@
   font-size: 22rpx;
   color: #9aa0b0;
 }
+
+/* 语音 / 引用 / 撤回（2026-10-24） */
+.msg-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 200rpx;
+  padding: 14rpx 22rpx;
+  border-radius: 28rpx;
+  background: #f2f3f5;
+}
+.msg-mine .msg-voice { background: #ffe8cf; }
+.msg-voice-icon { font-size: 26rpx; }
+.msg-voice-bar {
+  width: 120rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: rgba(0, 0, 0, 0.15);
+}
+.msg-voice-dur { font-size: 22rpx; color: #8a919f; }
+.msg-quoted {
+  font-size: 22rpx;
+  color: #8a919f;
+  background: rgba(0, 0, 0, 0.05);
+  border-left: 4rpx solid rgba(0, 0, 0, 0.15);
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  margin-bottom: 6rpx;
+  max-width: 480rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-quote-bar { padding: 10rpx 16rpx; margin: 0 24rpx 8rpx; }
+.chat-recalled { font-size: 22rpx; color: #8a919f; padding: 4rpx 0; }
+.chat-recording { font-size: 22rpx; color: #d03050; padding: 4rpx 24rpx 8rpx; }
+.chat-voice-btn.recording { background: #d03050; color: #fff; border-radius: 50%; }

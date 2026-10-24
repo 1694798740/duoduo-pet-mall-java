@@ -2,6 +2,18 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 撤回/引用/语音冒烟（`scripts/chat-recall-quote-voice-smoke.mjs`，25 项，第九十一轮）
+
+```bash
+NO_PROXY="*" node scripts/chat-recall-quote-voice-smoke.mjs
+```
+
+前置：容器在跑（网关 :8080）。覆盖：买家撤回 2 分钟窗口内成功且库内留痕（content 覆写 +
+recalled_at 落库）、客服 WS 收 RECALL 信号（会话/消息 id 正确）、重复撤回幂等、撤他人消息 403、
+无关用户撤回 403、引用摘要服务端拼装（文本 60 字/媒体 [图片] 占位，**读会话视图断言**——发送响应
+quoted 恒 null 是设计行为）、客服侧引用、跨会话引用 400、aac 上传、VOICE 发送 + 时长入会话、
+durationMs>60000 与缺省被拒、客服侧可见同一条语音。2026-10-24 实测 **25/0**。
+
 ## 实时消息冒烟（`scripts/realtime-smoke.mjs`，17 项，第八十九轮）
 
 ```bash

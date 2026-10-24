@@ -23,7 +23,7 @@ import { realtimeApi } from '@duoduo/api-sdk/endpoints';
 export type RealtimeBiz = 'SUPPORT' | 'DIRECT';
 
 export interface RealtimeEvent {
-  type: 'MESSAGE' | 'READ' | 'TYPING' | 'READY' | 'PING' | 'PONG';
+  type: 'MESSAGE' | 'READ' | 'TYPING' | 'RECALL' | 'READY' | 'PING' | 'PONG';
   biz?: RealtimeBiz;
   sessionId?: string;
   conversationId?: string;

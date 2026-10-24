@@ -15,11 +15,12 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { messageApi } from '@duoduo/api-sdk/endpoints';
+import { messageApi, uploadApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
-import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
+  isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
 import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 
@@ -82,6 +83,10 @@ export const ChatPage: React.FC = () => {
       if (typingTimer.current) window.clearTimeout(typingTimer.current);
       typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
     }
+    // 撤回信号（2026-10-24）：回源刷新，灰字替换原气泡
+    if (event.type === 'RECALL' && same) {
+      setTick((v) => v + 1);
+    }
   });
 
   // 打开会话即标记已读（幂等、尽力而为：失败不影响阅读）
@@ -107,6 +112,47 @@ export const ChatPage: React.FC = () => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items[items.length - 1]?.id]);
+
+  // ---------------- 引用 / 撤回 / 语音（2026-10-24） ----------------
+  /** 正在引用的消息：随下一条消息一起发出 */
+  const [replyTo, setReplyTo] = useState<import('@duoduo/api-sdk/types').ChatMessageView | null>(null);
+  const recallWithinWindow = (m: import('@duoduo/api-sdk/types').ChatMessageView): boolean =>
+    m.mine && !m.recalledAt && Date.now() - new Date(m.createdAt).getTime() < 120_000;
+
+  const recallMessage = async (m: import('@duoduo/api-sdk/types').ChatMessageView) => {
+    if (!window.confirm('撤回这条消息？')) return;
+    try {
+      await messageApi.recall(m.id);
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+      push(toFriendlyMessage(err), 'error');
+    }
+  };
+
+  const sendVoice = async (blob: Blob, durationMs: number) => {
+    setBusy(true);
+    setSendError(null);
+    try {
+      const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      const file = new File([blob], `voice.${ext}`, { type: blob.type });
+      const { url } = await uploadApi.image(file);
+      await messageApi.send({
+        receiverId: peerId, content: '[语音]', bizType: 'VOICE',
+        productId, listingId, mediaUrl: url, durationMs, replyToId: replyTo?.id,
+      });
+      setReplyTo(null);
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const recorder = useVoiceRecorder({
+    onReady: (blob, durationMs) => void sendVoice(blob, durationMs),
+    onError: (message) => setSendError(message),
+  });
 
   /** 私信只允许发送「当前咨询的商品」卡，不提供收藏/购物车等来源 */
   const sendSticker = async (url: string) => {
@@ -174,8 +220,9 @@ export const ChatPage: React.FC = () => {
     setBusy(true);
     setSendError(null);
     try {
-      await messageApi.send({ receiverId: peerId, content, productId, listingId });
+      await messageApi.send({ receiverId: peerId, content, productId, listingId, replyToId: replyTo?.id });
       setDraft('');
+      setReplyTo(null);
       setTick((v) => v + 1);
     } catch (err) {
       // 服务端会拒绝「非互关的第二条」，原因原样展示（不吞、不假装成功）
@@ -225,6 +272,7 @@ export const ChatPage: React.FC = () => {
               data-first-unread={
                 !m.mine && !m.read && !items.slice(0, idx).some((x) => !x.mine && !x.read) ? '1' : undefined
               }
+              data-mid={m.id}
             >
               <div
                 className="card card-pad"
@@ -233,10 +281,22 @@ export const ChatPage: React.FC = () => {
                   background: m.mine ? 'var(--brand-soft, #fff3e6)' : undefined,
                 }}
               >
-                <MessageBody message={m} />
+                {m.recalledAt ? (
+                  <RecallLine mine={m.mine} />
+                ) : (
+                  <MessageBody message={m} />
+                )}
                 <div className="small muted" style={{ marginTop: 4, textAlign: 'right' }}>
                   {timeText(m.createdAt)}
                   {m.mine ? (m.read ? ' · 已读' : ' · 未读') : ''}
+                  {!m.recalledAt ? (
+                    <span className="sup-acts">
+                      <button type="button" className="sup-act" onClick={() => setReplyTo(m)}>引用</button>
+                      {recallWithinWindow(m) ? (
+                        <button type="button" className="sup-act" onClick={() => void recallMessage(m)}>撤回</button>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -247,6 +307,15 @@ export const ChatPage: React.FC = () => {
 
       {peerTyping ? <div className="sup-typing">对方正在输入…</div> : null}
       {sendError ? <Alert kind="error">{sendError}</Alert> : null}
+      {replyTo ? (
+        <div className="chat-quoted" role="button" onClick={() => setReplyTo(null)} title="点击取消引用">
+          引用：{replyTo.quoted?.excerpt ?? replyTo.content}
+          {'　✕'}
+        </div>
+      ) : null}
+      {recorder.recording ? (
+        <div className="recording-tip" role="status">录音中 {recorder.seconds}s … 松开发送（最长 60 秒）</div>
+      ) : null}
 
       <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'flex-start' }}>
         <ChatMediaMenu
@@ -257,6 +326,18 @@ export const ChatPage: React.FC = () => {
           onError={(msg) => setSendError(msg)}
           disabled={busy || !canSend}
         />
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          disabled={busy || !canSend}
+          style={recorder.recording ? { background: '#d03050', color: '#fff' } : undefined}
+          onPointerDown={(e) => { e.preventDefault(); recorder.start(); }}
+          onPointerUp={(e) => { e.preventDefault(); recorder.stop(); }}
+          onPointerLeave={() => { if (recorder.recording) recorder.stop(); }}
+          aria-label="按住说话"
+        >
+          {recorder.recording ? '松开发送' : '按住说话'}
+        </button>
         <textarea
           className="input"
           style={{ flex: 1, minHeight: 62, resize: 'vertical' }}
@@ -299,6 +380,9 @@ export const ChatPage: React.FC = () => {
 
 /** 私信消息体：媒体走专用渲染，纯表情放大 */
 const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessageView }> = ({ message }) => {
+  if (message.bizType === 'VOICE') {
+    return <VoiceBubble url={message.mediaUrl || ''} durationMs={message.durationMs ?? null} />;
+  }
   const kind = message.bizType === 'IMAGE' || message.bizType === 'VIDEO' || message.bizType === 'EMOJI'
     ? message.bizType
     : null;
@@ -325,6 +409,7 @@ const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessa
       className="small"
       style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: emojiOnly ? 28 : undefined }}
     >
+      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} /> : null}
       {message.content}
     </div>
   );

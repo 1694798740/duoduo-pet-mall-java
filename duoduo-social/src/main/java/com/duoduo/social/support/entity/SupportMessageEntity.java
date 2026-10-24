@@ -45,6 +45,10 @@ public class SupportMessageEntity {
 
     /** 接收方已读时间；NULL = 未读 */
     private LocalDateTime readAt;
+    /** 撤回时间（2026-10-24）；NULL = 未撤回。撤回为软删：content 覆写为占位符、媒体字段清空，行保留审计 */
+    private LocalDateTime recalledAt;
+    /** 引用的消息 id（2026-10-24，同会话内） */
+    private Long replyToId;
     private LocalDateTime createdAt;
 
     public Long getId() {
@@ -157,6 +161,22 @@ public class SupportMessageEntity {
 
     public void setReadAt(LocalDateTime readAt) {
         this.readAt = readAt;
+    }
+
+    public LocalDateTime getRecalledAt() {
+        return recalledAt;
+    }
+
+    public void setRecalledAt(LocalDateTime recalledAt) {
+        this.recalledAt = recalledAt;
+    }
+
+    public Long getReplyToId() {
+        return replyToId;
+    }
+
+    public void setReplyToId(Long replyToId) {
+        this.replyToId = replyToId;
     }
 
     public LocalDateTime getCreatedAt() {

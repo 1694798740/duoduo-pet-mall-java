@@ -19,6 +19,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   sellerSupportApi,
+  uploadApi,
   type SupportMessageView,
   type SupportProductCard,
   type SupportSessionView,
@@ -28,7 +29,8 @@ import { productImage } from '@duoduo/api-sdk/images';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
 import { formatBjShort } from '@duoduo/shared/lib/time';
-import { ChatMediaMenu, MediaBubble, isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
+  isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
 import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { OrderCard } from '@duoduo/shared/components/order-card';
 
@@ -148,6 +150,11 @@ export const SellerSupportPage: React.FC = () => {
       if (typingTimer.current) window.clearTimeout(typingTimer.current);
       typingTimer.current = window.setTimeout(() => setPeerTyping(false), 3000);
     }
+    // 撤回信号（2026-10-24）：回源刷新，灰字替换原气泡
+    if (event.type === 'RECALL') {
+      if (same) void loadThread(activeId as string);
+      void loadSessions();
+    }
   });
 
   /**
@@ -191,13 +198,48 @@ export const SellerSupportPage: React.FC = () => {
     if (filter === 'UNREAD') void loadSessions();
   };
 
+  // ---------------- 引用 / 撤回 / 语音（2026-10-24） ----------------
+  const [replyTo, setReplyTo] = useState<SupportMessageView | null>(null);
+  const recallWithinWindow = (m: SupportMessageView): boolean =>
+    m.mine && !m.recalledAt && Date.now() - new Date(m.createdAt).getTime() < 120_000;
+
+  const recallMessage = async (m: SupportMessageView) => {
+    if (!window.confirm('撤回这条回复？')) return;
+    try {
+      await sellerSupportApi.recall(activeId as string, m.id);
+      await loadThread(activeId as string);
+      void loadSessions();
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+
+  const sendVoice = async (blob: Blob, durationMs: number) => {
+    if (!activeId) return;
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    try {
+      const file = new File([blob], `voice.${ext}`, { type: blob.type });
+      const { url } = await uploadApi.image(file);
+      await sellerSupportApi.reply(activeId, { content: '[语音]', type: 'VOICE', mediaUrl: url, durationMs });
+      await loadThread(activeId);
+      await loadSessions();
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+  const recorder = useVoiceRecorder({
+    onReady: (blob, durationMs) => void sendVoice(blob, durationMs),
+    onError: (message) => push(message, 'error'),
+  });
+
   const reply = async () => {
     const content = draft.trim();
     if (!content || !activeId || sending) return;
     setSending(true);
     try {
-      await sellerSupportApi.reply(activeId, { content });
+      await sellerSupportApi.reply(activeId, { content, replyToId: replyTo?.id });
       setDraft('');
+      setReplyTo(null);
       await loadThread(activeId);
       await loadSessions();
     } catch (e) {
@@ -378,6 +420,9 @@ export const SellerSupportPage: React.FC = () => {
                       isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
                     }
                     onOpenCard={setCard}
+                    onQuote={setReplyTo}
+                    onRecall={(mm) => void recallMessage(mm)}
+                    canRecall={recallWithinWindow(m)}
                   />
                 );
               })
@@ -393,6 +438,15 @@ export const SellerSupportPage: React.FC = () => {
             ) : (
             <>
             {peerTyping ? <div className="sup-typing">买家正在输入…</div> : null}
+            {replyTo ? (
+              <div className="chat-quoted" role="button" onClick={() => setReplyTo(null)} title="点击取消引用">
+                引用 买家：{replyTo.quoted?.excerpt ?? replyTo.content}
+                {'　✕'}
+              </div>
+            ) : null}
+            {recorder.recording ? (
+              <div className="recording-tip" role="status">录音中 {recorder.seconds}s … 松开发送（最长 60 秒）</div>
+            ) : null}
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
                 onMedia={sendMedia}
@@ -401,6 +455,18 @@ export const SellerSupportPage: React.FC = () => {
                 onError={(msg) => push(msg, 'error')}
                 disabled={sending || !thread || thread.status === 'CLOSED'}
               />
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                disabled={sending || !thread || thread.status === 'CLOSED'}
+                style={recorder.recording ? { background: '#d03050', color: '#fff' } : undefined}
+                onPointerDown={(e) => { e.preventDefault(); recorder.start(); }}
+                onPointerUp={(e) => { e.preventDefault(); recorder.stop(); }}
+                onPointerLeave={() => { if (recorder.recording) recorder.stop(); }}
+                aria-label="按住说话"
+              >
+                {recorder.recording ? '松开发送' : '按住说话'}
+              </button>
               <input
                 className="input"
                 style={{ flex: 1 }}
@@ -478,6 +544,9 @@ function renderContent(message: SupportMessageView) {
     // 商家端只读：订单详情是买家页面，跳过去会带着当前浏览器里商城的登录态
     return <OrderCard metaJson={message.metaJson} href={null} />;
   }
+  if (message.bizType === 'VOICE') {
+    return <VoiceBubble url={message.mediaUrl || ''} durationMs={message.durationMs} />;
+  }
   const kind = message.bizType === 'IMAGE' || message.bizType === 'VIDEO' || message.bizType === 'EMOJI'
     ? message.bizType
     : null;
@@ -501,6 +570,7 @@ function renderContent(message: SupportMessageView) {
   const emojiOnly = isEmojiOnly(message.content);
   return (
     <div className="sup-bubble" style={emojiOnly ? { fontSize: 30, lineHeight: 1.25 } : undefined}>
+      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} /> : null}
       {message.content}
     </div>
   );
@@ -514,29 +584,42 @@ const Bubble: React.FC<{
   firstUnread?: boolean;
   receipt: string | null;
   onOpenCard: (card: SupportProductCard) => void;
-}> = ({ message, unreadTag, firstUnread, receipt, onOpenCard }) => (
-  <div className={`sup-row${message.mine ? ' mine' : ''}`} data-first-unread={firstUnread ? '1' : undefined}>
+  onQuote?: (m: SupportMessageView) => void;
+  onRecall?: (m: SupportMessageView) => void;
+  canRecall?: boolean;
+}> = ({ message, unreadTag, firstUnread, receipt, onOpenCard, onQuote, onRecall, canRecall }) => (
+  <div
+    className={`sup-row${message.mine ? ' mine' : ''}`}
+    data-first-unread={firstUnread ? '1' : undefined}
+    data-mid={message.id}
+  >
     <div className="sup-col">
-      {renderContent(message)}
-      {message.card && (
-        <button
-          type="button"
-          className="card sup-card"
-          style={{ textAlign: 'left', cursor: 'pointer' }}
-          onClick={() => onOpenCard(message.card as SupportProductCard)}
-        >
-          <img
-            className="sup-card-img"
-            src={productImage(message.card.productId, message.card.image)}
-            alt=""
-          />
-          <span style={{ minWidth: 0 }}>
-            <span className="sup-card-title">{message.card.title}</span>
-            {message.card.price != null && (
-              <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
-            )}
-          </span>
-        </button>
+      {message.recalledAt ? (
+        <RecallLine mine={message.mine} />
+      ) : (
+        <>
+          {renderContent(message)}
+          {message.card && (
+          <button
+            type="button"
+            className="card sup-card"
+            style={{ textAlign: 'left', cursor: 'pointer' }}
+            onClick={() => onOpenCard(message.card as SupportProductCard)}
+          >
+            <img
+              className="sup-card-img"
+              src={productImage(message.card.productId, message.card.image)}
+              alt=""
+            />
+            <span style={{ minWidth: 0 }}>
+              <span className="sup-card-title">{message.card.title}</span>
+              {message.card.price != null && (
+                <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
+              )}
+            </span>
+          </button>
+          )}
+        </>
       )}
       <div className="sup-time">
         {formatBjShort(message.createdAt)}
@@ -544,6 +627,16 @@ const Bubble: React.FC<{
           <span className="sup-unread"> · 未读</span>
         ) : receipt ? (
           ` · ${receipt}`
+        ) : null}
+        {!message.recalledAt && (onQuote || (onRecall && canRecall)) ? (
+          <span className="sup-acts">
+            {onQuote ? (
+              <button type="button" className="sup-act" onClick={() => onQuote(message)}>引用</button>
+            ) : null}
+            {onRecall && canRecall ? (
+              <button type="button" className="sup-act" onClick={() => onRecall(message)}>撤回</button>
+            ) : null}
+          </span>
         ) : null}
       </div>
     </div>

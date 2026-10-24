@@ -26,14 +26,19 @@
         wx:key="id"
         id="msg-{{item.id}}"
         class="msg-row {{item.mine ? 'msg-mine' : ''}}"
+        data-msg="{{item}}"
+        bindlongpress="onMsgLongPress"
       >
         <image
-          wx:if="{{!item.mine}}"
+          wx:if="{{!item.mine && !item.recalled}}"
           class="msg-avatar"
           src="{{sellerAvatar || '/images/category/default.png'}}"
           mode="aspectFill"
         />
         <view class="msg-col">
+          <!-- 撤回后的灰字（2026-10-24）：整条替换，不渲染原内容 -->
+          <view wx:if="{{item.recalled}}" class="chat-recalled">{{item.mine ? '你撤回了一条消息' : '对方撤回了一条消息'}}</view>
+          <block wx:else>
           <view
             wx:if="{{item.card}}"
             class="msg-card"
@@ -61,8 +66,22 @@
             poster="{{item.thumbUrl}}"
             object-fit="contain"
           />
-          <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">{{item.content}}</view>
-          <view class="t3 msg-time">{{item.timeText}}<text wx:if="{{item.mine && !item.read}}" class="msg-unread"> · 未读</text></view>
+          <view
+            wx:elif="{{item.bizType === 'VOICE'}}"
+            class="msg-voice"
+            data-url="{{item.mediaUrl}}"
+            bindtap="playVoice"
+          >
+            <text class="msg-voice-icon">▶</text>
+            <view class="msg-voice-bar"></view>
+            <text class="msg-voice-dur">{{item.voiceSecs}}"</text>
+          </view>
+          <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">
+            <view wx:if="{{item.quotedExcerpt}}" class="msg-quoted">{{item.quotedExcerpt}}</view>
+            <text>{{item.content}}</text>
+          </view>
+          </block>
+          <view class="t3 msg-time">{{item.timeText}}<text wx:if="{{item.mine && !item.read && !item.recalled}}" class="msg-unread"> · 未读</text></view>
         </view>
       </view>
       <!-- 结束后的系统小字：只在本会话内可见，不弹 toast、不出现"关闭"字样 -->
@@ -71,10 +90,20 @@
     </scroll-view>
 
     <view wx:if="{{typingVisible}}" class="chat-typing">对方正在输入…</view>
+    <!-- 引用条（2026-10-24）：点击取消 -->
+    <view wx:if="{{replyTo}}" class="msg-quoted chat-quote-bar" bindtap="cancelQuote">{{replyText}}　✕</view>
+    <!-- 录音提示（2026-10-24） -->
+    <view wx:if="{{recordingTip}}" class="chat-recording">{{recordingTip}}</view>
 
     <view class="chat-input-bar">
       <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>
+      <view
+        class="chat-plus chat-voice-btn {{recording ? 'recording' : ''}}"
+        bindtouchstart="voiceStart"
+        bindtouchend="voiceEnd"
+        bindtouchcancel="voiceEnd"
+      >{{recording ? '松发' : '按说'}}</view>
       <input
         class="chat-input"
         value="{{input}}"

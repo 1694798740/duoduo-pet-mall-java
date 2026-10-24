@@ -40,7 +40,7 @@ public final class SupportDtos {
             String content,
             String bizType,
             Long bizId,
-            /** 媒体地址（IMAGE / VIDEO / EMOJI） */
+            /** 媒体地址（IMAGE / VIDEO / EMOJI / VOICE） */
             String mediaUrl,
             String thumbUrl,
             Integer width,
@@ -51,8 +51,18 @@ public final class SupportDtos {
             String createdAt,
             boolean mine,
             boolean read,
-            ProductCard card
+            ProductCard card,
+            /** 撤回时间（2026-10-24）；null=未撤回。撤回后 content 已是占位符、媒体已清空 */
+            String recalledAt,
+            /** 引用的消息 id；null=无引用 */
+            Long replyToId,
+            /** 服务端拼装的引用摘要（replyToId 非空时恒非 null，被引用消息已撤回时 excerpt=「原消息已撤回」） */
+            QuotedView quoted
     ) {
+    }
+
+    /** 引用摘要（2026-10-24）：服务端拼装，不信任端侧传摘要；不递归嵌套 */
+    public record QuotedView(Long id, String bizType, String excerpt) {
     }
 
     /** 会话详情（消息按时间正序） */
@@ -86,12 +96,16 @@ public final class SupportDtos {
                               String mediaUrl, String thumbUrl,
                               Integer width, Integer height, Integer durationMs,
                               /** type=ORDER 时必填：订单号（服务端回交易域校验归属并生成快照） */
-                              String orderNo) {
+                              String orderNo,
+                              /** 引用的消息 id（2026-10-24）：必须同会话；服务端拼摘要 */
+                              Long replyToId) {
     }
 
     /** 商家发消息（第七十九轮 B 批：与用户侧一致，支持图片/视频/表情） */
     public record SellerSendRequest(String content, String type,
                                     String mediaUrl, String thumbUrl,
-                                    Integer width, Integer height, Integer durationMs) {
+                                    Integer width, Integer height, Integer durationMs,
+                                    /** 引用的消息 id（2026-10-24）：必须同会话 */
+                                    Long replyToId) {
     }
 }

@@ -1180,7 +1180,13 @@ export const messageApi = {
     width?: number;
     height?: number;
     durationMs?: number;
+    /** 引用的消息 id（2026-10-24）：必须同会话 */
+    replyToId?: string;
   }) => api.post<ChatMessageView>('/api/socials/messages', body),
+
+  /** 撤回自己 2 分钟内发出的私信（2026-10-24，幂等） */
+  recall: (messageId: string) =>
+    api.post<ChatMessageView>(`/api/socials/messages/${messageId}/recall`),
 
   /** 我的私信未读总数（角标走合并口径 unread-summary；这里用于入口上的独立未读数） */
   unreadCount: () => api.get<UnreadCount>('/api/socials/messages/unread-count'),
@@ -1220,8 +1226,8 @@ export interface SupportMessageView {
   senderId: string;
   senderRole: 'USER' | 'SELLER' | 'SYSTEM';
   content: string;
-  /** TEXT / PRODUCT / IMAGE / VIDEO / EMOJI / ORDER */
-  bizType: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER';
+  /** TEXT / PRODUCT / IMAGE / VIDEO / EMOJI / ORDER / VOICE */
+  bizType: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER' | 'VOICE';
   bizId: string | null;
   mediaUrl: string | null;
   thumbUrl: string | null;
@@ -1233,6 +1239,12 @@ export interface SupportMessageView {
   mine: boolean;
   read: boolean;
   card: SupportProductCard | null;
+  /** 撤回时间（2026-10-24）；null=未撤回 */
+  recalledAt: string | null;
+  /** 引用的消息 id；null=无引用 */
+  replyToId: string | null;
+  /** 服务端拼装的引用摘要 */
+  quoted: { id: string; bizType: string | null; excerpt: string } | null;
 }
 
 export interface SupportThreadView {
@@ -1281,7 +1293,7 @@ export const supportApi = {
     sellerId?: string;
     content: string;
     productId?: string;
-    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER';
+    type?: 'TEXT' | 'PRODUCT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'ORDER' | 'VOICE';
     /** type=ORDER 时必填 */
     orderNo?: string;
     mediaUrl?: string;
@@ -1289,7 +1301,12 @@ export const supportApi = {
     width?: number;
     height?: number;
     durationMs?: number;
+    /** 引用的消息 id（2026-10-24）：必须同会话 */
+    replyToId?: string;
   }) => api.post<SupportMessageView>('/api/support/messages', body),
+  /** 撤回自己 2 分钟内发出的消息（2026-10-24，幂等） */
+  recall: (messageId: string) =>
+    api.post<SupportMessageView>(`/api/support/messages/${messageId}/recall`),
   markRead: (sessionId: string) =>
     api.post<number>('/api/support/read', undefined, { query: { sessionId } }),
   /**
@@ -1327,14 +1344,19 @@ export const sellerSupportApi = {
     api.get<SupportThreadView>(`/api/seller/support/sessions/${id}/messages`, { query }),
   reply: (id: string, payload: {
     content: string;
-    type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'EMOJI';
+    type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'VOICE';
     mediaUrl?: string;
     thumbUrl?: string;
     width?: number;
     height?: number;
     durationMs?: number;
+    /** 引用的消息 id（2026-10-24）：必须同会话 */
+    replyToId?: string;
   }) => api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages`, payload),
   markRead: (id: string) => api.post<number>(`/api/seller/support/sessions/${id}/read`),
+  /** 撤回客服 2 分钟内发出的回复（2026-10-24，幂等） */
+  recall: (id: string, messageId: string) =>
+    api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages/${messageId}/recall`),
   // 关闭 / 重开已下线（2026-10-23）：关闭权只在买家手里，客服侧调用恒返回 403
   unreadCount: () => api.get<number>('/api/seller/support/unread-count'),
 };

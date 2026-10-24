@@ -37,6 +37,7 @@ public record RealtimeEvent(
     public static final String MESSAGE = "MESSAGE";
     public static final String READ = "READ";
     public static final String TYPING = "TYPING";
+    public static final String RECALL = "RECALL";
     public static final String READY = "READY";
     public static final String PONG = "PONG";
 
@@ -57,6 +58,14 @@ public record RealtimeEvent(
     public static RealtimeEvent typing(String biz, String sessionId, String conversationId, Long fromUserId) {
         return new RealtimeEvent(TYPING, biz, sessionId, conversationId,
                 fromUserId == null ? null : String.valueOf(fromUserId), null, null, now());
+    }
+
+    /** 撤回（2026-10-24）：messageId 携带被撤回的消息 id，对端收到后回源刷新 */
+    public static RealtimeEvent recall(String biz, String sessionId, String conversationId,
+                                       Long fromUserId, Long messageId) {
+        return new RealtimeEvent(RECALL, biz, sessionId, conversationId,
+                fromUserId == null ? null : String.valueOf(fromUserId),
+                messageId == null ? null : String.valueOf(messageId), null, now());
     }
 
     public static RealtimeEvent simple(String type) {

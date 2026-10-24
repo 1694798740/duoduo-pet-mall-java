@@ -1,6 +1,25 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-23 · 第八十九轮）**：**聊天实时化（WebSocket 大迭代）** ——
+> **最新一轮（2026-10-24 · 第九十一轮）**：**消息撤回 / 引用 / 语音（im 迭代第二批收官）** ——
+> 按 `docs/im-realtime-iteration-plan.md` 顺序落地三能力，客服 + 私信双通道、web 三页 + 小程序两页同批对齐：
+> ① **撤回**：软删留痕（`recalled_at` + 内容覆写「[消息已撤回]」+ 媒体字段置空，数据库层不可读，不靠前端隐藏）；
+> 仅发送者本人 + 120s 窗口 + 幂等；WS 新增 RECALL 信号实时通知对端；会话摘要同步改撤回文案。
+> ② **引用**：`reply_to_id` 单列；必须同会话（跨会话 400）；摘要在**读取路径服务端拼装**（文本前 60 字、
+> 媒体用 `[图片]/[视频]/[表情]/[语音]/[卡片]` 占位、已撤回显示「原消息已撤回」），端侧摘要不可注入、不递归。
+> ③ **语音**：新 bizType `VOICE`（`mediaUrl` + `durationMs` 1–60000ms 服务端校验）；上传白名单扩
+> aac/mp3 + 音频 MIME（音频豁免体积上限、扩展名/MIME 一致性按「音频/非音频」二分判断——★ audio/mp4
+> 的 mp4 同为视频扩展名，原写法会误拒）；web MediaRecorder（webm/mp4 自动探测、<600ms 丢弃、60s 自动停）、
+> 小程序 RecorderManager（aac）+ InnerAudioContext 播放；按住说话 + 长按气泡操作单（引用/撤回）。
+> SQL：`incremental/44-message-recall-quote-voice.sql`（两表加 `recalled_at` / `reply_to_id`）。
+> **★ 本轮抓出一个关键 bug**：`LambdaUpdateWrapper.eq(col, null)` 生成 `recalled_at = null` 永不匹配 →
+> 撤回「假成功」（API 返回占位符但库未落）；改 `.isNull(...)` 并用 MySQL general log + 冒烟反向验证。
+> **★ 教训**：mvn 调用若 JAVA_HOME 未设会 exit 127 且被 `| tail` 吞掉退出码，包装后 `$?` 是 tail 的——
+> 构建退出码必须直接判，构建产物 mtime 必须与源码编辑时间对照。
+> 验证：新冒烟 `scripts/chat-recall-quote-voice-smoke.mjs` **25/0**（撤回留痕/RECALL 信号/越权 403/
+> 幂等/引用摘要/媒体占位/跨会话拒绝/语音上传/时长边界/客服侧可见）；回归 session-ui 39/0、ux 53/0、
+> seller 40/0、notice 50/0、read 24/0、lifecycle 32/0、realtime 17/0；web 双端 tsc+build 通过、容器 healthy。
+
+> **上轮（2026-10-23 · 第九十轮）**：**聊天实时化（WebSocket 大迭代）** ——
 > 客服 + 私信从轮询升级原生 WS 实时推送（`duoduo-social/.../realtime/`）：60s 一次性票据鉴权
 > + 网关升级前 Redis 预检（防 101 假成功）、纯信号推送（WS 只传 MESSAGE/READ/TYPING/READY，
 > 端侧收信号走既有 HTTP 拉取，单渲染路径）、Redis Pub/Sub 多实例扇出、对端库回源防越权。

@@ -89,6 +89,12 @@ public class SellerSupportController {
         return ApiResponse.ok(supportService.markReadBySeller(requireStoreOwnerId(), id));
     }
 
+    /** 撤回客服 2 分钟内发出的回复（2026-10-24，幂等） */
+    @PostMapping("/api/seller/support/sessions/{id}/messages/{messageId}/recall")
+    public ApiResponse<MessageView> recall(@PathVariable Long id, @PathVariable Long messageId) {
+        return ApiResponse.ok(supportService.recallBySeller(requireStoreOwnerId(), id, messageId));
+    }
+
     /**
      * 【已下线】关闭 / 重开会话（2026-10-23）。
      *

@@ -1234,3 +1234,148 @@ export const MediaBubble: React.FC<{
     </>
   );
 };
+
+// ---------- 语音 / 引用 / 撤回（2026-10-24 第九十一轮） ----------
+
+/** 语音气泡：点击播放/暂停；没有花哨波形 —— 一条比例进度条足够传达状态 */
+export const VoiceBubble: React.FC<{ url: string; durationMs: number | null }> = ({ url, durationMs }) => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const secs = durationMs ? Math.max(1, Math.round(durationMs / 1000)) : 0;
+  return (
+    <div
+      className="voice-bubble"
+      role="button"
+      aria-label={playing ? `暂停语音 ${secs} 秒` : `播放语音 ${secs} 秒`}
+      onClick={() => {
+        const el = audioRef.current;
+        if (!el) return;
+        if (playing) {
+          el.pause();
+        } else {
+          void el.play();
+        }
+      }}
+    >
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setProgress(0); }}
+        onTimeUpdate={(e) => {
+          const el = e.currentTarget;
+          setProgress(el.duration > 0 ? Math.min(1, el.currentTime / el.duration) : 0);
+        }}
+      />
+      <span className="voice-icon" aria-hidden>{playing ? '⏸' : '▶'}</span>
+      <span className="voice-bar" aria-hidden>
+        <span className="voice-bar-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+      </span>
+      <span className="voice-dur">{secs}"</span>
+    </div>
+  );
+};
+
+/**
+ * 按住录音（web）：MediaRecorder，60 秒上限自动停。
+ * 不做暂停/重录的花活：松手即发送，录音失败给明确报错。
+ */
+export const VOICE_MAX_MS_WEB = 60_000;
+
+export const useVoiceRecorder: (opts: {
+  onReady: (blob: Blob, durationMs: number) => void;
+  onError: (message: string) => void;
+}) => {
+  recording: boolean;
+  seconds: number;
+  start: () => void;
+  stop: () => void;
+} = ({ onReady, onError }) => {
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startedAtRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const optsRef = useRef({ onReady, onError });
+  optsRef.current = { onReady, onError };
+
+  const cleanup = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    recRef.current = null;
+    setRecording(false);
+    setSeconds(0);
+  }, []);
+
+  const stop = useCallback(() => {
+    recRef.current?.state === 'recording' && recRef.current.stop();
+  }, []);
+
+  const start = useCallback(() => {
+    if (recRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      optsRef.current.onError('当前浏览器不支持录音');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      streamRef.current = stream;
+      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        const durationMs = Date.now() - startedAtRef.current;
+        const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' });
+        cleanup();
+        if (durationMs < 600) {
+          optsRef.current.onError('说话时间太短，再按久一点');
+          return;
+        }
+        optsRef.current.onReady(blob, Math.min(durationMs, VOICE_MAX_MS_WEB));
+      };
+      startedAtRef.current = Date.now();
+      rec.start();
+      recRef.current = rec;
+      setRecording(true);
+      timerRef.current = setInterval(() => {
+        const s = Math.floor((Date.now() - startedAtRef.current) / 1000);
+        setSeconds(s);
+        if (Date.now() - startedAtRef.current >= VOICE_MAX_MS_WEB) stop();
+      }, 250);
+    }).catch(() => optsRef.current.onError('无法访问麦克风，请检查浏览器权限'));
+  }, [cleanup, stop]);
+
+  useEffect(() => () => {
+    recRef.current?.state === 'recording' && recRef.current.stop();
+    cleanup();
+  }, [cleanup]);
+
+  return { recording, seconds, start, stop };
+};
+
+/** 引用条：气泡顶部灰条 + 点击定位到原消息 */
+export const QuotedStrip: React.FC<{
+  excerpt: string;
+  onClick?: () => void;
+}> = ({ excerpt, onClick }) => (
+  <div
+    className="chat-quoted"
+    role={onClick ? 'button' : undefined}
+    onClick={onClick}
+    title={onClick ? '点击查看原消息' : undefined}
+  >
+    {excerpt}
+  </div>
+);
+
+/** 撤回后整条消息替换为系统灰字 */
+export const RecallLine: React.FC<{ mine: boolean }> = ({ mine }) => (
+  <div className="chat-recalled">{mine ? '你撤回了一条消息' : '对方撤回了一条消息'}</div>
+);

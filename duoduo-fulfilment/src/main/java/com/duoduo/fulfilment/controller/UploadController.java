@@ -77,17 +77,25 @@ public class UploadController {
             // 兼容性最好，转码能力（mov/webm）不在本轮范围内。
             "mp4", "video/mp4",
             // 端侧压缩的产物：浏览器 MediaRecorder 在部分环境只产 webm
-            "webm", "video/webm");
+            "webm", "video/webm",
+            // 语音消息（2026-10-24）：小程序 RecorderManager 默认 aac；web 录音可能产
+            // audio/mp4（扩展名 mp4 已在白名单）或 audio/webm（扩展名 webm 已在白名单）
+            "aac", "audio/aac",
+            "mp3", "audio/mpeg");
 
     /** GET 只接受服务端自己生成的文件名（UUID + 白名单扩展名），路径穿越在正则这一层就死掉 */
     private static final Pattern SERVABLE = Pattern.compile(
-            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|jpeg|png|webp|gif|mp4|webm)$");
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|jpeg|png|webp|gif|mp4|webm|aac|mp3)$");
 
     private static final Set<String> IMAGE_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif");
 
     /** 视频 MIME（B 批）：只收 mp4，与小程序的 chooseMedia / 浏览器 <video> 对齐 */
     private static final Set<String> VIDEO_CONTENT_TYPES = Set.of("video/mp4", "video/webm");
+
+    /** 语音 MIME（2026-10-24）：web 录音与小程序录音的产物 */
+    private static final Set<String> AUDIO_CONTENT_TYPES = Set.of(
+            "audio/aac", "audio/mpeg", "audio/mp4", "audio/webm", "audio/mp3");
 
     private final ObjectStorage storage;
     private final int maxSizeMb;
@@ -148,22 +156,26 @@ public class UploadController {
         }
         String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
         boolean video = VIDEO_CONTENT_TYPES.contains(contentType);
+        boolean audio = AUDIO_CONTENT_TYPES.contains(contentType);
         // 视频**不按大小限制**（第七十九轮修订）：时长由端侧校验、体积由端侧压缩，
         // 服务端再卡 MB 只会让「压缩失败回退原视频」这条兜底路径必然失败。
         // 图片仍保留体积上限（图片没有端侧压缩管线，放任大图直接打满存储）。
-        if (!video && maxSizeMb > 0 && file.getSize() > maxSizeMb * 1024L * 1024L) {
+        // 音频（2026-10-24）：语音 ≤60s、端侧录制，体积天然小；与视频同口径不卡大小，
+        // 否则「60 秒录音被 5MB 限制拒绝」这种边缘 case 只会制造无效报错。
+        if (!video && !audio && maxSizeMb > 0 && file.getSize() > maxSizeMb * 1024L * 1024L) {
             throw BizException.validation("图片不能超过 " + maxSizeMb + "MB");
         }
-        if (!video && !IMAGE_CONTENT_TYPES.contains(contentType)) {
-            throw BizException.validation("只支持 jpg / png / webp / gif 图片，或 mp4 视频");
+        if (!video && !audio && !IMAGE_CONTENT_TYPES.contains(contentType)) {
+            throw BizException.validation("只支持 jpg / png / webp / gif 图片、mp4 视频或语音");
         }
         String ext = extOf(file.getOriginalFilename());
         if (ext == null || !ALLOWED.containsKey(ext)) {
-            throw BizException.validation("只支持 jpg / png / webp / gif 图片，或 mp4 视频");
+            throw BizException.validation("只支持 jpg / png / webp / gif 图片、mp4 视频或语音");
         }
         // 扩展名与 MIME 必须一致：只改后缀的 exe/网页不能借 mp4 之名落盘
         boolean extVideo = "mp4".equals(ext) || "webm".equals(ext);
-        if (extVideo != video) {
+        boolean extAudio = "aac".equals(ext) || "mp3".equals(ext) || extVideo;
+        if (audio ? !extAudio : (video != extVideo)) {
             throw BizException.validation("文件类型与扩展名不一致");
         }
 

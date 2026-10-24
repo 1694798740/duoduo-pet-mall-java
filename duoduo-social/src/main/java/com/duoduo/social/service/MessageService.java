@@ -123,7 +123,8 @@ public class MessageService {
         String bizType = normalizeBizType(request.bizType());
         Long bizId = request.bizId();
         String content = normalizeContent(request.content());
-        boolean media = "IMAGE".equals(bizType) || "VIDEO".equals(bizType) || "EMOJI".equals(bizType);
+        boolean media = "IMAGE".equals(bizType) || "VIDEO".equals(bizType) || "EMOJI".equals(bizType)
+                || "VOICE".equals(bizType);
         if (media) {
             if (request.mediaUrl() == null || request.mediaUrl().isBlank()) {
                 throw BizException.validation("缺少媒体地址，请重新上传");
@@ -131,8 +132,14 @@ public class MessageService {
             if (!isSafeMediaUrl(request.mediaUrl())) {
                 throw BizException.validation("媒体地址不合法");
             }
+            if ("VOICE".equals(bizType)
+                    && (request.durationMs() == null || request.durationMs() <= 0
+                        || request.durationMs() > VOICE_MAX_MS)) {
+                throw BizException.validation("语音时长无效（最长 60 秒），请重新录制");
+            }
             if (content.isEmpty()) {
-                content = "IMAGE".equals(bizType) ? "[图片]" : "VIDEO".equals(bizType) ? "[视频]" : "[表情]";
+                content = "IMAGE".equals(bizType) ? "[图片]" : "VIDEO".equals(bizType) ? "[视频]"
+                        : "VOICE".equals(bizType) ? "[语音]" : "[表情]";
             }
         }
         if (SocialDtos.BIZ_TEXT.equals(bizType) && content.isEmpty()) {
@@ -195,6 +202,16 @@ public class MessageService {
 
         String conversationId = conversationId(userId, receiverId, context);
 
+        // 引用（2026-10-24）：必须同会话，摘要由服务端拼装，不信任端侧
+        Long replyToId = null;
+        if (request.replyToId() != null) {
+            SocialMessageEntity quoted = messageMapper.selectById(request.replyToId());
+            if (quoted == null || !conversationId.equals(quoted.getConversationId())) {
+                throw BizException.validation("引用的消息不存在或不属于当前会话");
+            }
+            replyToId = request.replyToId();
+        }
+
         // 条数规则：咨询会话（带上下文段）整体豁免；主会话仍按「非互关每人限发一条」
         // （countAskInConversation 兼容第四十七轮旧数据：主会话里的历史 ASK 也豁免）
         boolean exempt = context.present()
@@ -225,6 +242,7 @@ public class MessageService {
         entity.setWidth(request.width());
         entity.setHeight(request.height());
         entity.setDurationMs(request.durationMs());
+        entity.setReplyToId(replyToId);
         entity.setCreatedAt(now);
         messageMapper.insert(entity);
         log.info("用户 {} 向用户 {} 发送 {} 消息（会话 {}）", userId, receiverId, bizType, conversationId);
@@ -246,7 +264,92 @@ public class MessageService {
         notifyReceiverQuietly(entity);
         pushRealtime(entity);
 
-        return toView(entity, userId, cardView(bizType, bizId, product, listing));
+        Map<Long, SocialDtos.QuotedView> quoted = quotedOf(List.of(entity));
+        return toView(entity, userId, cardView(bizType, bizId, product, listing),
+                replyToId == null ? null : quoted.get(replyToId));
+    }
+
+    /**
+     * 撤回私信（2026-10-24）：仅发送者本人 + 2 分钟窗口 + 幂等；软删（content 覆写为占位符、媒体清空）。
+     */
+    public MessageView recall(Long userId, Long messageId) {
+        SocialMessageEntity msg = messageId == null ? null : messageMapper.selectById(messageId);
+        if (msg == null) {
+            throw BizException.notFound("消息");
+        }
+        if (!Objects.equals(msg.getSenderId(), userId)) {
+            throw BizException.forbidden("只能撤回自己发送的消息");
+        }
+        if (msg.getRecalledAt() != null) {
+            Map<Long, SocialDtos.QuotedView> quoted = quotedOf(List.of(msg));
+            return toView(msg, userId, null, msg.getReplyToId() == null ? null : quoted.get(msg.getReplyToId()));
+        }
+        if (msg.getCreatedAt() == null
+                || msg.getCreatedAt().isBefore(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(RECALL_WINDOW_SECONDS))) {
+            throw BizException.businessRule("超过 2 分钟的消息不能再撤回");
+        }
+        messageMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SocialMessageEntity>()
+                .eq(SocialMessageEntity::getId, msg.getId())
+                // ★ eq(col, null) 永不匹配 → 必须用 isNull（防「假成功」）
+                .isNull(SocialMessageEntity::getRecalledAt)
+                .set(SocialMessageEntity::getRecalledAt, LocalDateTime.now(ZoneOffset.UTC))
+                .set(SocialMessageEntity::getContent, RECALLED_PLACEHOLDER)
+                .set(SocialMessageEntity::getMediaUrl, null)
+                .set(SocialMessageEntity::getThumbUrl, null)
+                .set(SocialMessageEntity::getMetaJson, null));
+        msg.setRecalledAt(LocalDateTime.now(ZoneOffset.UTC));
+        msg.setContent(RECALLED_PLACEHOLDER);
+        msg.setMediaUrl(null);
+        msg.setThumbUrl(null);
+        msg.setMetaJson(null);
+        try {
+            realtime.publish(msg.getReceiverId(), com.duoduo.social.realtime.RealtimeEvent.recall(
+                    "DIRECT", null, msg.getConversationId(), userId, msg.getId()));
+        } catch (Exception e) {
+            log.warn("私信撤回信号推送失败 messageId={}（不影响撤回）", msg.getId(), e);
+        }
+        Map<Long, SocialDtos.QuotedView> quoted = quotedOf(List.of(msg));
+        return toView(msg, userId, null, msg.getReplyToId() == null ? null : quoted.get(msg.getReplyToId()));
+    }
+
+    /** 语音上限 60 秒；撤回窗口 2 分钟；撤回占位正文 */
+    private static final int VOICE_MAX_MS = 60_000;
+    private static final long RECALL_WINDOW_SECONDS = 120;
+    private static final String RECALLED_PLACEHOLDER = "[消息已撤回]";
+
+    /**
+     * 引用摘要拼装（2026-10-24）：批量回源被引用消息；文本前 60 字、媒体用类型占位；
+     * 已撤回显示「原消息已撤回」；不递归。
+     */
+    private Map<Long, SocialDtos.QuotedView> quotedOf(List<SocialMessageEntity> messages) {
+        List<Long> ids = messages.stream()
+                .map(SocialMessageEntity::getReplyToId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, SocialDtos.QuotedView> map = new java.util.HashMap<>();
+        for (SocialMessageEntity q : messageMapper.selectBatchIds(ids)) {
+            String excerpt;
+            if (q.getRecalledAt() != null) {
+                excerpt = "原消息已撤回";
+            } else {
+                excerpt = switch (q.getBizType() == null ? "" : q.getBizType()) {
+                    case "IMAGE" -> "[图片]";
+                    case "VIDEO" -> "[视频]";
+                    case "EMOJI" -> "[表情]";
+                    case "VOICE" -> "[语音]";
+                    default -> {
+                        String text = q.getContent() == null ? "" : q.getContent();
+                        yield text.length() <= 60 ? text : text.substring(0, 60);
+                    }
+                };
+            }
+            map.put(q.getId(), new SocialDtos.QuotedView(q.getId(), q.getBizType(), excerpt));
+        }
+        return map;
     }
 
     /**
@@ -399,11 +502,13 @@ public class MessageService {
         Map<Long, ProductCardBrief> cards = loadProductCards(ordered);
         Map<Long, ListingCardBrief> listingCards = loadListingCards(ordered);
         // bizId 为 null 的普通文本消息不能直接 Map.get(null)：不可变 Map（Map.of）对 null 键查询抛 NPE
+        Map<Long, SocialDtos.QuotedView> quoted = quotedOf(ordered);
         List<MessageView> views = ordered.stream()
                 .map(e -> toView(e, userId,
                         cardView(e.getBizType(), e.getBizId(),
                                 e.getBizId() == null ? null : cards.get(e.getBizId()),
-                                e.getBizId() == null ? null : listingCards.get(e.getBizId()))))
+                                e.getBizId() == null ? null : listingCards.get(e.getBizId())),
+                        e.getReplyToId() == null ? null : quoted.get(e.getReplyToId())))
                 .toList();
         return new MessagePage(views, result.getTotal(), pageNo, size,
                 peerId,
@@ -453,7 +558,9 @@ public class MessageService {
             case SocialDtos.BIZ_TEXT, SocialDtos.BIZ_ASK, SocialDtos.BIZ_PRODUCT,
                  SocialDtos.BIZ_SHARE, SocialDtos.BIZ_PROFILE_CARD, SocialDtos.BIZ_LISTING,
                  // B 批（2026-10-21）：私信与客服一致的媒体类型
-                 "IMAGE", "VIDEO", "EMOJI" -> type;
+                 "IMAGE", "VIDEO", "EMOJI",
+                 // 语音（2026-10-24）
+                 "VOICE" -> type;
             default -> throw BizException.validation("不支持的消息类型");
         };
     }
@@ -615,7 +722,8 @@ public class MessageService {
         return e.getSenderId().equals(userId) ? e.getReceiverId() : e.getSenderId();
     }
 
-    private MessageView toView(SocialMessageEntity e, Long viewerId, com.duoduo.social.dto.SocialDtos.CardView card) {
+    private MessageView toView(SocialMessageEntity e, Long viewerId, com.duoduo.social.dto.SocialDtos.CardView card,
+                               SocialDtos.QuotedView quoted) {
         return new MessageView(
                 e.getId(),
                 e.getSenderId(),
@@ -632,7 +740,10 @@ public class MessageService {
                 iso(e.getCreatedAt()),
                 e.getSenderId().equals(viewerId),
                 e.getReadAt() != null,
-                card);
+                card,
+                iso(e.getRecalledAt()),
+                e.getReplyToId(),
+                quoted);
     }
 
     /** 会话键：数值小的在前（纯数值约定，与业务无关）——主会话（互关私聊 / 商品卡分享） */
