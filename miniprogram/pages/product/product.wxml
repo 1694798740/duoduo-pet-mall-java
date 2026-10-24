@@ -109,8 +109,11 @@
   <!-- 商品介绍：详情长文 + 图文配图 -->
   <view class="card">
     <view class="sec-title">商品介绍</view>
-    <text class="p-desc">{{detail.description || '暂无介绍'}}</text>
-    <view wx:for="{{detailImages}}" wx:key="*this" class="detail-media">
+    <text wx:if="{{detail.description}}" class="p-desc">{{detail.description}}</text>
+    <!-- 富文本详情（2026-10-24）：服务端已做白名单消毒，小程序用 rich-text 渲染 -->
+    <rich-text wx:if="{{detail.detailHtml}}" class="p-rich" nodes="{{detail.detailHtml}}"></rich-text>
+    <text wx:if="{{!detail.description && !detail.detailHtml}}" class="p-desc">暂无介绍</text>
+    <view wx:if="{{!detail.detailHtml}}" wx:for="{{detailImages}}" wx:key="*this" class="detail-media">
       <image class="detail-img" src="{{item}}" mode="widthFix" lazy-load />
     </view>
   </view>

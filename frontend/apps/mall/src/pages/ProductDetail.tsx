@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { RichTextView } from '@duoduo/shared/components/RichText';
 import { detailImages, gallery } from '@duoduo/api-sdk/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
@@ -158,9 +159,15 @@ export const ProductDetailPage: React.FC = () => {
   const { card, suitability } = data;
   // 图集交给统一解析：后端的 /img/… 占位路径映射到本地图池（主图+4 变体），
   // 真实存在的（将来 CDN 下发的绝对 URL / 用户上传的 /uploads/）原样放行
-  const images = data.images.some((u) => /^https?:|^\/uploads\//i.test(u))
+  // ★ 2026-10-24：主图必须是第一张。服务端已归一（mainImage 前置），这里再做一次
+  //   端侧兜底 —— 历史缓存/旧接口返回里主图可能不在首位，否则会出现
+  //   「首页卡片是 A 图，点进来先看到 B 图」的错位。
+  const rawImages = data.images.some((u) => /^https?:|^\/uploads\//i.test(u))
     ? data.images
     : gallery(card.id, card.mainImage);
+  const images = card.mainImage && rawImages[0] !== card.mainImage
+    ? [card.mainImage, ...rawImages.filter((u) => u !== card.mainImage)]
+    : rawImages;
   const canBuy = selectedSku?.sellable === true;
   const price = selectedSku?.price ?? card.minPrice;
 
@@ -559,15 +566,19 @@ export const ProductDetailPage: React.FC = () => {
       {/* ---------- 通栏详情区（2026-10-21 重排） ----------
           此前「商品介绍 / 规格参数 / 包装规格」三张长卡堆在左列，把左列拉到两三屏长、
           右列大量留白。改为通栏后：介绍大图宽屏两列并排，规格两卡并排，重心恢复平衡。 */}
-      {data.detail ? (
+      {data.intro || data.detail || data.detailHtml ? (
         <div className="card card-pad pd-section">
           <h3 style={{ marginBottom: 8 }}>商品介绍</h3>
-          <p className="pd-detail-text" style={{ whiteSpace: 'pre-wrap' }}>
-            {data.detail}
-          </p>
-          {/* 图文配图（第七十三轮）：与小程序端同一映射池（base=seed+2 取 3 张），
-              两端「商品介绍」从此是同一批图；后端将来下发真实图时原样放行 */}
-          {detailImages(card.id).length ? (
+          {data.intro || data.detail ? (
+            <p className="pd-detail-text" style={{ whiteSpace: 'pre-wrap' }}>
+              {data.intro || data.detail}
+            </p>
+          ) : null}
+          {/* 富文本详情（2026-10-24）：商家在商家端编辑，服务端白名单消毒后渲染。
+              历史商品没有富文本时，保留原来的「介绍配图」兜底，不让老商品变成纯文字页 */}
+          {data.detailHtml ? (
+            <RichTextView html={data.detailHtml} />
+          ) : detailImages(card.id).length ? (
             <div className="pd-detail-imgs">
               {detailImages(card.id).map((img, index) => (
                 <img
@@ -587,6 +598,14 @@ export const ProductDetailPage: React.FC = () => {
         <div className="card card-pad">
           <h3 style={{ marginBottom: 10 }}>规格参数</h3>
           <dl className="spec-list">
+            {/* 商家填写的规格参数（2026-10-24）排在最前：它是商品自己的事实，
+                品牌/分类等派生信息只是补充，不该抢占第一屏 */}
+            {(data.specParams ?? []).map((item) => (
+              <React.Fragment key={`sp-${item.name}`}>
+                <dt>{item.name}</dt>
+                <dd>{item.value || '—'}</dd>
+              </React.Fragment>
+            ))}
             <dt>品牌</dt>
             <dd>{card.brandName ?? '—'}</dd>
             <dt>分类</dt>
@@ -624,7 +643,14 @@ export const ProductDetailPage: React.FC = () => {
           <div className="card card-pad">
             <h3 style={{ marginBottom: 10 }}>包装规格</h3>
             <dl className="spec-list">
-              {Object.keys(selectedSku.spec).length ? (
+              {/* 商家填写的包装规格（2026-10-24）优先；没填时回落到 SKU 规格键值对 */}
+              {(data.packaging ?? []).map((item) => (
+                <React.Fragment key={`pk-${item.name}`}>
+                  <dt>{item.name}</dt>
+                  <dd>{item.value || '—'}</dd>
+                </React.Fragment>
+              ))}
+              {(data.packaging ?? []).length === 0 && Object.keys(selectedSku.spec).length ? (
                 Object.entries(selectedSku.spec)
                   .filter(([, v]) => v)
                   .map(([k, v]) => (
@@ -633,12 +659,12 @@ export const ProductDetailPage: React.FC = () => {
                       <dd>{v}</dd>
                     </React.Fragment>
                   ))
-              ) : (
+              ) : (data.packaging ?? []).length === 0 ? (
                 <>
                   <dt>规格</dt>
                   <dd>默认规格</dd>
                 </>
-              )}
+              ) : null}
               {selectedSku.skuCode ? (
                 <>
                   <dt>SKU 编码</dt>

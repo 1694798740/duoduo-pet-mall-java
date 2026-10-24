@@ -3467,3 +3467,29 @@ button.chat-quoted, .chat-quoted[role='button'] { cursor: pointer; }
 }
 .sup-act:hover { color: var(--brand, #3b82f6); }
 .recording-tip { font-size: 12px; color: #d03050; padding: 4px 2px; }
+
+/* ---------------- 富文本编辑器与详情渲染（2026-10-24，商品管理） ---------------- */
+.rich-editor { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.rich-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.rich-toolbar button { border: 1px solid transparent; background: none; color: var(--text-2); font-size: 12px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.rich-toolbar button:hover { background: var(--surface); border-color: var(--border); color: var(--text); }
+.rich-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+.rich-body { padding: 10px 12px; outline: none; font-size: 14px; line-height: 1.7; color: var(--text); max-height: 420px; overflow: auto; }
+.rich-body:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
+.rich-body img { max-width: 100%; border-radius: 8px; }
+.rich-body h2 { font-size: 18px; margin: 12px 0 6px; }
+.rich-body h3 { font-size: 16px; margin: 10px 0 4px; }
+.rich-body blockquote { margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--brand); color: var(--text-2); background: var(--surface-2); }
+.rich-hint { padding: 6px 10px; border-top: 1px dashed var(--border); font-size: 12px; color: var(--text-3); }
+.rich-view { font-size: 14px; line-height: 1.8; color: var(--text-2); }
+.rich-view h2 { font-size: 18px; color: var(--text); margin: 14px 0 8px; }
+.rich-view h3 { font-size: 16px; color: var(--text); margin: 12px 0 6px; }
+.rich-view p { margin: 8px 0; }
+.rich-view img { max-width: 100%; border-radius: 10px; margin: 8px 0; display: block; }
+.rich-view ul, .rich-view ol { padding-left: 22px; margin: 8px 0; }
+.rich-view li { margin: 4px 0; }
+.rich-view blockquote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--brand); background: var(--surface-2); border-radius: 0 8px 8px 0; }
+.rich-view a { color: var(--brand); }
+.kv-editor { display: flex; flex-direction: column; gap: 8px; }
+.kv-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .kv-row { grid-template-columns: 1fr; } }

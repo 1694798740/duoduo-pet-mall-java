@@ -349,7 +349,9 @@ class SellerProductServiceTest {
         // ① 常规落库 —— 在 NOT_NULL 策略下这一条**不会**带上 subtitle=null
         verify(spuMapper).updateById(spu);
         // ② 显式清空 —— 缺了它，用户看到的"已清空"就只是内存里的幻觉
-        verify(spuMapper).update(isNull(), any());
+        //    2026-10-24 起还有一条"审核列显式写回"的 UPDATE（含 audit_reason=null），
+        //    所以这里恰好是 2 条：审核列补丁 + 内容列清空。
+        verify(spuMapper, times(2)).update(isNull(), any());
     }
 
     @Test
@@ -361,8 +363,10 @@ class SellerProductServiceTest {
 
         service.update(9001L, titleUpdate("新标题"));
 
-        // 反面对照：没有清空动作时不该多发一条 UPDATE（否则每次编辑都是两次写库）
-        verify(spuMapper, never()).update(isNull(), any());
+        // 反面对照：没有清空动作时只有"审核列补丁"这一条 —— 它**故意每次内容变更都发**，
+        // 因为 updateById 不写 null，不补这一条就会出现「已通过 + 上一轮的驳回原因」
+        // 这种自相矛盾的数据。除它之外不该再多发清空 UPDATE。
+        verify(spuMapper, times(1)).update(isNull(), any());
     }
 
     @Test
@@ -664,6 +668,45 @@ class SellerProductServiceTest {
         // 驳回时 status 被压成 OFF_SHELF，且 REJECTED 件不可能自己上架（门禁堵死）；
         // 若不在这里恢复，卖家改完并通过审核后仍是不可见状态，且没有任何入口能放它出来
         assertThat(spu.getStatus()).isEqualTo("ON_SALE");
+    }
+
+    /**
+     * 2026-10-24 回归：驳回 → 第一次编辑（状态变 PENDING）→ **第二次编辑**。
+     *
+     * <p>修复前：第二次编辑时库里已不是 REJECTED，`applyContentReaudit` 只读当前状态，
+     * 干净内容会被 decideAudit 自动放行 —— 卖家「改两次」就绕过了人工审核。
+     * 修复后：rejected_at 是持久化标记，第一次编辑不会清掉它，第二次仍转人工。
+     */
+    @Test
+    void 驳回后连续两次编辑_第二次仍必须人工审核() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null, "merchant", "PENDING", "ON_SALE");
+        // 第一次编辑后的库内状态：PENDING + rejected_at 仍在（这正是修复的关键）
+        spu.setRejectedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L, titleUpdate("第二次改个字"));
+
+        assertThat(spu.getAuditStatus()).isEqualTo("PENDING");
+        assertThat(spu.getAuditSource()).isNull();
+        assertThat(spu.getAuditAt()).isNull();
+    }
+
+    /** 人工通过（平反）后标记必须清空，否则该商品以后每次改内容都要人审 */
+    @Test
+    void 人工通过后_rejectedAt被清空且此后可自动放行() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        spu.setRejectedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+        when(catalogLookup.categoryNames(any())).thenReturn(java.util.Map.of());
+
+        service.audit(9001L, "APPROVE", null);
+
+        assertThat(spu.getRejectedAt()).isNull();
+        assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
     }
 
     @Test

@@ -72,7 +72,15 @@ Page({
           lifeStages: s.lifeStages,
           allergens: s.allergens,
         }));
-        const gallery = images.gallery(this.data.id, card.mainImage || (skus[0] && skus[0].backendImage));
+        // ★ 2026-10-24：主图必须排第一，且真实上传的图片优先于本地占位映射池。
+        //   此前只按占位池合成，商家换的主图在轮播里看不到（与 Web 同一处错位）。
+        const mainImage = card.mainImage || (skus[0] && skus[0].backendImage) || '';
+        const rawImages = Array.isArray(raw.images) ? raw.images.filter((u) => u) : [];
+        const hasReal = rawImages.some((u) => /^https?:|^\/uploads\//i.test(u));
+        let gallery = hasReal ? rawImages.slice() : images.gallery(this.data.id, mainImage);
+        if (mainImage && gallery[0] !== mainImage) {
+          gallery = [mainImage].concat(gallery.filter((u) => u !== mainImage));
+        }
         const detail = {
           title: card.title || '商品',
           subtitle: card.subtitle || '',
@@ -90,8 +98,11 @@ Page({
           // 供货类型（self 自营 / merchant 品牌入驻）：详情页身份标签的判定依据，
           // 与 Web 端 SupplyTag 同一字段同一口径（第七十三轮补齐两端一致）
           supplyType: card.supplyType || 'self',
-          // 后端的 detail 是介绍长文本
-          description: raw.detail || '',
+          // 商品介绍（2026-10-24 起优先 intro；历史商品回落 detail 长文）
+          description: raw.intro || raw.detail || '',
+          detailHtml: raw.detailHtml || '',
+          specParams: Array.isArray(raw.specParams) ? raw.specParams : [],
+          packaging: Array.isArray(raw.packaging) ? raw.packaging : [],
           skus,
         };
         this.setData(
@@ -139,7 +150,11 @@ Page({
     const lifeStages = Array.isArray(suit.lifeStages) ? suit.lifeStages : [];
     const allergens = Array.isArray(suit.allergens) ? suit.allergens : [];
 
-    const params = [
+    // 商家填写的规格参数排最前（2026-10-24）：它是商品自己的事实，派生信息只是补充
+    const customParams = (detail.specParams || [])
+      .filter((x) => x && x.name)
+      .map((x) => ({ k: x.name, v: x.value || '—' }));
+    const params = customParams.concat([
       { k: '品牌', v: detail.brandName || '—' },
       { k: '分类', v: detail.categoryName || '—' },
       {
@@ -152,15 +167,17 @@ Page({
       },
       { k: '过敏原', v: allergens.length ? allergens.join('、') : '未标注' },
       { k: '食品类', v: suit.food ? '是（不适用 7 天无理由）' : '否（支持 7 天无理由）' },
-    ];
+    ]);
 
-    const packageRows = [];
+    const packageRows = (detail.packaging || [])
+      .filter((x) => x && x.name)
+      .map((x) => ({ k: x.name, v: x.value || '—' }));
     const spec = sku.spec && typeof sku.spec === 'object' ? sku.spec : null;
-    if (spec) {
+    if (packageRows.length === 0 && spec) {
       Object.keys(spec).forEach((k) => {
         if (spec[k]) packageRows.push({ k: k, v: spec[k] });
       });
-    } else {
+    } else if (packageRows.length === 0) {
       packageRows.push({ k: '规格', v: sku.specText });
     }
     if (sku.skuCode) packageRows.push({ k: 'SKU 编码', v: sku.skuCode });

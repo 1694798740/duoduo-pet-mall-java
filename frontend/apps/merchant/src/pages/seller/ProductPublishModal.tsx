@@ -16,6 +16,7 @@ import { catalogApi, sellerApi } from '@duoduo/api-sdk/endpoints';
 import type { BrandView, CategoryNode, SellerSkuInput } from '@duoduo/api-sdk/types';
 import { Field, Modal, useToast } from '@duoduo/shared/components/ui';
 import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
+import { KeyValueEditor, RichTextEditor, type KvItem } from '@duoduo/shared/components/RichText';
 
 interface Props {
   open: boolean;
@@ -61,6 +62,11 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
   const [uploadBusy, setUploadBusy] = useState<Record<string, boolean>>({});
   const uploading = Object.values(uploadBusy).some(Boolean);
   const [detail, setDetail] = useState('');
+  // 2026-10-24 商品内容能力：介绍 / 富文本详情 / 规格参数 / 包装规格
+  const [intro, setIntro] = useState('');
+  const [detailHtml, setDetailHtml] = useState('');
+  const [specParams, setSpecParams] = useState<KvItem[]>([]);
+  const [packaging, setPackaging] = useState<KvItem[]>([]);
   const [skus, setSkus] = useState<SkuDraft[]>([emptySku()]);
 
   // 类目 / 品牌是超小字典表，弹窗打开时取一次；失败不阻塞表单（类目会在提交时被服务端拦）
@@ -89,6 +95,10 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
     setImages([]);
     setUploadBusy({});
     setDetail('');
+    setIntro('');
+    setDetailHtml('');
+    setSpecParams([]);
+    setPackaging([]);
     setSkus([emptySku()]);
   };
 
@@ -151,7 +161,13 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
         brandId: brandId || null,
         mainImage: mainImage.trim(),
         images: images.length ? images : null,
-        detail: detail.trim() || null,
+        // detail 保留为「介绍」的兼容副本：历史页面/小程序读的是 detail，
+        // 新端读 intro；两个都写，迁移期不出现"商家填了但前台看不到"。
+        detail: intro.trim() || detail.trim() || null,
+        intro: intro.trim() || null,
+        detailHtml: detailHtml.trim() || null,
+        specParams: specParams.filter((x) => x.name.trim() || x.value.trim()),
+        packaging: packaging.filter((x) => x.name.trim() || x.value.trim()),
         skus: payloadSkus,
       });
       push('商品已提交，正在等待平台审核（审核通过后自动上架）', 'success');
@@ -254,14 +270,31 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
           />
         </Field>
 
-        <Field label="商品详情">
+        <Field label="商品介绍" hint="详情页「商品介绍」区展示的短文本">
           <textarea
             className="input"
-            rows={4}
-            maxLength={4000}
-            value={detail}
-            onChange={(e) => setDetail(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            value={intro}
+            onChange={(e) => setIntro(e.target.value)}
             placeholder="材质、成分、适用宠物、喂养建议…"
+          />
+        </Field>
+
+        <Field label="商品详情（富文本）" hint="支持标题、加粗、列表与插图；保存后前台按富文本渲染">
+          <RichTextEditor value={detailHtml} onChange={setDetailHtml} />
+        </Field>
+
+        <Field label="规格参数" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
+          <KeyValueEditor value={specParams} onChange={setSpecParams} />
+        </Field>
+
+        <Field label="包装规格" hint="如 包装形式 / 单包重量 / 箱规；最多 20 条">
+          <KeyValueEditor
+            value={packaging}
+            onChange={setPackaging}
+            namePlaceholder="规格名（如 包装形式）"
+            valuePlaceholder="规格值（如 袋装）"
           />
         </Field>
 

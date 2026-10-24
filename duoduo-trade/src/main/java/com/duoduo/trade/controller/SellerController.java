@@ -62,6 +62,12 @@ public class SellerController {
         return ApiResponse.ok(sellerService.analytics());
     }
 
+    /** 按商品的经营统计（2026-10-24）：销量 / 成交额 / 退款件数，商家端商品分析表用 */
+    @GetMapping("/product-stats")
+    public ApiResponse<java.util.List<com.duoduo.trade.dto.AnalyticsDtos.ProductStat>> productStats() {
+        return ApiResponse.ok(sellerService.productStats());
+    }
+
     /**
      * 卖出的订单列表。
      *

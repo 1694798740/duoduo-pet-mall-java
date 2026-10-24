@@ -90,6 +90,30 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
     List<Map<String, Object>> topProductsBySales(@Param("sellerIds") Collection<Long> sellerIds,
                                                  @Param("limit") int limit);
 
+    /**
+     * 按商品的经营统计（2026-10-24，商家端商品分析）。
+     *
+     * <p>为什么不能读 {@code t_spu.sales_count}：那一列全仓只有建商品时写 0，
+     * 下单/支付都不回写 —— 它是个"看起来像销量"的常量。真实销量只能从订单明细聚合。
+     *
+     * <p>口径：成交状态含退款（这些单确实成交过），退款件数单独出一列，
+     * 让商家看到"卖出去多少 / 退回来多少"，而不是把退款单从分母里悄悄扣掉。
+     */
+    @Select("<script>"
+            + "SELECT i.spu_id AS spuId, MAX(i.title) AS name, "
+            + "COALESCE(SUM(i.quantity), 0) AS qty, "
+            + "COALESCE(SUM(i.amount), 0) AS amount, "
+            + "COALESCE(SUM(CASE WHEN i.refund_status IN ('REFUNDING','REFUNDED') THEN i.quantity ELSE 0 END), 0) AS refundQty "
+            + "FROM t_order_item i JOIN t_order o ON o.id = i.order_id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "<if test='sellerIds != null'>AND o.seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "</if>"
+            + "GROUP BY i.spu_id ORDER BY qty DESC, i.spu_id ASC LIMIT #{limit}"
+            + "</script>")
+    List<Map<String, Object>> productStatsBySeller(@Param("sellerIds") Collection<Long> sellerIds,
+                                                   @Param("limit") int limit);
+
     /** 订单类型分布（NORMAL / SECKILL），返回形如 {@code [{t:"SECKILL", cnt:28}, ...]} */
     @Select("<script>"
             + "SELECT order_type AS t, COUNT(*) AS cnt FROM t_order "

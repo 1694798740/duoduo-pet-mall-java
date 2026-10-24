@@ -15,6 +15,7 @@ import com.duoduo.product.client.MerchantRiskClient;
 import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.client.dto.MerchantRiskInfo;
+import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
@@ -29,6 +30,7 @@ import com.duoduo.product.mapper.SpuMapper;
 import com.duoduo.product.support.BannedWordGuard;
 import com.duoduo.product.support.CatalogLookup;
 import com.duoduo.product.support.Csv;
+import com.duoduo.product.support.ProductContent;
 import com.duoduo.product.support.SpuRiskJudge;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -131,6 +133,8 @@ public class SellerProductService {
     private static final int SUBTITLE_MAX = 60;
     private static final int IMAGE_MAX = 500;
     private static final int DETAIL_MAX = 4000;
+    /** 商品介绍上限（富文本之外的短介绍） */
+    private static final int INTRO_MAX = ProductContent.INTRO_MAX;
     private static final int MAX_IMAGES = 9;
     private static final int MAX_SKUS = 20;
     private static final int SPEC_NAME_MAX = 30;
@@ -334,6 +338,10 @@ public class SellerProductService {
         String subtitle = optionalText(request.subtitle(), "副标题", SUBTITLE_MAX);
         String mainImage = requireText(request.mainImage(), "商品主图", IMAGE_MAX);
         String detail = optionalText(request.detail(), "商品详情", DETAIL_MAX);
+        String intro = optionalText(request.intro(), "商品介绍", INTRO_MAX);
+        String detailHtml = sanitizeDetailHtml(request.detailHtml());
+        List<ProductDtos.KvItem> specParams = ProductContent.normalizeKv(request.specParams(), "规格参数");
+        List<ProductDtos.KvItem> packaging = ProductContent.normalizeKv(request.packaging(), "包装规格");
         List<String> images = normalizeImages(request.images());
         requireCategoryExists(request.categoryId());
         requireBrandExists(request.brandId());
@@ -347,6 +355,13 @@ public class SellerProductService {
         }
         if (detail != null) {
             bannedWordGuard.rejectIfHit(detail, "商品详情");
+        }
+        if (intro != null) {
+            bannedWordGuard.rejectIfHit(intro, "商品介绍");
+        }
+        String htmlText = ProductContent.htmlText(detailHtml);
+        if (htmlText != null) {
+            bannedWordGuard.rejectIfHit(htmlText, "富文本详情");
         }
 
         boolean selfSupplied = scope.platformScope();
@@ -364,6 +379,11 @@ public class SellerProductService {
         spu.setMainImage(mainImage);
         spu.setImages(images.isEmpty() ? null : String.join(",", images));
         spu.setDetail(detail);
+        spu.setIntro(intro);
+        spu.setDetailHtml(detailHtml);
+        spu.setSpecParams(ProductContent.toJson(specParams));
+        spu.setPackaging(ProductContent.toJson(packaging));
+        spu.setRejectCount(0);
         spu.setStatus(STATUS_ON_SALE);
         spu.setSalesCount(0);
         // 评分从 0 起步（而不是 DDL 里的 5.00）：t_spu.rating / rating_count 的唯一写入口
@@ -447,6 +467,11 @@ public class SellerProductService {
         boolean clearSubtitle = false;
         boolean clearImages = false;
         boolean clearDetail = false;
+        // 2026-10-24 新增四个内容字段，清空语义同上：必须显式 set(col, null)
+        boolean clearIntro = false;
+        boolean clearDetailHtml = false;
+        boolean clearSpecParams = false;
+        boolean clearPackaging = false;
         if (request.title() != null) {
             String normalized = requireText(request.title(), "商品标题", TITLE_MAX);
             if (!normalized.equals(spu.getTitle())) {
@@ -503,6 +528,47 @@ public class SellerProductService {
                 changed = true;
             }
         }
+        if (request.intro() != null) {
+            String normalized = optionalText(request.intro(), "商品介绍", INTRO_MAX);
+            if (!java.util.Objects.equals(normalized, spu.getIntro())) {
+                if (normalized != null) {
+                    bannedWordGuard.rejectIfHit(normalized, "商品介绍");
+                }
+                spu.setIntro(normalized);
+                if (normalized == null) { clearIntro = true; }
+                changed = true;
+            }
+        }
+        if (request.detailHtml() != null) {
+            String normalized = sanitizeDetailHtml(request.detailHtml());
+            if (!java.util.Objects.equals(normalized, spu.getDetailHtml())) {
+                String text = ProductContent.htmlText(normalized);
+                if (text != null) {
+                    bannedWordGuard.rejectIfHit(text, "富文本详情");
+                }
+                spu.setDetailHtml(normalized);
+                if (normalized == null) { clearDetailHtml = true; }
+                changed = true;
+            }
+        }
+        if (request.specParams() != null) {
+            List<ProductDtos.KvItem> items = ProductContent.normalizeKv(request.specParams(), "规格参数");
+            String normalized = ProductContent.toJson(items);
+            if (!java.util.Objects.equals(normalized, spu.getSpecParams())) {
+                spu.setSpecParams(normalized);
+                if (normalized == null) { clearSpecParams = true; }
+                changed = true;
+            }
+        }
+        if (request.packaging() != null) {
+            List<ProductDtos.KvItem> items = ProductContent.normalizeKv(request.packaging(), "包装规格");
+            String normalized = ProductContent.toJson(items);
+            if (!java.util.Objects.equals(normalized, spu.getPackaging())) {
+                spu.setPackaging(normalized);
+                if (normalized == null) { clearPackaging = true; }
+                changed = true;
+            }
+        }
         if (request.categoryId() != null && !request.categoryId().equals(spu.getCategoryId())) {
             requireCategoryExists(request.categoryId());
             spu.setCategoryId(request.categoryId());
@@ -524,26 +590,36 @@ public class SellerProductService {
         //   而「转人工」时 audit_source 恰恰要写回 NULL（上一次结论的来源已作废）。
         //   不显式 set 的话，界面上会看到「待审 + 来源=AUTO」这种自相矛盾的组合：
         //   接口 200、状态也变了，只有那一列悄悄留着旧值，无异常、无日志、断言也抓不到。
-        if (!risks.isEmpty() && isMerchantSupplied(spu)) {
-            spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
-                    .eq(SpuEntity::getId, spuId)
-                    .set(SpuEntity::getAuditSource, null)
-                    .set(SpuEntity::getAuditAt, null));
-        }
+        // ★ 审核四列一律显式写（含 null）：updateById 的 NOT_NULL 策略不写 null，
+        //   否则会出现「待审 + 来源=AUTO」这种自相矛盾组合，且驳回原因永远清不掉
+        //   （2026-10-24 复核发现：通过后库里仍留着上一次的 audit_reason）。
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .set(SpuEntity::getStatus, spu.getStatus())
+                .set(SpuEntity::getAuditStatus, spu.getAuditStatus())
+                .set(SpuEntity::getAuditSource, spu.getAuditSource())
+                .set(SpuEntity::getAuditAt, spu.getAuditAt())
+                .set(SpuEntity::getAuditReason, null));
         // ★★ 同一个 NOT_NULL 坑的另一半：「传 "" = 清空」的三个字段。
         //    上面那句 set(null) 已经处理了 audit_source / audit_at（那是"转人工"要写回 NULL），
         //    但**卖家主动清空副标题 / 图片集 / 详情**走的是同一个 updateById —— 同样不写 null。
         //    症状：接口 200、审计日志有记录、前端刷新后旧值还在。
         //    ⇒ 凡是"语义上可清空"的列，都必须显式 set(col, null)。
-        if (clearSubtitle || clearImages || clearDetail) {
+        if (clearSubtitle || clearImages || clearDetail || clearIntro
+                || clearDetailHtml || clearSpecParams || clearPackaging) {
             LambdaUpdateWrapper<SpuEntity> clear = new LambdaUpdateWrapper<SpuEntity>()
                     .eq(SpuEntity::getId, spuId);
             if (clearSubtitle) { clear.set(SpuEntity::getSubtitle, null); }
             if (clearImages) { clear.set(SpuEntity::getImages, null); }
             if (clearDetail) { clear.set(SpuEntity::getDetail, null); }
+            if (clearIntro) { clear.set(SpuEntity::getIntro, null); }
+            if (clearDetailHtml) { clear.set(SpuEntity::getDetailHtml, null); }
+            if (clearSpecParams) { clear.set(SpuEntity::getSpecParams, null); }
+            if (clearPackaging) { clear.set(SpuEntity::getPackaging, null); }
             spuMapper.update(null, clear);
-            log.info("商品 {} 显式清空字段：subtitle={} images={} detail={}",
-                    spuId, clearSubtitle, clearImages, clearDetail);
+            log.info("商品 {} 显式清空字段：subtitle={} images={} detail={} intro={} html={} spec={} packaging={}",
+                    spuId, clearSubtitle, clearImages, clearDetail, clearIntro,
+                    clearDetailHtml, clearSpecParams, clearPackaging);
         }
         log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={}）",
                 spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
@@ -962,19 +1038,36 @@ public class SellerProductService {
             throw BizException.validation("驳回时必须填写原因");
         }
 
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        boolean reject = AUDIT_REJECTED.equals(target);
+        int rejectCount = (spu.getRejectCount() == null ? 0 : spu.getRejectCount()) + (reject ? 1 : 0);
         spu.setAuditStatus(target);
-        spu.setAuditReason(AUDIT_REJECTED.equals(target) ? trimToNull(reason) : null);
-        if (AUDIT_REJECTED.equals(target) && STATUS_ON_SALE.equals(spu.getStatus())) {
+        spu.setAuditReason(reject ? trimToNull(reason) : null);
+        if (reject && STATUS_ON_SALE.equals(spu.getStatus())) {
             spu.setStatus(STATUS_OFF_SHELF);
         }
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         spu.setAuditAt(now);
         spu.setAuditBy(operator.userId());
         // E28：无论结论是通过还是驳回，来源都是「人工」—— 它回答的是
         // 「这条结论是怎么来的」，而不是「结论是什么」。
         spu.setAuditSource(AUDIT_SOURCE_MANUAL);
+        // ★ 2026-10-24：驳回点亮「曾被驳回」标记；**通过则清空**（人工放行 = 平反），
+        //   否则该商品以后每次改内容都要人审，与「改两次绕过」是同一个 bug 的另一面。
+        spu.setRejectedAt(reject ? now : null);
+        spu.setRejectCount(rejectCount);
         spu.setUpdatedAt(now);
-        spuMapper.updateById(spu);
+        // 显式 set 每一列：updateById 不写 null，会把「已通过 + 旧驳回原因」留在库里
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .set(SpuEntity::getAuditStatus, target)
+                .set(SpuEntity::getAuditReason, reject ? trimToNull(reason) : null)
+                .set(SpuEntity::getAuditAt, now)
+                .set(SpuEntity::getAuditBy, operator.userId())
+                .set(SpuEntity::getAuditSource, AUDIT_SOURCE_MANUAL)
+                .set(SpuEntity::getStatus, spu.getStatus())
+                .set(SpuEntity::getRejectedAt, reject ? now : null)
+                .set(SpuEntity::getRejectCount, rejectCount)
+                .set(SpuEntity::getUpdatedAt, now));
 
         log.info("商品 {} 审核结论={}（审核人={} 原因={}）", spuId, target, operator.userId(),
                 spu.getAuditReason());
@@ -1015,6 +1108,10 @@ public class SellerProductService {
                 .set(SpuEntity::getAuditSource, AUDIT_SOURCE_SAMPLE)
                 .set(SpuEntity::getAuditAt, now)
                 .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                // 抽查判违规同样点亮「曾被驳回」：否则卖家改两次就能把它洗回来
+                .set(SpuEntity::getRejectedAt, now)
+                .set(SpuEntity::getRejectCount,
+                        (spu.getRejectCount() == null ? 0 : spu.getRejectCount()) + 1)
                 .set(SpuEntity::getUpdatedAt, now));
         log.info("商品 {} 抽查判违规 → 已驳回并强制下架（原因={}）", spuId, reason);
     }
@@ -1046,12 +1143,22 @@ public class SellerProductService {
         //   不这么做的话，「随便改一个字」就能把 REJECTED 冲掉并重新自动上线 ——
         //   人工驳回与抽查判违规就都成了摆设，而这恰恰是最容易被绕过的那种绕过：
         //   接口不报错、状态看起来还更好了（待审 → 在售），没有断言盯着就发现不了。
-        boolean wasRejected = AUDIT_REJECTED.equals(spu.getAuditStatus());
+        // ★ 2026-10-24 修复「改两次绕过审核」：
+        //   只看当前 auditStatus 不够 —— 卖家第一次编辑会把 REJECTED 改成 PENDING，
+        //   第二次编辑时该事实已消失，干净内容就被自动放行。
+        //   rejectedAt 是持久化标记：人工/抽查驳回时落时间，**人工通过时清空**。
+        boolean wasRejected = AUDIT_REJECTED.equals(spu.getAuditStatus()) || spu.getRejectedAt() != null;
         AuditDecision decision = wasRejected
                 ? new AuditDecision(false, List.of(new SpuRiskJudge.Hit(
                         "PREVIOUSLY_REJECTED", "该商品此前被驳回或判违规，修改后需人工确认")))
                 : decideAudit(spu);
-        spu.setStatus(STATUS_ON_SALE);
+        // ★ 不无条件恢复在售：卖家主动下架（已过审）的商品，改个标题不该被悄悄上架。
+        //   只有「被驳回压成下架」这种非自愿状态，才在编辑后恢复在售等待重审。
+        boolean forcedOffByReject = AUDIT_REJECTED.equals(spu.getAuditStatus())
+                && STATUS_OFF_SHELF.equals(spu.getStatus());
+        if (forcedOffByReject || STATUS_ON_SALE.equals(spu.getStatus())) {
+            spu.setStatus(STATUS_ON_SALE);
+        }
         spu.setAuditReason(null);
         if (decision.autoApprove()) {
             spu.setAuditStatus(AUDIT_APPROVED);
@@ -1434,6 +1541,8 @@ public class SellerProductService {
                 nz(spu.getMinPrice()),
                 nz(spu.getMaxPrice()),
                 spu.getSalesCount() == null ? 0 : spu.getSalesCount(),
+                spu.getRating() == null ? 0d : spu.getRating().doubleValue(),
+                spu.getRatingCount() == null ? 0 : spu.getRatingCount(),
                 stats[0],
                 stats[1]);
     }
@@ -1448,6 +1557,10 @@ public class SellerProductService {
                 spu.getMainImage(),
                 Csv.split(spu.getImages()),
                 spu.getDetail(),
+                spu.getIntro(),
+                spu.getDetailHtml(),
+                ProductContent.parseKv(spu.getSpecParams()),
+                ProductContent.parseKv(spu.getPackaging()),
                 spu.getSupplyType(),
                 spu.getStatus(),
                 statusLabelOf(spu.getStatus()),
@@ -1471,6 +1584,10 @@ public class SellerProductService {
                 spu.getMainImage(),
                 Csv.split(spu.getImages()),
                 spu.getDetail(),
+                spu.getIntro(),
+                spu.getDetailHtml(),
+                ProductContent.parseKv(spu.getSpecParams()),
+                ProductContent.parseKv(spu.getPackaging()),
                 spu.getCategoryId(),
                 categoryName,
                 spu.getBrandId(),
@@ -1495,6 +1612,18 @@ public class SellerProductService {
                 sku.getStock() == null ? 0 : sku.getStock(),
                 sku.getImage(),
                 sku.getStatus());
+    }
+
+    /**
+     * 富文本消毒 + 长度校验；非法内容按 400 返回（不是静默丢弃，
+     * 否则商家会以为「保存成功了」却看到内容被吞）。
+     */
+    private String sanitizeDetailHtml(String raw) {
+        try {
+            return ProductContent.sanitizeHtml(raw);
+        } catch (IllegalArgumentException e) {
+            throw BizException.validation(e.getMessage());
+        }
     }
 
     /** 状态文案由服务端给出，前端不维护映射表 */

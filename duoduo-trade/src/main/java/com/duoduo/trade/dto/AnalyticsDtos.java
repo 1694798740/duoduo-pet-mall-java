@@ -73,6 +73,18 @@ public final class AnalyticsDtos {
     }
 
     /**
+     * 按商品的经营统计行（2026-10-24）。
+     *
+     * @param spuId     商品 id（与商品域、评价域关联的唯一键）
+     * @param name      商品名（订单里的历史标题，改过名以最新成交单为准）
+     * @param quantity  成交件数
+     * @param amount    成交金额（分）
+     * @param refundQty 其中退款件数（REFUNDING / REFUNDED）
+     */
+    public record ProductStat(Long spuId, String name, long quantity, long amount, long refundQty) {
+    }
+
+    /**
      * 平台后台图表数据（运营概览）。
      *
      * @param statusDistribution 全平台订单状态分布（分布图）

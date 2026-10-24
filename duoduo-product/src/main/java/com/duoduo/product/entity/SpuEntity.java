@@ -27,6 +27,14 @@ public class SpuEntity {
     /** 逗号分隔的图片列表 */
     private String images;
     private String detail;
+    /** 商品介绍（纯文本，2026-10-24）：与富文本详情分开，详情页「商品介绍」区渲染它 */
+    private String intro;
+    /** 富文本详情 HTML（2026-10-24）：服务端白名单消毒后落库，端侧按 HTML 渲染 */
+    private String detailHtml;
+    /** 规格参数 JSON：[{name,value}]（2026-10-24，商家可编辑） */
+    private String specParams;
+    /** 包装规格 JSON：[{name,value}]（2026-10-24，商家可编辑） */
+    private String packaging;
     /** ON_SALE / OFF_SHELF */
     private String status;
     /**
@@ -55,6 +63,17 @@ public class SpuEntity {
      * 自营不用管、自动放行要纳入抽查、历史数据要补标。
      */
     private String auditSource;
+    /**
+     * 最近一次被驳回的时间（2026-10-24）。
+     *
+     * <p>为什么需要它：此前「曾被驳回」只从 auditStatus 现读现判，而卖家第一次编辑就会把
+     * REJECTED 改成 PENDING —— 第二次编辑时该事实已消失，干净内容会被自动放行，等于
+     * 「改两次就绕过审核」。改为持久化标记：人工/抽查驳回时落时间，**人工通过时清空**，
+     * 只有清空后内容变更才允许重新走自动放行。
+     */
+    private LocalDateTime rejectedAt;
+    /** 累计被驳回次数（只增）：运营判断「反复违规」的参考，不参与放行判定 */
+    private Integer rejectCount;
     private Integer salesCount;
     private BigDecimal rating;
     private Integer ratingCount;
@@ -255,5 +274,53 @@ public class SpuEntity {
 
     public void setSellerId(Long sellerId) {
         this.sellerId = sellerId;
+    }
+
+    public String getIntro() {
+        return intro;
+    }
+
+    public void setIntro(String intro) {
+        this.intro = intro;
+    }
+
+    public String getDetailHtml() {
+        return detailHtml;
+    }
+
+    public void setDetailHtml(String detailHtml) {
+        this.detailHtml = detailHtml;
+    }
+
+    public String getSpecParams() {
+        return specParams;
+    }
+
+    public void setSpecParams(String specParams) {
+        this.specParams = specParams;
+    }
+
+    public String getPackaging() {
+        return packaging;
+    }
+
+    public void setPackaging(String packaging) {
+        this.packaging = packaging;
+    }
+
+    public LocalDateTime getRejectedAt() {
+        return rejectedAt;
+    }
+
+    public void setRejectedAt(LocalDateTime rejectedAt) {
+        this.rejectedAt = rejectedAt;
+    }
+
+    public Integer getRejectCount() {
+        return rejectCount;
+    }
+
+    public void setRejectCount(Integer rejectCount) {
+        this.rejectCount = rejectCount;
     }
 }

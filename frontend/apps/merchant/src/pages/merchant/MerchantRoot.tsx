@@ -25,6 +25,7 @@ import { SellerDashboardPage } from '../seller/Dashboard';
 import { SellerOrderDetailPage } from '../seller/OrderDetail';
 import { SellerOrdersPage } from '../seller/Orders';
 import { SellerProductsPage } from '../seller/Products';
+import { SellerProductInsightsPage } from '../seller/ProductInsights';
 import { SellerSettlementsPage } from '../seller/Settlements';
 import { SellerAfterSalesPage } from '../seller/AfterSales';
 import { SellerSupportPage } from '../seller/SupportInbox';
@@ -39,6 +40,7 @@ import { SellerStaffPage } from '../seller/Staff';
 const TABS_FOR_OWNER = [
   { to: '/seller', label: '经营概览', end: true },
   { to: '/seller/products', label: '商品管理', end: false },
+  { to: '/seller/product-insights', label: '商品分析', end: false },
   { to: '/seller/orders', label: '订单管理', end: false },
   // 客服信息：买家咨询的接待入口。自营店铺的接待人是官方客服账号（同样是 SELLER），
   // 第三方店铺是各自商家 —— 同一页、同一套接口，靠登录态区分，不靠前端传参。
@@ -50,6 +52,7 @@ const TABS_FOR_OWNER = [
 const TABS_FOR_STAFF = [
   { to: '/seller', label: '经营概览', end: true },
   { to: '/seller/products', label: '商品管理', end: false },
+  { to: '/seller/product-insights', label: '商品分析', end: false },
   { to: '/seller/orders', label: '订单管理', end: false },
   // 客服信息对所有能进工作台的角色可见：运营/店员进去会看到说明页，
   // 而不是"页签凭空消失"——消失会让人以为功能没上线。
@@ -282,6 +285,7 @@ export const MerchantRoot: React.FC = () => (
       {/* 账号中心：工作台自己的身份页，不与商城个人中心共用（两套独立登录态） */}
       <Route path="/seller/account" element={<SellerAccountPage />} />
       <Route path="/seller/products" element={<SellerProductsPage />} />
+      <Route path="/seller/product-insights" element={<SellerProductInsightsPage />} />
       <Route path="/seller/settlements" element={<SellerSettlementsPage />} />
       <Route path="/seller/staff" element={<SellerStaffPage />} />
       <Route path="/seller/after-sales" element={<SellerAfterSalesPage />} />

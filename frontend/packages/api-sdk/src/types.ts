@@ -234,7 +234,15 @@ export interface Suitability {
 
 export interface ProductDetail {
   card: ProductCard;
+  /** 商品介绍（纯文本，历史字段；新商品与 intro 同义） */
   detail: string | null;
+  /** 富文本详情（服务端已消毒）；为空时端侧回落 detail */
+  detailHtml?: string | null;
+  /** 商品介绍（短文本） */
+  intro?: string | null;
+  specParams?: KvItem[];
+  packaging?: KvItem[];
+  /** 图集：**第一张恒为主图**，其后为副图（2026-10-24 服务端归一） */
   images: string[];
   skus: SkuView[];
   suitability: Suitability;
@@ -647,6 +655,9 @@ export interface SellerProductView {
   minPrice: number;
   maxPrice: number;
   salesCount: number;
+  /** 商品评分与评价数（2026-10-24）：来自评价域回写 */
+  rating?: number;
+  ratingCount?: number;
   skuCount: number;
   totalStock: number;
 }
@@ -666,6 +677,11 @@ export interface SellerSkuInput {
  * 归属由登录态推导、供货类型与审核态由服务端判定 ——
  * 请求体里给出任何一个，都等于让客户端自证「我该不该被审核」。
  */
+export interface KvItem {
+  name: string;
+  value: string;
+}
+
 export interface SellerProductCreateRequest {
   title: string;
   subtitle?: string | null;
@@ -674,6 +690,12 @@ export interface SellerProductCreateRequest {
   mainImage: string;
   images?: string[] | null;
   detail?: string | null;
+  /** 商品介绍（纯文本） */
+  intro?: string | null;
+  /** 富文本详情 HTML */
+  detailHtml?: string | null;
+  specParams?: KvItem[] | null;
+  packaging?: KvItem[] | null;
   skus: SellerSkuInput[];
 }
 
@@ -690,6 +712,11 @@ export interface SellerProductUpdateRequest {
   mainImage?: string;
   images?: string[];
   detail?: string;
+  intro?: string;
+  detailHtml?: string;
+  /** null/undefined = 不改；[] = 清空 */
+  specParams?: KvItem[];
+  packaging?: KvItem[];
   categoryId?: string;
   brandId?: string;
 }
@@ -714,6 +741,10 @@ export interface SellerProductDetailView {
   mainImage: string | null;
   images: string[];
   detail: string | null;
+  intro?: string | null;
+  detailHtml?: string | null;
+  specParams?: KvItem[];
+  packaging?: KvItem[];
   supplyType: string;
   status: string;
   statusLabel: string;
@@ -1419,6 +1450,15 @@ export interface AnalyticsTrendPoint {
 }
 
 /** 商家端多维度统计 */
+/** 按商品的经营统计（2026-10-24）：销量 / 成交额 / 退款件数 */
+export interface SellerProductStat {
+  spuId: string;
+  name: string;
+  quantity: number;
+  amount: number;
+  refundQty: number;
+}
+
 export interface SellerAnalytics {
   /** 维度一：订单状态分布 */
   statusDistribution: AnalyticsSlice[];

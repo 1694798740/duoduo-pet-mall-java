@@ -15,6 +15,13 @@
   <description>商品服务：类目树 / 品牌 / SPU-SKU / 商品搜索 / 首页聚合 / C2C 闲置浏览</description>
 
   <dependencies>
+    <!-- 富文本详情消毒（2026-10-24）：商家提交的 HTML 必须过白名单再落库，
+         不能只靠端侧清理 —— 直接调接口绕过前端的场景永远存在。 -->
+    <dependency>
+      <groupId>org.jsoup</groupId>
+      <artifactId>jsoup</artifactId>
+      <version>1.18.3</version>
+    </dependency>
     <dependency>
       <groupId>com.duoduo</groupId>
       <artifactId>duoduo-common</artifactId>

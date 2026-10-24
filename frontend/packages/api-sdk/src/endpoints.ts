@@ -22,6 +22,7 @@
 
 import { api } from './client';
 import type {
+  SellerProductStat,
   AbnormalSettlement,
   AdminCharts,
   AdminProductAuditRequest,
@@ -474,6 +475,9 @@ export const sellerApi = {
    * 图表取数异常不该把卡片一起拖下水 —— 两个 useAsync 各自降级。
    */
   analytics: () => api.get<SellerAnalytics>('/api/seller/analytics'),
+
+  /** 按商品的经营统计（2026-10-24）：销量 / 成交额 / 退款件数，商品分析表用 */
+  productStats: () => api.get<SellerProductStat[]>('/api/seller/product-stats'),
 
   /** 卖出的订单列表；status 可选 PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED */
   orders: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>

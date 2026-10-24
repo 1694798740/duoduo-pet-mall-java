@@ -32,6 +32,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
 import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
+import { KeyValueEditor, RichTextEditor, type KvItem } from '@duoduo/shared/components/RichText';
 import { ProductPublishModal } from './ProductPublishModal';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -55,6 +56,12 @@ interface EditDraft {
   mainImage: string;
   images: string[];
   detail: string;
+  /** 商品介绍（纯文本，2026-10-24） */
+  intro: string;
+  /** 富文本详情 HTML */
+  detailHtml: string;
+  specParams: KvItem[];
+  packaging: KvItem[];
 }
 
 export const SellerProductsPage: React.FC = () => {
@@ -158,6 +165,10 @@ export const SellerProductsPage: React.FC = () => {
         mainImage: detail.mainImage ?? '',
         images: detail.images ?? [],
         detail: detail.detail ?? '',
+        intro: detail.intro ?? '',
+        detailHtml: detail.detailHtml ?? '',
+        specParams: detail.specParams ?? [],
+        packaging: detail.packaging ?? [],
       });
     } catch (err) {
       push(err instanceof Error ? err.message : '读取商品详情失败', 'error');
@@ -192,12 +203,23 @@ export const SellerProductsPage: React.FC = () => {
           subtitle: detailItem.subtitle ?? '',
           detail: detailItem.detail ?? '',
           images: detailItem.images ?? [],
+          intro: detailItem.intro ?? '',
+          detailHtml: detailItem.detailHtml ?? '',
+          specParams: detailItem.specParams ?? [],
+          packaging: detailItem.packaging ?? [],
         }
       : null;
     if (originals) {
       if (draft.subtitle.trim() !== originals.subtitle) body.subtitle = draft.subtitle.trim();
       if (draft.detail.trim() !== originals.detail) body.detail = draft.detail.trim();
       if (draft.images.join('\n') !== originals.images.join('\n')) body.images = draft.images;
+      // 2026-10-24 新增内容字段：与原文比对后才提交（避免"点保存就重审"）
+      if (draft.intro.trim() !== originals.intro) body.intro = draft.intro.trim();
+      if (draft.detailHtml.trim() !== originals.detailHtml) body.detailHtml = draft.detailHtml.trim();
+      const kvKey = (list: KvItem[]) => list.filter((x) => x.name.trim() || x.value.trim())
+        .map((x) => `${x.name.trim()}=${x.value.trim()}`).join('\u0001');
+      if (kvKey(draft.specParams) !== kvKey(originals.specParams)) body.specParams = draft.specParams;
+      if (kvKey(draft.packaging) !== kvKey(originals.packaging)) body.packaging = draft.packaging;
     }
 
     if (Object.keys(body).length === 0) {
@@ -464,13 +486,36 @@ export const SellerProductsPage: React.FC = () => {
                 hint=""
               />
             </Field>
-            <Field label="商品详情">
+            <Field label="商品介绍" hint="详情页「商品介绍」区展示的短文本（选填）">
               <textarea
                 className="input"
-                rows={4}
-                maxLength={4000}
-                value={draft.detail}
-                onChange={(e) => setDraft({ ...draft, detail: e.target.value })}
+                rows={3}
+                maxLength={2000}
+                value={draft.intro}
+                onChange={(e) => setDraft({ ...draft, intro: e.target.value })}
+                placeholder="用一段话介绍这件商品的特点"
+              />
+            </Field>
+            <Field label="商品详情（富文本）" hint="支持标题、加粗、列表与插图；保存后前台按富文本渲染">
+              <RichTextEditor
+                value={draft.detailHtml}
+                onChange={(html) => setDraft({ ...draft, detailHtml: html })}
+              />
+            </Field>
+            <Field label="规格参数" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
+              <KeyValueEditor
+                value={draft.specParams}
+                onChange={(next) => setDraft({ ...draft, specParams: next })}
+                namePlaceholder="参数名（如 净含量）"
+                valuePlaceholder="参数值（如 2kg）"
+              />
+            </Field>
+            <Field label="包装规格" hint="如 包装形式 / 单包重量 / 箱规；最多 20 条">
+              <KeyValueEditor
+                value={draft.packaging}
+                onChange={(next) => setDraft({ ...draft, packaging: next })}
+                namePlaceholder="规格名（如 包装形式）"
+                valuePlaceholder="规格值（如 袋装）"
               />
             </Field>
             <p className="small muted" style={{ marginTop: 8 }}>

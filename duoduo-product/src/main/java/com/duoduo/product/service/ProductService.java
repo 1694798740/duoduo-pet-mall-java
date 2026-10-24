@@ -434,14 +434,26 @@ public class ProductService {
                 .eq(SkuEntity::getStatus, SKU_ACTIVE)
                 .orderByAsc(SkuEntity::getPrice));
 
-        List<String> images = new ArrayList<>(Csv.split(spu.getImages()));
-        if (images.isEmpty() && spu.getMainImage() != null) {
+        // ★ 2026-10-24 修复图片顺序：主图必须是图集第一张。
+        //   此前只返回 images（副图），主图仅在 images 为空时补进去 ——
+        //   于是首页卡片用主图、点进详情却先看到另一张，视觉上「不是同一件商品」。
+        List<String> images = new ArrayList<>();
+        if (spu.getMainImage() != null && !spu.getMainImage().isBlank()) {
             images.add(spu.getMainImage());
+        }
+        for (String img : Csv.split(spu.getImages())) {
+            if (img != null && !img.isBlank() && !images.contains(img)) {
+                images.add(img);
+            }
         }
 
         return new ProductDetail(
                 toCards(List.of(spu)).get(0),
                 spu.getDetail(),
+                spu.getDetailHtml(),
+                spu.getIntro(),
+                com.duoduo.product.support.ProductContent.parseKv(spu.getSpecParams()),
+                com.duoduo.product.support.ProductContent.parseKv(spu.getPackaging()),
                 images,
                 skus.stream().map(this::toSkuView).toList(),
                 aggregateSuitability(skus),

@@ -460,6 +460,24 @@ public class SellerService {
                 isoTs(LocalDateTime.now(ZoneOffset.UTC)));
     }
 
+    /**
+     * 按商品维度的经营统计（2026-10-24，商品分析页用）。
+     *
+     * <p>最多返回 200 个商品：商品分析是"看盘子"而不是"翻台账"，
+     * 卖 200 个 SPU 以上的商家需要的是按类目汇总，不是无限分页。
+     */
+    public List<AnalyticsDtos.ProductStat> productStats() {
+        SellerScope scope = requireSellerScope();
+        return orderMapper.productStatsBySeller(scope.visibleSellerIds(), 200).stream()
+                .map(row -> new AnalyticsDtos.ProductStat(
+                        lng(row, "spuId"),
+                        str(row, "name"),
+                        lng(row, "qty"),
+                        lng(row, "amount"),
+                        lng(row, "refundQty")))
+                .toList();
+    }
+
     // ---------------- 内部实现 ----------------
 
     /**

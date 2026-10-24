@@ -256,6 +256,9 @@ public final class ProductDtos {
             long minPrice,
             long maxPrice,
             int salesCount,
+            /** 商品评分与评价数（2026-10-24）：来自评价域回写，商家端据此展示口碑 */
+            double rating,
+            int ratingCount,
             int skuCount,
             int totalStock
     ) {
@@ -272,6 +275,16 @@ public final class ProductDtos {
      * 99% 是「一份商品有几种规格」（2kg / 5kg、单包 / 三包装），
      * 任意键值对表单会让发布页复杂到没人愿意填。
      */
+    /**
+     * 商品级键值对（2026-10-24）：规格参数 / 包装规格共用。
+     *
+     * <p>为什么用 KV 而不是固定列：不同类目的参数差异极大（猫粮看粗蛋白/适用阶段，
+     * 猫砂看结团性/粉尘，用品看尺寸/材质），固定列要么建几十个空列，要么永远不够。
+     * 前后端都按 [{@code name, value}] 传，落库是 JSON 文本。
+     */
+    public record KvItem(String name, String value) {
+    }
+
     public record SellerSkuInput(
             String specName,
             Long price,
@@ -296,9 +309,22 @@ public final class ProductDtos {
             Long brandId,
             String mainImage,
             List<String> images,
+            /** 商品介绍（纯文本）；历史字段 detail 保留兼容，新代码用它 */
             String detail,
+            String intro,
+            /** 富文本详情 HTML（服务端白名单消毒） */
+            String detailHtml,
+            List<KvItem> specParams,
+            List<KvItem> packaging,
             List<SellerSkuInput> skus
     ) {
+        /** 兼容旧调用（2026-10-24 新增内容字段前的 8 参构造）：新字段缺省 = 不设置 */
+        public SellerProductCreateRequest(String title, String subtitle, Long categoryId, Long brandId,
+                                          String mainImage, List<String> images, String detail,
+                                          List<SellerSkuInput> skus) {
+            this(title, subtitle, categoryId, brandId, mainImage, images, detail,
+                    null, null, null, null, skus);
+        }
     }
 
     /** 编辑请求（E14 扩展）：内容任意字段不传即不改（三态语义同旧版 title / mainImage） */
@@ -308,9 +334,20 @@ public final class ProductDtos {
             String mainImage,
             List<String> images,
             String detail,
+            String intro,
+            String detailHtml,
+            /** null = 不改；空数组 = 清空 */
+            List<KvItem> specParams,
+            List<KvItem> packaging,
             Long categoryId,
             Long brandId
     ) {
+        /** 兼容旧调用（2026-10-24 新增内容字段前的 7 参构造）：新字段缺省 = 不修改 */
+        public SellerProductUpdateRequest(String title, String subtitle, String mainImage,
+                                          List<String> images, String detail,
+                                          Long categoryId, Long brandId) {
+            this(title, subtitle, mainImage, images, detail, null, null, null, null, categoryId, brandId);
+        }
     }
 
     /** SKU 视图（商家侧编辑回填 / 审核台核对用） */
@@ -340,6 +377,10 @@ public final class ProductDtos {
             String mainImage,
             List<String> images,
             String detail,
+            String intro,
+            String detailHtml,
+            List<KvItem> specParams,
+            List<KvItem> packaging,
             String supplyType,
             String status,
             String statusLabel,
@@ -369,6 +410,10 @@ public final class ProductDtos {
             String mainImage,
             List<String> images,
             String detail,
+            String intro,
+            String detailHtml,
+            List<KvItem> specParams,
+            List<KvItem> packaging,
             Long categoryId,
             String categoryName,
             Long brandId,
@@ -438,7 +483,13 @@ public final class ProductDtos {
 
     public record ProductDetail(
             ProductCard card,
+            /** 商品介绍（纯文本，向后兼容历史数据） */
             String detail,
+            /** 富文本详情 HTML（已消毒；为空时端侧回落 detail） */
+            String detailHtml,
+            String intro,
+            List<KvItem> specParams,
+            List<KvItem> packaging,
             List<String> images,
             List<SkuView> skus,
             Suitability suitability,
