@@ -100,7 +100,7 @@ try {
   const last = (await nameInputs.count()) - 2;
   await nameInputs.nth(last).fill('保质期');
   await nameInputs.nth(last + 1).fill('18 个月');
-  await page.getByRole('button', { name: '保存' }).click();
+  await page.getByRole('button', { name: '保存内容' }).click();
   await page.waitForTimeout(2500);
   const after = (await call('GET', `/api/seller/products/${target.id}`, null, token)).body?.data;
   savedSpecCount = (after?.specParams ?? []).length;
@@ -110,6 +110,27 @@ try {
   });
   check('新增参数名与值正确', (after?.specParams ?? []).some((x) => x.name === '保质期' && x.value === '18 个月'),
     after?.specParams);
+
+  step('改价 / 改库存（不触发重审）');
+  // 上一步「保存内容」会关闭弹窗，重新打开编辑（价格与库存是独立保存入口）
+  await page.locator('tr', { hasText: 'R93 冒烟商品' }).first().getByRole('button', { name: '编辑' }).click();
+  await page.getByRole('button', { name: '保存价格/库存' }).waitFor({ timeout: 15000 });
+  const priceTable = page.locator('table', { hasText: '价格（元）' }).last();
+  const priceInput = priceTable.locator('input').first();
+  const stockInput = priceTable.locator('input').nth(1);
+  const oldPrice = Number(await priceInput.inputValue());
+  const oldStock = Number(await stockInput.inputValue());
+  await priceInput.fill((oldPrice + 1).toFixed(2));
+  await stockInput.fill(String(oldStock + 1));
+  await page.getByRole('button', { name: '保存价格/库存' }).click();
+  await page.waitForTimeout(2500);
+  const afterPriceSave = (await call('GET', `/api/seller/products/${target.id}`, null, token)).body?.data;
+  const firstSku = (afterPriceSave?.skus ?? [])[0];
+  check('界面改价已落库（+1 元）', firstSku?.price === Math.round((oldPrice + 1) * 100),
+    { before: oldPrice, after: firstSku?.price });
+  check('界面改库存已落库（+1）', firstSku?.stock === oldStock + 1, { before: oldStock, after: firstSku?.stock });
+  check('改价未触发重新审核', afterPriceSave?.auditStatus === before?.auditStatus,
+    { before: before?.auditStatus, after: afterPriceSave?.auditStatus });
 
   step('商品分析页');
   await page.goto(`${MERCHANT}/seller/product-insights`, { waitUntil: 'networkidle' });

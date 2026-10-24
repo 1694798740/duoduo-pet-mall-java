@@ -49,6 +49,24 @@ class SpuRiskJudgeTest {
     }
 
     @Test
+    @DisplayName("★ 富文本里的微信号也要转人工（2026-10-24）")
+    void richTextContactTriggersManualReview() {
+        SpuRiskJudge.Context ctx = new SpuRiskJudge.Context(
+                "猫粮", "干净标题", null, "干净详情", 12900L, 13000L, false,
+                "配方表：鸡肉 60%。加微信 duoduo888 领券", null);
+        assertThat(codes(SpuRiskJudge.risks(ctx))).contains("CONTACT_INFO");
+    }
+
+    @Test
+    @DisplayName("★ 规格参数 / 包装规格里的电话也要转人工（2026-10-24）")
+    void attrsContactTriggersManualReview() {
+        SpuRiskJudge.Context ctx = new SpuRiskJudge.Context(
+                "猫粮", "干净标题", null, "干净详情", 12900L, 13000L, false,
+                null, "客服电话:13800138000");
+        assertThat(codes(SpuRiskJudge.risks(ctx))).contains("CONTACT_INFO");
+    }
+
+    @Test
     @DisplayName("★ 一次返回全部命中项（而不是遇到第一个就返回）：复盘误伤率要的是完整分布")
     void returnsAllHits() {
         SpuRiskJudge.Context bad = ctx("宠物药品", "官方直营 13800138000", null,

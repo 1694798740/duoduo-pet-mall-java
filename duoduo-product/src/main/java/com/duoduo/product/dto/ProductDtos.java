@@ -350,6 +350,20 @@ public final class ProductDtos {
         }
     }
 
+    /**
+     * SKU 改价 / 改库存项（2026-10-24）。
+     *
+     * <p>为什么只允许这两个字段：规格结构与图片属于「内容」，改它们要重审；
+     * 价格与库存是高频运营动作，行业通行做法是不重审、但要校验与留痕。
+     * id 必须属于该 SPU，否则视为越权（不区分「不存在」与「不是你的」）。
+     */
+    public record SkuPriceStockInput(Long id, Long price, Integer stock) {
+    }
+
+    /** SKU 改价 / 改库存请求（批量；一次提交本次编辑过的行） */
+    public record SellerSkuPriceStockRequest(List<SkuPriceStockInput> skus) {
+    }
+
     /** SKU 视图（商家侧编辑回填 / 审核台核对用） */
     public record SellerSkuView(
             Long id,

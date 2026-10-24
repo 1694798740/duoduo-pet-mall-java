@@ -6,6 +6,7 @@ import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
+import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
 import com.duoduo.product.service.SellerProductService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -108,5 +109,19 @@ public class SellerProductController {
     public ApiResponse<SellerProductView> update(@PathVariable Long spuId,
                                                  @RequestBody(required = false) SellerProductUpdateRequest request) {
         return ApiResponse.ok(sellerProductService.update(spuId, request));
+    }
+
+    /**
+     * SKU 改价 / 改库存（2026-10-24）。
+     *
+     * <p>与「编辑」分开是刻意的：价格与库存是高频运营动作，**不触发内容重审**
+     * （淘宝/天猫/有赞等平台的通行口径：改价改库存不重新审核，改标题/主图/详情才重审）。
+     * 但仍要过归属校验、价格边界校验，并在同事务里同步 SPU 的 minPrice/maxPrice 冗余列。
+     */
+    @PutMapping("/{spuId}/skus/price-stock")
+    public ApiResponse<SellerProductDetailView> updateSkuPriceStock(
+            @PathVariable Long spuId,
+            @RequestBody(required = false) SellerSkuPriceStockRequest request) {
+        return ApiResponse.ok(sellerProductService.updateSkuPriceStock(spuId, request));
     }
 }

@@ -2,6 +2,16 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 审核台内容完整性 e2e（`scripts/e2e/admin-audit-content-ui-check.mjs`，11 项，第九十四轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/admin-audit-content-ui-check.mjs
+```
+
+前置：容器在跑；运营 13684295254、卖家 13600003333 可用。脚本会创建一个标题含联系方式的夹具（强制 PENDING），
+在后台审核台搜索并断言：详情图 2 张可见、商品介绍可见、富文本可展开且按 HTML 渲染（`.rich-view h2`）、
+规格参数与包装规格可见；结束自动驳回夹具。2026-10-24 实测 **11/0**。
+
 ## 商品管理改造冒烟（`scripts/product-manage-r93-smoke.mjs`，25 项，第九十三轮）
 
 ```bash

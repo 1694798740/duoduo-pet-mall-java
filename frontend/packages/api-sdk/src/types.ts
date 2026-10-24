@@ -721,6 +721,15 @@ export interface SellerProductUpdateRequest {
   brandId?: string;
 }
 
+/** SKU 改价 / 改库存项（2026-10-24）：只允许这两个字段，且不触发内容重审 */
+export interface SkuPriceStockInput {
+  id: string;
+  /** 单位：分；不传 = 不改 */
+  price?: number;
+  /** 不传 = 不改 */
+  stock?: number;
+}
+
 /** 规格视图（商家侧编辑回填 / 审核台核对） */
 export interface SellerSkuView {
   id: string;
@@ -767,6 +776,12 @@ export interface AdminProductAuditView {
   mainImage: string | null;
   images: string[];
   detail: string | null;
+  /** 商品介绍（2026-10-24）：审核台需展示 */
+  intro?: string | null;
+  /** 富文本详情（服务端已消毒，2026-10-24）：审核台需展示 */
+  detailHtml?: string | null;
+  specParams?: KvItem[];
+  packaging?: KvItem[];
   categoryId: string | null;
   categoryName: string | null;
   brandId: string | null;

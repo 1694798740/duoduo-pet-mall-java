@@ -62,6 +62,10 @@ interface EditDraft {
   detailHtml: string;
   specParams: KvItem[];
   packaging: KvItem[];
+  /** SKU 价格（元，字符串）与库存（字符串）—— 独立于内容保存，不触发重审 */
+  skuPrices: Record<string, { price: string; stock: string }>;
+  /** SKU id → 规格名（表格首列展示） */
+  skuLabels: Record<string, string>;
 }
 
 export const SellerProductsPage: React.FC = () => {
@@ -86,6 +90,10 @@ export const SellerProductsPage: React.FC = () => {
    *  两个上传器按字段名分开记：单个布尔量会被「一个传完、另一个还在传」覆盖掉。 */
   const [uploadBusy, setUploadBusy] = useState<Record<string, boolean>>({});
   const uploading = Object.values(uploadBusy).some(Boolean);
+  /** 改价/改库存提交中（与内容保存互斥，避免两个请求互相覆盖） */
+  const [pricingBusy, setPricingBusy] = useState(false);
+  /** 打开编辑时的 SKU 基准值：用来判断「哪几行真的改了」，只提交差异 */
+  const [skuBase, setSkuBase] = useState<Record<string, { price: number; stock: number }>>({});
 
   const fetcher = useCallback(
     () =>
@@ -159,6 +167,15 @@ export const SellerProductsPage: React.FC = () => {
     setDraftLoading(true);
     try {
       const detail: SellerProductDetailView = await sellerApi.productDetail(item.id);
+      const skuPrices: Record<string, { price: string; stock: string }> = {};
+      const base: Record<string, { price: number; stock: number }> = {};
+      const labels: Record<string, string> = {};
+      for (const sku of detail.skus ?? []) {
+        skuPrices[sku.id] = { price: (sku.price / 100).toFixed(2), stock: String(sku.stock) };
+        base[sku.id] = { price: sku.price, stock: sku.stock };
+        labels[sku.id] = sku.specName || '默认规格';
+      }
+      setSkuBase(base);
       setDraft({
         title: detail.title ?? '',
         subtitle: detail.subtitle ?? '',
@@ -169,6 +186,8 @@ export const SellerProductsPage: React.FC = () => {
         detailHtml: detail.detailHtml ?? '',
         specParams: detail.specParams ?? [],
         packaging: detail.packaging ?? [],
+        skuPrices,
+        skuLabels: labels,
       });
     } catch (err) {
       push(err instanceof Error ? err.message : '读取商品详情失败', 'error');
@@ -237,6 +256,62 @@ export const SellerProductsPage: React.FC = () => {
       push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  /**
+   * 保存价格与库存（2026-10-24）。
+   *
+   * 与「保存内容」分开：内容变更要重审，价格/库存不重审（行业通行口径）。
+   * 只提交真正变化的行，避免无意义的写库与「点一下就改更新时间」。
+   */
+  const submitPrices = async () => {
+    if (!editing || !draft) return;
+    const changed: { id: string; price?: number; stock?: number }[] = [];
+    for (const [id, value] of Object.entries(draft.skuPrices)) {
+      const base = skuBase[id];
+      if (!base) continue;
+      const yuan = Number(value.price);
+      const stock = Number(value.stock);
+      if (!Number.isFinite(yuan) || yuan <= 0) {
+        push('每个规格都要填写大于 0 的价格', 'error');
+        return;
+      }
+      if (!Number.isInteger(stock) || stock < 0) {
+        push('库存必须是不小于 0 的整数', 'error');
+        return;
+      }
+      const cents = Math.round(yuan * 100);
+      if (cents > 9_999_900) {
+        push('价格超出上限（单个规格最高 99999 元）', 'error');
+        return;
+      }
+      if (cents !== base.price || stock !== base.stock) {
+        changed.push({ id, price: cents, stock });
+      }
+    }
+    if (changed.length === 0) {
+      push('价格与库存没有变化', 'info');
+      return;
+    }
+    setPricingBusy(true);
+    try {
+      const detail = await sellerApi.updateSkuPriceStock(editing.id, { skus: changed });
+      // 用服务端返回的结果刷新基准与表单，避免「保存成功但界面还是旧价」
+      const nextBase: Record<string, { price: number; stock: number }> = {};
+      const nextForm: Record<string, { price: string; stock: string }> = {};
+      for (const sku of detail.skus ?? []) {
+        nextBase[sku.id] = { price: sku.price, stock: sku.stock };
+        nextForm[sku.id] = { price: (sku.price / 100).toFixed(2), stock: String(sku.stock) };
+      }
+      setSkuBase(nextBase);
+      setDraft((d) => (d ? { ...d, skuPrices: nextForm } : d));
+      push('价格与库存已更新（不会触发重新审核）', 'success');
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
+    } finally {
+      setPricingBusy(false);
     }
   };
 
@@ -432,11 +507,18 @@ export const SellerProductsPage: React.FC = () => {
               取消
             </button>
             <button
+              className="btn btn-ghost"
+              disabled={busyId !== null || pricingBusy || !draft || uploading}
+              onClick={submitPrices}
+            >
+              {pricingBusy ? '保存价格中…' : '保存价格/库存'}
+            </button>
+            <button
               className="btn btn-primary"
-              disabled={busyId !== null || !draft || uploading}
+              disabled={busyId !== null || pricingBusy || !draft || uploading}
               onClick={submitEdit}
             >
-              {busyId !== null ? '保存中…' : uploading ? '图片上传中…' : '保存'}
+              {busyId !== null ? '保存中…' : uploading ? '图片上传中…' : '保存内容'}
             </button>
           </>
         }
@@ -501,6 +583,56 @@ export const SellerProductsPage: React.FC = () => {
                 value={draft.detailHtml}
                 onChange={(html) => setDraft({ ...draft, detailHtml: html })}
               />
+            </Field>
+            <Field label="价格与库存" hint="改价、改库存不会触发重新审核；保存后立即对买家生效">
+              <div className="stack" style={{ gap: 8 }}>
+                {Object.keys(draft.skuPrices).length === 0 ? (
+                  <span className="small muted">该商品没有可修改的规格</span>
+                ) : (
+                  <table className="table" style={{ width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th>规格</th>
+                        <th style={{ width: 140 }}>价格（元）</th>
+                        <th style={{ width: 120 }}>库存</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(draft.skuPrices).map(([id, value]) => (
+                        <tr key={id}>
+                          <td>{draft.skuLabels[id] ?? '默认规格'}</td>
+                          <td>
+                            <input
+                              className="input"
+                              value={value.price}
+                              inputMode="decimal"
+                              onChange={(e) =>
+                                setDraft({
+                                  ...draft,
+                                  skuPrices: { ...draft.skuPrices, [id]: { ...value, price: e.target.value } },
+                                })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="input"
+                              value={value.stock}
+                              inputMode="numeric"
+                              onChange={(e) =>
+                                setDraft({
+                                  ...draft,
+                                  skuPrices: { ...draft.skuPrices, [id]: { ...value, stock: e.target.value } },
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </Field>
             <Field label="规格参数" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
               <KeyValueEditor

@@ -14,6 +14,8 @@ import com.duoduo.product.client.dto.MerchantRiskInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
+import com.duoduo.product.dto.ProductDtos.SkuPriceStockInput;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
 import com.duoduo.product.entity.CategoryEntity;
@@ -707,6 +709,60 @@ class SellerProductServiceTest {
 
         assertThat(spu.getRejectedAt()).isNull();
         assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+    }
+
+    /**
+     * 2026-10-24：改价 / 改库存是运营字段，**不触发重审**，但要同步价格区间。
+     *
+     * <p>用两次 selectList 模拟「改前 / 改后」：真实库里 update 后第二次查询会读到新价。
+     */
+    @Test
+    void 改价改库存_保持审核态并重算价格区间() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null, "merchant", "APPROVED", "ON_SALE");
+        spu.setMinPrice(1000L);
+        spu.setMaxPrice(2000L);
+        spu.setAuditSource("AUTO");
+        SkuEntity a = sku(11L, 9001L, 1000L, 5);
+        SkuEntity b = sku(12L, 9001L, 2000L, 8);
+        SkuEntity a2 = sku(11L, 9001L, 3000L, 9);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b), List.of(a2, b));
+
+        var view = service.updateSkuPriceStock(9001L,
+                new SellerSkuPriceStockRequest(List.of(new SkuPriceStockInput(11L, 3000L, 9))));
+
+        assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getAuditSource()).isEqualTo("AUTO");
+        assertThat(view.minPrice()).isEqualTo(2000L);
+        assertThat(view.maxPrice()).isEqualTo(3000L);
+        // 走的是显式 UpdateWrapper（要同步 min/max），不是整行 updateById
+        verify(spuMapper, never()).updateById(any());
+    }
+
+    @Test
+    void 改价必须大于0且库存不能为负() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null, "merchant", "APPROVED", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(sku(11L, 9001L, 1000L, 5)));
+
+        assertThatThrownBy(() -> service.updateSkuPriceStock(9001L,
+                new SellerSkuPriceStockRequest(List.of(new SkuPriceStockInput(11L, 0L, null)))))
+                .isInstanceOf(com.duoduo.common.exception.BizException.class);
+        assertThatThrownBy(() -> service.updateSkuPriceStock(9001L,
+                new SellerSkuPriceStockRequest(List.of(new SkuPriceStockInput(11L, null, -1)))))
+                .isInstanceOf(com.duoduo.common.exception.BizException.class);
+    }
+
+    private static SkuEntity sku(long id, long spuId, long price, int stock) {
+        SkuEntity sku = new SkuEntity();
+        sku.setId(id);
+        sku.setSpuId(spuId);
+        sku.setPrice(price);
+        sku.setStock(stock);
+        sku.setStatus("ACTIVE");
+        return sku;
     }
 
     @Test

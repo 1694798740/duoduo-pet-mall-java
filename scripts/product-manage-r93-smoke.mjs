@@ -141,6 +141,39 @@ async function main() {
   check('列表项含 rating / ratingCount', row != null && 'rating' in row && 'ratingCount' in row,
     row ? { rating: row.rating, ratingCount: row.ratingCount } : null);
 
+  console.log('\n== 7. SKU 改价 / 改库存（不触发重审） ==');
+  const beforePrice = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
+  const sku = (beforePrice?.skus ?? [])[0];
+  check('存在可修改的 SKU', Boolean(sku?.id), beforePrice?.skus);
+  if (sku?.id) {
+    const newPrice = (sku.price ?? 0) + 700;
+    const newStock = (sku.stock ?? 0) + 3;
+    const auditBefore = beforePrice?.auditStatus;
+    const upd = await call('PUT', `/api/seller/products/${spuId}/skus/price-stock`,
+      { skus: [{ id: sku.id, price: newPrice, stock: newStock }] }, sellerToken);
+    check('改价改库存接口成功', upd.status === 200, upd.body);
+    const afterPrice = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
+    const skuAfter = (afterPrice?.skus ?? []).find((x) => String(x.id) === String(sku.id));
+    check('SKU 价格已更新', skuAfter?.price === newPrice, { before: sku.price, after: skuAfter?.price });
+    check('SKU 库存已更新', skuAfter?.stock === newStock, { before: sku.stock, after: skuAfter?.stock });
+    check('商品价格区间已同步（min=max=新价）',
+      afterPrice?.minPrice === (afterPrice?.skus ?? []).reduce((m, x) => Math.min(m, x.price), Infinity)
+      && afterPrice?.maxPrice === (afterPrice?.skus ?? []).reduce((m, x) => Math.max(m, x.price), -Infinity),
+      { min: afterPrice?.minPrice, max: afterPrice?.maxPrice });
+    check('★ 改价不改变审核态（不重审）', afterPrice?.auditStatus === auditBefore,
+      { before: auditBefore, after: afterPrice?.auditStatus });
+
+    const badPrice = await call('PUT', `/api/seller/products/${spuId}/skus/price-stock`,
+      { skus: [{ id: sku.id, price: 0 }] }, sellerToken);
+    check('价格 0 被拒（400/业务错误）', badPrice.status === 400 || (badPrice.body?.code && badPrice.body.code !== 0), badPrice.body);
+    const badStock = await call('PUT', `/api/seller/products/${spuId}/skus/price-stock`,
+      { skus: [{ id: sku.id, stock: -1 }] }, sellerToken);
+    check('负库存被拒（400/业务错误）', badStock.status === 400 || (badStock.body?.code && badStock.body.code !== 0), badStock.body);
+    const ghost = await call('PUT', `/api/seller/products/${spuId}/skus/price-stock`,
+      { skus: [{ id: 999999999999, price: 100 }] }, sellerToken);
+    check('不属于该商品的 SKU id → 404（不泄露归属）', ghost.status === 404, ghost.status);
+  }
+
   console.log(`\n结果：${pass} 通过 / ${failures.length} 失败`);
   if (failures.length) {
     console.log('失败项：\n - ' + failures.join('\n - '));

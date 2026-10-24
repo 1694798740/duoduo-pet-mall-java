@@ -574,6 +574,10 @@ export const sellerApi = {
    */
   updateProduct: (spuId: string, body: SellerProductUpdateRequest) =>
     api.put<SellerProductView>(`/api/seller/products/${spuId}`, body),
+
+  /** SKU 改价 / 改库存（2026-10-24）：不触发内容重审，服务端会同步商品价格区间 */
+  updateSkuPriceStock: (spuId: string, body: { skus: import('./types').SkuPriceStockInput[] }) =>
+    api.put<import('./types').SellerProductDetailView>(`/api/seller/products/${spuId}/skus/price-stock`, body),
 };
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------

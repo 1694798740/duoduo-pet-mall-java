@@ -21,6 +21,7 @@ import type { AdminProductAuditView } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, SupplyTag, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
+import { RichTextView } from '@duoduo/shared/components/RichText';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -258,6 +259,52 @@ export const AdminProductAuditsPage: React.FC = () => {
                         规格（{item.skus.length}）：
                         {item.skus.slice(0, 4).map((sku) => skuSummary(sku)).join(' ｜ ')}
                         {item.skus.length > 4 ? ` … 等 ${item.skus.length} 项` : ''}
+                      </div>
+                    ) : null}
+
+                    {/* 2026-10-24：审核台必须看到买家将看到的全部内容。
+                        此前只显示主图 1 张与纯文本详情，详情图与富文本在审核时是"不可见"的。 */}
+                    {(item.images ?? []).length > 0 ? (
+                      <div className="row row-wrap" style={{ gap: 6, marginTop: 8 }}>
+                        {(item.images ?? []).map((img, idx) => (
+                          <a key={`${img}-${idx}`} href={img} target="_blank" rel="noreferrer">
+                            <img
+                              src={img}
+                              alt={`详情图 ${idx + 1}`}
+                              style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border, #e5e7eb)' }}
+                              loading="lazy"
+                              decoding="async"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {item.intro ? (
+                      <div className="small" style={{ marginTop: 8 }}>
+                        <b>商品介绍：</b>{item.intro}
+                      </div>
+                    ) : null}
+
+                    {item.detailHtml ? (
+                      <details style={{ marginTop: 8 }}>
+                        <summary className="small" style={{ cursor: 'pointer' }}>
+                          富文本详情（点击展开，共 {item.detailHtml.length} 字符）
+                        </summary>
+                        <div style={{ maxHeight: 260, overflow: 'auto', marginTop: 6, padding: '6px 8px', border: '1px solid var(--border, #e5e7eb)', borderRadius: 8 }}>
+                          <RichTextView html={item.detailHtml} />
+                        </div>
+                      </details>
+                    ) : null}
+
+                    {(item.specParams ?? []).length > 0 || (item.packaging ?? []).length > 0 ? (
+                      <div className="small muted" style={{ marginTop: 8 }}>
+                        {(item.specParams ?? []).length > 0 ? (
+                          <div>规格参数：{(item.specParams ?? []).map((x) => `${x.name}=${x.value}`).join('；')}</div>
+                        ) : null}
+                        {(item.packaging ?? []).length > 0 ? (
+                          <div>包装规格：{(item.packaging ?? []).map((x) => `${x.name}=${x.value}`).join('；')}</div>
+                        ) : null}
                       </div>
                     ) : null}
 

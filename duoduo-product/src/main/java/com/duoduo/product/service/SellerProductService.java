@@ -22,6 +22,7 @@ import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
+import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
 import com.duoduo.product.dto.ProductDtos.SellerSkuView;
 import com.duoduo.product.entity.SkuEntity;
 import com.duoduo.product.entity.SpuEntity;
@@ -629,6 +630,87 @@ public class SellerProductService {
     }
 
     /**
+     * SKU 改价 / 改库存（2026-10-24）。
+     *
+     * <p>与 {@link #update} 分成两个入口，是一条明确的产品规则：
+     * <b>价格与库存是运营字段，不触发内容重审</b>；标题/主图/详情/规格结构才是内容字段。
+     * 行业口径一致（有赞帮助中心：改价格与库存不触发重新审核；改标题/主图/SKU/详情/类目才触发）。
+     *
+     * <p>但“不重审”不等于“不校验”：归属、价格边界、库存非负一项不少；
+     * 更新后在同一事务语义内重算 `t_spu.min_price / max_price`（这两个是列表与排序用的冗余列，
+     * 不同步就会出现“列表显示 ¥19，点进去 ¥29”）。
+     *
+     * <p>下单快照不受影响：`t_order_item.price/amount` 在支付前已固化，改价只影响新订单。
+     */
+    public SellerProductDetailView updateSkuPriceStock(Long spuId, SellerSkuPriceStockRequest request) {
+        SellerScope scope = requireSellerScope();
+        if (request == null || request.skus() == null || request.skus().isEmpty()) {
+            throw BizException.validation("没有需要修改的规格");
+        }
+        SpuEntity spu = requireOwned(spuId, scope);
+        // 与编辑同款门禁：运营代改第三方商品需要工单
+        requireProxyForThirdParty(spu, scope, "改价改库存");
+
+        List<SkuEntity> existing = skusOf(spuId);
+        if (existing.isEmpty()) {
+            throw BizException.businessRule("该商品没有可修改的规格");
+        }
+        java.util.Map<Long, SkuEntity> byId = existing.stream()
+                .collect(Collectors.toMap(SkuEntity::getId, x -> x, (a, b) -> a));
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int changed = 0;
+        for (ProductDtos.SkuPriceStockInput input : request.skus()) {
+            if (input == null || input.id() == null) {
+                throw BizException.validation("缺少规格 id");
+            }
+            SkuEntity sku = byId.get(input.id());
+            if (sku == null) {
+                // 不区分“不存在”与“不是你的”：否则可以靠返回码探测别人的 SKU id
+                throw BizException.notFound("规格");
+            }
+            long price = input.price() == null ? nz(sku.getPrice()) : requirePrice(input.price());
+            int currentStock = sku.getStock() == null ? 0 : sku.getStock();
+            int stock = input.stock() == null ? currentStock : requireStock(input.stock());
+            if (price == nz(sku.getPrice()) && stock == currentStock) {
+                continue;
+            }
+            skuMapper.update(null, new LambdaUpdateWrapper<SkuEntity>()
+                    .eq(SkuEntity::getId, sku.getId())
+                    .eq(SkuEntity::getSpuId, spuId)
+                    .set(SkuEntity::getPrice, price)
+                    .set(SkuEntity::getStock, stock)
+                    .set(SkuEntity::getUpdatedAt, now));
+            changed++;
+        }
+        if (changed == 0) {
+            return toDetailView(spu, existing);
+        }
+
+        List<SkuEntity> after = skusOf(spuId);
+        long min = after.stream().mapToLong(x -> nz(x.getPrice())).min().orElse(0L);
+        long max = after.stream().mapToLong(x -> nz(x.getPrice())).max().orElse(0L);
+        spu.setMinPrice(min);
+        spu.setMaxPrice(max);
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .set(SpuEntity::getMinPrice, min)
+                .set(SpuEntity::getMaxPrice, max)
+                .set(SpuEntity::getUpdatedAt, now));
+        log.info("商品 {} 价格/库存更新 {} 个 SKU（{}~{} 分）；审核态保持 {}（改价不重审）",
+                spuId, changed, min, max, spu.getAuditStatus());
+        return toDetailView(spu, after);
+    }
+
+    /** 库存必须是不小于 0 的整数（缺省按 0 处理会掩盖脏数据，这里显式校验） */
+    private int requireStock(Integer stock) {
+        if (stock == null || stock < 0) {
+            throw BizException.validation("库存必须是不小于 0 的整数");
+        }
+        return stock;
+    }
+
+    /**
      * 上架 / 下架（幂等开关）。
      *
      * <p>为什么用「开关 + 幂等」而不是严格状态机：上下架可逆、无资金动作，
@@ -1209,7 +1291,11 @@ public class SellerProductService {
                 spu.getDetail(),
                 nz(spu.getMinPrice()),
                 categoryAvgMinPrice(categoryId),
-                sellerFlagged(spu.getSellerId())));
+                sellerFlagged(spu.getSellerId()),
+                // 2026-10-24：富文本与自定义参数同样可能藏联系方式，必须一起判
+                ProductContent.htmlText(spu.getDetailHtml()),
+                kvText(ProductContent.parseKv(spu.getSpecParams()))
+                        + " " + kvText(ProductContent.parseKv(spu.getPackaging()))));
         return new AuditDecision(hits.isEmpty(), hits);
     }
 
@@ -1624,6 +1710,26 @@ public class SellerProductService {
         } catch (IllegalArgumentException e) {
             throw BizException.validation(e.getMessage());
         }
+    }
+
+    /** 把规格/包装的键值对拼成一段文本，供联系方式规则判定 */
+    private static String kvText(List<ProductDtos.KvItem> items) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (ProductDtos.KvItem item : items) {
+            if (item == null) {
+                continue;
+            }
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append(item.name() == null ? "" : item.name())
+                    .append(':')
+                    .append(item.value() == null ? "" : item.value());
+        }
+        return sb.toString();
     }
 
     /** 状态文案由服务端给出，前端不维护映射表 */

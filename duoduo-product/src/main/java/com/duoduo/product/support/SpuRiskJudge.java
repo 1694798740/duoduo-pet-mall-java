@@ -74,7 +74,17 @@ public final class SpuRiskJudge {
      * @param sellerFlagged    该商家是否有驳回或停业记录
      */
     public record Context(String categoryName, String title, String subtitle, String detail,
-                          long minPrice, Long categoryAvgPrice, boolean sellerFlagged) {
+                          long minPrice, Long categoryAvgPrice, boolean sellerFlagged,
+                          /** 富文本详情的纯文本（2026-10-24）：只判文本，标签已由调用方剥离 */
+                          String richText,
+                          /** 规格参数 / 包装规格拼成的文本（2026-10-24）：同样可能藏联系方式 */
+                          String attrsText) {
+
+        /** 兼容旧调用：新字段缺省视为无内容 */
+        public Context(String categoryName, String title, String subtitle, String detail,
+                       long minPrice, Long categoryAvgPrice, boolean sellerFlagged) {
+            this(categoryName, title, subtitle, detail, minPrice, categoryAvgPrice, sellerFlagged, null, null);
+        }
     }
 
     /**
@@ -93,7 +103,10 @@ public final class SpuRiskJudge {
             hits.add(new Hit("RESTRICTED_CATEGORY",
                     "类目「" + ctx.categoryName() + "」属前置许可类，需人工核验资质"));
         }
-        if (hitContactInfo(joinText(ctx.title(), ctx.subtitle(), ctx.detail()))) {
+        // 2026-10-24：富文本与规格/包装也要拼进来 —— 只判纯文本会让
+        // 「标题干净、正文干净，微信写在富文本里」成为绕过转人工的捷径。
+        if (hitContactInfo(joinText(ctx.title(), ctx.subtitle(), ctx.detail(),
+                ctx.richText(), ctx.attrsText()))) {
             hits.add(new Hit("CONTACT_INFO", "标题 / 副标题 / 详情含联系方式或站外链接，需人工判断是否违规导流"));
         }
         if (hitPriceAnomaly(ctx.minPrice(), ctx.categoryAvgPrice())) {
