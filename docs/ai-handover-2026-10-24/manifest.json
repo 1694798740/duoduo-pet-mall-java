@@ -35,9 +35,11 @@
       "note": "14 篇 + 技能文件（另存为 14-AI接管技能-SKILL.md）"
     },
     "tencent_docs": {
-      "status": "blocked",
-      "reason": "connector 授权失效（bad_mcp_config / 无 TDOC token），重新连接被用户取消",
-      "action": "用户在连接器面板重新授权腾讯文档后可一键补传"
+      "status": "done",
+      "folder_id": "LeWFJXQHjkfr",
+      "url": "https://docs.qq.com/desktop/mydoc/folder/LeWFJXQHjkfr",
+      "files": 15,
+      "note": "14 篇正文 + 技能文档，均为 Word 类在线文档（doc.create_with_markdown），已全部移入文件夹"
     },
     "ima": {
       "status": "done",
