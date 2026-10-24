@@ -27,6 +27,7 @@ import type {
   AdminCharts,
   AdminProductAuditRequest,
   AdminProductAuditView,
+  SpuAuditLogView,
   AuditLogQuery,
   AuditLogView,
   AdminReport,
@@ -718,6 +719,12 @@ export const adminApi = {
   /** 审核结论：驳回时 reason 必填（服务端会 400）；审核可重入（允许改判） */
   auditProduct: (spuId: string, body: AdminProductAuditRequest) =>
     api.post<AdminProductAuditView>(`/api/admin/products/${spuId}/audit`, body),
+
+  /** 审核历史（A-08）：最新在前；limit 缺省 50、服务端上限 100 */
+  productAuditHistory: (spuId: string, limit?: number) =>
+    api.get<SpuAuditLogView[]>(`/api/admin/products/${spuId}/history`, {
+      query: limit == null ? undefined : { limit },
+    }),
 
   // ---- E28 · 商品侧事后抽查（落在 duoduo-product，路径族与审核台分开） ----
   //

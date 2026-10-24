@@ -36,6 +36,8 @@ public class AuditSampleEntity {
     private String reviewNote;
     private Long reviewedBy;
     private LocalDateTime reviewedAt;
+    /** 抽中时的商品版本快照（A-08）；NULL = 旧任务未记录，不回填 */
+    private Integer spuVersion;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -117,6 +119,14 @@ public class AuditSampleEntity {
 
     public void setReviewedAt(LocalDateTime reviewedAt) {
         this.reviewedAt = reviewedAt;
+    }
+
+    public Integer getSpuVersion() {
+        return spuVersion;
+    }
+
+    public void setSpuVersion(Integer spuVersion) {
+        this.spuVersion = spuVersion;
     }
 
     public LocalDateTime getCreatedAt() {

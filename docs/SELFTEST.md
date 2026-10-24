@@ -2,6 +2,29 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商品审核历史冒烟（`scripts/spu-audit-history-a08-smoke.mjs`，52 项，第九十七轮）
+
+```bash
+NO_PROXY="*" node scripts/spu-audit-history-a08-smoke.mjs
+```
+
+前置：容器在跑；`incremental/49` 已执行；卖家 13600003333、运营 13684295254 可用。
+覆盖：发布 → 编辑 → 驳回 → 重提 → 通过全链路的六类事件与回库顺序（`SUBMIT,EDIT,REJECT,RESUBMIT,APPROVE`）；
+编辑事件的字段级 diff（改前/改后标题）；`limit=1` / `limit=1000` 边界；卖家访问 403、未知商品 404；
+自营商品不写历史（API 空列表 + 库内 0 行）；抽检版本漂移字段（`sampledVersion/currentVersion/drift`）。
+结束删除夹具商品并复原抽查任务。2026-10-24 实测 **52/0**。
+
+## 商品上架审核 UI e2e（`scripts/e2e/product-audit-ui-check.mjs`，48 项，第九十七轮扩 A-08）
+
+```bash
+NO_PROXY="*" node scripts/e2e/product-audit-ui-check.mjs
+```
+
+前置：三站点均为最新产物；ES 容器在跑（脚本先全量重索引再断言检索可见性，避免“没进索引”造成假绿）。
+覆盖：发布 → 未过审前台不可见 → 审核通过可见 → 编辑重审 → 驳回 → 重提 → 二审通过的全闭环；
+第九十七轮新增：审核台「审核历史」展示提交事件、五事件完整时间线、驳回原因与标题 diff；
+抽检页「内容已变更 v抽中 → v当前」徽标与复核弹窗警示。2026-10-24 实测 **48/0**。
+
 ## 订单级库存预占冒烟（`scripts/stock-order-reservation-smoke.mjs`，23 项，第九十五轮）
 
 ```bash

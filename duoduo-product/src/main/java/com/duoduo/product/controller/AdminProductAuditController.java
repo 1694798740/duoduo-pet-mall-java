@@ -7,7 +7,9 @@ import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditRequest;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
+import com.duoduo.product.dto.SpuAuditDtos.SpuAuditLogView;
 import com.duoduo.product.service.SellerProductService;
+import com.duoduo.product.service.SpuAuditHistoryService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 运营侧 · 第三方商品上架审核台（E14，平台管理后台）。
@@ -35,9 +39,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminProductAuditController {
 
     private final SellerProductService sellerProductService;
+    private final SpuAuditHistoryService auditHistoryService;
 
-    public AdminProductAuditController(SellerProductService sellerProductService) {
+    public AdminProductAuditController(SellerProductService sellerProductService,
+                                       SpuAuditHistoryService auditHistoryService) {
         this.sellerProductService = sellerProductService;
+        this.auditHistoryService = auditHistoryService;
     }
 
     /** 审核列表：按审核状态过滤（不传＝全部），可按店铺归属筛，可按商品标题搜 */
@@ -55,6 +62,13 @@ public class AdminProductAuditController {
     @GetMapping("/{spuId}")
     public ApiResponse<AdminProductAuditView> detail(@PathVariable Long spuId) {
         return ApiResponse.ok(sellerProductService.auditDetail(spuId));
+    }
+
+    /** 审核历史（A-08）：最新在前；limit 缺省 50、上限 100 */
+    @GetMapping("/{spuId}/history")
+    public ApiResponse<List<SpuAuditLogView>> history(@PathVariable Long spuId,
+                                                      @RequestParam(defaultValue = "50") Integer limit) {
+        return ApiResponse.ok(auditHistoryService.history(spuId, limit));
     }
 
     /** 审核结论：{@code {"action":"APPROVE"|"REJECT","reason":"...","version":0}}（驳回时 reason 必填；version 必带） */

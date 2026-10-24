@@ -812,6 +812,42 @@ export interface AdminProductAuditRequest {
   version: number;
 }
 
+/** 一条字段级变更（A-08）。before/after 是给运营看的展示值（富文本已转纯文本、KV 已展开） */
+export interface SpuAuditFieldChange {
+  field: string;
+  label: string;
+  before: string | null;
+  after: string | null;
+  /** 展示值超长（> 2000 码点）被截断；截断仍算一次变更，不会静默丢弃 */
+  truncated: boolean;
+}
+
+/**
+ * 商品审核历史的一条事件（A-08）。
+ * id 是雪花 id 字符串 —— 端上禁止 Number()，排序/比较只按字符串或服务端顺序。
+ */
+export interface SpuAuditLogView {
+  id: string;
+  /** SUBMIT / EDIT / RESUBMIT / APPROVE / REJECT / SAMPLE_REJECT */
+  event: string;
+  eventLabel: string;
+  /** SELLER / STAFF / OPERATOR / SYSTEM */
+  actorType: string;
+  actorLabel: string;
+  actorId: string | null;
+  actorPhone: string | null;
+  fromAuditStatus: string | null;
+  toAuditStatus: string | null;
+  auditSource: string | null;
+  reason: string | null;
+  versionBefore: number | null;
+  versionAfter: number;
+  /** 抽查判违规时，抽中那一刻的商品版本；其余事件为 null */
+  sampledVersion: number | null;
+  changes: SpuAuditFieldChange[];
+  createdAt: string | null;
+}
+
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------
 
 export interface CategorySaveRequest {
@@ -1974,6 +2010,12 @@ export interface AuditSampleView {
   createdAt: string | null;
   /** 建任务 → 复核完成的小时数；未复核为 null（0 才是「不到一小时」） */
   responseHours: number | null;
+  /** 抽中时的商品版本快照（A-08）；null = 旧任务未记录，不做漂移判断 */
+  sampledVersion?: number | null;
+  /** 商品当前版本（A-08）；商品已不存在时为 null */
+  currentVersion?: number | null;
+  /** 抽中后卖家又改过内容（A-08）；只提示不阻断复核 */
+  drift?: boolean;
 }
 
 /** 一条入驻侧抽查任务（E28）。与商品侧差别：没有 sellerId，改带店铺名；无「必抽」理由 */

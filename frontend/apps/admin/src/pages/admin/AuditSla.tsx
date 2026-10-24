@@ -75,6 +75,11 @@ interface Row {
   reviewedAt: string | null;
   note: string | null;
   hours: number | null;
+  /** 抽中时的版本 / 当前版本（A-08，仅商品侧有）；旧任务为 null */
+  sampledVersion: number | null;
+  currentVersion: number | null;
+  /** 抽中后卖家又改过内容（A-08）：提示运营眼前内容已不是抽中那一版 */
+  drift: boolean;
   /** 商品侧有商城详情深链（复核必须能看见实物）；入驻侧无对应前台页，为 null */
   detailUrl: string | null;
 }
@@ -107,6 +112,9 @@ const normalize = (domain: Domain, s: AnySample): Row => ({
   reviewedAt: s.reviewedAt ?? null,
   note: s.reviewNote ?? null,
   hours: s.responseHours ?? null,
+  sampledVersion: s.sampledVersion ?? null,
+  currentVersion: s.currentVersion ?? null,
+  drift: Boolean(s.drift),
   detailUrl: domain === 'product' ? `${MALL_URL}/product/${s.bizId}` : null,
 });
 
@@ -350,6 +358,14 @@ export const AdminAuditSlaPage: React.FC = () => {
                       {STATUS_TEXT[row.status] ?? row.status}
                     </span>
                     {row.reasonLabel ? <span className="tag">{row.reasonLabel}</span> : null}
+                    {row.drift ? (
+                      <span
+                        className="tag tag-warn"
+                        title="抽中后卖家又改过内容：请以当前商品详情为准，不要对着旧截图下结论"
+                      >
+                        内容已变更 v{row.sampledVersion} → v{row.currentVersion}
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="small muted" style={{ marginTop: 6 }}>
@@ -441,6 +457,13 @@ export const AdminAuditSlaPage: React.FC = () => {
             复核对象：<b>{reviewing.title}</b>（{reviewing.meta}）
             {reviewing.reasonLabel ? ` · 抽中理由：${reviewing.reasonLabel}` : ''}
           </div>
+        ) : null}
+        {reviewing?.drift ? (
+          <Alert kind="warn">
+            该商品抽中后已被卖家修改（抽中版本 v{reviewing.sampledVersion}，当前版本 v
+            {reviewing.currentVersion}）。复核依据是「抽中时那一版」还是「当前内容」，
+            请在处置原因里写明；本提示不阻断复核。
+          </Alert>
         ) : null}
         <Field label="复核依据（判定违规必填）">
           <textarea

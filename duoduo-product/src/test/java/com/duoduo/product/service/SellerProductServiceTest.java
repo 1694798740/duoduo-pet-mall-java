@@ -43,10 +43,12 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -79,10 +81,12 @@ class SellerProductServiceTest {
     private final MerchantRiskClient merchantRiskClient = mock(MerchantRiskClient.class);
     private final BannedWordGuard bannedWordGuard = mock(BannedWordGuard.class);
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
+    private final SpuAuditHistoryService auditHistoryService = mock(SpuAuditHistoryService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
-            new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper);
+            new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
+            auditHistoryService);
 
     /**
      * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
@@ -1399,9 +1403,196 @@ class SellerProductServiceTest {
         when(spuMapper.selectById(9001L)).thenReturn(spu);
         when(spuMapper.update(isNull(), any())).thenReturn(0);
 
-        assertThatThrownBy(() -> service.rejectBySample(9001L, "主图违规"))
+        assertThatThrownBy(() -> service.rejectBySample(9001L, "主图违规", null))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("内容已变化")
                 .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.CONFLICT));
+    }
+
+    // ---------------- A-08 · 审核历史与变更留痕 ----------------
+
+    /**
+     * 提交是审核时间线的起点：没有它，历史从第一次编辑才开始，
+     * 「卖家提交时到底写了什么、当时是自动放行还是转人工」就永远缺一块。
+     */
+    @Test
+    void A08_提交第三方商品记录SUBMIT事件() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+
+        service.create(createRequest("新商品"));
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordSubmit(captor.capture(), eq(false));
+        SpuEntity saved = captor.getValue();
+        assertThat(saved.getSupplyType()).isEqualTo("merchant");
+        assertThat(saved.getAuditStatus()).isEqualTo("APPROVED");
+    }
+
+    /** 自营免审，没有「审核」这回事 —— 写进历史只会让审核台出现平台自己的商品 */
+    @Test
+    void A08_运营提交自营商品不记录审核历史() {
+        UserContext.set(operator());
+        stubCreateDeps();
+
+        service.create(createRequest("自营新品"));
+
+        verify(auditHistoryService, never()).recordSubmit(any(), anyBoolean());
+    }
+
+    @Test
+    void A08_编辑记录EDIT事件_改前快照必须是改前的值() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "旧标题", "https://img/old.png");
+        spu.setDetail("旧详情");
+        spu.setVersion(3);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L, new SellerProductUpdateRequest("新标题", null,
+                "https://img/new.png", null, "新详情", null, null, null, null, null, null, 3));
+
+        ArgumentCaptor<SpuAuditHistoryService.ContentSnapshot> beforeCaptor =
+                ArgumentCaptor.forClass(SpuAuditHistoryService.ContentSnapshot.class);
+        ArgumentCaptor<SpuEntity> afterCaptor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordEdit(beforeCaptor.capture(), afterCaptor.capture(), eq(false));
+
+        SpuAuditHistoryService.ContentSnapshot before = beforeCaptor.getValue();
+        assertThat(before.title()).isEqualTo("旧标题");
+        assertThat(before.mainImage()).isEqualTo("https://img/old.png");
+        assertThat(before.detail()).isEqualTo("旧详情");
+        assertThat(before.version()).isEqualTo(3);
+
+        SpuEntity after = afterCaptor.getValue();
+        assertThat(after.getTitle()).isEqualTo("新标题");
+        assertThat(after.getMainImage()).isEqualTo("https://img/new.png");
+        assertThat(after.getDetail()).isEqualTo("新详情");
+        assertThat(after.getVersion()).isEqualTo(4);
+    }
+
+    @Test
+    void A08_编辑没有实质变化不记录事件() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", "https://img/old.png");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        service.update(9001L, new SellerProductUpdateRequest("原标题", null,
+                "https://img/old.png", null, null, null, null, null, null, null, null, 0));
+
+        verify(auditHistoryService, never()).recordEdit(any(), any(), anyBoolean());
+    }
+
+    @Test
+    void A08_版本冲突不记录事件() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        spu.setVersion(3);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("新标题", 2)))
+                .isInstanceOf(BizException.class);
+
+        verify(auditHistoryService, never()).recordEdit(any(), any(), anyBoolean());
+    }
+
+    @Test
+    void A08_重新提审记录RESUBMIT事件() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "驳回商品", null, "merchant", "REJECTED", "OFF_SHELF");
+        spu.setVersion(6);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.resubmit(9001L);
+
+        ArgumentCaptor<SpuAuditHistoryService.ContentSnapshot> beforeCaptor =
+                ArgumentCaptor.forClass(SpuAuditHistoryService.ContentSnapshot.class);
+        ArgumentCaptor<SpuEntity> afterCaptor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordResubmit(beforeCaptor.capture(), afterCaptor.capture(), eq(false));
+
+        assertThat(beforeCaptor.getValue().auditStatus()).isEqualTo("REJECTED");
+        assertThat(beforeCaptor.getValue().version()).isEqualTo(6);
+        assertThat(afterCaptor.getValue().getAuditStatus()).isEqualTo("PENDING");
+        assertThat(afterCaptor.getValue().getVersion()).isEqualTo(7);
+    }
+
+    @Test
+    void A08_审核通过记录APPROVE事件() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+        when(catalogLookup.categoryNames(any())).thenReturn(Map.of());
+
+        service.audit(9001L, "APPROVE", null, 0);
+
+        ArgumentCaptor<SpuAuditHistoryService.ContentSnapshot> beforeCaptor =
+                ArgumentCaptor.forClass(SpuAuditHistoryService.ContentSnapshot.class);
+        ArgumentCaptor<SpuEntity> afterCaptor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordAudit(beforeCaptor.capture(), afterCaptor.capture());
+
+        assertThat(beforeCaptor.getValue().auditStatus()).isEqualTo("PENDING");
+        assertThat(afterCaptor.getValue().getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(afterCaptor.getValue().getAuditSource()).isEqualTo("MANUAL");
+        assertThat(afterCaptor.getValue().getAuditReason()).isNull();
+        assertThat(afterCaptor.getValue().getVersion()).isEqualTo(1);
+    }
+
+    @Test
+    void A08_审核驳回记录REJECT事件并保留原因() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+        when(catalogLookup.categoryNames(any())).thenReturn(Map.of());
+
+        service.audit(9001L, "REJECT", "主图与实物不符", 0);
+
+        ArgumentCaptor<SpuEntity> afterCaptor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordAudit(any(), afterCaptor.capture());
+
+        assertThat(afterCaptor.getValue().getAuditStatus()).isEqualTo("REJECTED");
+        assertThat(afterCaptor.getValue().getAuditReason()).isEqualTo("主图与实物不符");
+        // 驳回压成下架是审核动作的一部分，历史行要能解释「为什么商品从在售变成了下架」
+        assertThat(afterCaptor.getValue().getStatus()).isEqualTo("OFF_SHELF");
+        assertThat(afterCaptor.getValue().getVersion()).isEqualTo(1);
+    }
+
+    @Test
+    void A08_抽查判违规记录SAMPLE_REJECT事件并带抽样版本() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "抽中商品", null, "merchant", "APPROVED", "ON_SALE");
+        spu.setVersion(3);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        service.rejectBySample(9001L, "主图违规", 3);
+
+        ArgumentCaptor<SpuAuditHistoryService.ContentSnapshot> beforeCaptor =
+                ArgumentCaptor.forClass(SpuAuditHistoryService.ContentSnapshot.class);
+        ArgumentCaptor<SpuEntity> afterCaptor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(auditHistoryService).recordSampleReject(beforeCaptor.capture(), afterCaptor.capture(), eq(3));
+
+        assertThat(beforeCaptor.getValue().version()).isEqualTo(3);
+        assertThat(afterCaptor.getValue().getAuditStatus()).isEqualTo("REJECTED");
+        assertThat(afterCaptor.getValue().getAuditSource()).isEqualTo("SAMPLE");
+        assertThat(afterCaptor.getValue().getAuditReason()).isEqualTo("主图违规");
+        assertThat(afterCaptor.getValue().getVersion()).isEqualTo(4);
+    }
+
+    /**
+     * 审核历史是 strict 写入：历史表写失败必须让业务失败，不能吞异常继续返回 200。
+     * （回滚本身由 @Transactional 保证，单测只能钉住「异常没有被吞掉」。）
+     */
+    @Test
+    void A08_历史写入失败向上抛出_不吞异常() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        doThrow(new IllegalStateException("历史表不可写"))
+                .when(auditHistoryService).recordEdit(any(), any(), anyBoolean());
+
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("新标题")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("历史表不可写");
     }
 }

@@ -41,7 +41,16 @@ public final class AuditSlaDtos {
             String reviewedAt,
             String createdAt,
             /** 从建任务到复核完成的小时数；未复核为 null */
-            Long responseHours
+            Long responseHours,
+            /** 抽中时的商品版本快照（A-08）；null = 旧任务未记录，不做漂移判断 */
+            Integer sampledVersion,
+            /** 商品当前版本；商品已不存在时为 null */
+            Integer currentVersion,
+            /**
+             * 抽中后卖家又改过内容（sampledVersion != currentVersion）。
+             * 只提示、不阻断复核：运营据此判断「眼前的内容是否还是抽中时那一版」。
+             */
+            boolean drift
     ) {
     }
 

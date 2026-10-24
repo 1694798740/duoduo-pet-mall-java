@@ -17,7 +17,7 @@
 
 import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
-import type { AdminProductAuditView } from '@duoduo/api-sdk/types';
+import type { AdminProductAuditView, SpuAuditLogView } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, SupplyTag, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
@@ -45,6 +45,23 @@ const AUDIT_BADGE: Record<string, string> = {
   PENDING: 'tag tag-warn',
   APPROVED: 'tag tag-success',
   REJECTED: 'tag tag-danger',
+};
+
+/** 审核来源（A-08）：历史行要能回答「这条结论是怎么来的」 */
+const SOURCE_LABELS: Record<string, string> = {
+  AUTO: '规则自动放行',
+  MANUAL: '人工审核',
+  SELF: '自营免审',
+  SAMPLE: '事后抽查',
+};
+
+const EVENT_BADGE: Record<string, string> = {
+  SUBMIT: 'tag',
+  EDIT: 'tag tag-warn',
+  RESUBMIT: 'tag tag-warn',
+  APPROVE: 'tag tag-success',
+  REJECT: 'tag tag-danger',
+  SAMPLE_REJECT: 'tag tag-danger',
 };
 
 const fmtTime = (value: string | null | undefined): string =>
@@ -75,6 +92,12 @@ export const AdminProductAuditsPage: React.FC = () => {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // A-08：审核历史（按需拉取，不跟着列表翻页反复请求）
+  const [historyOf, setHistoryOf] = useState<AdminProductAuditView | null>(null);
+  const [history, setHistory] = useState<SpuAuditLogView[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsync(
     useCallback(
@@ -133,6 +156,20 @@ export const AdminProductAuditsPage: React.FC = () => {
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  const openHistory = async (item: AdminProductAuditView) => {
+    setHistoryOf(item);
+    setHistory(null);
+    setHistoryError(null);
+    setHistoryLoading(true);
+    try {
+      setHistory(await adminApi.productAuditHistory(item.id, 50));
+    } catch (err) {
+      setHistoryError(toFriendlyMessage(err));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -349,6 +386,13 @@ export const AdminProductAuditsPage: React.FC = () => {
                   </div>
 
                   <div className="row" style={{ gap: 8, flex: 'none' }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      disabled={busy}
+                      onClick={() => void openHistory(item)}
+                    >
+                      审核历史
+                    </button>
                     {approved ? (
                       // 已通过仍给改判入口：审核可重入，堵掉只会把改判逼成改库
                       <button
@@ -425,6 +469,69 @@ export const AdminProductAuditsPage: React.FC = () => {
             maxLength={200}
           />
         </Field>
+      </Modal>
+
+      <Modal
+        open={historyOf != null}
+        title="商品审核历史"
+        onClose={() => setHistoryOf(null)}
+        footer={<button className="btn btn-ghost" onClick={() => setHistoryOf(null)}>关闭</button>}
+      >
+        {historyOf ? (
+          <div className="small muted" style={{ marginBottom: 10 }}>
+            商品：<b>{historyOf.title}</b>
+            {' · '}#{historyOf.id}
+            {' · '}当前版本 v{historyOf.version}
+          </div>
+        ) : null}
+        {historyLoading ? (
+          <LoadingBlock text="正在拉取审核历史…" />
+        ) : historyError ? (
+          <Alert kind="error">{historyError}</Alert>
+        ) : (history ?? []).length === 0 ? (
+          <Empty
+            title="没有审核历史"
+            desc="自营商品免审、不进审核时间线；第三方商品从第一次提交起记录"
+          />
+        ) : (
+          <div className="stack" style={{ gap: 12, maxHeight: 460, overflow: 'auto' }}>
+            {(history ?? []).map((log) => (
+              <div key={log.id} style={{ borderLeft: '3px solid var(--border, #e5e7eb)', paddingLeft: 10 }}>
+                <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+                  <span className={EVENT_BADGE[log.event] ?? 'tag'}>{log.eventLabel}</span>
+                  <span className="small muted">
+                    {fmtTime(log.createdAt)}
+                    {' · '}{log.actorLabel}{log.actorId ? ` #${log.actorId}` : ''}
+                  </span>
+                </div>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  {log.fromAuditStatus ?? '—'} → {log.toAuditStatus ?? '—'}
+                  {log.auditSource ? ` · 来源：${SOURCE_LABELS[log.auditSource] ?? log.auditSource}` : ''}
+                  {' · '}版本 {log.versionBefore ?? '—'} → {log.versionAfter}
+                  {log.sampledVersion != null ? ` · 抽中版本 v${log.sampledVersion}` : ''}
+                </div>
+                {log.reason ? (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    <b>原因：</b>{log.reason}
+                  </div>
+                ) : null}
+                {log.changes.length > 0 ? (
+                  <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                    {log.changes.map((change) => (
+                      <li key={change.field} style={{ marginBottom: 4 }}>
+                        <b>{change.label}</b>：
+                        <span className="muted">{change.before ?? '（空）'}</span>
+                        {' → '}
+                        <span>{change.after ?? '（空）'}</span>
+                        {change.truncated ? <span className="muted">（超长截断）</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
     </div>
   );

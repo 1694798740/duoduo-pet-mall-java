@@ -151,6 +151,7 @@ public class SellerProductService {
     private final BannedWordGuard bannedWordGuard;
     private final CatalogLookup catalogLookup;
     private final ObjectMapper objectMapper;
+    private final SpuAuditHistoryService auditHistoryService;
 
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
@@ -160,7 +161,8 @@ public class SellerProductService {
                                 SnowflakeIdGenerator idGenerator,
                                 BannedWordGuard bannedWordGuard,
                                 CatalogLookup catalogLookup,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                SpuAuditHistoryService auditHistoryService) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
@@ -170,6 +172,7 @@ public class SellerProductService {
         this.bannedWordGuard = bannedWordGuard;
         this.catalogLookup = catalogLookup;
         this.objectMapper = objectMapper;
+        this.auditHistoryService = auditHistoryService;
     }
 
     // ---------------- 准入与归属 ----------------
@@ -422,6 +425,11 @@ public class SellerProductService {
         for (NormalizedSku sku : skus) {
             skuMapper.insert(toSkuEntity(spuId, ++seq, sku, now));
         }
+        // A-08：与业务写在同一个事务里 —— 历史写不进去，商品也不该悄悄发出去。
+        // 自营免审，不属于「审核时间线」，连调用都不发起（服务内部还有一层 supplies 门禁）。
+        if (isMerchantSupplied(spu)) {
+            auditHistoryService.recordSubmit(spu, scope.staffMember());
+        }
 
         log.info("{} 提交商品 {}「{}」（供货={} 归属={} 审核态={} 来源={} 规格数={}）",
                 scope.staffMember() ? "店员" : (selfSupplied ? "运营" : "店主"),
@@ -448,6 +456,7 @@ public class SellerProductService {
      * 属于「改价即改合约」的范畴，不做成卖家随手可改的字段（这条边界是旧版就定下的，
      * E14 不放开）。本期要调价走下架后重新提交。
      */
+    @Transactional(rollbackFor = Exception.class)
     public SellerProductView update(Long spuId, SellerProductUpdateRequest request) {
         SellerScope scope = requireSellerScope();
         if (request == null) {
@@ -469,6 +478,10 @@ public class SellerProductService {
         if (!java.util.Objects.equals(spu.getVersion(), request.version())) {
             throw BizException.conflict("商品已被其他人修改，请刷新后重试");
         }
+        // A-08：必须在下面那批字段被就地改写**之前**取快照 —— 整个更新流程复用一个实体，
+        // 改完再去读「改前值」只会读到改后的值，diff 永远是空的。
+        SpuAuditHistoryService.ContentSnapshot auditBefore =
+                isMerchantSupplied(spu) ? SpuAuditHistoryService.ContentSnapshot.of(spu) : null;
 
         boolean changed = false;
         if (request.title() != null) {
@@ -615,6 +628,8 @@ public class SellerProductService {
         }
         spu.setUpdatedAt(now);
         spu.setVersion(request.version() + 1);
+        // A-08：条件 UPDATE 成功之后才写历史 —— 版本冲突（0 行）已经抛出去了，不留假记录
+        auditHistoryService.recordEdit(auditBefore, spu, scope.staffMember());
         log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={} 版本={}）",
                 spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
                 spu.getAuditStatus(), spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(),
@@ -983,6 +998,7 @@ public class SellerProductService {
      *       （驳回时 status 已被审核动作压成 OFF_SHELF）。</li>
      * </ul>
      */
+    @Transactional(rollbackFor = Exception.class)
     public SellerProductView resubmit(Long spuId) {
         SellerScope scope = requireSellerScope();
         SpuEntity spu = requireOwned(spuId, scope);
@@ -992,6 +1008,8 @@ public class SellerProductService {
         if (AUDIT_APPROVED.equals(spu.getAuditStatus())) {
             throw BizException.businessRule("该商品已通过审核，无需重新提交；如需修改请直接编辑");
         }
+        SpuAuditHistoryService.ContentSnapshot auditBefore =
+                isMerchantSupplied(spu) ? SpuAuditHistoryService.ContentSnapshot.of(spu) : null;
         spu.setAuditStatus(AUDIT_PENDING);
         spu.setAuditReason(null);
         spu.setStatus(STATUS_ON_SALE);
@@ -1016,7 +1034,12 @@ public class SellerProductService {
         if (rows == 0) {
             throw BizException.conflict("商品状态已变化，请刷新后重试");
         }
+        // 内存实体同步库里的最终值：来源/审核时间已被显式清空，历史行据此落「上一次结论作废」
+        spu.setAuditSource(null);
+        spu.setAuditAt(null);
+        spu.setUpdatedAt(now);
         spu.setVersion((spu.getVersion() == null ? 0 : spu.getVersion()) + 1);
+        auditHistoryService.recordResubmit(auditBefore, spu, scope.staffMember());
         log.info("商品 {} 由卖家重新提审，回到待审核（版本={}）", spuId, spu.getVersion());
         return toView(spu, skuStatsOf(spuId));
     }
@@ -1109,6 +1132,7 @@ public class SellerProductService {
      * <p>通过时<b>不动 status</b>：卖家提交时期望的就是在售，
      * 审核通过即自动出现在前台（若它同时被卖家手动下架过，保持下架 —— 尊重卖家的选择）。
      */
+    @Transactional(rollbackFor = Exception.class)
     public AdminProductAuditView audit(Long spuId, String action, String reason, Integer version) {
         LoginUser operator = UserContext.require();
         OperatorGuard.requireOperator();
@@ -1138,6 +1162,7 @@ public class SellerProductService {
         if (!java.util.Objects.equals(spu.getVersion(), version)) {
             throw BizException.conflict("商品内容已变化，请刷新后重新审核");
         }
+        SpuAuditHistoryService.ContentSnapshot auditBefore = SpuAuditHistoryService.ContentSnapshot.of(spu);
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         boolean reject = AUDIT_REJECTED.equals(target);
@@ -1176,6 +1201,8 @@ public class SellerProductService {
             throw BizException.conflict("商品内容已变化，请刷新后重新审核");
         }
         spu.setVersion(version + 1);
+        // A-08：结论落库成功后才写历史，事件名由结论决定（APPROVE / REJECT）
+        auditHistoryService.recordAudit(auditBefore, spu);
 
         log.info("商品 {} 审核结论={}（审核人={} 原因={} 版本={}）", spuId, target, operator.userId(),
                 spu.getAuditReason(), spu.getVersion());
@@ -1201,13 +1228,16 @@ public class SellerProductService {
      * <p>不做 {@code OperatorGuard} 校验：调用方（抽查复核）是运营接口，已经校验过一次；
      * 这里再校验一次会让「系统自动判定」这条路径没有合法调用方。
      */
-    public void rejectBySample(Long spuId, String reason) {
+    @Transactional(rollbackFor = Exception.class)
+    public void rejectBySample(Long spuId, String reason, Integer sampledVersion) {
         SpuEntity spu = spuId == null ? null : spuMapper.selectById(spuId);
         if (spu == null || !isMerchantSupplied(spu)) {
             return;             // 自营商品不进抽查队列；查不到就什么都不做
         }
+        SpuAuditHistoryService.ContentSnapshot auditBefore = SpuAuditHistoryService.ContentSnapshot.of(spu);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         int expectedVersion = spu.getVersion() == null ? 0 : spu.getVersion();
+        int rejectCount = (spu.getRejectCount() == null ? 0 : spu.getRejectCount()) + 1;
         // 显式 set 每一个要改的列（包括把 audit_source 写成 SAMPLE）：
         // updateById 不写 null，而这里恰好要覆盖旧值 —— 用 UpdateWrapper 一次说清。
         // A-07：抽查复核也是「对着某一版内容下判定」，版本变了就不该落地。
@@ -1221,13 +1251,23 @@ public class SellerProductService {
                 .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
                 // 抽查判违规同样点亮「曾被驳回」：否则卖家改两次就能把它洗回来
                 .set(SpuEntity::getRejectedAt, now)
-                .set(SpuEntity::getRejectCount,
-                        (spu.getRejectCount() == null ? 0 : spu.getRejectCount()) + 1)
+                .set(SpuEntity::getRejectCount, rejectCount)
                 .set(SpuEntity::getUpdatedAt, now)
                 .setSql("version = version + 1"));
         if (rows == 0) {
             throw BizException.conflict("商品内容已变化，请刷新后重新判定");
         }
+        // 内存实体同步最终值，历史行才能落下正确的 toStatus / 版本 / 原因
+        spu.setAuditStatus(AUDIT_REJECTED);
+        spu.setAuditReason(trimToNull(reason));
+        spu.setAuditSource(AUDIT_SOURCE_SAMPLE);
+        spu.setAuditAt(now);
+        spu.setStatus(STATUS_OFF_SHELF);
+        spu.setRejectedAt(now);
+        spu.setRejectCount(rejectCount);
+        spu.setUpdatedAt(now);
+        spu.setVersion(expectedVersion + 1);
+        auditHistoryService.recordSampleReject(auditBefore, spu, sampledVersion);
         log.info("商品 {} 抽查判违规 → 已驳回并强制下架（原因={}）", spuId, reason);
     }
 

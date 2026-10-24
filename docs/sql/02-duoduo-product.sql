@@ -121,6 +121,9 @@ CREATE TABLE t_audit_sample (
     review_note VARCHAR(200),
     reviewed_by BIGINT,
     reviewed_at DATETIME,
+    -- A-08：抽中时的商品版本快照。复核台据此提示「抽中后内容又改过」；
+    -- 可空 = 本列上线前的旧任务，不回填（回填会伪造「当时就是这一版」的事实）。
+    spu_version INT          NULL COMMENT '抽样时的商品版本快照（A-08）',
     created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
@@ -128,6 +131,31 @@ CREATE TABLE t_audit_sample (
     KEY idx_status_created (status, created_at),
     KEY idx_seller_date (seller_id, sample_date)
 );
+
+-- ---------- A-08 · 商品审核历史（append-only，增量脚本 49-spu-audit-history.sql） ----------
+-- 为什么独立成表：同一商品会反复编辑 / 驳回 / 重提，t_spu 上的四列只能记「最近一次」；
+-- 审核历史天然是一条时间线（一对多），压进一行就丢掉了改判与多次驳回。
+-- 只记审核维度事件；改价 / 改库存 / 上下架是正交高频动作，不写本表。
+CREATE TABLE t_spu_audit_log (
+    id                BIGINT       NOT NULL COMMENT '雪花 id（同时是时间线顺序）',
+    spu_id            BIGINT       NOT NULL COMMENT 't_spu.id',
+    seller_id         BIGINT       NOT NULL DEFAULT 0 COMMENT '归属店铺主体 user id；0=平台自营（自营不写本表）',
+    event             VARCHAR(20)  NOT NULL COMMENT 'SUBMIT/EDIT/RESUBMIT/APPROVE/REJECT/SAMPLE_REJECT',
+    actor_type        VARCHAR(20)  NOT NULL COMMENT 'SELLER/STAFF/OPERATOR/SYSTEM',
+    actor_id          BIGINT                COMMENT '操作人 user id；SYSTEM 为空',
+    actor_phone       VARCHAR(20)           COMMENT '操作人手机号快照',
+    from_audit_status VARCHAR(20)           COMMENT '事件前的审核态；SUBMIT 为空',
+    to_audit_status   VARCHAR(20)  NOT NULL COMMENT '事件后的审核态',
+    audit_source      VARCHAR(16)           COMMENT 'AUTO/MANUAL/SAMPLE/SELF；NULL=转人工或重提',
+    reason            VARCHAR(200)          COMMENT '驳回 / 抽查判违规原因',
+    version_before    INT                   COMMENT '事件前版本；SUBMIT 为空',
+    version_after     INT          NOT NULL COMMENT '事件后版本',
+    sampled_version   INT                   COMMENT '抽查判违规时：运营当时看到的是哪一版',
+    changes           MEDIUMTEXT            COMMENT '字段级变更 JSON（每值最多 2000 码点）',
+    created_at        TIMESTAMP    NOT NULL COMMENT '事件时间（UTC）',
+    PRIMARY KEY (id),
+    KEY idx_spu_id (spu_id, id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品审核历史（append-only）';
 
 -- 抽样强度（单行，id 固定 1）：附录 D 第五节「连续 3 天违规率超标 → 比例翻倍」要有个
 -- 能被**自动改写**的落点；写进配置文件就变成「改配置再重启」，那就不叫自动收紧。

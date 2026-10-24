@@ -188,6 +188,9 @@ public class AuditSampleService {
             row.setSampleDate(date);
             row.setReason(c.reason().name());
             row.setStatus(STATUS_PENDING);
+            // A-08：记下抽中时是哪一版。复核台据此提示「抽中后卖家又改过内容」，
+            // 避免运营对着旧截图下结论；不阻断复核（阻断会让每日编辑把队列堵死）。
+            row.setSpuVersion(c.spu().getVersion());
             row.setCreatedAt(now);
             row.setUpdatedAt(now);
             try {
@@ -325,7 +328,7 @@ public class AuditSampleService {
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (STATUS_REJECTED.equals(target)) {
-            sellerProductService.rejectBySample(sample.getBizId(), reason);
+            sellerProductService.rejectBySample(sample.getBizId(), reason, sample.getSpuVersion());
             reportViolation(sample.getSellerId(), reason);
         }
         sample.setStatus(target);
@@ -485,30 +488,44 @@ public class AuditSampleService {
             return List.of();
         }
         Map<Long, String> titles = new HashMap<>();
+        Map<Long, Integer> versions = new HashMap<>();
         List<Long> spuIds = rows.stream()
                 .filter(r -> BIZ_SPU.equals(r.getBizType()) && r.getBizId() != null)
                 .map(AuditSampleEntity::getBizId).distinct().toList();
         if (!spuIds.isEmpty()) {
             spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
-                            .select(SpuEntity::getId, SpuEntity::getTitle)
+                            .select(SpuEntity::getId, SpuEntity::getTitle, SpuEntity::getVersion)
                             .in(SpuEntity::getId, spuIds))
-                    .forEach(s -> titles.put(s.getId(), s.getTitle()));
+                    .forEach(s -> {
+                        titles.put(s.getId(), s.getTitle());
+                        versions.put(s.getId(), s.getVersion());
+                    });
         }
-        return rows.stream().map(r -> new AuditSampleView(
-                String.valueOf(r.getId()),
-                r.getBizType(),
-                String.valueOf(r.getBizId()),
-                String.valueOf(r.getSellerId()),
-                r.getSampleDate() == null ? null : r.getSampleDate().toString(),
-                r.getReason(),
-                reasonLabel(r.getReason()),
-                r.getStatus(),
-                titles.get(r.getBizId()),
-                r.getReviewNote(),
-                r.getReviewedBy() == null ? null : String.valueOf(r.getReviewedBy()),
-                isoOf(r.getReviewedAt()),
-                isoOf(r.getCreatedAt()),
-                responseHours(r))).toList();
+        return rows.stream().map(r -> {
+            Integer sampledVersion = r.getSpuVersion();
+            Integer currentVersion = r.getBizId() == null ? null : versions.get(r.getBizId());
+            // 旧任务 sampledVersion 为 null：不知道抽的是哪一版，不能凭空喊「内容已变更」
+            boolean drift = sampledVersion != null && currentVersion != null
+                    && !sampledVersion.equals(currentVersion);
+            return new AuditSampleView(
+                    String.valueOf(r.getId()),
+                    r.getBizType(),
+                    String.valueOf(r.getBizId()),
+                    String.valueOf(r.getSellerId()),
+                    r.getSampleDate() == null ? null : r.getSampleDate().toString(),
+                    r.getReason(),
+                    reasonLabel(r.getReason()),
+                    r.getStatus(),
+                    titles.get(r.getBizId()),
+                    r.getReviewNote(),
+                    r.getReviewedBy() == null ? null : String.valueOf(r.getReviewedBy()),
+                    isoOf(r.getReviewedAt()),
+                    isoOf(r.getCreatedAt()),
+                    responseHours(r),
+                    sampledVersion,
+                    currentVersion,
+                    drift);
+        }).toList();
     }
 
     private static Long responseHours(AuditSampleEntity row) {

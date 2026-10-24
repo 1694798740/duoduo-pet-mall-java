@@ -47,6 +47,8 @@ const PW_CORE =
 const CHROME = process.env.CHROME_PATH ?? undefined;
 const PWD = 'duoduo12345';
 const OPERATOR_PHONE = '13684295254';
+/** A-08 抽检漂移夹具的固定 id（收尾按它删除，避免污染真实抽查队列） */
+const SLA_SAMPLE_ID = '991000000000000001';
 
 /** 库内已有的叶子类目 / 品牌（脚本里硬编码会随种子变更而失效，这里取真实存在的） */
 const LEAF_CATEGORY = '101';
@@ -218,6 +220,19 @@ try {
   check('审核台默认「待审核」页签可见该商品', await card.isVisible());
   check('卡片展示审核态徽标', (await card.innerText()).includes('待审核'), (await card.innerText()).slice(0, 120));
   await pageOp.screenshot({ path: `${SHOTS}/e14_admin_pending.png` });
+
+  // A-08：审核历史时间线（此时应只有一条 SUBMIT）
+  await card.getByRole('button', { name: '审核历史' }).click();
+  const histModal = pageOp.locator('.modal, [role="dialog"]').first();
+  await histModal.waitFor({ timeout: 10000 });
+  await histModal.getByText('提交审核').first().waitFor({ timeout: 10000 });
+  const histText0 = await histModal.innerText();
+  check('A-08 历史弹窗展示「提交审核」事件', histText0.includes('提交审核'), histText0.slice(0, 200));
+  check('A-08 历史弹窗展示操作人「卖家」', histText0.includes('卖家'), histText0.slice(0, 200));
+  await pageOp.screenshot({ path: `${SHOTS}/a08_admin_history_submit.png` });
+  await histModal.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await histModal.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+
   await card.getByRole('button', { name: '通过', exact: true }).click();
   await pageOp.getByText('已通过审核').waitFor({ timeout: 10000 });
   check('运营通过审核成功', true);
@@ -279,6 +294,26 @@ try {
   check('二审通过', approve2.status === 200 && approve2.data?.auditStatus === 'APPROVED', approve2.data?.auditStatus);
   check('★ 闭环：二审通过后公开详情 200', (await call('GET', `/api/products/${spuId}`)).status === 200);
 
+  // A-08：完整时间线（提交 → 编辑 → 驳回 → 重提 → 通过），且编辑带字段级 diff
+  // 二审通过后商品已不在默认「待审核」页签 → 切「全部」并按标题搜，避免翻页碰运气
+  await pageOp.reload({ waitUntil: 'networkidle' });
+  await pageOp.getByRole('button', { name: '全部', exact: true }).click();
+  await pageOp.locator('input[placeholder="搜商品标题"]').fill(newTitle);
+  const card3 = pageOp.locator('.card', { hasText: newTitle }).first();
+  await card3.waitFor({ timeout: 15000 });
+  await card3.getByRole('button', { name: '审核历史' }).click();
+  const histModal2 = pageOp.locator('.modal, [role="dialog"]').first();
+  await histModal2.getByText('审核通过').first().waitFor({ timeout: 10000 });
+  const histText = await histModal2.innerText();
+  for (const event of ['提交审核', '编辑内容', '审核驳回', '重新提审', '审核通过']) {
+    check(`A-08 时间线含「${event}」`, histText.includes(event), histText.slice(0, 300));
+  }
+  check('A-08 时间线保留驳回原因', histText.includes('主图与类目不符'), histText.slice(0, 400));
+  check('★ A-08 编辑事件展示改前/改后标题', histText.includes(title) && histText.includes(newTitle),
+    { hasBefore: histText.includes(title), hasAfter: histText.includes(newTitle) });
+  await pageOp.screenshot({ path: `${SHOTS}/a08_admin_history_timeline.png` });
+  await histModal2.getByRole('button', { name: '关闭', exact: true }).last().click();
+
   // ---------------- S9 审核台边界 ----------------
   step('S9 审核台边界：队列只含第三方商品（自营免审）');
   const queue = await call('GET', '/api/admin/products?page=1&pageSize=50', undefined, op.jar);
@@ -288,6 +323,38 @@ try {
     (queue.data?.items ?? []).map((it) => it.supplyType).filter((t) => t !== 'merchant'));
   const anon = await fetch(`${GW}/api/admin/products`);
   check('★ 未登录访问审核台 → 401', anon.status === 401, anon.status);
+
+  // ---------------- S9b. A-08 抽检版本漂移 ----------------
+  step('S9b. A-08 抽检漂移：抽中版本 < 当前版本 → UI 提示「内容已变更」');
+  const nowDetail = await call('GET', `/api/seller/products/${spuId}`, undefined, owner.jar);
+  const currentVersion = nowDetail.data?.version;
+  const sampledVersion = currentVersion - 1;
+  await mysql('duoduo_product',
+    `DELETE FROM t_audit_sample WHERE id=${SLA_SAMPLE_ID} OR (biz_type='SPU' AND biz_id=${spuId} AND sample_date=UTC_DATE());`);
+  await mysql('duoduo_product',
+    `INSERT INTO t_audit_sample (id, biz_type, biz_id, seller_id, sample_date, reason, status, spu_version, created_at, updated_at)
+     VALUES (${SLA_SAMPLE_ID}, 'SPU', ${spuId}, 0, UTC_DATE(), 'BASE', 'PENDING', ${sampledVersion}, UTC_TIMESTAMP(), UTC_TIMESTAMP());`);
+
+  const ctxSla = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
+  const pageSla = await ctxSla.newPage();
+  const wSla = watch(pageSla);
+  await loginUI(pageSla, ADMIN_UI, OPERATOR_PHONE);
+  await pageSla.goto(`${ADMIN_UI}/admin/audit-sla`, { waitUntil: 'networkidle' });
+  await pageSla.locator('input[placeholder*="搜商品标题"]').fill(newTitle);
+  await pageSla.getByText(/内容已变更/).first().waitFor({ timeout: 10000 });
+  const driftTag = await pageSla.getByText(/内容已变更/).first().innerText();
+  check('★ 抽查队列显示「内容已变更 v抽中 → v当前」',
+    driftTag.includes(`v${sampledVersion}`) && driftTag.includes(`v${currentVersion}`), driftTag);
+  await pageSla.getByRole('button', { name: '复核', exact: true }).first().click();
+  const slaModal = pageSla.locator('.modal, [role="dialog"]').first();
+  await slaModal.waitFor({ timeout: 10000 });
+  const slaModalText = await slaModal.innerText();
+  check('复核弹窗提示抽中版本与当前版本',
+    slaModalText.includes(`v${sampledVersion}`) && slaModalText.includes(`v${currentVersion}`),
+    slaModalText.slice(0, 300));
+  await pageSla.screenshot({ path: `${SHOTS}/a08_audit_sla_drift.png` });
+  check('抽查页无 pageerror / 5xx', wSla.httpErrors.length === 0, wSla.httpErrors);
+  await ctxSla.close();
 
   // ---------------- S10 UI 卫生 ----------------
   step('S10 UI 卫生：无 pageerror / 5xx');
@@ -299,6 +366,11 @@ try {
 } finally {
   await browser.close();
   // ---------------- 收尾 ----------------
+  try {
+    await mysql('duoduo_product', `DELETE FROM t_audit_sample WHERE id=${SLA_SAMPLE_ID};`);
+  } catch (e) {
+    console.log(`  [WARN] 抽查夹具清理失败（需人工核查 sampleId=${SLA_SAMPLE_ID}）：${e.message}`);
+  }
   // ★ 留在库里的一条 PENDING 商品会永久占用审核队列（E26 教训的同型问题：
   //   "测试造出来的东西不收尾，会伪装成真实待办"）。SKU 无级联删除，按序清。
   if (spuId) {
