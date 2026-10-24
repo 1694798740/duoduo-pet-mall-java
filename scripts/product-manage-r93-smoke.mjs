@@ -47,6 +47,25 @@ async function call(method, path, body, token, entry) {
 const tokenOf = async (phone, entry) =>
   (await call('POST', '/api/auth/login/token', { phone, password: PWD }, null, entry)).body?.data?.accessToken;
 
+// 历史轮次遗留的在售 R93 商品会拉高类目均价，使本轮新品被判 PRICE_ANOMALY。
+// 每次启动先下架它们（只动标题前缀匹配且在售的，幂等；不计入断言）。
+async function offShelfStaleR93(token) {
+  const stale = [];
+  for (let page = 1; page <= 50; page++) {
+    const data = (await call('GET', `/api/seller/products?page=${page}&pageSize=50`, null, token)).body?.data;
+    const items = data?.items ?? [];
+    stale.push(...items.filter((x) => String(x.title ?? '').startsWith('R93 冒烟商品') && x.status === 'ON_SALE'));
+    if (items.length < 50 || page * 50 >= (data?.total ?? 0)) break;
+  }
+  let offShelfed = 0;
+  for (const p of stale) {
+    const r = await call('POST', `/api/seller/products/${p.id}/status`, { action: 'OFF_SHELF' }, token);
+    if (r.status === 200) offShelfed++;
+    else console.log(`  [CLEAN] 下架失败 id=${p.id} status=${r.status}`);
+  }
+  console.log(`  [CLEAN] 启动自清理：遗留 R93 在售商品 ${stale.length} 件，已下架 ${offShelfed} 件`);
+}
+
 async function main() {
   console.log('== 0. 登录卖家与运营 ==');
   const sellerToken = await tokenOf(SELLER, 'merchant');
@@ -54,6 +73,7 @@ async function main() {
   check('卖家（店主）登录成功', Boolean(sellerToken));
   check('运营登录成功（admin 入口）', Boolean(opToken));
   if (!sellerToken || !opToken) return 1;
+  await offShelfStaleR93(sellerToken);
 
   console.log('\n== 1. 发布商品（含富文本与四类内容） ==');
   const stamp = String(Date.now()).slice(-6);
