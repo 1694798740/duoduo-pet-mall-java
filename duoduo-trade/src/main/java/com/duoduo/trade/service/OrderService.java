@@ -1141,6 +1141,15 @@ public class OrderService {
             return replayPayment(order, existing);
         }
 
+        // 状态闸先于「已收款」闸：订单已不可支付时，要报的是 ORDER_STATUS_ILLEGAL，
+        // 而不是一条容易被读成「支付处理中」的资金提示。资金保护不依赖这两者的顺序 ——
+        // 卡在待付款但已有成功支付单的订单，状态闸会放行，仍由下面的 paidOne 拦住。
+        OrderStatus current = OrderStatus.of(order.getStatus());
+        if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
+                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许支付");
+        }
+
         LocalDateTime now = nowUtc();
 
         // 同一订单只允许存在一个「收款入口」，这是钱的问题，不能靠订单状态兜。
@@ -1171,12 +1180,6 @@ public class OrderService {
                 .last("LIMIT 1"));
         if (livePayment != null) {
             return replayPayment(order, livePayment);
-        }
-
-        OrderStatus current = OrderStatus.of(order.getStatus());
-        if (current == null || !current.canTransitionTo(OrderStatus.PAID)) {
-            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL,
-                    "订单当前状态（" + OrderStatus.labelOf(order.getStatus()) + "）不允许支付");
         }
 
         PaymentEntity payment = new PaymentEntity();
