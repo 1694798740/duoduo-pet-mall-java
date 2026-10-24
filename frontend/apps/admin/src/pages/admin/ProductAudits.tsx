@@ -23,7 +23,7 @@ import {
 } from '@duoduo/shared/components/ui';
 import { RichTextView } from '@duoduo/shared/components/RichText';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
-import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { ApiError, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
@@ -106,17 +106,31 @@ export const AdminProductAuditsPage: React.FC = () => {
     setPage(1);
   };
 
-  const runAudit = async (spuId: string, action: 'APPROVE' | 'REJECT', rejectReason?: string) => {
+  const runAudit = async (
+    spuId: string,
+    version: number,
+    action: 'APPROVE' | 'REJECT',
+    rejectReason?: string,
+  ) => {
     setActionError(null);
     setBusy(true);
     try {
-      await adminApi.auditProduct(spuId, { action, reason: rejectReason });
+      await adminApi.auditProduct(spuId, { action, reason: rejectReason, version });
       push(action === 'APPROVE' ? '已通过审核' : '已驳回', 'success');
       setRejecting(null);
       setReason('');
       reload();
     } catch (err) {
-      setActionError(toFriendlyMessage(err));
+      // 409 = 卖家在运营核对期间改了内容（或已重提审）。此时手上的结论对应的是旧内容，
+      // 不能静默重试，也不能留在弹窗里「再点一次」—— 关掉并刷新，逼运营重新看一遍。
+      if (err instanceof ApiError && err.status === 409) {
+        setActionError('商品内容已被卖家修改，列表已刷新，请重新核对后再审核');
+        setRejecting(null);
+        setReason('');
+        reload();
+      } else {
+        setActionError(toFriendlyMessage(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -352,7 +366,7 @@ export const AdminProductAuditsPage: React.FC = () => {
                         <button
                           className="btn btn-primary btn-sm"
                           disabled={busy}
-                          onClick={() => runAudit(item.id, 'APPROVE')}
+                          onClick={() => runAudit(item.id, item.version, 'APPROVE')}
                         >
                           通过
                         </button>
@@ -390,7 +404,7 @@ export const AdminProductAuditsPage: React.FC = () => {
             <button
               className="btn btn-primary"
               disabled={busy || !reason.trim()}
-              onClick={() => rejecting && runAudit(rejecting.id, 'REJECT', reason)}
+              onClick={() => rejecting && runAudit(rejecting.id, rejecting.version, 'REJECT', reason)}
             >
               {busy ? '处理中…' : '确认驳回'}
             </button>

@@ -327,7 +327,14 @@ public final class ProductDtos {
         }
     }
 
-    /** 编辑请求（E14 扩展）：内容任意字段不传即不改（三态语义同旧版 title / mainImage） */
+    /**
+     * 编辑请求（E14 扩展）：内容任意字段不传即不改（三态语义同旧版 title / mainImage）。
+     *
+     * <p>{@code version} 必填（A-07）：它是编辑回填时读到的乐观锁版本。
+     * 提交时若与服务端当前版本不一致，说明期间有他人（另一位店员 / 运营审核）
+     * 改过同一件商品，服务端返回 409，客户端应刷新后重试 ——
+     * 少了它，「整行覆盖」会把并发落下的审核结论（如 REJECTED）悄悄冲回旧值。
+     */
     public record SellerProductUpdateRequest(
             String title,
             String subtitle,
@@ -340,14 +347,9 @@ public final class ProductDtos {
             List<KvItem> specParams,
             List<KvItem> packaging,
             Long categoryId,
-            Long brandId
+            Long brandId,
+            Integer version
     ) {
-        /** 兼容旧调用（2026-10-24 新增内容字段前的 7 参构造）：新字段缺省 = 不修改 */
-        public SellerProductUpdateRequest(String title, String subtitle, String mainImage,
-                                          List<String> images, String detail,
-                                          Long categoryId, Long brandId) {
-            this(title, subtitle, mainImage, images, detail, null, null, null, null, categoryId, brandId);
-        }
     }
 
     /**
@@ -405,7 +407,9 @@ public final class ProductDtos {
             Long sellerId,
             long minPrice,
             long maxPrice,
-            List<SellerSkuView> skus
+            List<SellerSkuView> skus,
+            /** 乐观锁版本（A-07）：编辑提交时必须原样带回 */
+            Integer version
     ) {
     }
 
@@ -441,14 +445,18 @@ public final class ProductDtos {
             long minPrice,
             long maxPrice,
             List<SellerSkuView> skus,
-            String createdAt
+            String createdAt,
+            /** 乐观锁版本（A-07）：审核提交时必须原样带回，防止审的是旧内容 */
+            Integer version
     ) {
     }
 
     /** 商品审核请求；action = APPROVE / REJECT，驳回时 reason 必填 */
     public record AdminProductAuditRequest(
             String action,
-            String reason
+            String reason,
+            /** 审核详情打开时的版本（A-07）；缺失返回 400，过期返回 409 */
+            Integer version
     ) {
     }
 

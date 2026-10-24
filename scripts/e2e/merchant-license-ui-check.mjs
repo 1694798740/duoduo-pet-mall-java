@@ -288,7 +288,9 @@ VALUES (${materialId()}, ${merchantId}, 'BUSINESS_LICENSE',
   // ★ 必须先把**商品审核**过掉，否则上架会先被 E14 那道门禁拦下（提示「正在审核中」），
   //   本套件要验的是 E15 资质那道门 —— 两道门都在，得先把不测的那道放行，
   //   否则一个断言红掉时无法区分是哪道门在生效（这正是产品代码里"两道门禁"的固有歧义）。
-  const audit = await call('POST', `/api/admin/products/${spuId}/audit`, { action: 'APPROVE' }, op.jar);
+  const auditTarget = await call('GET', `/api/seller/products/${spuId}`, undefined, owner.jar);
+  const audit = await call('POST', `/api/admin/products/${spuId}/audit`,
+    { action: 'APPROVE', version: auditTarget.data?.version }, op.jar);
   check('运营先通过商品审核（隔离出资质这道门）',
     audit.status === 200 && audit.data?.auditStatus === 'APPROVED', audit.data?.auditStatus);
 

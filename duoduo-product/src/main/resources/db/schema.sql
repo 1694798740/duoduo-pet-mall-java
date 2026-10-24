@@ -64,6 +64,7 @@ CREATE TABLE t_spu (
     updated_at   TIMESTAMP    NOT NULL,
     -- 卖家归属（t_user.id；0 = 平台自营）。第三方商家接入后由入驻流程写入
     seller_id    BIGINT       NOT NULL DEFAULT 0,
+    version      INT          NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_spu_category ON t_spu (category_id, status);

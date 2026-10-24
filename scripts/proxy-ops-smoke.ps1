@@ -316,9 +316,13 @@ Check "★ 被拒后库里查不到那个被改的标题（证明没有先写后
 
 # 3.7 正对照：自营商品运营可以直接编辑（收窄不该把平台自己的货也拦住）
 #     刻意改 subtitle 而不是 title：subtitle 可以再置空复原，不必把原标题读出来插回 SQL。
-$r = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = 'A1正对照标记' }
+#     A-07：编辑必须带读到的 version；每次改完版本 +1，所以第二次要重新取。
+$selfVer = [int](Sql 'duoduo_product' "SELECT version FROM t_spu WHERE id=$spuSelf;")
+$r = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = 'A1正对照标记'; version = $selfVer }
 Check "正对照：运营直接编辑自营商品 → 200（自营不受限）" ($r.status -eq 200) $r.status
-$null = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = '' }
+$selfVer2 = [int](Sql 'duoduo_product' "SELECT version FROM t_spu WHERE id=$spuSelf;")
+Check "A-07：编辑成功 → 版本 +1（$selfVer → $selfVer2）" ($selfVer2 -eq $selfVer + 1) "before=$selfVer after=$selfVer2"
+$null = Call 'Put' "$Gateway/api/seller/products/$spuSelf" $sessOp @{ subtitle = ''; version = $selfVer2 }
 Check "（复原）自营夹具副标题已置空" `
     ((Sql 'duoduo_product' "SELECT IFNULL(subtitle,'') FROM t_spu WHERE id=$spuSelf;") -eq '')
 

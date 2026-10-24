@@ -522,8 +522,13 @@ Check "★ 服务端（直连）：USER 调商品审核 → 403（注解/判权�
 $r = Call 'Post' "$SvcProduct/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (AsUser 'SELLER' $uidSellA)
 Check "★ 纵向（服务端·直连）：卖家本人调商品审核 → 403（不能自审自己的商品）" ($r.status -eq 403) "status=$($r.status) raw=$($r.raw)"
 
-$r = Call 'Post' "$Gateway/api/admin/products/$spuB/audit" @{ action = 'APPROVE' } (Bearer $tokenOp)
+# A-07：审核必须带「看到的版本」。这里用库里的当前值，避免把 version=0 写死 ——
+# 将来前面若插入一次编辑，写死的 0 会让这条正对照变成 409，看起来像权限回归。
+$spuBVer = [int](Sql 'duoduo_product' "SELECT version FROM t_spu WHERE id=$spuB;")
+$r = Call 'Post' "$Gateway/api/admin/products/$spuB/audit" @{ action = 'APPROVE'; version = $spuBVer } (Bearer $tokenOp)
 Check "正对照：运营审核通过 → 200" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"
+$spuBVerAfter = [int](Sql 'duoduo_product' "SELECT version FROM t_spu WHERE id=$spuB;")
+Check "A-07：审核结论落库且版本 +1（$spuBVer → $spuBVerAfter）" ($spuBVerAfter -eq $spuBVer + 1) "before=$spuBVer after=$spuBVerAfter"
 
 $r = Call 'Get' "$Gateway/api/products/$spuB" $null (Bearer $tokenA)
 Check "★ 过审后买家即可见 → 200（反证上一节的 404 来自审核态，而不是商品压根没建出来）" ($r.status -eq 200) "status=$($r.status) raw=$($r.raw)"

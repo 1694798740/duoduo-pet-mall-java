@@ -719,6 +719,8 @@ export interface SellerProductUpdateRequest {
   packaging?: KvItem[];
   categoryId?: string;
   brandId?: string;
+  /** 乐观锁版本（A-07）：编辑回填时读到，提交时必带；不一致服务端返回 409 */
+  version: number;
 }
 
 /** SKU 改价 / 改库存项（2026-10-24）：只允许这两个字段，且不触发内容重审 */
@@ -765,6 +767,8 @@ export interface SellerProductDetailView {
   minPrice: number;
   maxPrice: number;
   skus: SellerSkuView[];
+  /** 乐观锁版本（A-07）：编辑提交时原样带回 */
+  version: number;
 }
 
 /** 平台审核台条目（E14）：带全部背审材料，运营不必点进二级页就能判断 */
@@ -796,12 +800,16 @@ export interface AdminProductAuditView {
   maxPrice: number;
   skus: SellerSkuView[];
   createdAt: string | null;
+  /** 乐观锁版本（A-07）：审核结论以此版本为前置条件 */
+  version: number;
 }
 
 /** 商品审核请求；驳回时 reason 必填（服务端会 400） */
 export interface AdminProductAuditRequest {
   action: 'APPROVE' | 'REJECT';
   reason?: string;
+  /** 乐观锁版本（A-07）：审核台看到的版本，内容被卖家改过则 409 */
+  version: number;
 }
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------

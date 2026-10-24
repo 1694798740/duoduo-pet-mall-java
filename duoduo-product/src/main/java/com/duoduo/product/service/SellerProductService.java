@@ -415,6 +415,7 @@ public class SellerProductService {
         spu.setAuditBy(null);
         spu.setCreatedAt(now);
         spu.setUpdatedAt(now);
+        spu.setVersion(0);
         spuMapper.insert(spu);
 
         int seq = 0;
@@ -459,20 +460,17 @@ public class SellerProductService {
         //   不收窄的后果很具体：运营绕过工单直接改第三方商品的标题/副标题/主图，
         //   而「改了什么」既没有工单、也没有改前值留档。
         requireProxyForThirdParty(spu, scope, "编辑");
+        // ★ 顺序有意为之：归属 / 代理权限（403）先于请求内容校验（400）。
+        //   反过来会把「这条商品不属于你」变成「你少传了 version」，越权探测的信号就漏出去了。
+        if (request.version() == null) {
+            throw BizException.validation("缺少版本号（version），请刷新后重试");
+        }
+        // 归属校验之后再做版本判定：否则别人商品的版本号会成为一个可探测的信号
+        if (!java.util.Objects.equals(spu.getVersion(), request.version())) {
+            throw BizException.conflict("商品已被其他人修改，请刷新后重试");
+        }
 
         boolean changed = false;
-        // ★ 「传 "" = 清空」的三个可空字段要**单独记账**，原因见本方法末尾的显式 set(null) 段：
-        //   MyBatis-Plus 的 updateById 更新策略是 NOT_NULL，它**不写 null 字段**。
-        //   2026-10-13 实测：不记账时「清空副标题」接口返回 200、库里纹丝不动 ——
-        //   无异常、无日志、单测也抓不到（单测用的是 mock mapper，本来就不落库）。
-        boolean clearSubtitle = false;
-        boolean clearImages = false;
-        boolean clearDetail = false;
-        // 2026-10-24 新增四个内容字段，清空语义同上：必须显式 set(col, null)
-        boolean clearIntro = false;
-        boolean clearDetailHtml = false;
-        boolean clearSpecParams = false;
-        boolean clearPackaging = false;
         if (request.title() != null) {
             String normalized = requireText(request.title(), "商品标题", TITLE_MAX);
             if (!normalized.equals(spu.getTitle())) {
@@ -491,7 +489,6 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(normalized, "商品副标题");
                 }
                 spu.setSubtitle(normalized);
-                if (normalized == null) { clearSubtitle = true; }
                 changed = true;
             }
         }
@@ -514,7 +511,6 @@ public class SellerProductService {
             String joined = images.isEmpty() ? null : String.join(",", images);
             if (!java.util.Objects.equals(joined, spu.getImages())) {
                 spu.setImages(joined);
-                if (joined == null) { clearImages = true; }
                 changed = true;
             }
         }
@@ -525,7 +521,6 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(normalized, "商品详情");
                 }
                 spu.setDetail(normalized);
-                if (normalized == null) { clearDetail = true; }
                 changed = true;
             }
         }
@@ -536,7 +531,6 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(normalized, "商品介绍");
                 }
                 spu.setIntro(normalized);
-                if (normalized == null) { clearIntro = true; }
                 changed = true;
             }
         }
@@ -548,7 +542,6 @@ public class SellerProductService {
                     bannedWordGuard.rejectIfHit(text, "富文本详情");
                 }
                 spu.setDetailHtml(normalized);
-                if (normalized == null) { clearDetailHtml = true; }
                 changed = true;
             }
         }
@@ -557,7 +550,6 @@ public class SellerProductService {
             String normalized = ProductContent.toJson(items);
             if (!java.util.Objects.equals(normalized, spu.getSpecParams())) {
                 spu.setSpecParams(normalized);
-                if (normalized == null) { clearSpecParams = true; }
                 changed = true;
             }
         }
@@ -566,7 +558,6 @@ public class SellerProductService {
             String normalized = ProductContent.toJson(items);
             if (!java.util.Objects.equals(normalized, spu.getPackaging())) {
                 spu.setPackaging(normalized);
-                if (normalized == null) { clearPackaging = true; }
                 changed = true;
             }
         }
@@ -584,48 +575,50 @@ public class SellerProductService {
         if (!changed) {
             return toView(spu, skuStatsOf(spuId));
         }
+        // 只有「被驳回压成下架」才允许编辑后恢复在售；卖家主动下架的商品改个标题不该被悄悄上架。
+        // 必须在 applyContentReaudit 改内存状态之前判定。
+        boolean restoreOnSale = AUDIT_REJECTED.equals(spu.getAuditStatus())
+                && STATUS_OFF_SHELF.equals(spu.getStatus());
         List<SpuRiskJudge.Hit> risks = applyContentReaudit(spu);
-        spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
-        spuMapper.updateById(spu);
-        // ★ updateById 的更新策略是 NOT_NULL —— 它**不写 null 字段**。
-        //   而「转人工」时 audit_source 恰恰要写回 NULL（上一次结论的来源已作废）。
-        //   不显式 set 的话，界面上会看到「待审 + 来源=AUTO」这种自相矛盾的组合：
-        //   接口 200、状态也变了，只有那一列悄悄留着旧值，无异常、无日志、断言也抓不到。
-        // ★ 审核四列一律显式写（含 null）：updateById 的 NOT_NULL 策略不写 null，
-        //   否则会出现「待审 + 来源=AUTO」这种自相矛盾组合，且驳回原因永远清不掉
-        //   （2026-10-24 复核发现：通过后库里仍留着上一次的 audit_reason）。
-        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+
+        // ★ A-07：内容列 + 审核列合并成**一条**带版本前置条件的 UPDATE。
+        //   旧实现是「updateById 整行 + 审核列补丁 + 清空补丁」三次写，每次只按 id 定位：
+        //   并发编辑 / 审核时后写的一方会把对方刚落下的结论整行覆盖（REJECTED 被冲回 APPROVED），
+        //   两边还都返回 200。现在版本不匹配就影响 0 行，直接 409。
+        //   可空字段一律显式 set（含 null）：MyBatis-Plus 的 NOT_NULL 策略不会替我们写 null。
+        LambdaUpdateWrapper<SpuEntity> write = new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
-                .set(SpuEntity::getStatus, spu.getStatus())
+                .eq(SpuEntity::getVersion, request.version())
+                .set(SpuEntity::getTitle, spu.getTitle())
+                .set(SpuEntity::getSubtitle, spu.getSubtitle())
+                .set(SpuEntity::getMainImage, spu.getMainImage())
+                .set(SpuEntity::getImages, spu.getImages())
+                .set(SpuEntity::getDetail, spu.getDetail())
+                .set(SpuEntity::getIntro, spu.getIntro())
+                .set(SpuEntity::getDetailHtml, spu.getDetailHtml())
+                .set(SpuEntity::getSpecParams, spu.getSpecParams())
+                .set(SpuEntity::getPackaging, spu.getPackaging())
+                .set(SpuEntity::getCategoryId, spu.getCategoryId())
+                .set(SpuEntity::getBrandId, spu.getBrandId())
                 .set(SpuEntity::getAuditStatus, spu.getAuditStatus())
                 .set(SpuEntity::getAuditSource, spu.getAuditSource())
                 .set(SpuEntity::getAuditAt, spu.getAuditAt())
-                .set(SpuEntity::getAuditReason, null));
-        // ★★ 同一个 NOT_NULL 坑的另一半：「传 "" = 清空」的三个字段。
-        //    上面那句 set(null) 已经处理了 audit_source / audit_at（那是"转人工"要写回 NULL），
-        //    但**卖家主动清空副标题 / 图片集 / 详情**走的是同一个 updateById —— 同样不写 null。
-        //    症状：接口 200、审计日志有记录、前端刷新后旧值还在。
-        //    ⇒ 凡是"语义上可清空"的列，都必须显式 set(col, null)。
-        if (clearSubtitle || clearImages || clearDetail || clearIntro
-                || clearDetailHtml || clearSpecParams || clearPackaging) {
-            LambdaUpdateWrapper<SpuEntity> clear = new LambdaUpdateWrapper<SpuEntity>()
-                    .eq(SpuEntity::getId, spuId);
-            if (clearSubtitle) { clear.set(SpuEntity::getSubtitle, null); }
-            if (clearImages) { clear.set(SpuEntity::getImages, null); }
-            if (clearDetail) { clear.set(SpuEntity::getDetail, null); }
-            if (clearIntro) { clear.set(SpuEntity::getIntro, null); }
-            if (clearDetailHtml) { clear.set(SpuEntity::getDetailHtml, null); }
-            if (clearSpecParams) { clear.set(SpuEntity::getSpecParams, null); }
-            if (clearPackaging) { clear.set(SpuEntity::getPackaging, null); }
-            spuMapper.update(null, clear);
-            log.info("商品 {} 显式清空字段：subtitle={} images={} detail={} intro={} html={} spec={} packaging={}",
-                    spuId, clearSubtitle, clearImages, clearDetail, clearIntro,
-                    clearDetailHtml, clearSpecParams, clearPackaging);
+                .set(SpuEntity::getAuditReason, null)
+                .set(SpuEntity::getUpdatedAt, now)
+                .setSql("version = version + 1");
+        if (restoreOnSale) {
+            write.set(SpuEntity::getStatus, STATUS_ON_SALE);
         }
-        log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={}）",
+        if (spuMapper.update(null, write) == 0) {
+            throw BizException.conflict("商品已被其他人修改，请刷新后重试");
+        }
+        spu.setUpdatedAt(now);
+        spu.setVersion(request.version() + 1);
+        log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={} 版本={}）",
                 spuId, scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
                 spu.getAuditStatus(), spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(),
-                risks.stream().map(SpuRiskJudge.Hit::code).toList());
+                risks.stream().map(SpuRiskJudge.Hit::code).toList(), spu.getVersion());
         return toView(spu, skuStatsOf(spuId));
     }
 
@@ -741,9 +734,15 @@ public class SellerProductService {
 
         if (!target.equals(spu.getStatus())) {
             String from = spu.getStatus();
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            // A-07：定向更新而不是整行 updateById —— 上下架与审核是两个正交动作，
+            // 整行写会把并发落下的审核结论一起覆盖。状态本身不参与版本，避免制造 409 噪音。
+            spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, spuId)
+                    .set(SpuEntity::getStatus, target)
+                    .set(SpuEntity::getUpdatedAt, now));
             spu.setStatus(target);
-            spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            spuMapper.updateById(spu);
+            spu.setUpdatedAt(now);
             log.info("商品 {} 由卖家 {} 上下架：{} -> {}", spuId, UserContext.require().userId(), from, target);
         }
         return toView(spu, skuStatsOf(spuId));
@@ -801,9 +800,13 @@ public class SellerProductService {
         }
         if (!STATUS_OFF_SHELF.equals(spu.getStatus())) {
             String from = spu.getStatus();
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, spuId)
+                    .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                    .set(SpuEntity::getUpdatedAt, now));
             spu.setStatus(STATUS_OFF_SHELF);
-            spu.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
-            spuMapper.updateById(spu);
+            spu.setUpdatedAt(now);
             log.info("代运营下架商品 {}（店铺 {}）：{} -> {}，原因：{}",
                     spuId, spu.getSellerId(), from, STATUS_OFF_SHELF, reason);
         }
@@ -998,15 +1001,23 @@ public class SellerProductService {
         //   updateById 不会把 audit_source 写回 NULL，结果就是「待审 + 来源=上一次的结论」
         //   这种自相矛盾的组合会一直挂在审核台上（接口 200，无异常，断言也抓不到）。
         //   「重新提审」的语义是「上一次结论已作废」，来源标记必须跟着一起作废。
-        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+        // A-07：前置条件写进 WHERE —— 只有「当前仍是 REJECTED」才允许重提。
+        //   否则运营恰好在这一刻通过该商品时，重提会把 APPROVED 又推回 PENDING。
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
+                .eq(SpuEntity::getAuditStatus, AUDIT_REJECTED)
                 .set(SpuEntity::getAuditStatus, AUDIT_PENDING)
                 .set(SpuEntity::getAuditReason, null)
                 .set(SpuEntity::getAuditSource, null)
                 .set(SpuEntity::getAuditAt, null)
                 .set(SpuEntity::getStatus, STATUS_ON_SALE)
-                .set(SpuEntity::getUpdatedAt, now));
-        log.info("商品 {} 由卖家重新提审，回到待审核", spuId);
+                .set(SpuEntity::getUpdatedAt, now)
+                .setSql("version = version + 1"));
+        if (rows == 0) {
+            throw BizException.conflict("商品状态已变化，请刷新后重试");
+        }
+        spu.setVersion((spu.getVersion() == null ? 0 : spu.getVersion()) + 1);
+        log.info("商品 {} 由卖家重新提审，回到待审核（版本={}）", spuId, spu.getVersion());
         return toView(spu, skuStatsOf(spuId));
     }
 
@@ -1098,9 +1109,12 @@ public class SellerProductService {
      * <p>通过时<b>不动 status</b>：卖家提交时期望的就是在售，
      * 审核通过即自动出现在前台（若它同时被卖家手动下架过，保持下架 —— 尊重卖家的选择）。
      */
-    public AdminProductAuditView audit(Long spuId, String action, String reason) {
+    public AdminProductAuditView audit(Long spuId, String action, String reason, Integer version) {
         LoginUser operator = UserContext.require();
         OperatorGuard.requireOperator();
+        if (version == null) {
+            throw BizException.validation("缺少版本号（version），请刷新后重试");
+        }
 
         String act = action == null ? "" : action.trim().toUpperCase();
         String target = switch (act) {
@@ -1118,6 +1132,11 @@ public class SellerProductService {
         }
         if (AUDIT_REJECTED.equals(target) && trimToNull(reason) == null) {
             throw BizException.validation("驳回时必须填写原因");
+        }
+        // A-07：审核结论只对「打开审核台时看到的那一版内容」有效。
+        // 期间卖家改过内容（版本已变）必须重看，否则等于对着旧内容下架 / 放行。
+        if (!java.util.Objects.equals(spu.getVersion(), version)) {
+            throw BizException.conflict("商品内容已变化，请刷新后重新审核");
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -1138,9 +1157,11 @@ public class SellerProductService {
         spu.setRejectedAt(reject ? now : null);
         spu.setRejectCount(rejectCount);
         spu.setUpdatedAt(now);
-        // 显式 set 每一列：updateById 不写 null，会把「已通过 + 旧驳回原因」留在库里
-        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+        // 显式 set 每一列：updateById 不写 null，会把「已通过 + 旧驳回原因」留在库里。
+        // A-07：结论与版本 +1 在同一条语句里，WHERE 带读到的版本 —— 影响 0 行即有人抢先写过。
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
+                .eq(SpuEntity::getVersion, version)
                 .set(SpuEntity::getAuditStatus, target)
                 .set(SpuEntity::getAuditReason, reject ? trimToNull(reason) : null)
                 .set(SpuEntity::getAuditAt, now)
@@ -1149,10 +1170,15 @@ public class SellerProductService {
                 .set(SpuEntity::getStatus, spu.getStatus())
                 .set(SpuEntity::getRejectedAt, reject ? now : null)
                 .set(SpuEntity::getRejectCount, rejectCount)
-                .set(SpuEntity::getUpdatedAt, now));
+                .set(SpuEntity::getUpdatedAt, now)
+                .setSql("version = version + 1"));
+        if (rows == 0) {
+            throw BizException.conflict("商品内容已变化，请刷新后重新审核");
+        }
+        spu.setVersion(version + 1);
 
-        log.info("商品 {} 审核结论={}（审核人={} 原因={}）", spuId, target, operator.userId(),
-                spu.getAuditReason());
+        log.info("商品 {} 审核结论={}（审核人={} 原因={} 版本={}）", spuId, target, operator.userId(),
+                spu.getAuditReason(), spu.getVersion());
         Map<Long, String> categoryNames = catalogLookup.categoryNames(List.of(spu.getCategoryId()));
         return toAuditView(spu, skusOf(spuId), categoryNames.get(spu.getCategoryId()), null);
     }
@@ -1181,10 +1207,13 @@ public class SellerProductService {
             return;             // 自营商品不进抽查队列；查不到就什么都不做
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int expectedVersion = spu.getVersion() == null ? 0 : spu.getVersion();
         // 显式 set 每一个要改的列（包括把 audit_source 写成 SAMPLE）：
         // updateById 不写 null，而这里恰好要覆盖旧值 —— 用 UpdateWrapper 一次说清。
-        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+        // A-07：抽查复核也是「对着某一版内容下判定」，版本变了就不该落地。
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
+                .eq(SpuEntity::getVersion, expectedVersion)
                 .set(SpuEntity::getAuditStatus, AUDIT_REJECTED)
                 .set(SpuEntity::getAuditReason, trimToNull(reason))
                 .set(SpuEntity::getAuditSource, AUDIT_SOURCE_SAMPLE)
@@ -1194,7 +1223,11 @@ public class SellerProductService {
                 .set(SpuEntity::getRejectedAt, now)
                 .set(SpuEntity::getRejectCount,
                         (spu.getRejectCount() == null ? 0 : spu.getRejectCount()) + 1)
-                .set(SpuEntity::getUpdatedAt, now));
+                .set(SpuEntity::getUpdatedAt, now)
+                .setSql("version = version + 1"));
+        if (rows == 0) {
+            throw BizException.conflict("商品内容已变化，请刷新后重新判定");
+        }
         log.info("商品 {} 抽查判违规 → 已驳回并强制下架（原因={}）", spuId, reason);
     }
 
@@ -1657,7 +1690,8 @@ public class SellerProductService {
                 nz(spu.getSellerId()),
                 nz(spu.getMinPrice()),
                 nz(spu.getMaxPrice()),
-                skus.stream().map(this::toSkuView).toList());
+                skus.stream().map(this::toSkuView).toList(),
+                spu.getVersion());
     }
 
     private AdminProductAuditView toAuditView(SpuEntity spu, List<SkuEntity> skus,
@@ -1687,7 +1721,8 @@ public class SellerProductService {
                 nz(spu.getMinPrice()),
                 nz(spu.getMaxPrice()),
                 skus.stream().map(this::toSkuView).toList(),
-                isoOf(spu.getCreatedAt()));
+                isoOf(spu.getCreatedAt()),
+                spu.getVersion());
     }
 
     private SellerSkuView toSkuView(SkuEntity sku) {

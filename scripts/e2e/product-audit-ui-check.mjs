@@ -239,7 +239,9 @@ try {
   // ---------------- S7 内容变更再审 ----------------
   step('S7 内容变更再审：改标题 → 回 PENDING → 前台再次不可见');
   const newTitle = `${title}-改`;
-  const upd = await call('PUT', `/api/seller/products/${spuId}`, { title: newTitle }, owner.jar);
+  const beforeEdit = await call('GET', `/api/seller/products/${spuId}`, undefined, owner.jar);
+  const upd = await call('PUT', `/api/seller/products/${spuId}`,
+    { title: newTitle, version: beforeEdit.data?.version }, owner.jar);
   check('编辑商品成功（200）', upd.status === 200, upd.status);
   check('★ 内容变更后审核态回 PENDING', upd.data?.auditStatus === 'PENDING', upd.data?.auditStatus);
   check('★ 变更后公开详情再次 404', (await call('GET', `/api/products/${spuId}`)).status === 404);
@@ -272,7 +274,8 @@ try {
   check('PENDING 阶段公开详情仍 404', (await call('GET', `/api/products/${spuId}`)).status === 404);
 
   // 二审通过 → 前台可见（真闭环）
-  const approve2 = await call('POST', `/api/admin/products/${spuId}/audit`, { action: 'APPROVE' }, op.jar);
+  const approve2 = await call('POST', `/api/admin/products/${spuId}/audit`,
+    { action: 'APPROVE', version: afterResubmit.data?.version }, op.jar);
   check('二审通过', approve2.status === 200 && approve2.data?.auditStatus === 'APPROVED', approve2.data?.auditStatus);
   check('★ 闭环：二审通过后公开详情 200', (await call('GET', `/api/products/${spuId}`)).status === 200);
 

@@ -57,13 +57,14 @@ public class AdminProductAuditController {
         return ApiResponse.ok(sellerProductService.auditDetail(spuId));
     }
 
-    /** 审核结论：{@code {"action":"APPROVE"|"REJECT","reason":"..."}}（驳回时 reason 必填） */
+    /** 审核结论：{@code {"action":"APPROVE"|"REJECT","reason":"...","version":0}}（驳回时 reason 必填；version 必带） */
     @PostMapping("/{spuId}/audit")
     @Audited(action = AuditAction.PRODUCT_AUDIT)
     public ApiResponse<AdminProductAuditView> audit(@PathVariable Long spuId,
                                                     @RequestBody AdminProductAuditRequest request) {
         return ApiResponse.ok(sellerProductService.audit(spuId,
                 request == null ? null : request.action(),
-                request == null ? null : request.reason()));
+                request == null ? null : request.reason(),
+                request == null ? null : request.version()));
     }
 }

@@ -17,7 +17,8 @@
 import React, { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { sellerApi } from '@duoduo/api-sdk/endpoints';
-import type { PageResult, SellerProductDetailView, SellerProductView } from '@duoduo/api-sdk/types';
+import { ApiError } from '@duoduo/api-sdk/client';
+import type { PageResult, SellerProductDetailView, SellerProductUpdateRequest, SellerProductView } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import {
   Alert,
@@ -85,6 +86,9 @@ export const SellerProductsPage: React.FC = () => {
   const [publishing, setPublishing] = useState(false);
   const [editing, setEditing] = useState<SellerProductView | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
+  /** 打开编辑时读到的详情快照：既是「原始值」比对基准，也是提交时的乐观锁版本来源。
+   *  保存时不再二次拉详情 —— 否则版本号会变成"此刻最新"，A-07 的并发保护就被绕过了。 */
+  const [editDetail, setEditDetail] = useState<SellerProductDetailView | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   /** 图片上传/转存进行中 —— 保存按钮必须一起禁用，否则会存下「图还没进列表」的版本。
    *  两个上传器按字段名分开记：单个布尔量会被「一个传完、另一个还在传」覆盖掉。 */
@@ -155,6 +159,7 @@ export const SellerProductsPage: React.FC = () => {
   const closeEdit = () => {
     setEditing(null);
     setDraft(null);
+    setEditDetail(null);
   };
 
   /**
@@ -164,6 +169,7 @@ export const SellerProductsPage: React.FC = () => {
   const openEdit = async (item: SellerProductView) => {
     setEditing(item);
     setDraft(null);
+    setEditDetail(null);
     setDraftLoading(true);
     try {
       const detail: SellerProductDetailView = await sellerApi.productDetail(item.id);
@@ -176,6 +182,7 @@ export const SellerProductsPage: React.FC = () => {
         labels[sku.id] = sku.specName || '默认规格';
       }
       setSkuBase(base);
+      setEditDetail(detail);
       setDraft({
         title: detail.title ?? '',
         subtitle: detail.subtitle ?? '',
@@ -198,7 +205,7 @@ export const SellerProductsPage: React.FC = () => {
   };
 
   const submitEdit = async () => {
-    if (!editing || !draft) return;
+    if (!editing || !draft || !editDetail) return;
     const title = draft.title.trim();
     if (!title) {
       push('商品标题不能为空', 'error');
@@ -212,34 +219,31 @@ export const SellerProductsPage: React.FC = () => {
 
     // 「用户没填」= 不改：该字段根本不出现在请求体里（服务端按三态语义处理）。
     // 直接传空串会把卖家的原有内容清掉 —— 那是线上事故，不是容错。
-    const body: Record<string, unknown> = {};
+    const body: Omit<SellerProductUpdateRequest, 'version'> = {};
     if (title !== editing.title) body.title = title;
     if (mainImage !== (editing.mainImage ?? '')) body.mainImage = mainImage;
 
-    const detailItem: SellerProductDetailView = await sellerApi.productDetail(editing.id).catch(() => null as never);
-    const originals = detailItem
-      ? {
-          subtitle: detailItem.subtitle ?? '',
-          detail: detailItem.detail ?? '',
-          images: detailItem.images ?? [],
-          intro: detailItem.intro ?? '',
-          detailHtml: detailItem.detailHtml ?? '',
-          specParams: detailItem.specParams ?? [],
-          packaging: detailItem.packaging ?? [],
-        }
-      : null;
-    if (originals) {
-      if (draft.subtitle.trim() !== originals.subtitle) body.subtitle = draft.subtitle.trim();
-      if (draft.detail.trim() !== originals.detail) body.detail = draft.detail.trim();
-      if (draft.images.join('\n') !== originals.images.join('\n')) body.images = draft.images;
-      // 2026-10-24 新增内容字段：与原文比对后才提交（避免"点保存就重审"）
-      if (draft.intro.trim() !== originals.intro) body.intro = draft.intro.trim();
-      if (draft.detailHtml.trim() !== originals.detailHtml) body.detailHtml = draft.detailHtml.trim();
-      const kvKey = (list: KvItem[]) => list.filter((x) => x.name.trim() || x.value.trim())
-        .map((x) => `${x.name.trim()}=${x.value.trim()}`).join('\u0001');
-      if (kvKey(draft.specParams) !== kvKey(originals.specParams)) body.specParams = draft.specParams;
-      if (kvKey(draft.packaging) !== kvKey(originals.packaging)) body.packaging = draft.packaging;
-    }
+    // 比对基准用**打开弹窗时**读到的快照：保存前再拉一次详情会把 version 刷成最新，
+    // 恰好让「期间被别人改过」这件事被抹掉，乐观锁形同虚设。
+    const originals = {
+      subtitle: editDetail.subtitle ?? '',
+      detail: editDetail.detail ?? '',
+      images: editDetail.images ?? [],
+      intro: editDetail.intro ?? '',
+      detailHtml: editDetail.detailHtml ?? '',
+      specParams: editDetail.specParams ?? [],
+      packaging: editDetail.packaging ?? [],
+    };
+    if (draft.subtitle.trim() !== originals.subtitle) body.subtitle = draft.subtitle.trim();
+    if (draft.detail.trim() !== originals.detail) body.detail = draft.detail.trim();
+    if (draft.images.join('\n') !== originals.images.join('\n')) body.images = draft.images;
+    // 2026-10-24 新增内容字段：与原文比对后才提交（避免"点保存就重审"）
+    if (draft.intro.trim() !== originals.intro) body.intro = draft.intro.trim();
+    if (draft.detailHtml.trim() !== originals.detailHtml) body.detailHtml = draft.detailHtml.trim();
+    const kvKey = (list: KvItem[]) => list.filter((x) => x.name.trim() || x.value.trim())
+      .map((x) => `${x.name.trim()}=${x.value.trim()}`).join('\u0001');
+    if (kvKey(draft.specParams) !== kvKey(originals.specParams)) body.specParams = draft.specParams;
+    if (kvKey(draft.packaging) !== kvKey(originals.packaging)) body.packaging = draft.packaging;
 
     if (Object.keys(body).length === 0) {
       push('没有需要保存的修改', 'info');
@@ -248,12 +252,18 @@ export const SellerProductsPage: React.FC = () => {
 
     setBusyId(editing.id);
     try {
-      await sellerApi.updateProduct(editing.id, body);
+      await sellerApi.updateProduct(editing.id, { ...body, version: editDetail.version });
       push('商品已更新。内容变更已重新提交审核，审核通过后自动恢复展示', 'success');
       closeEdit();
       reload();
     } catch (err) {
-      push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
+      // 409 = 期间被审核 / 被其他会话改过。绝不能自动刷新版本重试：
+      // 那等于拿旧内容覆盖刚发生的变更，正是 A-07 要堵的整行覆盖。
+      if (err instanceof ApiError && err.status === 409) {
+        push('商品内容已被其他人修改，本次保存未生效。请关闭后重新打开编辑，确认最新内容再改', 'error');
+      } else {
+        push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
+      }
     } finally {
       setBusyId(null);
     }

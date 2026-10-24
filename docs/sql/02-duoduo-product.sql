@@ -92,6 +92,9 @@ CREATE TABLE t_spu (
     updated_at   TIMESTAMP    NOT NULL,
     -- 卖家归属（t_user.id；0 = 平台自营）。第三方商家接入后由入驻流程写入
     seller_id    BIGINT       NOT NULL DEFAULT 0,
+    -- A-07 · 乐观锁：内容编辑与审核判定都以读到的 version 为条件更新，成功则 +1。
+    --   上下架 / 改价改库存不参与（正交高频动作，纳入只会制造 409 噪音）。
+    version      INT          NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_spu_category ON t_spu (category_id, status);

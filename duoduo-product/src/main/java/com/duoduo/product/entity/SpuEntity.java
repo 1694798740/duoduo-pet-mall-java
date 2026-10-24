@@ -92,6 +92,13 @@ public class SpuEntity {
      */
     private Long sellerId;
 
+    /**
+     * 乐观锁版本（A-07）：内容编辑与审核判定以「读到的版本」为前置条件更新，
+     * 成功则 +1。上下架 / 改价改库存不参与 —— 那是正交的高频动作，
+     * 纳入版本条件会让「运营审核时卖家下架」这类正常操作变成 409 噪音。
+     */
+    private Integer version;
+
     public Long getId() {
         return id;
     }
@@ -322,5 +329,13 @@ public class SpuEntity {
 
     public void setRejectCount(Integer rejectCount) {
         this.rejectCount = rejectCount;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
+    public void setVersion(Integer version) {
+        this.version = version;
     }
 }

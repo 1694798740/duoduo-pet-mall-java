@@ -120,18 +120,37 @@ async function main() {
 
   console.log('\n== 3. 审核：驳回 → 两次编辑 ==');
   const rej = await call('POST', `/api/admin/products/${spuId}/audit`,
-    { action: 'REJECT', reason: '图片不清晰，请更换主图' }, opToken);
+    { action: 'REJECT', reason: '图片不清晰，请更换主图', version: detail1?.version }, opToken);
   check('运营驳回成功', rej.status === 200, rej.body);
   const afterReject = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('驳回后状态 = REJECTED 且下架', afterReject?.auditStatus === 'REJECTED' && afterReject?.status === 'OFF_SHELF',
     { audit: afterReject?.auditStatus, status: afterReject?.status });
+  check('A-07 审核成功 → 版本 +1', afterReject?.version === (detail1?.version ?? -1) + 1,
+    { before: detail1?.version, after: afterReject?.version });
 
-  const edit1 = await call('PUT', `/api/seller/products/${spuId}`, { title: `R93 冒烟商品 ${stamp}（改1）` }, sellerToken);
+  // A-07：拿审核前的旧版本编辑，必须 409 且库里一行未动
+  const staleEdit = await call('PUT', `/api/seller/products/${spuId}`,
+    { title: `陈旧版本不该生效 ${stamp}`, version: detail1?.version }, sellerToken);
+  check('A-07 旧版本编辑 → 409', staleEdit.status === 409, staleEdit.body);
+  const afterStaleEdit = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
+  check('A-07 冲突编辑未落库（标题/审核态/版本均未变）',
+    afterStaleEdit?.title === detail1?.title && afterStaleEdit?.auditStatus === 'REJECTED'
+      && afterStaleEdit?.version === afterReject?.version,
+    { title: afterStaleEdit?.title, audit: afterStaleEdit?.auditStatus, version: afterStaleEdit?.version });
+
+  const noVersion = await call('PUT', `/api/seller/products/${spuId}`, { subtitle: '缺版本号' }, sellerToken);
+  check('A-07 编辑缺 version → 400', noVersion.status === 400, noVersion.body);
+
+  const edit1 = await call('PUT', `/api/seller/products/${spuId}`,
+    { title: `R93 冒烟商品 ${stamp}（改1）`, version: afterReject?.version }, sellerToken);
   check('第一次编辑成功', edit1.status === 200, edit1.body);
   const afterEdit1 = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('第一次编辑 → 待审核（原有行为）', afterEdit1?.auditStatus === 'PENDING', afterEdit1?.auditStatus);
+  check('A-07 编辑成功 → 版本 +1', afterEdit1?.version === (afterReject?.version ?? -1) + 1,
+    { before: afterReject?.version, after: afterEdit1?.version });
 
-  const edit2 = await call('PUT', `/api/seller/products/${spuId}`, { subtitle: '第二次编辑的副标题' }, sellerToken);
+  const edit2 = await call('PUT', `/api/seller/products/${spuId}`,
+    { subtitle: '第二次编辑的副标题', version: afterEdit1?.version }, sellerToken);
   check('第二次编辑成功', edit2.status === 200, edit2.body);
   const afterEdit2 = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('★ 第二次编辑仍为待审核（修复「改两次绕过」）', afterEdit2?.auditStatus === 'PENDING',
@@ -139,19 +158,36 @@ async function main() {
   check('商家侧没有混入"自动通过"来源', afterEdit2?.auditSource !== 'AUTO', afterEdit2?.auditSource);
 
   console.log('\n== 4. 人工通过后可自动放行 ==');
-  const appr = await call('POST', `/api/admin/products/${spuId}/audit`, { action: 'APPROVE' }, opToken);
+  // A-07：运营拿着编辑前的旧版本点「通过」→ 409，审核态保持待审
+  const staleApprove = await call('POST', `/api/admin/products/${spuId}/audit`,
+    { action: 'APPROVE', version: (afterEdit2?.version ?? 0) - 1 }, opToken);
+  check('A-07 旧版本审核 → 409', staleApprove.status === 409, staleApprove.body);
+  const afterStaleApprove = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
+  check('A-07 冲突审核未落库（仍待审、版本未变）',
+    afterStaleApprove?.auditStatus === 'PENDING' && afterStaleApprove?.version === afterEdit2?.version,
+    { audit: afterStaleApprove?.auditStatus, version: afterStaleApprove?.version });
+
+  const appr = await call('POST', `/api/admin/products/${spuId}/audit`,
+    { action: 'APPROVE', version: afterEdit2?.version }, opToken);
   check('运营通过成功', appr.status === 200, appr.body);
   const afterApprove = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('通过后驳回原因被清空', afterApprove?.auditReason == null, afterApprove?.auditReason);
+  check('A-07 审核通过 → 版本 +1', afterApprove?.version === (afterEdit2?.version ?? -1) + 1,
+    { before: afterEdit2?.version, after: afterApprove?.version });
 
-  const edit3 = await call('PUT', `/api/seller/products/${spuId}`, { subtitle: '平反后的编辑' }, sellerToken);
+  const edit3 = await call('PUT', `/api/seller/products/${spuId}`,
+    { subtitle: '平反后的编辑', version: afterApprove?.version }, sellerToken);
   const afterEdit3 = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('人工通过后编辑可自动放行（标记已清）', edit3.status === 200 && afterEdit3?.auditStatus === 'APPROVED',
     { status: edit3.status, audit: afterEdit3?.auditStatus });
 
   console.log('\n== 5. 卖家主动下架 → 编辑不应悄悄上架 ==');
   await call('POST', `/api/seller/products/${spuId}/status`, { action: 'OFF_SHELF' }, sellerToken);
-  await call('PUT', `/api/seller/products/${spuId}`, { subtitle: '下架状态下改个字' }, sellerToken);
+  const afterOffShelf = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
+  check('A-07 上下架不参与版本（不产生冲突噪声）', afterOffShelf?.version === afterEdit3?.version,
+    { before: afterEdit3?.version, after: afterOffShelf?.version });
+  await call('PUT', `/api/seller/products/${spuId}`,
+    { subtitle: '下架状态下改个字', version: afterEdit3?.version }, sellerToken);
   const afterOffEdit = (await call('GET', `/api/seller/products/${spuId}`, null, sellerToken)).body?.data;
   check('主动下架的商品编辑后仍为下架', afterOffEdit?.status === 'OFF_SHELF', afterOffEdit?.status);
 

@@ -129,8 +129,9 @@ try {
   if (failures.length) console.log('失败项：\n - ' + failures.join('\n - '));
 } finally {
   await browser.close();
-  // 收尾：把夹具驳回，避免长期占着待审队列
+  // 收尾：把夹具驳回，避免长期占着待审队列（A-07：先取当前版本，审核要带版本）
+  const current = await call('GET', `/api/seller/products/${spuId}`, null, sellerToken);
   await call('POST', `/api/admin/products/${spuId}/audit`,
-    { action: 'REJECT', reason: 'e2e 夹具收尾（审核台内容校验）' }, opToken);
+    { action: 'REJECT', reason: 'e2e 夹具收尾（审核台内容校验）', version: current.body?.data?.version }, opToken);
 }
 process.exitCode = failures.length ? 1 : 0;

@@ -23,20 +23,24 @@ NO_PROXY="*" node scripts/e2e/admin-audit-content-ui-check.mjs
 在后台审核台搜索并断言：详情图 2 张可见、商品介绍可见、富文本可展开且按 HTML 渲染（`.rich-view h2`）、
 规格参数与包装规格可见；结束自动驳回夹具。2026-10-24 实测 **11/0**。
 
-## 商品管理改造冒烟（`scripts/product-manage-r93-smoke.mjs`，34 项，第九十三轮，第九十五轮扩自清理）
+## 商品管理改造冒烟（`scripts/product-manage-r93-smoke.mjs`，43 项，第九十三轮，第九十六轮扩 A-07）
 
 ```bash
 NO_PROXY="*" node scripts/product-manage-r93-smoke.mjs
 ```
 
-前置：容器在跑；`incremental/46` 已执行；卖家 13600003333、运营 13684295254 可用。
+前置：容器在跑；`incremental/46`、`incremental/48` 已执行；卖家 13600003333、运营 13684295254 可用。
 覆盖：发布带富文本/介绍/规格/包装的商品；**注入串（script / onerror / javascript:）被白名单剥离**；
 公开详情 `images[0] === mainImage` 且副图顺序正确；驳回 → 编辑一次 → **再编辑一次仍为 PENDING**；
 人工通过后驳回原因清空、`rejected_at` 清空、此后编辑可自动放行；主动下架商品编辑后仍下架；
 卖家列表回带 rating/ratingCount；SKU 改价/改库存落库且不触发重审。第九十五轮起脚本启动时先下架
-遗留的「R93 冒烟商品」在售件（只清理该前缀、幂等、不计入断言）。2026-10-24 实测 **34/0**。
+遗留的「R93 冒烟商品」在售件（只清理该前缀、幂等、不计入断言）。
 
-## 商品管理改造 UI e2e（`scripts/e2e/product-manage-r93-ui-check.mjs`，19 项）
+**第九十六轮（A-07）新增 8 条**：旧版本编辑 → 409 且标题/审核态/版本均未变；编辑缺 `version` → 400；
+编辑 / 审核成功 → 版本 +1；审核用旧版本 → 409 且仍为 PENDING、版本未变；
+上下架不 bump 版本（卖家可正常下架，不产生冲突噪音）。2026-10-24 实测 **43/0**。
+
+## 商品管理改造 UI e2e（`scripts/e2e/product-manage-r93-ui-check.mjs`，22 项）
 
 ```bash
 NO_PROXY="*" node scripts/e2e/product-manage-r93-ui-check.mjs
@@ -45,7 +49,8 @@ NO_PROXY="*" node scripts/e2e/product-manage-r93-ui-check.mjs
 前置：先跑上面的冒烟脚本（沿用其商品）；商家端与商城容器均为最新产物。
 覆盖：编辑弹窗出现「商品介绍 / 富文本编辑器 / 两个键值编辑器」且可保存并回读；富文本回填；
 「商品分析」页 KPI（含好评率）、表头（销量/成交额/退款/评分/好评率）、评价弹窗；商城详情首图 = 主图、
-富文本以 `.rich-view` 渲染、规格与包装显示商家填写值。2026-10-24 实测 **19/0**。
+富文本以 `.rich-view` 渲染、规格与包装显示商家填写值。第九十六轮起编辑保存会真实携带 `version`
+（顺带验证前端乐观锁接线不影响正常保存）。2026-10-24 实测 **22/0**。
 
 ## 第九十二轮 UI 专项 e2e（`scripts/e2e/r92-message-ui-check.mjs`，29 项）
 

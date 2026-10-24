@@ -3,8 +3,10 @@ package com.duoduo.product.service;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.MerchantRiskClient;
@@ -98,6 +100,9 @@ class SellerProductServiceTest {
                 new MerchantLicenseInfo("710000000000000101", "APPROVED", "NONE", null, null)));
         when(merchantRiskClient.of(any())).thenReturn(ApiResponse.ok(
                 new MerchantRiskInfo("710000000000000101", 0, false, false, false)));
+        // A-07：乐观锁写入成功（影响 1 行）。不 stub 的话 Mockito 默认返回 0，
+        // 会被实现解读为「期间有他人写入」，把所有正常路径都变成 409。
+        when(spuMapper.update(isNull(), any())).thenReturn(1);
     }
 
     /** 让该商家带上「此前有驳回 / 停业记录」的污点（E28 的风险规则之一） */
@@ -161,6 +166,8 @@ class SellerProductServiceTest {
         spu.setSalesCount(0);
         spu.setMinPrice(1000L);
         spu.setMaxPrice(2000L);
+        // 数据库里 version 非空、默认 0；夹具必须带上，否则乐观锁条件拿到 null
+        spu.setVersion(0);
         return spu;
     }
 
@@ -179,7 +186,28 @@ class SellerProductServiceTest {
     }
 
     private static SellerProductUpdateRequest titleUpdate(String title) {
-        return new SellerProductUpdateRequest(title, null, null, null, null, null, null);
+        return titleUpdate(title, 0);
+    }
+
+    private static SellerProductUpdateRequest titleUpdate(String title, int version) {
+        return new SellerProductUpdateRequest(title, null, null, null, null, null, null,
+                null, null, null, null, version);
+    }
+
+    /** 捕获内容编辑 / 审核发出的那条条件 UPDATE（A-07 起不再有整行 updateById） */
+    @SuppressWarnings("unchecked")
+    private LambdaUpdateWrapper<SpuEntity> captureSpuUpdate() {
+        ArgumentCaptor<LambdaUpdateWrapper<SpuEntity>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(spuMapper).update(isNull(), captor.capture());
+        return captor.getValue();
+    }
+
+    /** 条件 UPDATE 必须带版本前置条件，并且把版本原子 +1 */
+    private static void assertVersionGuarded(LambdaUpdateWrapper<SpuEntity> wrapper, int expectedVersion) {
+        assertThat(wrapper.getSqlSegment()).contains("version");
+        assertThat(wrapper.getSqlSet()).contains("version = version + 1");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(expectedVersion);
     }
 
     // ---------------- 归属与准入（沿用旧版断言，防止改动走形） ----------------
@@ -191,11 +219,14 @@ class SellerProductServiceTest {
         when(spuMapper.selectById(9001L)).thenReturn(spu);
 
         SellerProductView view = service.update(9001L,
-                new SellerProductUpdateRequest("新标题", null, "https://img/1.png", null, null, null, null));
+                new SellerProductUpdateRequest("新标题", null, "https://img/1.png", null, null, null, null,
+                        null, null, null, null, 0));
 
         assertThat(view.title()).isEqualTo("新标题");
         assertThat(view.mainImage()).isEqualTo("https://img/1.png");
-        verify(spuMapper).updateById(spu);
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("title", "main_image");
+        assertVersionGuarded(update, 0);
     }
 
     @Test
@@ -346,14 +377,19 @@ class SellerProductServiceTest {
         when(skuMapper.selectList(any())).thenReturn(List.of());
 
         service.update(9001L,
-                new SellerProductUpdateRequest(null, "", null, null, null, null, null));
+                new SellerProductUpdateRequest(null, "", null, null, null, null, null,
+                        null, null, null, null, 0));
 
-        // ① 常规落库 —— 在 NOT_NULL 策略下这一条**不会**带上 subtitle=null
-        verify(spuMapper).updateById(spu);
-        // ② 显式清空 —— 缺了它，用户看到的"已清空"就只是内存里的幻觉
-        //    2026-10-24 起还有一条"审核列显式写回"的 UPDATE（含 audit_reason=null），
-        //    所以这里恰好是 2 条：审核列补丁 + 内容列清空。
-        verify(spuMapper, times(2)).update(isNull(), any());
+        // A-07 起只有一条条件 UPDATE（eq id + version）：内容列与审核列一起写，
+        // subtitle 显式 set(null) 才不会被 NOT_NULL 策略吞掉。
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("subtitle", "audit_reason");
+        // AssertJ 的 anyMatch 遇到 null 元素会 NPE，这里直接看流结果
+        assertThat(update.getParamNameValuePairs().values().stream().anyMatch(java.util.Objects::isNull))
+                .as("subtitle 必须显式 set(null)，不能依赖 NOT_NULL 策略")
+                .isTrue();
+        assertVersionGuarded(update, 0);
+        verify(spuMapper, never()).updateById(any(SpuEntity.class));
     }
 
     @Test
@@ -365,10 +401,11 @@ class SellerProductServiceTest {
 
         service.update(9001L, titleUpdate("新标题"));
 
-        // 反面对照：没有清空动作时只有"审核列补丁"这一条 —— 它**故意每次内容变更都发**，
-        // 因为 updateById 不写 null，不补这一条就会出现「已通过 + 上一轮的驳回原因」
-        // 这种自相矛盾的数据。除它之外不该再多发清空 UPDATE。
-        verify(spuMapper, times(1)).update(isNull(), any());
+        // 反面对照：没有清空动作时也只发一条条件 UPDATE（A-07 前是「updateById + 审核列补丁」两条）。
+        // 审核列仍然每次都显式写，否则会出现「已通过 + 上一轮的驳回原因」这种自相矛盾的数据。
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("audit_status", "audit_source", "audit_at", "audit_reason");
+        assertVersionGuarded(update, 0);
     }
 
     @Test
@@ -409,13 +446,15 @@ class SellerProductServiceTest {
         assertThat(onlyTitle.mainImage()).isEqualTo("https://img/old.png");
 
         // 主图是列表页唯一的视觉锚点，清空即 400（E14 收紧；旧版允许清空）
+        // 第一次 update 已把内存版本推到 1，后续请求必须带当前版本，才能走到内容校验
         assertThatThrownBy(() -> service.update(9001L,
-                new SellerProductUpdateRequest(null, null, "   ", null, null, null, null)))
+                new SellerProductUpdateRequest(null, null, "   ", null, null, null, null,
+                        null, null, null, null, 1)))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("主图不能为空");
 
         // 标题不允许清空
-        assertThatThrownBy(() -> service.update(9001L, titleUpdate("   ")))
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("   ", 1)))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("标题不能为空");
     }
@@ -428,11 +467,11 @@ class SellerProductServiceTest {
         when(skuMapper.selectList(any())).thenReturn(List.of());
 
         service.update(9001L, new SellerProductUpdateRequest("原标题", null, "https://img/old.png",
-                null, null, null, null));
+                null, null, null, null, null, null, null, null, 0));
 
         // 无变化不发 UPDATE：省一次写，也避免 updated_at 被无意义地刷新
         // （刷新 updated_at 还会让索引同步任务白跑一轮）
-        verify(spuMapper, never()).updateById(any(SpuEntity.class));
+        verify(spuMapper, never()).update(isNull(), any());
     }
 
     // ---------------- E14 + E28 · 提交商品：自动放行判定 ----------------
@@ -631,7 +670,9 @@ class SellerProductServiceTest {
         assertThat(spu.getAuditAt()).isNotNull();     // 重新放行也要留下可被抽查的时间锚点
         assertThat(view.auditStatus()).isEqualTo("APPROVED");
         assertThat(spu.getStatus()).isEqualTo("ON_SALE");
-        verify(spuMapper).updateById(spu);
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("audit_status", "audit_source", "audit_at");
+        assertVersionGuarded(update, 0);
     }
 
     @Test
@@ -705,7 +746,7 @@ class SellerProductServiceTest {
         when(skuMapper.selectList(any())).thenReturn(List.of());
         when(catalogLookup.categoryNames(any())).thenReturn(java.util.Map.of());
 
-        service.audit(9001L, "APPROVE", null);
+        service.audit(9001L, "APPROVE", null, 0);
 
         assertThat(spu.getRejectedAt()).isNull();
         assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
@@ -949,7 +990,7 @@ class SellerProductServiceTest {
         when(skuMapper.selectList(any())).thenReturn(List.of());
         when(catalogLookup.categoryNames(any())).thenReturn(Map.of());
 
-        AdminProductAuditView view = service.audit(9001L, "APPROVE", null);
+        AdminProductAuditView view = service.audit(9001L, "APPROVE", null, 0);
 
         assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
         assertThat(spu.getAuditReason()).isNull();
@@ -970,11 +1011,11 @@ class SellerProductServiceTest {
         when(catalogLookup.categoryNames(any())).thenReturn(Map.of());
 
         // 不填原因：卖家只能猜着改，审核结论也留不下可追溯的解释
-        assertThatThrownBy(() -> service.audit(9001L, "REJECT", "  "))
+        assertThatThrownBy(() -> service.audit(9001L, "REJECT", "  ", 0))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("驳回时必须填写原因");
 
-        service.audit(9001L, "REJECT", "主图与实物不符");
+        service.audit(9001L, "REJECT", "主图与实物不符", 0);
 
         assertThat(spu.getAuditStatus()).isEqualTo("REJECTED");
         assertThat(spu.getAuditReason()).isEqualTo("主图与实物不符");
@@ -988,12 +1029,12 @@ class SellerProductServiceTest {
         SpuEntity selfSpu = spu(9001L, 0L, "自营商品", null, "self", "APPROVED", "ON_SALE");
         when(spuMapper.selectById(9001L)).thenReturn(selfSpu);
 
-        assertThatThrownBy(() -> service.audit(9001L, "PASS", null))
+        assertThatThrownBy(() -> service.audit(9001L, "PASS", null, 0))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("仅支持 APPROVE / REJECT");
 
         // 自营免审：走到这里说明调用方按错了对象，直接拒绝比「静默改个状态」安全
-        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null))
+        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null, 0))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("无需审核");
         verify(spuMapper, never()).updateById(any(SpuEntity.class));
@@ -1003,7 +1044,7 @@ class SellerProductServiceTest {
     void 非运营不能进审核台() {
         UserContext.set(seller(101L));
 
-        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null))
+        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null, 0))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("仅运营 / 管理员");
         assertThatThrownBy(() -> service.listForAudit(null, null, 1, 20))
@@ -1070,7 +1111,11 @@ class SellerProductServiceTest {
         SellerProductView view = service.changeStatus(9001L, "OFF_SHELF");
 
         assertThat(view.status()).isEqualTo("OFF_SHELF");
-        verify(spuMapper).updateById(spu);
+        // A-07：上下架改为定向 UPDATE —— 只写 status/updated_at，
+        // 不碰审核列（整行覆盖会把并发落下的 REJECTED 冲回 APPROVED），也不递增版本。
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("status", "updated_at");
+        assertThat(update.getSqlSet()).doesNotContain("audit_", "version");
     }
 
     @Test
@@ -1211,5 +1256,152 @@ class SellerProductServiceTest {
 
         assertThat(detail.auditStatus()).isEqualTo("REJECTED");
         assertThat(detail.auditReason()).isEqualTo("主图不清晰");
+    }
+
+    // ---------------- A-07 · 编辑 / 审核并发保护（乐观锁） ----------------
+
+    /**
+     * 丢失更新的最小复现：卖家打开的编辑页版本是 2，期间运营审核把商品驳回（版本 3），
+     * 卖家再保存。若不校验版本，整行写入会把 REJECTED 覆盖回 APPROVED —— 接口两边都 200。
+     */
+    @Test
+    void A07_旧版本编辑_返回409且不写库() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        spu.setVersion(3);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("旧页面上改的标题", 2)))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("已被其他人修改")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.CONFLICT));
+        verify(spuMapper, never()).update(isNull(), any());
+        assertThat(spu.getTitle()).isEqualTo("原标题");
+    }
+
+    @Test
+    void A07_缺少版本号编辑_返回400且不写库() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.update(9001L,
+                new SellerProductUpdateRequest("新标题", null, null, null, null, null, null,
+                        null, null, null, null, null)))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("缺少版本号")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A07_编辑成功_版本原子递增() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "原标题", null);
+        spu.setVersion(4);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductView view = service.update(9001L, titleUpdate("新标题", 4));
+
+        assertThat(view.title()).isEqualTo("新标题");
+        assertThat(spu.getVersion()).isEqualTo(5);
+        assertVersionGuarded(captureSpuUpdate(), 4);
+    }
+
+    /** 审核台打开的是版本 4 的内容，期间卖家改了一次（版本 5）—— 运营不能对着旧内容下结论。 */
+    @Test
+    void A07_旧版本审核_返回409且不写库() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        spu.setVersion(5);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null, 4))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("内容已变化")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.CONFLICT));
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A07_缺少版本号审核_返回400且不写库() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.audit(9001L, "APPROVE", null, null))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("缺少版本号")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A07_审核成功_版本原子递增且结论与版本同一条语句落库() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 101L, "待审商品", null, "merchant", "PENDING", "ON_SALE");
+        spu.setVersion(2);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+        when(catalogLookup.categoryNames(any())).thenReturn(Map.of());
+
+        AdminProductAuditView view = service.audit(9001L, "APPROVE", null, 2);
+
+        assertThat(view.auditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getVersion()).isEqualTo(3);
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSet()).contains("audit_status", "audit_source", "audit_at", "audit_reason");
+        assertVersionGuarded(update, 2);
+    }
+
+    /**
+     * 重新提审没有 version 入参：它的前置条件是「当前仍是 REJECTED」。
+     * 若运营在卖家点击重提的同一瞬间通过了该商品，重提必须落空并返回 409，
+     * 而不是把 APPROVED 又推回 PENDING。
+     */
+    @Test
+    void A07_重新提审_以驳回态为前置条件并递增版本() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "驳回商品", null, "merchant", "REJECTED", "OFF_SHELF");
+        spu.setVersion(6);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.resubmit(9001L);
+
+        assertThat(spu.getVersion()).isEqualTo(7);
+        LambdaUpdateWrapper<SpuEntity> update = captureSpuUpdate();
+        assertThat(update.getSqlSegment()).contains("audit_status");
+        // 没有 version 入参：并发安全性来自「仍为 REJECTED」这个状态前置条件
+        assertThat(update.getParamNameValuePairs().values()).contains("REJECTED");
+        assertThat(update.getSqlSet()).contains("version = version + 1");
+    }
+
+    @Test
+    void A07_重新提审期间被他人审核_返回409() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "驳回商品", null, "merchant", "REJECTED", "OFF_SHELF");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(spuMapper.update(isNull(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.resubmit(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("状态已变化")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.CONFLICT));
+    }
+
+    /** 抽查复核判违规前必须确认「商品还是抽中时那一版」，否则等于对着旧内容下架。 */
+    @Test
+    void A07_抽查判违规遇到并发修改_返回409且不落库() {
+        SpuEntity spu = spu(9001L, 101L, "抽中商品", null, "merchant", "APPROVED", "ON_SALE");
+        spu.setVersion(1);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(spuMapper.update(isNull(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.rejectBySample(9001L, "主图违规"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("内容已变化")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.CONFLICT));
     }
 }
