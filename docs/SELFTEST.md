@@ -2,6 +2,17 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 订单级库存预占冒烟（`scripts/stock-order-reservation-smoke.mjs`，23 项，第九十五轮）
+
+```bash
+NO_PROXY="*" node scripts/stock-order-reservation-smoke.mjs
+```
+
+前置：容器在跑；`incremental/47` 已执行；直连商品服务 8082，内部接口需现场签发 `dd1` 凭据（脚本内置）。
+覆盖：同一订单重复冻结不双冻、数量不一致拒绝、不同订单互不挪用；释放无预占幂等成功、释放后再释放/扣减的
+状态冲突；扣减无预占 `RESERVATION_NOT_FOUND`、错量拒绝、扣减后释放冲突；`t_sku_stock_reservation` 行状态与
+`t_sku.stock/frozen_stock` 同步；结束恢复原库存并删除探针预占行。2026-10-24 实测 **23/0**。
+
 ## 审核台内容完整性 e2e（`scripts/e2e/admin-audit-content-ui-check.mjs`，11 项，第九十四轮）
 
 ```bash
@@ -12,7 +23,7 @@ NO_PROXY="*" node scripts/e2e/admin-audit-content-ui-check.mjs
 在后台审核台搜索并断言：详情图 2 张可见、商品介绍可见、富文本可展开且按 HTML 渲染（`.rich-view h2`）、
 规格参数与包装规格可见；结束自动驳回夹具。2026-10-24 实测 **11/0**。
 
-## 商品管理改造冒烟（`scripts/product-manage-r93-smoke.mjs`，25 项，第九十三轮）
+## 商品管理改造冒烟（`scripts/product-manage-r93-smoke.mjs`，34 项，第九十三轮，第九十五轮扩自清理）
 
 ```bash
 NO_PROXY="*" node scripts/product-manage-r93-smoke.mjs
@@ -22,7 +33,8 @@ NO_PROXY="*" node scripts/product-manage-r93-smoke.mjs
 覆盖：发布带富文本/介绍/规格/包装的商品；**注入串（script / onerror / javascript:）被白名单剥离**；
 公开详情 `images[0] === mainImage` 且副图顺序正确；驳回 → 编辑一次 → **再编辑一次仍为 PENDING**；
 人工通过后驳回原因清空、`rejected_at` 清空、此后编辑可自动放行；主动下架商品编辑后仍下架；
-卖家列表回带 rating/ratingCount。2026-10-24 实测 **25/0**。
+卖家列表回带 rating/ratingCount；SKU 改价/改库存落库且不触发重审。第九十五轮起脚本启动时先下架
+遗留的「R93 冒烟商品」在售件（只清理该前缀、幂等、不计入断言）。2026-10-24 实测 **34/0**。
 
 ## 商品管理改造 UI e2e（`scripts/e2e/product-manage-r93-ui-check.mjs`，19 项）
 
@@ -265,7 +277,7 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 |---|---|---|---|
 | 1 | 全链路基础（网关 + 用户域 + 商品域） | `smoke.ps1` | 62 |
 | 2 | 购物车 | `trade-smoke.ps1` | 87 |
-| 3 | 下单 / 拆单 / 库存冻结 | `order-smoke.ps1` | 77 |
+| 3 | 下单 / 拆单 / 库存冻结（含订单级预占台账） | `order-smoke.ps1` | 79 |
 | 4 | 支付 / 订单状态机 / 超时关单 | `payment-smoke.ps1` | 72 |
 | 5 | 担保交易 / 资金托管 / 放款 / 退款 / 自动收货（含 E22 佣金与 T+7） | `settlement-smoke.ps1` | 149 |
 | 6 | 沙箱支付渠道 / 预下单 / 回调验签 | `pay-channel-smoke.ps1` | 62 |
@@ -298,7 +310,8 @@ docker exec duoduo-mysql mysql -uduoduo -pduoduo -D duoduo_user -e "UPDATE t_use
 | 33 | Python 探针（同样不进一键运行器） | `r58-restock-idempotent-smoke.py` / `r58-compensate-smoke.py` / `r58-listing-edit-delete-smoke.py` | 10 / 22 / 33 |
 | 34 | **租户健康度面板（E24）** | `tenant-health-smoke.ps1` | 90 |
 | 35 | **多卖家拆单幂等 / 支付入账**（Python 探针，不进一键运行器） | `split-order-idem-smoke.py` | 18 |
-| 36 | **冻结台账 ↔ 商品域对账守卫**（Node，直接读库判两个来源） | `check-stock-freeze-recon.mjs` | 6 |
+| 36 | **冻结台账 ↔ 商品域对账守卫**（Node，直接读库判两个来源） | `check-stock-freeze-recon.mjs` | 8 |
+| 37 | **订单级库存预占**（Node，直连商品内部接口） | `stock-order-reservation-smoke.mjs` | 23 |
 
 > ★ **本表的项数已在 2026-10-13 全套重跑后刷新。** 此后若有脚本变动，**要么重跑全套把总数实算一遍再改，
 > 要么就留着不改** —— 绝不允许**只把总数手改 +N**（那又是在写一个没人核的数字）。

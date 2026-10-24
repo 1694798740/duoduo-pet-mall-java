@@ -18,12 +18,17 @@ public final class StockChangeDtos {
     }
 
     /**
-     * 请求体：{@code {"items":[{"skuId":2001,"quantity":2}],"refNo":"restock:123"}}
+     * 请求体：{@code {"items":[{"skuId":2001,"quantity":2}],"orderId":123,"refNo":null}}
+     *
+     * <p>{@code orderId}（B-03）：freeze / release / deduct 必填。商品侧按
+     * {@code (order_id, sku_id)} 记预占台账，释放与扣减只作用于本订单的预占。
      *
      * <p>{@code refNo} 是<b>入库幂等号</b>（第五十八轮 · B-02）：仅 restock 使用，
      * 商品侧按 {@code (ref_no, sku_id)} 去重，重复提交不再加库存。其他动作传 null。
+     *
+     * <p>字段顺序与商品侧 {@code StockDtos.StockChangeRequest} 对齐；服务端按字段名反序列化。
      */
-    public record StockChangePayload(List<StockChangeItem> items, String refNo) {
+    public record StockChangePayload(List<StockChangeItem> items, Long orderId, String refNo) {
     }
 
     public record StockChangeResult(Long skuId, int quantity, boolean success, String reason) {

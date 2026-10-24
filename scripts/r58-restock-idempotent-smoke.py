@@ -13,15 +13,40 @@
 
 用法：python scripts/r58-restock-idempotent-smoke.py
 """
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import time
 import urllib.error
 import urllib.request
 
-PRODUCT = (os.environ.get("R58_PRODUCT") or "http://127.0.0.1:8082").rstrip("/")
+PRODUCT = (os.environ.get("R58_PRODUCT") or "http://localhost:8082").rstrip("/")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "duoduo-local-dev-internal-token")
+CALLER = "duoduo-smoke"
+
+
+def _b64url(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def internal_token(method):
+    """现场签发 dd1 凭据（与 scripts/lib/internal-token.ps1 同口径）。
+
+    nonce 一次性：每次请求都必须重新签，复用同一条头会被判重放（403）。
+    """
+    ts = int(time.time())
+    nonce = secrets.token_hex(16)
+    key = _b64url(hmac.new(INTERNAL_TOKEN.encode(),
+                           f"dd1|key|{CALLER.lower()}".encode(),
+                           hashlib.sha256).digest())
+    sig = _b64url(hmac.new(key.encode(),
+                           f"dd1\n{CALLER}\n{ts}\n{nonce}\n{method.upper()}".encode(),
+                           hashlib.sha256).digest())
+    return f"dd1.{CALLER}.{ts}.{nonce}.{sig}"
 
 PASSED, FAILED = [], []
 
@@ -48,7 +73,7 @@ def call(method, path, body=None, headers=None, timeout=20):
 
 
 def internal(path, body):
-    return call("POST", path, body, headers={"X-Internal-Token": INTERNAL_TOKEN})
+    return call("POST", path, body, headers={"X-Internal-Token": internal_token("POST")})
 
 
 def sql_scalar(query):
@@ -62,7 +87,7 @@ def sql_scalar(query):
 def stock_of(sku_id):
     """经内部快照端点读可售库存（availableStock = stock - frozen_stock）"""
     st, body = call("GET", f"/api/products/internal/skus/batch?ids={sku_id}",
-                    headers={"X-Internal-Token": INTERNAL_TOKEN})
+                    headers={"X-Internal-Token": internal_token("GET")})
     if st != 200 or not body.get("data"):
         return None
     return body["data"][0].get("availableStock")

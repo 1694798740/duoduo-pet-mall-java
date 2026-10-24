@@ -17,16 +17,20 @@ public final class StockDtos {
     /**
      * 批量库存变更请求（一个订单的多个 SKU 一次提交）。
      *
-     * @param refNo **入库幂等号**（第五十八轮 · B-02）：仅 {@code restock} 必需。
-     *              同一 refNo 的同一 SKU 只会真正加回一次库存；重复提交（响应丢失后的重试）
-     *              原样返回成功但**不再加库存**。其他动作可传 null。
+     * @param orderId 订单 id：{@code freeze} / {@code release} / {@code deduct} 必填。
+     *                商品域按 {@code (order_id, sku_id)} 记预占台账，释放与扣减只作用于
+     *                **本订单自己的**预占，不再靠 SKU 上的全局冻结量判断归属。
+     * @param refNo   **入库幂等号**（第五十八轮 · B-02）：仅 {@code restock} 必需。
+     *                同一 refNo 的同一 SKU 只会真正加回一次库存；重复提交（响应丢失后的重试）
+     *                原样返回成功但**不再加库存**。其他动作可传 null。
      */
-    public record StockChangeRequest(List<StockChangeItem> items, String refNo) {
+    public record StockChangeRequest(List<StockChangeItem> items, Long orderId, String refNo) {
     }
 
     /**
      * 单个 SKU 的变更结果。
-     * 失败原因码：SKU_NOT_FOUND / SKU_INACTIVE / INSUFFICIENT_STOCK / FREEZE_NOT_ENOUGH / RESTOCK_FAILED
+     * 失败原因码：SKU_NOT_FOUND / SKU_INACTIVE / INSUFFICIENT_STOCK / FREEZE_NOT_ENOUGH /
+     * RESTOCK_FAILED / RESERVATION_NOT_FOUND / RESERVATION_QTY_MISMATCH / RESERVATION_STATE_CONFLICT
      */
     public record StockChangeResult(Long skuId, int quantity, boolean success, String reason) {
     }
@@ -49,6 +53,12 @@ public final class StockDtos {
         public static final String FREEZE_NOT_ENOUGH = "FREEZE_NOT_ENOUGH";
         /** 入库失败（SKU 不存在等数据异常） */
         public static final String RESTOCK_FAILED = "RESTOCK_FAILED";
+        /** 扣减时本订单根本没有预占记录（不是「已扣过」，是真的没冻过） */
+        public static final String RESERVATION_NOT_FOUND = "RESERVATION_NOT_FOUND";
+        /** 请求数量与本订单已登记的预占数量不一致，拒绝按错误数量释放 / 扣减 */
+        public static final String RESERVATION_QTY_MISMATCH = "RESERVATION_QTY_MISMATCH";
+        /** 预占状态与本次操作冲突（如已释放后又来扣减、已扣减后又来释放） */
+        public static final String RESERVATION_STATE_CONFLICT = "RESERVATION_STATE_CONFLICT";
 
         private Reason() {
         }

@@ -7,7 +7,9 @@ import com.duoduo.product.dto.StockDtos.StockChangeRequest;
 import com.duoduo.product.dto.StockDtos.StockChangeResponse;
 import com.duoduo.product.dto.StockDtos.StockChangeResult;
 import com.duoduo.product.entity.SkuEntity;
+import com.duoduo.product.entity.SkuStockReservationEntity;
 import com.duoduo.product.mapper.SkuMapper;
+import com.duoduo.product.mapper.SkuStockReservationMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
@@ -62,9 +64,11 @@ public class StockService {
     private static final String SKU_ACTIVE = "ACTIVE";
 
     private final SkuMapper skuMapper;
+    private final SkuStockReservationMapper reservationMapper;
 
-    public StockService(SkuMapper skuMapper) {
+    public StockService(SkuMapper skuMapper, SkuStockReservationMapper reservationMapper) {
         this.skuMapper = skuMapper;
+        this.reservationMapper = reservationMapper;
     }
 
     @Transactional
@@ -89,41 +93,38 @@ public class StockService {
             }
         }
 
+        if (!ACTION_FREEZE.equals(action) && !ACTION_RELEASE.equals(action)
+                && !ACTION_DEDUCT.equals(action) && !ACTION_RESTOCK.equals(action)) {
+            throw BizException.validation("不支持的库存操作：" + action);
+        }
+
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         // 入库（B-02）：refNo 是幂等号，缺了就等于放弃了去重能力 —— 直接拒绝而不是「照样加库存」。
         // 宁可让调用方补上参数报错，也不要留一个「看起来成功、实际会双加」的口子。
         if (ACTION_RESTOCK.equals(action) && (request.refNo() == null || request.refNo().isBlank())) {
             throw BizException.validation("入库（restock）必须带 refNo 幂等号");
         }
+        // 冻结 / 释放 / 扣减都必须带订单号（B-03）：商品域要按订单记预占，
+        // 没有订单号就无从判断「这次释放的是谁的冻结」——那正是跨订单误释放的根源。
+        if (!ACTION_RESTOCK.equals(action)
+                && (request.orderId() == null || request.orderId() <= 0)) {
+            throw BizException.validation(action + " 必须带 orderId（订单级库存预占）");
+        }
+
         List<StockChangeResult> results = new ArrayList<>(request.items().size());
         boolean allSuccess = true;
         for (StockChangeItem item : request.items()) {
-            int affected;
-            if (ACTION_RESTOCK.equals(action)) {
-                // 幂等闸：只有「首次插入」才真正加库存。重复提交（响应丢失后的重试）在这里返回 0，
-                // 于是本轮跳过更新、按**成功**返回（货确实已经回库了）——既不重复加，也不让调用方重试到死。
-                int claimed = skuMapper.insertRestockLogIgnore(request.refNo(), item.skuId(), item.quantity());
-                if (claimed == 0) {
-                    // 回执必须如实：本轮**实际加回 0 件**（此前已入过库），不能报成加了 quantity 件 ——
-                    // 否则调用方与审计都会以为这批货回了两次。
-                    results.add(new StockChangeResult(item.skuId(), 0, true, null));
-                    continue;
-                }
-                affected = skuMapper.restockStock(item.skuId(), item.quantity(), now);
-            } else {
-                affected = switch (action) {
-                    case ACTION_FREEZE -> skuMapper.freezeStock(item.skuId(), item.quantity(), now);
-                    case ACTION_RELEASE -> skuMapper.releaseStock(item.skuId(), item.quantity(), now);
-                    case ACTION_DEDUCT -> skuMapper.deductStock(item.skuId(), item.quantity(), now);
-                    default -> throw BizException.validation("不支持的库存操作：" + action);
-                };
-            }
-            if (affected == 1) {
-                results.add(new StockChangeResult(item.skuId(), item.quantity(), true, null));
-            } else {
+            StockChangeResult result = switch (action) {
+                case ACTION_FREEZE -> freezeOne(request.orderId(), item, now);
+                case ACTION_RELEASE -> releaseOne(request.orderId(), item, now);
+                case ACTION_DEDUCT -> deductOne(request.orderId(), item, now);
+                case ACTION_RESTOCK -> restockOne(item, request.refNo(), now);
+                default -> throw BizException.validation("不支持的库存操作：" + action);
+            };
+            if (!result.success()) {
                 allSuccess = false;
-                results.add(new StockChangeResult(item.skuId(), item.quantity(), false, diagnose(action, item.skuId())));
             }
+            results.add(result);
         }
 
         // 整批原子：只要有一项没成功，把本事务标记为回滚，
@@ -137,9 +138,132 @@ public class StockService {
         // 注意：这里不抛异常，而是标记回滚后**照常返回逐项结果** ——
         // 调用方需要知道「是哪个 SKU、因为什么失败」才能给出准确提示。
         if (!allSuccess) {
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            markRollbackOnly();
         }
         return new StockChangeResponse(action, allSuccess, List.copyOf(results));
+    }
+
+    /**
+     * 标记当前事务回滚。
+     *
+     * <p>单独抽出来是为了单测能在无事务上下文里验证「失败即整批回滚」的决策，
+     * 而不必为了一个方法去起 Spring 事务管理器。
+     */
+    void markRollbackOnly() {
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+    }
+
+    /**
+     * 冻结：先登记订单级预占，再原子增加 SKU 冻结量。
+     *
+     * <p>顺序不能反：若先冻 SKU 再登记台账，登记失败时 SKU 已被冻住，而调用方拿不到
+     * 「这份冻结属于谁」的信息，只能靠对账猜。反过来，登记成功但冻结失败时，
+     * 本事务会整批回滚，预占行也一并撤销，不会留下幽灵占用。
+     *
+     * <p>重复请求（响应丢失后的重试）：主键撞车返回 0，再读已有预占。
+     * 数量一致 → 幂等成功（本轮实际新增 0）；数量不一致 → 拒绝，绝不按新数量再冻一次。
+     */
+    private StockChangeResult freezeOne(Long orderId, StockChangeItem item, LocalDateTime now) {
+        int claimed = reservationMapper.insertIgnore(orderId, item.skuId(), item.quantity(), now);
+        if (claimed == 0) {
+            SkuStockReservationEntity existing = reservationMapper.selectForUpdate(orderId, item.skuId());
+            if (existing == null) {
+                return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+            }
+            if (!SkuStockReservationEntity.STATUS_FROZEN.equals(existing.getStatus())) {
+                return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+            }
+            if (!item.quantity().equals(existing.getQuantity())) {
+                return failed(item, Reason.RESERVATION_QTY_MISMATCH);
+            }
+            return new StockChangeResult(item.skuId(), 0, true, null);
+        }
+        int affected = skuMapper.freezeStock(item.skuId(), item.quantity(), now);
+        return affected == 1
+                ? new StockChangeResult(item.skuId(), item.quantity(), true, null)
+                : failed(item, diagnose(ACTION_FREEZE, item.skuId()));
+    }
+
+    /**
+     * 释放：只释放本订单登记过的那份预占。
+     *
+     * <p>「本订单没有预占行」按幂等成功处理（库存不动）：这通常意味着冻结请求根本没成功，
+     * 或者上一次释放已经提交、只是响应丢了。此时报错只会让调用方无限重试；
+     * 而如果确实存在「交易域以为冻了、商品域没有记录」的偏差，对账守卫会把它抓出来，
+     * 不需要靠释放接口在这里猜。
+     */
+    private StockChangeResult releaseOne(Long orderId, StockChangeItem item, LocalDateTime now) {
+        SkuStockReservationEntity existing = reservationMapper.selectForUpdate(orderId, item.skuId());
+        if (existing == null) {
+            return new StockChangeResult(item.skuId(), 0, true, null);
+        }
+        if (SkuStockReservationEntity.STATUS_RELEASED.equals(existing.getStatus())) {
+            return new StockChangeResult(item.skuId(), 0, true, null);
+        }
+        if (!SkuStockReservationEntity.STATUS_FROZEN.equals(existing.getStatus())) {
+            return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+        }
+        if (!item.quantity().equals(existing.getQuantity())) {
+            return failed(item, Reason.RESERVATION_QTY_MISMATCH);
+        }
+        int affected = skuMapper.releaseStock(item.skuId(), item.quantity(), now);
+        if (affected != 1) {
+            return failed(item, diagnose(ACTION_RELEASE, item.skuId()));
+        }
+        if (reservationMapper.markReleased(orderId, item.skuId(), now) != 1) {
+            return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+        }
+        return new StockChangeResult(item.skuId(), item.quantity(), true, null);
+    }
+
+    /**
+     * 扣减：只扣本订单登记过的那份预占，库存与冻结量同时减少。
+     *
+     * <p>没有预占行时**不能**像释放那样按成功处理：钱已经收了，库存却没扣，
+     * 这是真正的资损方向，必须让支付事务回滚并暴露出来。
+     * 已扣减过的重试则按幂等成功返回，避免支付回调重放把库存扣两次。
+     */
+    private StockChangeResult deductOne(Long orderId, StockChangeItem item, LocalDateTime now) {
+        SkuStockReservationEntity existing = reservationMapper.selectForUpdate(orderId, item.skuId());
+        if (existing == null) {
+            return failed(item, Reason.RESERVATION_NOT_FOUND);
+        }
+        if (SkuStockReservationEntity.STATUS_DEDUCTED.equals(existing.getStatus())) {
+            return new StockChangeResult(item.skuId(), 0, true, null);
+        }
+        if (!SkuStockReservationEntity.STATUS_FROZEN.equals(existing.getStatus())) {
+            return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+        }
+        if (!item.quantity().equals(existing.getQuantity())) {
+            return failed(item, Reason.RESERVATION_QTY_MISMATCH);
+        }
+        int affected = skuMapper.deductStock(item.skuId(), item.quantity(), now);
+        if (affected != 1) {
+            return failed(item, diagnose(ACTION_DEDUCT, item.skuId()));
+        }
+        if (reservationMapper.markDeducted(orderId, item.skuId(), now) != 1) {
+            return failed(item, Reason.RESERVATION_STATE_CONFLICT);
+        }
+        return new StockChangeResult(item.skuId(), item.quantity(), true, null);
+    }
+
+    private StockChangeResult restockOne(StockChangeItem item, String refNo, LocalDateTime now) {
+        // 幂等闸：只有「首次插入」才真正加库存。重复提交（响应丢失后的重试）在这里返回 0，
+        // 于是本轮跳过更新、按**成功**返回（货确实已经回库了）——既不重复加，也不让调用方重试到死。
+        int claimed = skuMapper.insertRestockLogIgnore(refNo, item.skuId(), item.quantity());
+        if (claimed == 0) {
+            // 回执必须如实：本轮**实际加回 0 件**（此前已入过库），不能报成加了 quantity 件 ——
+            // 否则调用方与审计都会以为这批货回了两次。
+            return new StockChangeResult(item.skuId(), 0, true, null);
+        }
+        int affected = skuMapper.restockStock(item.skuId(), item.quantity(), now);
+        return affected == 1
+                ? new StockChangeResult(item.skuId(), item.quantity(), true, null)
+                : failed(item, diagnose(ACTION_RESTOCK, item.skuId()));
+    }
+
+    private static StockChangeResult failed(StockChangeItem item, String reason) {
+        return new StockChangeResult(item.skuId(), item.quantity(), false, reason);
     }
 
     /**
@@ -157,11 +281,12 @@ public class StockService {
         if (ACTION_RESTOCK.equals(action)) {
             return Reason.RESTOCK_FAILED;
         }
-        if (!SKU_ACTIVE.equals(sku.getStatus())) {
-            return Reason.SKU_INACTIVE;
-        }
+        // 释放的 WHERE 里同样没有 status 条件：下架不影响「把冻结放掉」，失败只能是冻结量不足。
         if (ACTION_RELEASE.equals(action)) {
             return Reason.FREEZE_NOT_ENOUGH;
+        }
+        if (ACTION_FREEZE.equals(action) && !SKU_ACTIVE.equals(sku.getStatus())) {
+            return Reason.SKU_INACTIVE;
         }
         return Reason.INSUFFICIENT_STOCK;
     }

@@ -96,6 +96,19 @@ CREATE TABLE t_sku (
 );
 CREATE INDEX idx_sku_spu ON t_sku (spu_id);
 
+-- ---------- 订单级库存预占台账（B-03） ----------
+-- 释放 / 扣减按 (order_id, sku_id) 定位本订单的冻结，不再只校验 SKU 上的全局冻结量。
+CREATE TABLE t_sku_stock_reservation (
+    order_id   BIGINT      NOT NULL,
+    sku_id     BIGINT      NOT NULL,
+    quantity   INT         NOT NULL,
+    status     VARCHAR(16) NOT NULL DEFAULT 'FROZEN',
+    created_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (order_id, sku_id)
+);
+CREATE INDEX idx_reservation_sku_status ON t_sku_stock_reservation (sku_id, status);
+
 -- ---------- C2C 闲置 ----------
 CREATE TABLE t_listing (
     id               BIGINT       NOT NULL,

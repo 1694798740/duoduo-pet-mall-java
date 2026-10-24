@@ -175,6 +175,21 @@ CREATE TABLE t_sku_restock_log (
 );
 CREATE INDEX idx_restock_log_sku ON t_sku_restock_log (sku_id);
 
+-- ---------- 订单级库存预占台账（B-03） ----------
+-- 释放 / 扣减原先只校验 t_sku.frozen_stock 这个全局数量，同一 SKU 被多单冻结时，
+-- 释放 A 单会把 B 单的冻结量也放掉。本表用 (order_id, sku_id) 主键把冻结归属到订单：
+-- 主键即幂等键，重复冻结 INSERT IGNORE 去重；释放 / 扣减只操作本订单那一行。
+CREATE TABLE t_sku_stock_reservation (
+    order_id   BIGINT      NOT NULL                COMMENT '订单 id（交易域雪花 id，仅作外部标识，不建外键）',
+    sku_id     BIGINT      NOT NULL                COMMENT 'SKU id',
+    quantity   INT         NOT NULL                COMMENT '本订单预占数量',
+    status     VARCHAR(16) NOT NULL DEFAULT 'FROZEN' COMMENT 'FROZEN / RELEASED / DEDUCTED',
+    created_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC）',
+    updated_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间（UTC）',
+    PRIMARY KEY (order_id, sku_id),
+    KEY idx_reservation_sku_status (sku_id, status)
+);
+
 -- ---------- C2C 闲置 ----------
 CREATE TABLE t_listing (
     id               BIGINT       NOT NULL,

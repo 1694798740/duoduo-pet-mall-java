@@ -69,24 +69,30 @@ public class ProductGateway {
         return map;
     }
 
-    /** 冻结库存；返回逐项结果，调用方按 {@code allSuccess} 决定是否补偿 */
+    /**
+     * 冻结库存；返回逐项结果，调用方按 {@code allSuccess} 决定是否补偿。
+     *
+     * <p><b>orderId 必传（B-03）</b>：商品侧要按 {@code (order_id, sku_id)} 登记预占。
+     * 之前这里收了 orderId 却只用于日志，请求体里传 null —— 释放方无从判断冻结归属，
+     * 这就是「A 单取消把 B 单冻结放掉」的入口。
+     */
     public StockChangeOutcome freeze(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.freezeStock(new StockChangePayload(items, null)),
+                () -> productClient.freezeStock(new StockChangePayload(items, orderId, null)),
                 "冻结库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
 
     public StockChangeOutcome release(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.releaseStock(new StockChangePayload(items, null)),
+                () -> productClient.releaseStock(new StockChangePayload(items, orderId, null)),
                 "释放库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
 
     public StockChangeOutcome deduct(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.deductStock(new StockChangePayload(items, null)),
+                () -> productClient.deductStock(new StockChangePayload(items, orderId, null)),
                 "扣减库存(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }
@@ -104,7 +110,7 @@ public class ProductGateway {
      */
     public StockChangeOutcome restock(Long orderId, List<StockChangeItem> items) {
         ApiResponse<StockChangeOutcome> response = call(
-                () -> productClient.restockStock(new StockChangePayload(items, "restock:" + orderId)),
+                () -> productClient.restockStock(new StockChangePayload(items, orderId, "restock:" + orderId)),
                 "退货入库(订单 " + orderId + ")");
         return response == null ? null : response.data();
     }

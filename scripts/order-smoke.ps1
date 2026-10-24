@@ -225,6 +225,8 @@ if (-not $SkipDbCheck) {
     Check "商品库 2001 冻结量 = 2（下单已冻结）" ($frozenA -eq '2') $frozenA
     $freezeRows = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)') AND status = 'FROZEN';"
     Check "冻结台账 2 行且状态为 FROZEN" ($freezeRows -eq '2') $freezeRows
+    $resv = Sql 'duoduo_product' "SELECT COUNT(*), COALESCE(SUM(quantity),0) FROM t_sku_stock_reservation WHERE order_id = (SELECT id FROM duoduo_trade.t_order WHERE order_no = '$($order1.orderNo)') AND status = 'FROZEN';"
+    Check "订单级预占 2 行、数量合计 3（B-03）" ($resv -eq "2`t3") $resv
     $logRows = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)');"
     Check "状态流转日志 1 行（创建）" ($logRows -eq '1') $logRows
     $availAfter = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }).body.data)[0].availableStock))
@@ -290,6 +292,8 @@ if (-not $SkipDbCheck) {
     Check "取消后商品库冻结量回到 0（已释放）" ($frozenAfter -eq '0') $frozenAfter
     $released = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)') AND status = 'RELEASED';"
     Check "冻结台账 2 行均标记为 RELEASED" ($released -eq '2') $released
+    $resvReleased = Sql 'duoduo_product' "SELECT COUNT(*) FROM t_sku_stock_reservation WHERE order_id = (SELECT id FROM duoduo_trade.t_order WHERE order_no = '$($order1.orderNo)') AND status = 'RELEASED';"
+    Check "订单级预占 2 行均标记为 RELEASED（B-03）" ($resvReleased -eq '2') $resvReleased
     $availBack = [int]((@((Call 'Get' "$Gateway/api/products/internal/skus/batch?ids=$SKU_A" $null $null @{ 'X-Internal-Token' = 'internal' }).body.data)[0].availableStock))
     Check "接口可售余量恢复到 $S1" ($availBack -eq $S1) $availBack
     $cancelLog = Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order_status_log WHERE order_id = (SELECT id FROM t_order WHERE order_no = '$($order1.orderNo)');"

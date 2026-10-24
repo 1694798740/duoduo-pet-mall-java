@@ -768,7 +768,7 @@ public class OrderService {
             if (!frozenOk.contains(item.skuId())) {
                 continue;
             }
-            frozenRefs.add(new FrozenRef(item.skuId(), item.quantity()));
+            frozenRefs.add(new FrozenRef(order.getId(), item.skuId(), item.quantity()));
             StockFreezeEntity freeze = new StockFreezeEntity();
             freeze.setId(idGenerator.nextId());
             freeze.setSkuId(item.skuId());
@@ -2399,23 +2399,40 @@ public class OrderService {
         marketingGateway.release(orderNo, scene);
     }
 
-    /** 补偿释放：失败只记日志，不再向外抛 —— 否则会掩盖真正的原始异常 */
+    /**
+     * 补偿释放：失败只记日志，不再向外抛 —— 否则会掩盖真正的原始异常。
+     *
+     * <p><b>必须按订单分组（B-03）</b>：一次下单可能拆成多家卖家的多张子单，
+     * 每张子单在商品侧各有自己的预占。把不同订单的 SKU 合并成一次 release，
+     * 商品侧无法判断每条冻结属于谁，只能退回「按全局冻结量释放」的老路。
+     * 分组后每张子单各释放各的，互不影响。
+     *
+     * <p>try/catch 放在循环**内部**：某一张子单释放失败，不能连累后面几张子单的释放。
+     */
     private void releaseQuietly(List<FrozenRef> refs, String scene) {
         if (refs.isEmpty()) {
             return;
         }
-        try {
-            List<StockChangeItem> items = refs.stream()
+        Map<Long, List<FrozenRef>> byOrder = refs.stream()
+                .collect(Collectors.groupingBy(FrozenRef::orderId,
+                        LinkedHashMap::new, Collectors.toList()));
+        for (Map.Entry<Long, List<FrozenRef>> entry : byOrder.entrySet()) {
+            Long orderId = entry.getKey();
+            List<StockChangeItem> items = entry.getValue().stream()
                     .map(r -> new StockChangeItem(r.skuId(), r.quantity()))
                     .toList();
-            StockChangeOutcome outcome = productGateway.release(null, items);
-            if (outcome == null || !outcome.allSuccess()) {
-                log.error("{}：库存释放未全部成功，需人工核对 {}", scene, describeFailure(outcome, Map.of()));
-            } else {
-                log.info("{}：已释放 {} 条预冻结库存", scene, items.size());
+            try {
+                StockChangeOutcome outcome = productGateway.release(orderId, items);
+                if (outcome == null || !outcome.allSuccess()) {
+                    log.error("{}：订单 {} 库存释放未全部成功，需人工核对 {}",
+                            scene, orderId, describeFailure(outcome, Map.of()));
+                } else {
+                    log.info("{}：订单 {} 已释放 {} 条预冻结库存", scene, orderId, items.size());
+                }
+            } catch (RuntimeException e) {
+                log.error("{}：订单 {} 释放预冻结库存时商品服务不可用，需人工核对 {}",
+                        scene, orderId, entry.getValue(), e);
             }
-        } catch (RuntimeException e) {
-            log.error("{}：释放预冻结库存时商品服务不可用，需人工核对 {}", scene, refs, e);
         }
     }
 
@@ -2517,8 +2534,8 @@ public class OrderService {
         return LocalDateTime.now(ZoneOffset.UTC);
     }
 
-    /** 已成功冻结的 SKU 与数量，用于异常补偿 */
-    private record FrozenRef(Long skuId, Integer quantity) {
+    /** 已成功冻结的订单、SKU 与数量，用于异常补偿（orderId 决定释放的是哪张子单的预占） */
+    private record FrozenRef(Long orderId, Long skuId, Integer quantity) {
     }
 
     /**

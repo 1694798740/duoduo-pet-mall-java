@@ -9,6 +9,7 @@
  * 这类缺陷的共同特征：**两个来源各自都"成功"，只有对不上账**。
  * 所以本守卫不复述任何业务判断，只做三件事：
  *   ① 台账 FROZEN 汇总（按 SKU）必须等于 t_sku.frozen_stock；
+ *      并核对商品域订单级预占（B-03）与库存冻结量、交易域台账三方一致；
  *   ② 一个订单最多只有一笔 SUCCESS 支付单（多笔 = 真的重复收了钱）；
  *   ③ 已支付 / 已关闭的订单不应再有 FROZEN 台账行。
  *
@@ -38,6 +39,30 @@ async function main() {
                       WHERE f.sku_id = s.id AND f.status = 'FROZEN')`);
   record('商品域冻结量都有对应台账行', orphan === '',
     orphan === '' ? '无幽灵冻结' : `有冻结量但无台账（sku/frozen）：\n${orphan}`);
+
+  // ①c 商品域订单级预占汇总 == t_sku.frozen_stock（B-03）
+  //     预占台账是释放 / 扣减的唯一归属依据；它和 SKU 冻结量对不上时，
+  //     下一次释放就会放错数量，或者放不掉。
+  const reservationMismatch = await mysql('duoduo_product', `
+    SELECT s.id, COALESCE(s.frozen_stock, 0) AS sku_frozen, COALESCE(r.qty, 0) AS reserved_qty
+    FROM t_sku s
+    LEFT JOIN (SELECT sku_id, SUM(quantity) AS qty FROM t_sku_stock_reservation
+               WHERE status = 'FROZEN' GROUP BY sku_id) r ON r.sku_id = s.id
+    WHERE COALESCE(s.frozen_stock, 0) <> COALESCE(r.qty, 0)`);
+  record('预占 FROZEN 汇总 == t_sku.frozen_stock', reservationMismatch === '',
+    reservationMismatch === '' ? '两来源一致' : `不一致的 SKU（sku/冻结量/预占）：\n${reservationMismatch}`);
+
+  // ①d 交易域 FROZEN 台账必须都有同数量的商品域预占（B-03 升级补登记是否完整）
+  const ledgerVsReservation = await mysql('duoduo_trade', `
+    SELECT f.order_id, f.sku_id, f.quantity AS ledger_qty,
+           r.quantity AS reservation_qty, r.status AS reservation_status
+    FROM t_stock_freeze f
+    LEFT JOIN duoduo_product.t_sku_stock_reservation r
+           ON r.order_id = f.order_id AND r.sku_id = f.sku_id
+    WHERE f.status = 'FROZEN'
+      AND (r.order_id IS NULL OR r.status <> 'FROZEN' OR r.quantity <> f.quantity)`);
+  record('交易域 FROZEN 都有同数量的商品域预占', ledgerVsReservation === '',
+    ledgerVsReservation === '' ? '无缺失' : `缺失/数量不一致（订单/SKU/台账/预占/状态）：\n${ledgerVsReservation}`);
 
   // ② 同一订单多笔成功收款
   const dupPay = await mysql('duoduo_trade', `

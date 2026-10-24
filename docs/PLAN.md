@@ -1,6 +1,29 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-24 · 第九十四轮）**：**商品管理重构 P0 批（审核有效性 + 可经营）** ——
+> **最新一轮（2026-10-24 · 第九十五轮）**：**库存预占订单级台账（B-03）—— 冻结/释放/扣减必须带 orderId** ——
+> 问题：商品域只按全局 `t_sku.frozen_stock` 做条件更新，A 单释放时可能动到 B 单的冻结量；
+> 交易侧 `ProductGateway` 虽接收 orderId，却把请求体里的 orderId 写成 null，形参等于摆设。
+> ① **商品域**：新增 `t_sku_stock_reservation`（主键 `(order_id, sku_id)`，状态 FROZEN/RELEASED/DEDUCTED）；
+> freeze 先 `INSERT IGNORE` 占坑再原子冻结；release/deduct 先锁台账行、校验数量与状态再动库存。
+> 无预占时 release 按约定幂等成功（+0），deduct 明确报 `RESERVATION_NOT_FOUND`（资金方向不许静默成功）；
+> 整批仍是一条本地事务，任一项失败即回滚，并新增 `RESERVATION_QTY_MISMATCH` / `RESERVATION_STATE_CONFLICT` 原因码。
+> ② **交易域**：`StockChangePayload` 增 `orderId` 并真实透传；`FrozenRef` 带 orderId，补偿释放按订单分组、
+> 逐组 try/catch —— 一张子单释放失败不再阻断其他子单。
+> ③ **SQL / 部署**：`incremental/47` 建表、`repair/47` 回填脚本；顺序固定为「建表 → 有 FROZEN 则回填 →
+> 先发交易（旧商品域忽略新字段）→ 再发商品」，反过来旧交易的新请求会被商品域 400。
+> ④ **对账与回归**：`check-stock-freeze-recon.mjs` 扩到 **8/8**（新增「商品预占 FROZEN 汇总 == SKU frozen_stock」
+> 与「交易台账 FROZEN ↔ 商品预占」两条）；`order-smoke` 扩到 **79/0**（下单/取消各加预占行断言）；
+> 新探针 `stock-order-reservation-smoke.mjs` **23/0**（重复冻结、越单释放、错量扣减、释放后扣减、扣减后释放等）；
+> 商品模块单测 **141/0**（新增 `StockServiceTest` 17 条，红→绿），交易模块单测 **119/0**。
+> ⑤ **顺手修基线**：`pay` 的订单状态闸前移到「已收款」闸之前（已付款订单重复支付应报 `ORDER_STATUS_ILLEGAL`；
+> 卡在待付款但已有成功支付单的仍由资金闸报 `BUSINESS_RULE`），`payment-smoke` **72/0**；
+> r58 探针脚手架改用 `dd1` 签名头 + localhost（**断言未动**）后 **10/0**；
+> r93 冒烟新增启动自清理（下架遗留「R93 冒烟商品」在售件），**34/0**。
+> 其余受影响套件：`pay-channel-smoke` 62/0、`split-order-idem-smoke` 18/18。
+> 风险：其他环境若已有 FROZEN 台账，升级前必须走维护窗口执行回填；本地 FROZEN=0，回填为空操作。
+> 本轮未改前端，`product-manage-r93-ui-check` 未重跑。
+
+> **上轮（2026-10-24 · 第九十四轮）**：**商品管理重构 P0 批（审核有效性 + 可经营）** ——
 > 基于平台调研（淘宝/天猫/京东/有赞）与全量代码审计，产出《商品管理重构方案》与两周待办；本轮先落 P0 四项：
 > ① **审核台完整内容**：详情图集（可点开）、商品介绍、富文本详情（可展开、HTML 渲染）、规格/包装全部可见 ——
 > 此前运营只看到主图 1 张与纯文本，人工审核等于"没看全就通过"。

@@ -4,6 +4,18 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-24（七十六）· 库存预占补上订单级台账（B-03）：冻结/释放/扣减必须带 orderId**
+
+- **资金风险修复**：商品域原先只按全局 `frozen_stock` 条件更新，释放 A 单可能动到 B 单的冻结量；
+  交易侧 `ProductGateway` 还把 orderId 丢成了 null。现在新增 `t_sku_stock_reservation`
+  （主键 `(order_id, sku_id)`，FROZEN/RELEASED/DEDUCTED），freeze/release/deduct 一律校验订单归属与数量。
+- **语义**：释放无预占 → 幂等成功（+0）；扣减无预占 → `RESERVATION_NOT_FOUND`（资金方向不许静默）；
+  重复冻结/错量/状态冲突分别返回 `RESERVATION_STATE_CONFLICT` / `RESERVATION_QTY_MISMATCH`；整批失败即回滚。
+- **部署**：`incremental/47` 建表 + `repair/47` 回填；顺序为「建表 → 回填（有 FROZEN 才需要）→ 交易 → 商品」。
+- **验证**：新探针 `stock-order-reservation-smoke.mjs` **23/0**、对账 `check-stock-freeze-recon.mjs` **8/8**、
+  `order-smoke` **79/0**、商品单测 **141/0**、交易单测 **119/0**；`payment-smoke` 72/0、`pay-channel-smoke` 62/0、
+  `split-order-idem-smoke` 18/18、r58 10/10。顺手修了支付状态闸顺序（历史断言不改）与 r93 冒烟启动自清理。
+
 **2026-10-24（七十五）· 商品管理重构 P0：审核台看全内容 / SKU 改价改库存 / 分级重审**
 
 - **审核台**：详情图集、商品介绍、富文本详情（HTML 渲染）、规格参数、包装规格全部可见。
@@ -1155,7 +1167,9 @@ node scripts\lib\check-e2e-shots.mjs
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke.ps1              # 62 项：用户域 + 商品域（含 E27 的闲置/无品牌商品夹具守卫）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\trade-smoke.ps1        # 87 项：购物车
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 77 项：下单拆单 + 库存冻结
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\order-smoke.ps1        # 79 项：下单拆单 + 库存冻结（含订单级预占台账断言）
+NO_PROXY="*" node scripts/stock-order-reservation-smoke.mjs                         # 23 项：订单级预占（重复冻结/越单释放/错量扣减/释放后扣减）
+NO_PROXY="*" node scripts/check-stock-freeze-recon.mjs                              # 8 项：交易台账 ↔ 商品预占 ↔ SKU frozen_stock 三方对账
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\payment-smoke.ps1      # 72 项：支付幂等 + 状态机 + 超时关单
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\settlement-smoke.ps1   # 149 项：担保交易 + 资金托管 + 退款 + E22 佣金/T+7/钱包/账单（双端同源 + 库内复算）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pay-channel-smoke.ps1  # 62 项：沙箱支付渠道（扫码/验签/回调）
