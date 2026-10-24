@@ -19,6 +19,17 @@
 > （chat-recall 25、realtime 17、r49 15、r50 18、r53 17、r55 41+1 跳过、lifecycle 32、read 24、split 22）；
 > mall/merchant tsc 干净、三容器 healthy。★ 顺手修两处陈年回归债：r50 种子公告丢失重放 17 号种子（数据缺口非代码）、
 > r55 E4 ship 路径 M5-9 起已改卖家归属校验（自营无卖家账号，改 skip 并注明 F 块已覆盖该链路）。
+> **★ 部署侧事故（2026-10-24，用户验收时发现「页面还是旧版」）**：根因是 **web 镜像只 COPY 宿主机的
+> `apps/{app}/dist`，不在容器内构建**（见 `frontend/Dockerfile` 头部约定）；本轮只跑了 `tsc --noEmit`
+> 与 `docker compose build`，跳过了 `npm run build`，于是把 8 小时前的旧 dist 打进镜像（构建仅 16s 即为征兆）。
+> 定位三证据：容器内 `assets/*.js` mtime 早于源码修改时间、产物 grep 不到新类名（`chat-time-sep`/`msg-menu-trigger`）、
+> `docker compose build` 日志无前端编译步骤。修复：`npm run build:mall` + `build:merchant` → 核对 dist mtime 与
+> 新标记 → `compose build` + `up -d --force-recreate` → 确认 index.html 引用新 hash（`main-BQ0v8Dz3.js` /
+> `merchant-CorQTNv6.js`）且 `Cache-Control: no-store`。**防复发：改前端后一律走 `scripts/web-up.sh`**
+> （内部即 npm build → compose build → up），禁止直接 `compose build` 前端镜像。
+> 新增 e2e `scripts/e2e/r92-message-ui-check.mjs` **18/0**（打 8088 容器产物：无「按住说话」/ 麦克风 SVG /
+> 点击出录音条并可取消 / ··· 菜单四动作 / 分隔条与多选样式存在 / 无 JS 异常），确保「接口改了、UI 没变」这类
+> 事故能被自动化抓住；既有 `support-ux-ui-check` 53/0 同轮复跑通过。
 
 > **上轮（2026-10-24 · 第九十一轮）**：**消息撤回 / 引用 / 语音（im 迭代第二批收官）** ——
 > 按 `docs/im-realtime-iteration-plan.md` 顺序落地三能力，客服 + 私信双通道、web 三页 + 小程序两页同批对齐：

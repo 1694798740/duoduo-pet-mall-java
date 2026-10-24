@@ -2,6 +2,18 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 第九十二轮 UI 专项 e2e（`scripts/e2e/r92-message-ui-check.mjs`，18 项）
+
+```bash
+NO_PROXY="*" node scripts/e2e/r92-message-ui-check.mjs
+```
+
+前置：容器已启动（8088 商城 / 8091 商家端 / 8080 网关），**打的是容器产物而不是 dev server**。
+覆盖：客服页无「按住说话」旧按钮、麦克风为 SVG 且点击出现录音条（含取消 / 结束并发送，取消后消失）、
+消息行「···」菜单展开且含引用/删除/撤回/多选、时间分隔条与多选工具条样式存在、无页面级 JS 异常。
+headless 无麦克风 → 必须带 `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`，否则录音条永不出现（假红）。
+2026-10-24 实测 **18/0**。
+
 ## 单向删除 / aroundId 定位冒烟（`scripts/message-self-delete-around-smoke.mjs`，30 项，第九十二轮）
 
 ```bash
