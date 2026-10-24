@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-10-24",
+  "project": "多多宠物商店",
+  "baseline_commit": "8e29571",
+  "local_root": "C:\\Users\\16947\\WorkBuddy\\2026-09-18-17-36-12\\AI交接文档集-2026-10-24",
+  "documents": [
+    "00-接手索引.md",
+    "01-项目介绍与业务模型.md",
+    "02-架构与技术栈.md",
+    "03-目录结构与代码地图.md",
+    "04-环境搭建与启动运维.md",
+    "05-开发规范与工作流.md",
+    "06-功能清单与完成度.md",
+    "07-数据模型与接口契约.md",
+    "08-测试体系与验收方法.md",
+    "09-待办任务与后续计划.md",
+    "10-最终预期效果与验收标准.md",
+    "11-踩坑手册与铁律.md",
+    "12-AI接管操作手册.md",
+    "13-账号与环境清单（脱敏）.md"
+  ],
+  "skill": "skills/duoduo-takeover/SKILL.md",
+  "targets": {
+    "github": { "status": "pending", "path": "docs/ai-handover-2026-10-24/" },
+    "feishu": { "status": "pending", "folder_token": null, "url": null },
+    "tencent_docs": { "status": "pending", "folder_id": null, "url": null },
+    "ima": { "status": "pending", "knowledge_base_id": "ima_kb_d6LoVzYa", "media_ids": [] }
+  }
+}
