@@ -16,7 +16,8 @@
  *   <li>录制是实时的（60 秒素材约等 60 秒），所以必须有进度提示，不能假装瞬间完成。</li>
  * </ul>
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /** 端侧硬约束：时长；体积不设限 */
 export const VIDEO_MAX_SECONDS = 60;
@@ -1332,7 +1333,13 @@ export const useVoiceRecorder: (opts: {
 
   const finish = useCallback(() => {
     const rec = recRef.current;
-    if (!rec) return;
+    if (!rec || rec.state === 'inactive') return;
+    // ★ 2026-10-24 修复：正在录的那一段此前从未结算 —— onstop 只读 activeMsRef，
+    // 于是「录了 N 秒后直接点结束」永远是 0ms，被误判「录音太短」；先暂停再结束才能成功。
+    // 这里在 stop 之前把最后一段补进累计值（暂停态已由 pause() 结算过，不能重复加）。
+    if (rec.state === 'recording') {
+      activeMsRef.current += Date.now() - segmentStartRef.current;
+    }
     if (rec.state === 'paused') rec.resume(); // stop() 在 paused 态不触发 ondataavailable 收尾
     rec.stop();
   }, []);
@@ -1437,6 +1444,17 @@ export const RecallLine: React.FC<{ mine: boolean }> = ({ mine }) => (
  * 消息操作菜单（2026-10-25）：悬停消息行尾出现「···」，点击弹出 引用/删除/撤回/多选。
  * 移动端触摸没有 hover —— 长按场景在小程序端实现，web 端也兼容点按（菜单按钮始终可点）。
  */
+/**
+ * 消息操作菜单（2026-10-25，2026-10-24 修复定位）。
+ *
+ * <p>为什么用 Portal + fixed：菜单此前是气泡行内的 absolute 元素，聊天滚动区
+ * （`.sup-body`，overflow: auto）会把它裁掉 —— 对方消息靠近左边缘时尤其明显，
+ * 表现为「只露出一个空白小框」。改为挂到 document.body 并按触发按钮的
+ * 视口坐标定位，再按菜单实际尺寸做边界夹取（右/下越界时翻转或内推），
+ * 既不受滚动容器裁剪，也不会跑出屏幕。
+ *
+ * <p>滚动/resize 时直接关闭：fixed 坐标不会跟随内容滚动，留着会「飘」。
+ */
 export const MessageActions: React.FC<{
   onQuote?: (() => void) | null;
   onRecall?: (() => void) | null;
@@ -1446,41 +1464,84 @@ export const MessageActions: React.FC<{
   disabled?: boolean;
 }> = ({ onQuote, onRecall, onDelete, onMultiSelect, disabled }) => {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const dismiss = () => setOpen(false);
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', esc);
+    // fixed 定位不随内容滚动 → 滚动即关，避免菜单与气泡错位
+    window.addEventListener('scroll', dismiss, true);
+    window.addEventListener('resize', dismiss);
     return () => {
       document.removeEventListener('mousedown', close);
       document.removeEventListener('keydown', esc);
+      window.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('resize', dismiss);
     };
   }, [open]);
+
+  // 打开后按菜单真实尺寸夹取到视口内（先渲染到屏外量尺寸，再落位，避免闪烁）
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !menuRef.current) return;
+    const t = triggerRef.current.getBoundingClientRect();
+    const m = menuRef.current.getBoundingClientRect();
+    const pad = 8;
+    let left = Math.min(t.right - m.width, window.innerWidth - m.width - pad);
+    left = Math.max(pad, left);
+    let top = t.bottom + 6;
+    if (top + m.height > window.innerHeight - pad) top = t.top - m.height - 6;
+    top = Math.max(pad, top);
+    setPos({ top, left });
+  }, [open]);
+
   if (disabled) return null;
   const hasAny = onQuote || onRecall || onDelete || onMultiSelect;
   if (!hasAny) return null;
   return (
     <div className="msg-menu-wrap" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="msg-menu-trigger"
         aria-label="消息操作"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setPos(null);
+          setOpen((v) => !v);
+        }}
       >
         ···
       </button>
-      {open ? (
-        <div className="msg-menu" role="menu">
-          {onQuote ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onQuote(); }}>引用</button> : null}
-          {onDelete ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}>删除</button> : null}
-          {onRecall ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onRecall(); }}>撤回</button> : null}
-          {onMultiSelect ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onMultiSelect(); }}>多选</button> : null}
-        </div>
-      ) : null}
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="msg-menu"
+              role="menu"
+              style={{
+                top: pos?.top ?? -9999,
+                left: pos?.left ?? -9999,
+                visibility: pos ? 'visible' : 'hidden',
+              }}
+            >
+              {onQuote ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onQuote(); }}>引用</button> : null}
+              {onDelete ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}>删除</button> : null}
+              {onRecall ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onRecall(); }}>撤回</button> : null}
+              {onMultiSelect ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onMultiSelect(); }}>多选</button> : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 };

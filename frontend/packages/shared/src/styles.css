@@ -3397,15 +3397,16 @@ button.chat-quoted, .chat-quoted[role='button'] { cursor: pointer; }
 }
 .sup-row:hover .msg-menu-trigger, .msg-menu-wrap:focus-within .msg-menu-trigger { opacity: 1; }
 .msg-menu {
-  position: absolute;
-  right: 0;
-  bottom: 100%;
-  z-index: 30;
+  /* 2026-10-24 修复：改为 fixed 并挂到 body（组件里用 Portal），
+     否则会被聊天滚动区（.sup-body overflow:auto）裁掉 —— 对方消息只露出一个空框。
+     坐标由组件按触发按钮视口位置计算并做边界夹取。 */
+  position: fixed;
+  z-index: 300;
   min-width: 96px;
   background: var(--surface, #fff);
   border: 1px solid var(--border, #e5e8ef);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -3418,9 +3419,11 @@ button.chat-quoted, .chat-quoted[role='button'] { cursor: pointer; }
   padding: 7px 12px;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--text-1, #23262d);
+  /* ★ 2026-10-24：原写法 var(--text-1, #23262d) —— 主题里根本没有 --text-1，
+     暗色下永远落到深色 fallback，深底深字几乎不可见。统一用 --text。 */
+  color: var(--text, #23262d);
 }
-.msg-menu button:hover { background: rgba(0, 0, 0, 0.06); }
+.msg-menu button:hover { background: var(--surface-2, rgba(0, 0, 0, 0.06)); }
 /* 多选删除工具条（2026-10-25） */
 .msg-select-bar {
   display: flex;

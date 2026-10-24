@@ -54,6 +54,12 @@ await call('POST', '/api/auth/register', { phone, password: PWD, nickname: 'R92U
 // 先经接口建一条客服会话：新账号直接进页面会是「未选会话」态（第 86 轮设计：不选会话不渲染输入区）
 const tk = (await call('POST', '/api/auth/login/token', { phone, password: PWD })).body?.data?.accessToken;
 await call('POST', '/api/support/messages', { content: 'R92 UI 预置消息' }, tk);
+// 让官方客服回一条：裁剪问题只在「对方消息」上暴露，会话里必须存在 .sup-row:not(.mine)
+const csToken = (await call('POST', '/api/auth/login/token', { phone: '13900000002', password: PWD })).body?.data?.accessToken;
+const sid = (await call('GET', '/api/support/session', null, tk)).body?.data?.id;
+if (csToken && sid) {
+  await call('POST', `/api/seller/support/sessions/${sid}/messages`, { content: '客服回复：用于菜单裁剪验证' }, csToken);
+}
 
 // headless 无真实麦克风：用 fake device 让 getUserMedia 可用（否则录音条永远不出现，假红）
 const browser = await chromium.launch({
@@ -137,6 +143,98 @@ try {
   const hasConfirmProvider = await page.evaluate(() => Boolean(document.querySelector('.dd-modal, .confirm-mask, [class*="confirm"]')));
   check('自定义弹窗组件已挂载（页面无原生 confirm 调用路径）', hasConfirmProvider || true);
   check('无页面级 JS 异常', errors.length === 0, errors.slice(0, 2));
+
+  step('暗色模式：菜单文字对比度（本轮修复点）');
+  await page.evaluate(() => localStorage.setItem('dd-theme', 'dark'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('.sup-item').first().click();
+  await page.locator('.msg-menu-trigger').first().waitFor({ timeout: 15000 });
+  check('暗色主题已生效（html[data-theme=dark]）',
+    (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark');
+  await page.locator('.sup-row').last().hover();
+  await page.locator('.msg-menu-trigger').last().click({ force: true });
+  await page.waitForTimeout(300);
+  const tone = await page.evaluate(() => {
+    const menu = document.querySelector('.msg-menu');
+    const btn = menu && menu.querySelector('button');
+    if (!menu || !btn) return null;
+    const cs = getComputedStyle(menu);
+    const bs = getComputedStyle(btn);
+    return { fg: bs.color, bg: cs.backgroundColor, opacity: bs.opacity };
+  });
+  const lum = (rgb) => {
+    const parts = (rgb.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const f = parts.map((v) => {
+      const x = v / 255;
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+  };
+  let ratio = 0;
+  if (tone) {
+    const a = lum(tone.fg);
+    const b = lum(tone.bg);
+    ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+  check('菜单文字与背景对比度 ≥ 4.5:1（暗色）', ratio >= 4.5, { ratio: Number(ratio.toFixed(2)), tone });
+  await page.keyboard.press('Escape');
+
+  step('菜单不被聊天滚动容器裁剪（本轮修复点）');
+  const otherRow = page.locator('.sup-row:not(.mine)').first();
+  const hasOther = (await otherRow.count()) > 0;
+  if (hasOther) {
+    await otherRow.scrollIntoViewIfNeeded();
+    await otherRow.hover();
+    await otherRow.locator('.msg-menu-trigger').click({ force: true });
+    await page.waitForTimeout(300);
+    const box = await page.evaluate(() => {
+      const menu = document.querySelector('.msg-menu');
+      if (!menu) return null;
+      const r = menu.getBoundingClientRect();
+      return {
+        inBody: menu.parentElement === document.body,
+        left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+        w: r.width, h: r.height,
+        vw: window.innerWidth, vh: window.innerHeight,
+        clipped: menu.scrollHeight > menu.clientHeight + 1,
+        items: menu.querySelectorAll('button').length,
+      };
+    });
+    check('菜单挂在 body 上（脱离 overflow 容器）', box?.inBody === true, box);
+    check('菜单完整落在视口内', Boolean(box) && box.left >= 0 && box.top >= 0
+      && box.right <= box.vw && box.bottom <= box.vh, box);
+    check('菜单未被裁剪（无内部截断，宽度≥90）', Boolean(box) && !box.clipped && box.w >= 90, box);
+    check('对方消息菜单项数 = 3（引用/删除/多选，无撤回）', box?.items === 3, box?.items);
+    const hasRecallItem = await page.locator('.msg-menu').last().getByText('撤回', { exact: true }).count();
+    check('对方消息不提供「撤回」入口（只允许撤自己）', hasRecallItem === 0);
+    await page.keyboard.press('Escape');
+  } else {
+    check('存在对方消息用于菜单裁剪验证', false, 'no .sup-row:not(.mine)');
+  }
+
+  step('录音：直接点「结束并发送」（本轮修复点）');
+  const before = await page.locator('.sup-row').count();
+  await page.locator('.mic-btn').first().click();
+  await page.waitForTimeout(1400); // 真实录 1.4 秒，不做暂停
+  await page.locator('.recording-bar').getByRole('button', { name: '结束并发送' }).click();
+  await page.waitForTimeout(3000);
+  const tooShort = await page.getByText(/录音太短/).count();
+  check('直接结束不再误报「录音太短」', tooShort === 0, tooShort);
+  const after = await page.locator('.sup-row').count();
+  check('录音消息已发出（消息数 +1）', after === before + 1, { before, after });
+  const voiceBubble = await page.locator('.sup-row').last().locator('..').innerHTML().catch(() => '');
+  check('最后一条为语音气泡（含 audio 或 voice 标记）',
+    /audio|voice|语音/i.test(voiceBubble), voiceBubble.slice(0, 120).replace(/\s+/g, ' '));
+
+  step('撤回入口只给自己的消息');
+  const ownRow = page.locator('.sup-row.mine').last();
+  await ownRow.scrollIntoViewIfNeeded();
+  await ownRow.hover();
+  await ownRow.locator('.msg-menu-trigger').click({ force: true });
+  await page.waitForTimeout(300);
+  const ownRecall = await page.locator('.msg-menu').last().getByText('撤回', { exact: true }).count();
+  check('本人 2 分钟内的消息提供「撤回」', ownRecall === 1, ownRecall);
+  await page.keyboard.press('Escape');
 
   console.log(`\n结果：${pass} 通过 / ${failures.length} 失败`);
   if (failures.length) console.log('失败项：\n - ' + failures.join('\n - '));
