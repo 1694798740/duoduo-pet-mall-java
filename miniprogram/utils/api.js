@@ -699,6 +699,10 @@ const social = {
     recall(messageId) {
       return req.post('/api/socials/messages/' + String(messageId) + '/recall');
     },
+    /** 单向删除私信（2026-10-25）：只对本人隐藏，对方仍可见。返回本次隐藏条数 */
+    deleteMessages(messageIds) {
+      return req.post('/api/socials/messages/delete', { messageIds: (messageIds || []).map(String) });
+    },
     /** 会话列表：每会话最新一条 + 未读数 + canSend（服务端算好，前端只消费） */
     conversations(page, pageSize) {
       return req.get(
@@ -709,7 +713,7 @@ const social = {
      * 与某人的双向消息（时间正序，取最新一页）+ 对方资料与可发状态。
      * productId 非空读商品咨询会话；listingId 非空读闲置咨询会话（第五十三轮）。
      */
-    thread(peerId, page, pageSize, productId, listingId) {
+    thread(peerId, page, pageSize, productId, listingId, aroundId) {
       return req.get(
         '/api/socials/messages/conversations/' +
           peerId +
@@ -718,7 +722,8 @@ const social = {
           '&pageSize=' +
           (pageSize || 20) +
           (productId ? '&productId=' + productId : '') +
-          (listingId ? '&listingId=' + listingId : '')
+          (listingId ? '&listingId=' + listingId : '') +
+          (aroundId ? '&aroundId=' + aroundId : '')
       );
     },
     /** 打开会话后标已读（幂等）；productId / listingId 语义同上 */
@@ -779,11 +784,16 @@ const social = {
     sessions() {
       return req.get('/api/support/sessions');
     },
-    /** 会话消息（时间正序）；sellerId 为空读自营客服会话 */
-    messages(sellerId, page, pageSize) {
+    /** 会话消息（时间正序）；sellerId 为空读自营客服会话；aroundId 非空 = 引用跳转定位窗口（2026-10-25） */
+    messages(sellerId, page, pageSize, aroundId) {
       const qs = ['page=' + (page || 1), 'pageSize=' + (pageSize || 20)];
       if (sellerId) qs.push('sellerId=' + String(sellerId));
+      if (aroundId) qs.push('aroundId=' + String(aroundId));
       return req.get('/api/support/messages?' + qs.join('&'));
+    },
+    /** 单向删除客服消息（2026-10-25）：只对本人隐藏，对方仍可见 */
+    deleteMessages(messageIds) {
+      return req.post('/api/support/messages/delete', { messageIds: (messageIds || []).map(String) });
     },
     send(content, sellerId, productId, extra) {
       const payload = { content: content || '' };
@@ -870,6 +880,61 @@ function shortTime(iso) {
   return p2(dt.getMonth() + 1) + '-' + p2(dt.getDate()) + ' ' + p2(dt.getHours()) + ':' + p2(dt.getMinutes());
 }
 
+/**
+ * 聊天时间分隔条文案（2026-10-25）：当天只显示 HH:mm；昨天/前天带相对称呼；
+ * 更早「M月D日 HH:mm」。prevIso 非空且间隔 <10 分钟 → 返回 null（不重复显示时间）。
+ */
+function chatTimeLabel(iso, prevIso) {
+  if (!iso) return null;
+  if (prevIso) {
+    const a = parseIsoLoose(iso);
+    const b = parseIsoLoose(prevIso);
+    if (a && b && Math.abs(a - b) < 10 * 60 * 1000) return null;
+  }
+  const raw = String(iso).trim();
+  const m = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$/
+  );
+  if (!m) return null;
+  const [y, mo, d, h, mi] = [+m[1], +m[2], +m[3], +m[4], +m[5]];
+  const frac = m[7] ? +((m[7] + '000').slice(0, 3)) : 0;
+  const zone = m[8];
+  let offsetMin = 0;
+  if (zone && zone !== 'Z') {
+    const sign = zone[0] === '-' ? -1 : 1;
+    const z = zone.slice(1).replace(':', '');
+    offsetMin = sign * (+z.slice(0, 2) * 60 + +z.slice(2));
+  }
+  const epoch = Date.UTC(y, mo - 1, d, h, mi, +(m[6] || 0), frac) - offsetMin * 60000;
+  const dt = new Date(epoch);
+  if (isNaN(dt.getTime())) return null;
+  // 北京时间（设备本地即 +8，与 shortTime 同口径）
+  const bj = new Date(epoch + 8 * 3600 * 1000);
+  const pad = (n) => ('0' + n).slice(-2);
+  const hm = pad(bj.getUTCHours()) + ':' + pad(bj.getUTCMinutes());
+  const day = bj.getUTCFullYear() + '-' + pad(bj.getUTCMonth() + 1) + '-' + pad(bj.getUTCDate());
+  const today = bjDayKeyFromEpoch(Date.now(), 0);
+  const yesterday = bjDayKeyFromEpoch(Date.now(), 1);
+  const beforeYesterday = bjDayKeyFromEpoch(Date.now(), 2);
+  if (day === today) return hm;
+  if (day === yesterday) return '昨天 ' + hm;
+  if (day === beforeYesterday) return '前天 ' + hm;
+  return (bj.getUTCMonth() + 1) + '月' + bj.getUTCDate() + '日 ' + hm;
+}
+
+/** 北京时间的 YYYY-MM-DD，offsetDays 天前 */
+function bjDayKeyFromEpoch(nowEpoch, offsetDays) {
+  const bj = new Date(nowEpoch - offsetDays * 86400000 + 8 * 3600 * 1000);
+  const pad = (n) => ('0' + n).slice(-2);
+  return bj.getUTCFullYear() + '-' + pad(bj.getUTCMonth() + 1) + '-' + pad(bj.getUTCDate());
+}
+
+/** 宽松 ISO 解析成毫秒（解析失败返回 null） */
+function parseIsoLoose(iso) {
+  const t = Date.parse(String(iso));
+  return isNaN(t) ? null : t;
+}
+
 module.exports = {
   get: req.get,
   post: req.post,
@@ -909,4 +974,5 @@ module.exports = {
   social,
   fen2yuan,
   shortTime,
+  chatTimeLabel,
 };

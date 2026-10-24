@@ -86,32 +86,88 @@ function prepareVideo(file) {
 }
 
 /**
- * 语音录制（2026-10-24）：RecorderManager 单例包装。
- * 松手即回调临时文件与实测时长；<600ms 视为误触报错；60 秒自动 onStop。
+ * 语音录制（2026-10-25 重构为点击式）：点麦克风开始 → 可暂停/继续 → 点结束发送。
+ * RecorderManager 单例包装；时长只累计「正在录」的片段；<600ms 视为误触报错；60 秒自动 onStop。
+ *
+ * callbacks：
+ *   onStart()                 开始录音
+ *   onState(state, seconds)   状态变化（recording / paused）+ 当前秒数
+ *   onTick(seconds)           每秒回传计时
+ *   onReady(path, durationMs) 结束并发送
+ *   onError(message)
  */
 function createVoiceRecorder(callbacks) {
   const rec = wx.getRecorderManager();
   let startedAt = 0;
+  let activeMs = 0;
+  let paused = false;
+  let cancelled = false;
+  let timer = null;
+
+  const secs = () => Math.floor((activeMs + (paused ? 0 : Date.now() - startedAt)) / 1000);
+  const emit = (state) => {
+    if (callbacks.onState) callbacks.onState(state, secs());
+  };
+  const startTimer = () => {
+    stopTimer();
+    timer = setInterval(() => {
+      if (callbacks.onTick) callbacks.onTick(secs());
+      if (secs() >= MAX_SECONDS) rec.stop(); // 60 秒自动结束并发送
+    }, 250);
+  };
+  const stopTimer = () => {
+    if (timer) { clearInterval(timer); timer = null; }
+  };
+
   rec.onStart(() => {
     startedAt = Date.now();
+    activeMs = 0;
+    paused = false;
     if (callbacks.onStart) callbacks.onStart();
+    emit('recording');
+    startTimer();
+  });
+  rec.onPause(() => {
+    activeMs += Date.now() - startedAt;
+    paused = true;
+    emit('paused');
+  });
+  rec.onResume(() => {
+    startedAt = Date.now();
+    paused = false;
+    emit('recording');
   });
   rec.onStop((res) => {
-    const durationMs = Date.now() - startedAt;
+    stopTimer();
+    const durationMs = activeMs + (paused ? 0 : Date.now() - startedAt);
+    activeMs = 0;
+    paused = false;
+    if (cancelled) {
+      cancelled = false;
+      return; // 取消：丢弃数据
+    }
     if (durationMs < 600) {
-      if (callbacks.onError) callbacks.onError('说话时间太短，再按久一点');
+      if (callbacks.onError) callbacks.onError('录音太短，点麦克风开始后再结束');
       return;
     }
     if (callbacks.onReady) callbacks.onReady(res.tempFilePath, Math.min(durationMs, MAX_SECONDS * 1000));
   });
   rec.onError(() => {
+    stopTimer();
     if (callbacks.onError) callbacks.onError('录音失败，请重试');
   });
+
   return {
     start() {
+      cancelled = false;
       rec.start({ duration: MAX_SECONDS * 1000, format: 'aac', sampleRate: 44100, encodeBitRate: 96000 });
     },
-    stop() {
+    pause() { if (!paused) rec.pause(); },
+    resume() { if (paused) rec.resume(); },
+    stop() { rec.stop(); },
+    cancel() {
+      cancelled = true;
+      stopTimer();
       rec.stop();
     },
   };

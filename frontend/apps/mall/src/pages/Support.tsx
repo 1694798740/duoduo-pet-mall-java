@@ -40,20 +40,20 @@ import { ProductPicker } from '@duoduo/shared/components/product-picker';
 import { OrderCard, parseOrderMeta } from '@duoduo/shared/components/order-card';
 import type { PickerProduct } from '@duoduo/api-sdk/endpoints';
 import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
-  isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+  isEmojiOnly, MessageActions, MultiSelectBar, type MediaPayload } from '@duoduo/shared/components/chat-media';
 import { realtime, useRealtime } from '@duoduo/shared/realtime';
-import { formatBjShort } from '@duoduo/shared/lib/time';
+import { chatSeparatorLabel } from '@duoduo/shared/lib/time';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 
 const POLL_MS = 5000;
 const PAGE_SIZE = 30;
-
-const timeText = (iso: string | null | undefined): string => formatBjShort(iso);
 
 const peerOf = (s: SupportSessionView): string => s.sellerName || `店铺${s.sellerId}`;
 
 export const SupportPage: React.FC = () => {
   const [search] = useSearchParams();
   const { push } = useToast();
+  const confirm = useConfirm();
 
   const sellerIdParam = search.get('sellerId') ?? undefined;
 
@@ -93,9 +93,9 @@ export const SupportPage: React.FC = () => {
     }
   }, []);
 
-  const loadThread = useCallback(async (sellerId?: string) => {
+  const loadThread = useCallback(async (sellerId?: string, aroundId?: string) => {
     try {
-      const data = await supportApi.messages({ sellerId, page: 1, pageSize: PAGE_SIZE });
+      const data = await supportApi.messages({ sellerId, page: 1, pageSize: PAGE_SIZE, aroundId });
       setThread(data);
       setError(null);
       if (data?.sessionId) {
@@ -261,14 +261,19 @@ export const SupportPage: React.FC = () => {
     void loadSessions();
   };
 
-  // ---------------- 引用 / 撤回 / 语音（2026-10-24） ----------------
+  // ---------------- 引用 / 撤回 / 删除 / 语音（2026-10-24/25） ----------------
   /** 正在引用的消息：输入框上方显示摘要条，随下一条消息一起发出 */
   const [replyTo, setReplyTo] = useState<SupportMessageView | null>(null);
+  /** 多选删除模式（2026-10-25）：勾选若干条批量「仅本人可见地」删除 */
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** 引用跳转：目标不在当前窗口时，用它记住待定位 id，aroundId 拉回后滚动 */
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const recallWithinWindow = (m: SupportMessageView): boolean =>
     m.mine && !m.recalledAt && Date.now() - new Date(m.createdAt).getTime() < 120_000;
 
   const recallMessage = async (m: SupportMessageView) => {
-    if (!window.confirm('撤回这条消息？')) return;
+    if (!(await confirm({ title: '撤回消息', message: '撤回后双方都看不到这条消息，确定撤回吗？' }))) return;
     try {
       await supportApi.recall(m.id);
       await loadThread(activeSellerId);
@@ -277,6 +282,61 @@ export const SupportPage: React.FC = () => {
       push(toFriendlyMessage(e), 'error');
     }
   };
+
+  /** 单向删除（2026-10-25）：只对我隐藏，对方仍可见 */
+  const deleteMessages = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    if (!(await confirm({
+      title: '删除消息',
+      message: ids.length === 1 ? '删除后仅自己看不到这条消息，对方不受影响。确定删除吗？'
+        : `已选 ${ids.length} 条，删除后仅自己看不到，对方不受影响。确定删除吗？`,
+      danger: true,
+      confirmText: '删除',
+    }))) return;
+    try {
+      await supportApi.deleteMessages(ids);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      await loadThread(activeSellerId);
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    }
+  };
+
+  /**
+   * 引用跳转定位（2026-10-25）：点击引用条滚到被引用的原始消息。
+   * 目标在当前分页窗口外时，带 aroundId 重新拉一页（服务端返回以该消息为中心的窗口）。
+   */
+  const jumpToQuoted = async (messageId: string | null | undefined) => {
+    if (!messageId) return;
+    const inWindow = thread?.items.some((x) => x.id === messageId);
+    if (inWindow) {
+      scrollToMessage(messageId);
+    } else {
+      setPendingScrollId(messageId);
+      await loadThread(activeSellerId, messageId);
+    }
+  };
+
+  const scrollToMessage = (messageId: string) => {
+    const el = bodyRef.current?.querySelector(`[data-mid="${messageId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      el.classList.remove('msg-flash');
+      // 强制重启动画
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add('msg-flash');
+    }
+  };
+
+  // aroundId 拉回的目标消息渲染完成后滚动定位
+  useEffect(() => {
+    if (!pendingScrollId || !thread?.items.length) return;
+    if (!thread.items.some((x) => x.id === pendingScrollId)) return;
+    scrollToMessage(pendingScrollId);
+    setPendingScrollId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.items[thread.items.length - 1]?.id, pendingScrollId]);
 
   const sendVoice = async (blob: Blob, durationMs: number) => {
     const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
@@ -449,24 +509,63 @@ export const SupportPage: React.FC = () => {
             ) : !thread || thread.items.length === 0 ? (
               <Empty title="还没有消息，说点什么吧" />
             ) : (
-              thread.items.map((m, idx) => {
-                const isLastMine = m.mine && !thread.items.slice(idx + 1).some((x) => x.mine);
-                return (
-                  <Bubble
-                    key={m.id}
-                    message={m}
-                    unreadTag={m.mine && !m.read}
-                    firstUnread={m.id === firstUnreadId}
-                    receipt={
-                      isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null
-                    }
-                    onQuote={setReplyTo}
-                    onRecall={(mm) => void recallMessage(mm)}
-                    canRecall={recallWithinWindow(m)}
-                  />
-                );
-              })
+              <>
+                {thread.items.map((m, idx) => {
+                  const isLastMine = m.mine && !thread.items.slice(idx + 1).some((x) => x.mine);
+                  const separator = chatSeparatorLabel(m.createdAt, idx > 0 ? thread.items[idx - 1]?.createdAt : null);
+                  const checked = selectedIds.has(m.id);
+                  return (
+                    <React.Fragment key={m.id}>
+                      {separator ? <div className="chat-time-sep">{separator}</div> : null}
+                      {selectMode ? (
+                        <label className={`sup-row${m.mine ? ' mine' : ''} msg-select-row`} data-mid={m.id}>
+                          <input
+                            type="checkbox"
+                            className="msg-check"
+                            checked={checked}
+                            onChange={() =>
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+                                return next;
+                              })
+                            }
+                          />
+                          <div className="sup-col"><MsgBody message={m} /></div>
+                        </label>
+                      ) : (
+                        <Bubble
+                          message={m}
+                          unreadTag={m.mine && !m.read}
+                          firstUnread={m.id === firstUnreadId}
+                          receipt={isLastMine && Number(thread.myUnreadCount) === 0 ? '已读' : null}
+                          onQuote={(mm) => setReplyTo(mm)}
+                          onRecall={(mm) => void recallMessage(mm)}
+                          canRecall={recallWithinWindow(m)}
+                          onDelete={(mm) => void deleteMessages([mm.id])}
+                          onMultiSelect={() => { setSelectMode(true); setSelectedIds(new Set()); }}
+                          onQuotedClick={() => void jumpToQuoted(m.replyToId)}
+                        />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </>
             )}
+            {selectMode ? (
+              <MultiSelectBar
+                count={selectedIds.size}
+                totalCount={thread?.items.length ?? 0}
+                onToggleAll={() =>
+                  setSelectedIds((prev) =>
+                    prev.size === (thread?.items.length ?? 0)
+                      ? new Set()
+                      : new Set((thread?.items ?? []).map((x) => x.id)))
+                }
+                onDelete={() => void deleteMessages([...selectedIds])}
+                onCancel={() => { setSelectMode(false); setSelectedIds(new Set()); }}
+              />
+            ) : null}
             {/* 结束后只在会话流里留一行系统小字：不弹 toast（会消失）、不出现「关闭」字样 */}
             {ended ? <div className="sup-system">当前会话已结束</div> : null}
             <div ref={bottomRef} />
@@ -486,8 +585,15 @@ export const SupportPage: React.FC = () => {
                 {'　✕'}
               </div>
             ) : null}
-            {recorder.recording ? (
-              <div className="recording-tip" role="status">录音中 {recorder.seconds}s … 松开发送（最长 60 秒）</div>
+            {recorder.status !== 'idle' ? (
+              <div className="recording-tip recording-bar" role="status">
+                <span>{recorder.status === 'paused' ? '已暂停' : '录音中'} {recorder.seconds}s（最长 60 秒）</span>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.cancel}>取消</button>
+                {recorder.status === 'paused'
+                  ? <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.resume}>继续</button>
+                  : <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.pause}>暂停</button>}
+                <button type="button" className="btn btn-sm btn-primary" onClick={recorder.stop}>结束并发送</button>
+              </div>
             ) : null}
             <div className="row" style={{ gap: 8 }}>
               <ChatMediaMenu
@@ -500,15 +606,17 @@ export const SupportPage: React.FC = () => {
               />
               <button
                 type="button"
-                className="btn btn-sm btn-ghost"
+                className="btn btn-sm btn-ghost mic-btn"
                 disabled={sending}
-                style={recorder.recording ? { background: '#d03050', color: '#fff' } : undefined}
-                onPointerDown={(e) => { e.preventDefault(); recorder.start(); }}
-                onPointerUp={(e) => { e.preventDefault(); recorder.stop(); }}
-                onPointerLeave={() => { if (recorder.recording) recorder.stop(); }}
-                aria-label="按住说话"
+                onClick={() => (recorder.status === 'idle' ? recorder.start() : recorder.stop())}
+                aria-label={recorder.status === 'idle' ? '开始录音' : '结束并发送'}
+                title={recorder.status === 'idle' ? '点击开始录音' : '点击结束并发送'}
               >
-                {recorder.recording ? '松开发送' : '按住说话'}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" />
+                  <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+                  <path d="M12 18v3M8.5 21h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
               </button>
               <input
                 className="input"
@@ -552,8 +660,8 @@ export const SupportPage: React.FC = () => {
   );
 };
 
-/** 媒体消息与纯表情的渲染：文本消息走原气泡，媒体走专用组件 */
-function renderContent(message: SupportMessageView) {
+/** 消息主体渲染（文本 / 媒体 / 卡片），多选行与气泡共用 */
+function MsgBody({ message, onQuotedClick }: { message: SupportMessageView; onQuotedClick?: () => void }) {
   if (message.bizType === 'ORDER') {
     const meta = parseOrderMeta(message.metaJson);
     return <OrderCard metaJson={message.metaJson} href={meta?.orderNo ? `/orders/${meta.orderNo}` : null} />;
@@ -584,7 +692,9 @@ function renderContent(message: SupportMessageView) {
   const emojiOnly = isEmojiOnly(message.content);
   return (
     <div className="sup-bubble" style={emojiOnly ? { fontSize: 30, lineHeight: 1.25 } : undefined}>
-      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} /> : null}
+      {message.quoted ? (
+        <QuotedStrip excerpt={message.quoted.excerpt} onClick={onQuotedClick} />
+      ) : null}
       {message.content}
     </div>
   );
@@ -600,53 +710,52 @@ const Bubble: React.FC<{
   onQuote?: (m: SupportMessageView) => void;
   onRecall?: (m: SupportMessageView) => void;
   canRecall?: boolean;
-}> = ({ message, unreadTag, firstUnread, receipt, onQuote, onRecall, canRecall }) => (
-  <div
-    className={`sup-row${message.mine ? ' mine' : ''}`}
-    data-first-unread={firstUnread ? '1' : undefined}
-    data-mid={message.id}
-  >
-    <div className="sup-col">
-      {message.recalledAt ? (
+  onDelete?: (m: SupportMessageView) => void;
+  onMultiSelect?: () => void;
+  /** 点击引用条 → 跳转定位到被引用的原始消息（2026-10-25） */
+  onQuotedClick?: () => void;
+}> = ({ message, unreadTag, firstUnread, receipt, onQuote, onRecall, canRecall, onDelete, onMultiSelect, onQuotedClick }) => {
+  if (message.recalledAt) {
+    // 撤回文案独立整行居中（2026-10-25）：不再是气泡内小字
+    return (
+      <div className="sup-row" data-mid={message.id} data-first-unread={firstUnread ? '1' : undefined}>
         <RecallLine mine={message.mine} />
-      ) : (
-        <>
-          {renderContent(message)}
-          {message.card && (
-            <a href={`/product/${message.card.productId}`} className="card sup-card">
-              <img
-                className="sup-card-img"
-                src={productImage(message.card.productId, message.card.image)}
-                alt=""
-              />
-              <span style={{ minWidth: 0 }}>
-                <span className="sup-card-title">{message.card.title}</span>
-                {message.card.price != null && (
-                  <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
-                )}
-              </span>
-            </a>
-          )}
-        </>
-      )}
-      <div className="sup-time">
-        {timeText(message.createdAt)}
-        {unreadTag ? (
-          <span className="sup-unread"> · 未读</span>
-        ) : receipt ? (
-          ` · ${receipt}`
-        ) : null}
-        {!message.recalledAt && (onQuote || (onRecall && canRecall)) ? (
-          <span className="sup-acts">
-            {onQuote ? (
-              <button type="button" className="sup-act" onClick={() => onQuote(message)}>引用</button>
-            ) : null}
-            {onRecall && canRecall ? (
-              <button type="button" className="sup-act" onClick={() => onRecall(message)}>撤回</button>
-            ) : null}
-          </span>
-        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div
+      className={`sup-row${message.mine ? ' mine' : ''}`}
+      data-first-unread={firstUnread ? '1' : undefined}
+      data-mid={message.id}
+    >
+      <div className="sup-col">
+        <MsgBody message={message} onQuotedClick={onQuotedClick} />
+        {message.card && (
+          <a href={`/product/${message.card.productId}`} className="card sup-card">
+            <img
+              className="sup-card-img"
+              src={productImage(message.card.productId, message.card.image)}
+              alt=""
+            />
+            <span style={{ minWidth: 0 }}>
+              <span className="sup-card-title">{message.card.title}</span>
+              {message.card.price != null && (
+                <span className="small sup-card-price">¥{(message.card.price / 100).toFixed(2)}</span>
+              )}
+            </span>
+          </a>
+        )}
+        <div className="sup-time">
+          {unreadTag ? <span className="sup-unread">未读</span> : receipt}
+          <MessageActions
+            onQuote={onQuote ? () => onQuote(message) : null}
+            onRecall={onRecall && canRecall ? () => onRecall(message) : null}
+            onDelete={onDelete ? () => onDelete(message) : null}
+            onMultiSelect={onMultiSelect ?? null}
+          />
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};

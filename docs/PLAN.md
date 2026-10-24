@@ -1,6 +1,26 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-24 · 第九十一轮）**：**消息撤回 / 引用 / 语音（im 迭代第二批收官）** ——
+> **最新一轮（2026-10-24 · 第九十二轮）**：**消息交互终版 —— 点击式录音 / 单向删除 / 时间分隔 / 自定义弹窗 / 引用跳转（im 迭代收尾打磨）** ——
+> 客服 + 私信双通道、web 三页 + 小程序两页同批对齐：
+> ① **录音改点击式**：废弃「按住说话」（总提示太短），点麦克风开始 → 可**暂停 / 继续 / 取消 / 结束并发送**；
+> web MediaRecorder 只累计「正在录」片段时长（pause 期间不计），小程序 RecorderManager pause/resume 对齐；<600ms 仍拒。
+> ② **弃用浏览器原生弹窗**：web 撤回等确认全部换 useConfirm 自定义弹窗（项目记忆已固化「所有项目一律不用原生弹窗」）。
+> ③ **时间展示**：10 分钟内连续消息不重复显示时间；超 10 分钟在消息流中央插分隔条 —— 当天 HH:mm /
+> 昨天·前天「昨天/前天 HH:mm」/ 超 3 天「M月D日 HH:mm」（web `chatSeparatorLabel`、小程序 `chatTimeLabel` UTC+8 口径）。
+> ④ **消息操作**：移动端长按 / web 悬停「···」弹同款菜单（引用 / 删除 / 撤回 / 多选）；**单向删除**（仅本人不可见、
+> 对方仍可见，支持多选 / 全选）与撤回（双向、留痕覆写、整行居中「你/对方撤回了一条消息」）语义严格分列 ——
+> 两张消息表各加两个 hidden 时间戳列（`hidden_for_user_at`/`hidden_for_seller_at`、`hidden_for_sender_at`/`hidden_for_receiver_at`），
+> 读取路径按查看方 isNull 过滤（aroundId 窗口同滤），删除幂等返回本次隐藏条数。
+> ⑤ **引用跳转**：点引用卡滚回原消息并闪烁高亮；原消息不在当前窗口时走 **aroundId 定位窗口**
+> （服务端返回「目标往前 half+1 + 往后 half 条」一页，目标必在窗口内），support thread / seller thread / 私信 conversation 三路齐备。
+> SQL：`incremental/45-message-self-delete-around.sql`。
+> 验证：新冒烟 `scripts/message-self-delete-around-smoke.mjs` **30/0**（客服侧单向删除与对端可见性 / 幂等计数 /
+> 双向各管各视角 / aroundId 窗口含目标且正序、不漏已删 / 私信侧 A-B 互删不串扰）；回归 9 套全绿
+> （chat-recall 25、realtime 17、r49 15、r50 18、r53 17、r55 41+1 跳过、lifecycle 32、read 24、split 22）；
+> mall/merchant tsc 干净、三容器 healthy。★ 顺手修两处陈年回归债：r50 种子公告丢失重放 17 号种子（数据缺口非代码）、
+> r55 E4 ship 路径 M5-9 起已改卖家归属校验（自营无卖家账号，改 skip 并注明 F 块已覆盖该链路）。
+
+> **上轮（2026-10-24 · 第九十一轮）**：**消息撤回 / 引用 / 语音（im 迭代第二批收官）** ——
 > 按 `docs/im-realtime-iteration-plan.md` 顺序落地三能力，客服 + 私信双通道、web 三页 + 小程序两页同批对齐：
 > ① **撤回**：软删留痕（`recalled_at` + 内容覆写「[消息已撤回]」+ 媒体字段置空，数据库层不可读，不靠前端隐藏）；
 > 仅发送者本人 + 120s 窗口 + 幂等；WS 新增 RECALL 信号实时通知对端；会话摘要同步改撤回文案。

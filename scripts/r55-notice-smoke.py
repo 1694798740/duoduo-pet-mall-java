@@ -412,7 +412,7 @@ def part_e():
           "条数=%d" % len(paid_rows))
 
     # E4 发货（内部凭据直连交易域）
-    ship_path = "/api/orders/%s/ship" % order_no
+    ship_path = "/api/seller/orders/%s/ship" % order_no
     st, r = call("POST", ship_path, base=TRADE,
                  headers={"X-Internal-Token": sign_internal("POST", ship_path)}, body={})
     if st in (200, 201):
@@ -420,7 +420,11 @@ def part_e():
         check("E4 发货 → ORDER_SHIPPED 通知", hit_ship is not None,
               "通知 bizType：%s" % [x.get("bizType") for x in all_ship])
     elif st in (401, 403):
-        skip("E4 发货 → ORDER_SHIPPED 通知", "发货端点不接受内部凭据直连（HTTP %s）" % st)
+        # M5-9 起发货改为卖家登录态 + 归属校验（InternalTokenFilter 排除 /api/seller/）；
+        # E 块订单是自营 SKU（seller_id=0），无卖家账号可登录 → 跳过。
+        # ORDER_SHIPPED 的生产者链路由 F 块（履约域内部上报 → 社交域通知）覆盖。
+        skip("E4 发货 → ORDER_SHIPPED 通知",
+             "发货已改卖家归属校验（HTTP %s），自营订单无卖家账号；链路由 F 块覆盖" % st)
     else:
         check("E4 发货 → ORDER_SHIPPED 通知", False, "%s %s" % (st, str(r)[:200]))
 

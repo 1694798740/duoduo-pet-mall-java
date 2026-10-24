@@ -3,6 +3,7 @@ package com.duoduo.social.controller;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.social.dto.SocialDtos;
 import com.duoduo.social.dto.SocialDtos.ConversationView;
 import com.duoduo.social.dto.SocialDtos.MessagePage;
 import com.duoduo.social.dto.SocialDtos.MessageView;
@@ -61,9 +62,16 @@ public class MessageController {
             @RequestParam(required = false) Long productId,
             @RequestParam(required = false) Long listingId,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "20") int pageSize,
+            @RequestParam(required = false) Long aroundId) {
         return ApiResponse.ok(messageService.conversation(
-                UserContext.requireUserId(), peerId, productId, listingId, page, pageSize));
+                UserContext.requireUserId(), peerId, productId, listingId, page, pageSize, aroundId));
+    }
+
+    /** 单向删除私信（2026-10-25）：批量隐藏本人视角的消息，对方仍可见。幂等 */
+    @PostMapping("/api/socials/messages/delete")
+    public ApiResponse<Integer> delete(@RequestBody SocialDtos.DeleteRequest request) {
+        return ApiResponse.ok(messageService.delete(UserContext.requireUserId(), request.messageIds()));
     }
 
     /** 打开会话后标记已读（幂等）；productId / listingId 语义同上 */

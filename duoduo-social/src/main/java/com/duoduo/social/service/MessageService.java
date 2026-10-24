@@ -466,6 +466,15 @@ public class MessageService {
     /** 与某人的双向消息（时间正序返回，分页取**最新**一页）；productId/listingId 非空时读对应咨询会话 */
     public MessagePage conversation(Long userId, Long peerId, Long productId, Long listingId,
                                     int page, int pageSize) {
+        return conversation(userId, peerId, productId, listingId, page, pageSize, null);
+    }
+
+    /**
+     * {@code aroundId} 非空（2026-10-25）：引用跳转定位 —— 返回以该消息为中心的一页，
+     * 目标消息必然落在窗口内；可见性过滤（本人单向删除）同常规读取。
+     */
+    public MessagePage conversation(Long userId, Long peerId, Long productId, Long listingId,
+                                    int page, int pageSize, Long aroundId) {
         if (peerId == null) {
             throw BizException.validation("缺少对方用户");
         }
@@ -483,12 +492,33 @@ public class MessageService {
         String conversationId = conversationId(userId, peerId, queryContext);
         int pageNo = Math.max(1, page);
         int size = normalizeSize(pageSize);
-        Page<SocialMessageEntity> result = messageMapper.selectPage(new Page<>(pageNo, size),
-                new LambdaQueryWrapper<SocialMessageEntity>()
-                        .eq(SocialMessageEntity::getConversationId, conversationId)
-                        .orderByDesc(SocialMessageEntity::getId));
-        // 分页取「最新一页」，展示按时间正序
-        List<SocialMessageEntity> ordered = result.getRecords().reversed();
+        // 可见性（2026-10-25 单向删除）：一条消息我既可能是发送方也可能是接收方，
+        // 我已删除的那侧时间戳非空就不再给我看；对方视角不受影响。
+        List<SocialMessageEntity> ordered;
+        long total;
+        if (aroundId != null) {
+            int half = size / 2;
+            List<SocialMessageEntity> before = messageMapper.selectList(
+                    visibleConversation(conversationId, userId)
+                            .le(SocialMessageEntity::getId, aroundId)
+                            .orderByDesc(SocialMessageEntity::getId)
+                            .last("LIMIT " + (half + 1)));
+            List<SocialMessageEntity> after = messageMapper.selectList(
+                    visibleConversation(conversationId, userId)
+                            .gt(SocialMessageEntity::getId, aroundId)
+                            .orderByAsc(SocialMessageEntity::getId)
+                            .last("LIMIT " + half));
+            java.util.Collections.reverse(after); // 统一倒序，走下面公共 reverse 变正序
+            ordered = new java.util.ArrayList<>(before);
+            ordered.addAll(after);
+            total = ordered.size();
+        } else {
+            Page<SocialMessageEntity> result = messageMapper.selectPage(new Page<>(pageNo, size),
+                    visibleConversation(conversationId, userId).orderByDesc(SocialMessageEntity::getId));
+            total = result.getTotal();
+            ordered = new java.util.ArrayList<>(result.getRecords());
+        }
+        java.util.Collections.reverse(ordered); // 展示按时间正序
 
         boolean mutual = followService.mutual(userId, peerId);
         ConvContext keyContext = contextOfKey(conversationId);
@@ -510,12 +540,25 @@ public class MessageService {
                                 e.getBizId() == null ? null : listingCards.get(e.getBizId())),
                         e.getReplyToId() == null ? null : quoted.get(e.getReplyToId())))
                 .toList();
-        return new MessagePage(views, result.getTotal(), pageNo, size,
+        return new MessagePage(views, total, pageNo, size,
                 peerId,
                 peer == null || peer.nickname() == null ? "用户" + peerId : peer.nickname(),
                 peer == null ? null : peer.avatar(),
                 mutual, canSend, consulting, keyContext.productId(), keyContext.listingId(),
                 conversationId);
+    }
+
+    /**
+     * 会话内按查看方过滤「本人已单向删除」消息的公共查询前缀（2026-10-25）。
+     * 一条消息我既可能是发送方也可能是接收方（不能给自己发），两侧 hidden 列分别判断。
+     */
+    private LambdaQueryWrapper<SocialMessageEntity> visibleConversation(String conversationId, Long userId) {
+        return new LambdaQueryWrapper<SocialMessageEntity>()
+                .eq(SocialMessageEntity::getConversationId, conversationId)
+                .and(w -> w.eq(SocialMessageEntity::getSenderId, userId)
+                                .isNull(SocialMessageEntity::getHiddenForSenderAt)
+                        .or().eq(SocialMessageEntity::getReceiverId, userId)
+                                .isNull(SocialMessageEntity::getHiddenForReceiverAt));
     }
 
     /** 打开会话：把「对方发给我、还没读」的批量置已读（幂等）；productId/listingId 语义同上 */
@@ -540,7 +583,43 @@ public class MessageService {
     }
 
     /**
-     * 我的私信未读总数（第五十五轮）：tabBar 角标口径的一半（另一半是通知，见 {@link UnreadService}）。
+     * 单向删除私信（2026-10-25）：只对操作者自己隐藏，对方仍可见。幂等；返回本次隐藏条数。
+     * 与撤回（双向、软删覆写）语义严格区分。
+     */
+    public int delete(Long userId, List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        for (Long id : messageIds) {
+            SocialMessageEntity msg = id == null ? null : messageMapper.selectById(id);
+            if (msg == null) {
+                throw BizException.notFound("消息");
+            }
+            boolean sender = userId.equals(msg.getSenderId());
+            boolean receiver = userId.equals(msg.getReceiverId());
+            if (!sender && !receiver) {
+                throw BizException.forbidden("只能删除自己参与会话中的消息");
+            }
+            if (sender && msg.getHiddenForSenderAt() == null) {
+                messageMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SocialMessageEntity>()
+                        .eq(SocialMessageEntity::getId, msg.getId())
+                        .isNull(SocialMessageEntity::getHiddenForSenderAt)
+                        .set(SocialMessageEntity::getHiddenForSenderAt, now));
+                n++;
+            } else if (receiver && msg.getHiddenForReceiverAt() == null) {
+                messageMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SocialMessageEntity>()
+                        .eq(SocialMessageEntity::getId, msg.getId())
+                        .isNull(SocialMessageEntity::getHiddenForReceiverAt)
+                        .set(SocialMessageEntity::getHiddenForReceiverAt, now));
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** 我的私信未读总数（第五十五轮）：tabBar 角标口径的一半（另一半是通知，见 {@link UnreadService}）。
      *
      * <p>此前小程序要拉 50 条会话在内存里求和：会话数超过一页时角标会偏小，
      * 且这个数字在「回到前台 / 60 秒轮询 / 每个 tab 页 onShow」都会被重算一次 ——

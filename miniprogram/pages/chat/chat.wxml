@@ -24,73 +24,99 @@
       <view wx:if="{{items.length === 0}}" class="empty">
         {{ask ? (listingId ? '向卖家咨询这件闲置吧' : '向卖家咨询这个商品吧') : '打个招呼吧'}}
       </view>
-      <view
+      <block
         wx:for="{{items}}"
         wx:key="id"
-        id="msg-{{item.id}}"
-        class="msg-row {{item.mine ? 'msg-mine' : ''}}"
-        data-msg="{{item}}"
-        bindlongpress="onMsgLongPress"
       >
-        <image
-          wx:if="{{!item.mine && !item.recalled}}"
-          class="msg-avatar"
-          src="{{page.peerAvatar || '/images/category/default.png'}}"
-          mode="aspectFill"
-        />
-        <view class="msg-col">
-          <!-- 撤回后的灰字（2026-10-24）：整条替换，不渲染原内容 -->
-          <view wx:if="{{item.recalled}}" class="chat-recalled">{{item.mine ? '你撤回了一条消息' : '对方撤回了一条消息'}}</view>
-          <block wx:else>
-          <!-- 卡片消息：服务端取事实源渲染，点击按类型分流（闲置卡→闲置详情 / 商品卡→商城详情） -->
-          <view
-            wx:if="{{item.card}}"
-            class="msg-card"
-            data-spu="{{item.card.id}}"
-            data-msgid="{{item.id}}"
-            catchtap="goCard"
-          >
-            <image class="msg-card-img" src="{{item.cardImage}}" mode="aspectFill" />
-            <view class="msg-card-info">
-              <view class="msg-card-title ellipsis-2">{{item.card.title}}</view>
-              <view wx:if="{{item.cardPriceText}}" class="price msg-card-price">{{item.cardPriceText}}</view>
-            </view>
+        <!-- 会话中央时间分隔条（2026-10-25）：10 分钟内的连续消息不重复显示时间 -->
+        <view wx:if="{{item.timeSep}}" class="chat-time-sep">{{item.timeSep}}</view>
+        <view
+          id="msg-{{item.id}}"
+          class="msg-row {{!selectMode && item.mine ? 'msg-mine' : ''}} {{selectMode ? 'msg-selecting' : ''}}"
+          data-msg="{{item}}"
+          bindlongpress="onMsgLongPress"
+        >
+          <!-- 多选删除模式（2026-10-25）：整行可点切换勾选 -->
+          <view wx:if="{{selectMode}}" class="msg-check-wrap" catchtap="toggleSelect" data-id="{{item.id}}">
+            <view class="msg-check {{item.checked ? 'on' : ''}}">✓</view>
           </view>
-          <image
-            wx:if="{{item.bizType === 'IMAGE'}}"
-            class="msg-media"
-            src="{{item.mediaUrl}}"
-            mode="widthFix"
-            data-url="{{item.mediaUrl}}"
-            bindtap="previewImage"
-          />
-          <video
-            wx:elif="{{item.bizType === 'VIDEO'}}"
-            class="msg-media"
-            src="{{item.mediaUrl}}"
-            poster="{{item.thumbUrl}}"
-            object-fit="contain"
-          />
-          <view
-            wx:elif="{{item.bizType === 'VOICE'}}"
-            class="msg-voice"
-            data-url="{{item.mediaUrl}}"
-            bindtap="playVoice"
-          >
-            <text class="msg-voice-icon">▶</text>
-            <view class="msg-voice-bar"></view>
-            <text class="msg-voice-dur">{{item.voiceSecs}}"</text>
-          </view>
-          <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">
-            <view wx:if="{{item.quotedExcerpt}}" class="msg-quoted">{{item.quotedExcerpt}}</view>
-            <text>{{item.content}}</text>
-          </view>
+          <block wx:if="{{!selectMode && !item.recalled}}">
+            <image
+              wx:if="{{!item.mine}}"
+              class="msg-avatar"
+              src="{{page.peerAvatar || '/images/category/default.png'}}"
+              mode="aspectFill"
+            />
           </block>
-          <view class="t3 msg-time">{{item.timeText}}<text wx:if="{{item.mine && !item.read && !item.recalled}}" class="msg-unread"> · 未读</text></view>
+          <view class="msg-col">
+            <!-- 撤回后整行居中灰字（2026-10-25） -->
+            <view wx:if="{{item.recalled}}" class="chat-recalled">{{item.mine ? '你撤回了一条消息' : '对方撤回了一条消息'}}</view>
+            <block wx:else>
+            <!-- 卡片消息：服务端取事实源渲染，点击按类型分流（闲置卡→闲置详情 / 商品卡→商城详情） -->
+            <view
+              wx:if="{{item.card}}"
+              class="msg-card"
+              data-spu="{{item.card.id}}"
+              data-msgid="{{item.id}}"
+              catchtap="goCard"
+            >
+              <image class="msg-card-img" src="{{item.cardImage}}" mode="aspectFill" />
+              <view class="msg-card-info">
+                <view class="msg-card-title ellipsis-2">{{item.card.title}}</view>
+                <view wx:if="{{item.cardPriceText}}" class="price msg-card-price">{{item.cardPriceText}}</view>
+              </view>
+            </view>
+            <image
+              wx:if="{{item.bizType === 'IMAGE'}}"
+              class="msg-media"
+              src="{{item.mediaUrl}}"
+              mode="widthFix"
+              data-url="{{item.mediaUrl}}"
+              bindtap="previewImage"
+            />
+            <video
+              wx:elif="{{item.bizType === 'VIDEO'}}"
+              class="msg-media"
+              src="{{item.mediaUrl}}"
+              poster="{{item.thumbUrl}}"
+              object-fit="contain"
+            />
+            <view
+              wx:elif="{{item.bizType === 'VOICE'}}"
+              class="msg-voice"
+              data-url="{{item.mediaUrl}}"
+              bindtap="playVoice"
+            >
+              <text class="msg-voice-icon">▶</text>
+              <view class="msg-voice-bar"></view>
+              <text class="msg-voice-dur">{{item.voiceSecs}}"</text>
+            </view>
+            <view wx:else class="msg-bubble {{item.mine ? 'msg-bubble-mine' : ''}}">
+              <view wx:if="{{item.quotedExcerpt}}" class="msg-quoted" catchtap="jumpQuoted" data-id="{{item.quotedId}}">{{item.quotedExcerpt}}</view>
+              <text>{{item.content}}</text>
+            </view>
+            </block>
+            <view wx:if="{{!selectMode}}" class="t3 msg-time"><text wx:if="{{item.mine && !item.read && !item.recalled}}" class="msg-unread">未读</text></view>
+          </view>
         </view>
-      </view>
+      </block>
       <view style="height: 20rpx"></view>
     </scroll-view>
+
+    <!-- 多选删除工具条（2026-10-25） -->
+    <view wx:if="{{selectMode}}" class="chat-select-bar">
+      <button class="btn btn-plain btn-mini" bindtap="toggleAllSelect">
+        {{selectedIds.length === items.length && items.length ? '取消全选' : '全选'}}
+      </button>
+      <text class="t3">已选 {{selectedIds.length}} 条</text>
+      <view style="flex:1"></view>
+      <button class="btn btn-plain btn-mini" bindtap="cancelSelect">取消</button>
+      <button
+        class="btn btn-accent btn-mini"
+        disabled="{{!selectedIds.length}}"
+        bindtap="deleteSelected"
+      >删除</button>
+    </view>
 
     <!-- 规则提示：非互关且已发过一条时禁言 -->
     <view wx:if="{{hint}}" class="chat-hint">{{hint}}</view>
@@ -99,18 +125,23 @@
     <view wx:if="{{typingVisible}}" class="chat-typing">对方正在输入…</view>
     <!-- 引用条（2026-10-24）：点击取消 -->
     <view wx:if="{{replyTo}}" class="msg-quoted chat-quote-bar" bindtap="cancelQuote">{{replyText}}　✕</view>
-    <!-- 录音提示（2026-10-24） -->
-    <view wx:if="{{recordingTip}}" class="chat-recording">{{recordingTip}}</view>
+    <!-- 点击式录音控制条（2026-10-25） -->
+    <view wx:if="{{recState}}" class="chat-recording chat-rec-bar">
+      <text>{{recState === 'paused' ? '已暂停' : '录音中'}} {{recSecs}}s（最长 60 秒）</text>
+      <button class="btn btn-plain btn-mini" bindtap="voiceCancel">取消</button>
+      <button wx:if="{{recState === 'paused'}}" class="btn btn-plain btn-mini" bindtap="voiceResume">继续</button>
+      <button wx:else class="btn btn-plain btn-mini" bindtap="voicePause">暂停</button>
+      <button class="btn btn-accent btn-mini" bindtap="voiceStop">结束并发送</button>
+    </view>
 
     <view class="chat-input-bar">
       <view class="chat-plus emoji-btn" bindtap="toggleEmoji">😀</view>
       <view class="chat-plus" bindtap="pickMedia">＋</view>
+      <!-- 麦克风图标（2026-10-25）：点击开始，再次点击结束并发送 -->
       <view
-        class="chat-plus chat-voice-btn {{recording ? 'recording' : ''}}"
-        bindtouchstart="voiceStart"
-        bindtouchend="voiceEnd"
-        bindtouchcancel="voiceEnd"
-      >{{recording ? '松发' : '按说'}}</view>
+        class="chat-plus chat-mic-btn {{recState ? 'recording' : ''}}"
+        bindtap="voiceTap"
+      >🎤</view>
       <input
         class="chat-input"
         value="{{input}}"

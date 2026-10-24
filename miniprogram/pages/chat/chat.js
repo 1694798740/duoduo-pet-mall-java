@@ -48,11 +48,18 @@ Page({
     conversationId: '',
     /** 对方正在输入 */
     typingVisible: false,
-    // 撤回 / 引用 / 语音（2026-10-24）
+    // 撤回 / 引用 / 语音（2026-10-24/25）
     replyTo: null,
     replyText: '',
-    recording: false,
-    recordingTip: '',
+    /** 点击式录音（2026-10-25）：'' = 空闲；recording / paused */
+    recState: '',
+    recSecs: 0,
+    /** 多选删除模式（2026-10-25） */
+    selectMode: false,
+    selectedIds: [],
+    /** 引用跳转定位（2026-10-25） */
+    aroundId: '',
+    pendingScrollId: '',
   },
 
   onLoad(query) {
@@ -141,6 +148,7 @@ Page({
       recalled: Boolean(msg.recalledAt),
       voiceSecs: msg.bizType === 'VOICE' && msg.durationMs ? Math.max(1, Math.round(msg.durationMs / 1000)) : 0,
       quotedExcerpt: msg.quoted ? msg.quoted.excerpt : '',
+      quotedId: msg.replyToId ? String(msg.replyToId) : '',
       // 自己 2 分钟内发出的消息可撤回
       canRecall: Boolean(msg.mine && !msg.recalledAt
         && Date.now() - new Date(msg.createdAt).getTime() < 120000),
@@ -149,12 +157,13 @@ Page({
 
   // ---------------- 撤回 / 引用 / 语音（2026-10-24） ----------------
 
-  /** 长按消息 → 引用 / 撤回 */
+  /** 长按消息 → 引用 / 删除 / 撤回 / 多选（2026-10-25） */
   onMsgLongPress(e) {
     const msg = (e.currentTarget.dataset.msg) || {};
-    if (msg.recalled) return;
-    const options = ['引用'];
+    if (msg.recalled || this.data.selectMode) return;
+    const options = ['引用', '删除'];
     if (msg.canRecall) options.push('撤回');
+    options.push('多选删除');
     wx.showActionSheet({
       itemList: options,
       success: (res) => {
@@ -164,18 +173,95 @@ Page({
             replyTo: { id: String(msg.id) },
             replyText: '引用：' + (msg.quotedExcerpt || msg.content || '[媒体消息]'),
           });
+        } else if (choice === '删除') {
+          this.deleteMessages([String(msg.id)]);
         } else if (choice === '撤回') {
           this.recallMessage(msg);
+        } else if (choice === '多选删除') {
+          this.setData({ selectMode: true, selectedIds: [] });
         }
       },
     });
   },
 
+  /** 撤回（双向）：确认后撤回，双方都变成居中灰字 */
   recallMessage(msg) {
-    api.social.message
-      .recall(msg.id)
-      .then(() => this.fetchThread(false))
-      .catch((err) => wx.showToast({ title: (err && err.message) || '撤回失败', icon: 'none' }));
+    wx.showModal({
+      title: '撤回消息',
+      content: '撤回后双方都看不到这条消息，确定撤回吗？',
+      success: (res) => {
+        if (!res.confirm) return;
+        api.social.message
+          .recall(msg.id)
+          .then(() => this.fetchThread(false))
+          .catch((err) => wx.showToast({ title: (err && err.message) || '撤回失败', icon: 'none' }));
+      },
+    });
+  },
+
+  /** 单向删除（2026-10-25）：只对本人隐藏，对方仍可见 */
+  deleteMessages(ids) {
+    if (!ids || !ids.length) return;
+    wx.showModal({
+      title: '删除消息',
+      content: ids.length === 1
+        ? '删除后仅自己看不到这条消息，对方不受影响。确定删除吗？'
+        : '已选 ' + ids.length + ' 条，删除后仅自己看不到，对方不受影响。确定删除吗？',
+      success: (res) => {
+        if (!res.confirm) return;
+        api.social.message
+          .deleteMessages(ids)
+          .then(() => this.setData({ selectMode: false, selectedIds: [] }))
+          .then(() => this.fetchThread(false))
+          .catch((err) => wx.showToast({ title: (err && err.message) || '删除失败', icon: 'none' }));
+      },
+    });
+  },
+
+  toggleSelect(e) {
+    const id = String(e.currentTarget.dataset.id);
+    const cur = this.data.selectedIds.slice();
+    const idx = cur.indexOf(id);
+    if (idx >= 0) cur.splice(idx, 1); else cur.push(id);
+    this.setData({ selectedIds: cur });
+    this.syncChecked();
+  },
+
+  toggleAllSelect() {
+    const all = this.data.items.map((m) => String(m.id));
+    this.setData({
+      selectedIds: this.data.selectedIds.length === all.length ? [] : all,
+    });
+    this.syncChecked();
+  },
+
+  /** 把 selectedIds 同步进 items[].checked（WXML 绑定不支持 indexOf） */
+  syncChecked() {
+    const sel = this.data.selectedIds;
+    this.setData({
+      items: this.data.items.map((m) => Object.assign({}, m, { checked: sel.indexOf(String(m.id)) >= 0 })),
+    });
+  },
+
+  deleteSelected() {
+    this.deleteMessages(this.data.selectedIds.slice());
+  },
+
+  cancelSelect() {
+    this.setData({ selectMode: false, selectedIds: [] });
+  },
+
+  /** 引用跳转定位（2026-10-25）：点击引用条滚到原消息；不在窗口内时用 aroundId 拉一页 */
+  jumpQuoted(e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    const inWindow = this.data.items.some((m) => String(m.id) === String(id));
+    if (inWindow) {
+      this.setData({ scrollInto: 'msg-' + id });
+    } else {
+      this.setData({ pendingScrollId: String(id) });
+      this.fetchThread(false, String(id));
+    }
   },
 
   cancelQuote() {
@@ -195,17 +281,21 @@ Page({
     this._audio.play();
   },
 
-  /** 按住录音；松手上传并发送（type=VOICE，时长实测回传） */
-  voiceStart() {
+  /** 点击式录音（2026-10-25）：点麦克风开始 → 可暂停/继续 → 点结束发送 */
+  voiceTap() {
+    if (this.data.recState === 'recording') { this.voiceStop(); return; }
+    if (this.data.recState === 'paused') { this.voiceStop(); return; }
     if (!this.data.canSend) {
       wx.showToast({ title: this.data.hint || '暂时不能发送', icon: 'none' });
       return;
     }
     if (!this._recorder) {
       this._recorder = media.createVoiceRecorder({
-        onStart: () => this.setData({ recording: true, recordingTip: '录音中… 松开发送（最长 60 秒）' }),
+        onStart: () => this.setData({ recState: 'recording', recSecs: 0 }),
+        onState: (state, seconds) => this.setData({ recState: state, recSecs: seconds }),
+        onTick: (seconds) => this.setData({ recSecs: seconds }),
         onReady: (path, durationMs) => {
-          this.setData({ recording: false, recordingTip: '' });
+          this.setData({ recState: '', recSecs: 0 });
           wx.showLoading({ title: '发送语音…', mask: true });
           api.upload(path)
             .then((data) => {
@@ -229,7 +319,7 @@ Page({
             });
         },
         onError: (message) => {
-          this.setData({ recording: false, recordingTip: '' });
+          this.setData({ recState: '', recSecs: 0 });
           wx.showToast({ title: message, icon: 'none' });
         },
       });
@@ -237,15 +327,19 @@ Page({
     this._recorder.start();
   },
 
-  voiceEnd() {
-    if (this._recorder && this.data.recording) this._recorder.stop();
+  voicePause() { if (this._recorder) this._recorder.pause(); },
+  voiceResume() { if (this._recorder) this._recorder.resume(); },
+  voiceStop() { if (this._recorder) this._recorder.stop(); },
+  voiceCancel() {
+    if (this._recorder) this._recorder.cancel();
+    this.setData({ recState: '', recSecs: 0 });
   },
 
   /**
    * 拉取最新一页消息（时间正序展示）。轮询与首次加载共用；
    * reset=true 时滚到底部；检测到新消息时顺手标已读。
    */
-  fetchThread(reset) {
+  fetchThread(reset, aroundId) {
     if (this._fetching) return; // 上一轮还没回来，跳过本次（防请求堆积）
     this._fetching = true;
     api.social.message
@@ -254,11 +348,18 @@ Page({
         1,
         PAGE_SIZE,
         this.data.productId || null,
-        this.data.listingId || null
+        this.data.listingId || null,
+        aroundId || null
       )
       .then((data) => {
         this._fetching = false;
         const items = ((data && data.items) || []).map((m) => this.decorate(m));
+        // 时间分隔条（2026-10-25）：与上一条间隔 ≥10 分钟才显示，格式按当天/昨天/前天/更早分档
+        let prev = null;
+        items.forEach((m) => {
+          m.timeSep = api.chatTimeLabel(m.createdAt, prev ? prev.createdAt : null);
+          prev = m;
+        });
         const lastIncoming = items.filter((m) => !m.mine).pop();
         const lastIncomingId = lastIncoming ? String(lastIncoming.id) : '';
         const hasNew = lastIncomingId && lastIncomingId !== this._lastIncomingId;
@@ -280,6 +381,11 @@ Page({
           // 打开会话定位到最新未读；轮询新增消息时才滚到底（2026-10-23 与客服页对齐）
           if (reset) this.scrollToLatest(items);
           else if (lastId !== prevLastId) this.scrollToBottom();
+          // 引用跳转：aroundId 拉回的目标消息到位后定位并清掉窗口参数（2026-10-25）
+          const pid = this.data.pendingScrollId;
+          if (pid && items.some((m) => String(m.id) === pid)) {
+            this.setData({ scrollInto: 'msg-' + pid, pendingScrollId: '', aroundId: '' });
+          }
         });
         if (hasNew) {
           api.social.message

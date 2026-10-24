@@ -5,6 +5,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.social.support.dto.SupportDtos;
 import com.duoduo.social.support.dto.SupportDtos.MessageView;
 import com.duoduo.social.support.dto.SupportDtos.SellerSendRequest;
 import com.duoduo.social.support.dto.SupportDtos.SessionView;
@@ -68,8 +69,16 @@ public class SellerSupportController {
     @GetMapping("/api/seller/support/sessions/{id}/messages")
     public ApiResponse<ThreadView> messages(@PathVariable Long id,
                                             @RequestParam(defaultValue = "1") int page,
-                                            @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(supportService.sellerThread(requireStoreOwnerId(), id, page, pageSize));
+                                            @RequestParam(defaultValue = "20") int pageSize,
+                                            @RequestParam(required = false) Long aroundId) {
+        return ApiResponse.ok(supportService.sellerThread(requireStoreOwnerId(), id, page, pageSize, aroundId));
+    }
+
+    /** 单向删除（2026-10-25）：批量隐藏商家侧视角的消息，用户仍可见。幂等 */
+    @PostMapping("/api/seller/support/sessions/{id}/messages/delete")
+    public ApiResponse<Integer> delete(@PathVariable Long id,
+                                       @RequestBody SupportDtos.DeleteRequest request) {
+        return ApiResponse.ok(supportService.deleteBySeller(requireStoreOwnerId(), id, request.messageIds()));
     }
 
     /**

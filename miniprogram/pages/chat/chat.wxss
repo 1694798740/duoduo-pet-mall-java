@@ -273,3 +273,27 @@
 .chat-recalled { font-size: 22rpx; color: #8a919f; padding: 4rpx 0; }
 .chat-recording { font-size: 22rpx; color: #d03050; padding: 4rpx 24rpx 8rpx; }
 .chat-voice-btn.recording { background: #d03050; color: #fff; border-radius: 50%; }
+
+/* ===== 2026-10-25 追加：时间分隔条 / 点击录音 / 多选删除 ===== */
+.chat-time-sep {
+  text-align: center;
+  font-size: 22rpx;
+  color: #8a919f;
+  margin: 20rpx 0 8rpx;
+}
+.chat-recalled { text-align: center; width: 100%; }
+.chat-rec-bar { display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
+.chat-mic-btn { font-size: 36rpx; }
+.msg-check-wrap { display: flex; align-items: center; padding: 0 8rpx; }
+.msg-check {
+  width: 40rpx; height: 40rpx; border-radius: 50%;
+  border: 2rpx solid #c3c8d0; color: transparent;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26rpx;
+}
+.msg-check.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.msg-selecting .msg-col { max-width: 70%; }
+.chat-select-bar {
+  display: flex; align-items: center; gap: 16rpx;
+  padding: 12rpx 24rpx; border-top: 1rpx solid #e5e8ef; background: #fff;
+}

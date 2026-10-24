@@ -2,6 +2,17 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 单向删除 / aroundId 定位冒烟（`scripts/message-self-delete-around-smoke.mjs`，30 项，第九十二轮）
+
+```bash
+NO_PROXY="*" node scripts/message-self-delete-around-smoke.mjs
+```
+
+前置：容器在跑（网关 :8080）、`incremental/45` 已执行。覆盖：客服侧买家批量单向删除（买家不见、
+客服仍可见、幂等计数 0）、客服删买家消息（各管各视角）、aroundId 窗口（含目标、时间正序、
+不漏本人已删）、私信 A/B 双向互删不串扰（A 删自己→B 仍见；B 删 A 发的→不影响 A 未删的消息；
+重复删除幂等）、私信 aroundId 窗口。2026-10-24 实测 **30/0**。
+
 ## 撤回/引用/语音冒烟（`scripts/chat-recall-quote-voice-smoke.mjs`，25 项，第九十一轮）
 
 ```bash

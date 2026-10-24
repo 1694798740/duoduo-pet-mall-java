@@ -108,4 +108,8 @@ public final class SupportDtos {
                                     /** 引用的消息 id（2026-10-24）：必须同会话 */
                                     Long replyToId) {
     }
+
+    /** 单向删除（2026-10-25）：批量隐藏本人视角的消息，对方仍可见 */
+    public record DeleteRequest(java.util.List<Long> messageIds) {
+    }
 }

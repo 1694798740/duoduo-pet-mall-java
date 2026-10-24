@@ -144,8 +144,36 @@ public class SupportService {
     }
 
     public ThreadView userThread(Long userId, Long sellerId, int page, int pageSize) {
+        return userThread(userId, sellerId, page, pageSize, null);
+    }
+
+    /** {@code aroundId} 非空 = 引用跳转定位：返回以该消息为中心的一页（2026-10-25） */
+    public ThreadView userThread(Long userId, Long sellerId, int page, int pageSize, Long aroundId) {
         SessionView session = ensureForUser(userId, sellerId);
-        return thread(session, page, pageSize, userId, true);
+        return thread(session, page, pageSize, aroundId, userId, true);
+    }
+
+    /** 单向删除（2026-10-25）：只对用户本人隐藏，商家仍可见。幂等；返回本次隐藏条数 */
+    public int deleteByUser(Long userId, List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        for (Long id : messageIds) {
+            SupportMessageEntity msg = requireMessage(id);
+            SupportSessionEntity session = requireSession(msg.getSessionId());
+            if (!Objects.equals(session.getUserId(), userId)) {
+                throw BizException.forbidden("该会话不属于当前账号");
+            }
+            if (msg.getHiddenForUserAt() != null) {
+                continue; // 幂等：已删过的不重复计
+            }
+            SupportMessageEntity patch = new SupportMessageEntity();
+            patch.setId(msg.getId());
+            patch.setHiddenForUserAt(now());
+            n += messageMapper.updateById(patch);
+        }
+        return n;
     }
 
     /** 用户发消息；{@code productId} 非空时附带商品卡上下文（自营/第三方商品都走这里） */
@@ -385,10 +413,38 @@ public class SupportService {
     }
 
     public ThreadView sellerThread(Long sellerId, Long sessionId, int page, int pageSize) {
+        return sellerThread(sellerId, sessionId, page, pageSize, null);
+    }
+
+    /** {@code aroundId} 非空 = 引用跳转定位（2026-10-25） */
+    public ThreadView sellerThread(Long sellerId, Long sessionId, int page, int pageSize, Long aroundId) {
         SupportSessionEntity session = requireOwnedSession(sellerId, sessionId);
         Map<Long, UserBrief> briefs = loadBriefs(List.of(session.getSellerId(), session.getUserId()));
         return thread(toSessionView(session, briefs, loadStoreNames(List.of(session.getSellerId())), false),
-                page, pageSize, sellerId, false);
+                page, pageSize, aroundId, sellerId, false);
+    }
+
+    /** 单向删除（2026-10-25）：只对商家侧隐藏，用户仍可见。幂等 */
+    public int deleteBySeller(Long sellerId, Long sessionId, List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return 0;
+        }
+        requireOwnedSession(sellerId, sessionId);
+        int n = 0;
+        for (Long id : messageIds) {
+            SupportMessageEntity msg = requireMessage(id);
+            if (!Objects.equals(msg.getSessionId(), sessionId)) {
+                throw BizException.validation("该消息不属于当前会话");
+            }
+            if (msg.getHiddenForSellerAt() != null) {
+                continue;
+            }
+            SupportMessageEntity patch = new SupportMessageEntity();
+            patch.setId(msg.getId());
+            patch.setHiddenForSellerAt(now());
+            n += messageMapper.updateById(patch);
+        }
+        return n;
     }
 
     public MessageView sendBySeller(Long sellerId, Long sessionId, SellerSendRequest request) {
@@ -572,13 +628,47 @@ public class SupportService {
     }
 
     private ThreadView thread(SessionView session, int page, int pageSize, Long viewerId, boolean userSide) {
+        return thread(session, page, pageSize, null, viewerId, userSide);
+    }
+
+    /**
+     * 会话消息读取。
+     *
+     * <p>{@code aroundId} 非空（2026-10-25）：引用跳转定位 —— 目标消息可能远在
+     * 当前分页窗口之外，此时不再按页取「最新一页」，而是取「该消息往前 half 条 +
+     * 往后 half 条」组成的一页，前端拿到的窗口必然包含被引用消息。
+     *
+     * <p>可见性（2026-10-25 单向删除）：本人已删除的消息在任何读取路径都不出现；
+     * 对方视角不受影响（hidden_* 按查看方分列）。
+     */
+    private ThreadView thread(SessionView session, int page, int pageSize, Long aroundId,
+                              Long viewerId, boolean userSide) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
-        Page<SupportMessageEntity> result = messageMapper.selectPage(new Page<>(p, size),
-                new LambdaQueryWrapper<SupportMessageEntity>()
-                        .eq(SupportMessageEntity::getSessionId, session.id())
-                        .orderByDesc(SupportMessageEntity::getId));
-        List<SupportMessageEntity> ordered = new ArrayList<>(result.getRecords());
+        List<SupportMessageEntity> ordered;
+        long total;
+        if (aroundId != null) {
+            int half = size / 2;
+            // 窗口 = [aroundId 往前 half+1 条（含本条）, 之后 half 条]，正序返回
+            List<SupportMessageEntity> before = messageMapper.selectList(visibleQuery(session.id(), userSide)
+                    .le(SupportMessageEntity::getId, aroundId)
+                    .orderByDesc(SupportMessageEntity::getId)
+                    .last("LIMIT " + (half + 1)));
+            List<SupportMessageEntity> after = messageMapper.selectList(visibleQuery(session.id(), userSide)
+                    .gt(SupportMessageEntity::getId, aroundId)
+                    .orderByAsc(SupportMessageEntity::getId)
+                    .last("LIMIT " + half));
+            java.util.Collections.reverse(after); // 统一成倒序，走下面的公共 reverse 变正序
+            ordered = new ArrayList<>(before);
+            ordered.addAll(after);
+            total = ordered.size();
+        } else {
+            Page<SupportMessageEntity> result = messageMapper.selectPage(new Page<>(p, size),
+                    visibleQuery(session.id(), userSide)
+                            .orderByDesc(SupportMessageEntity::getId));
+            ordered = new ArrayList<>(result.getRecords());
+            total = result.getTotal();
+        }
         java.util.Collections.reverse(ordered); // 分页取最新一页，展示按时间正序
 
         Map<Long, ProductCardBrief> products = loadProducts(ordered);
@@ -597,7 +687,19 @@ public class SupportService {
                 session.userId(), session.userName(), session.userAvatar(),
                 // 同 toSessionView：会话状态只对客服可见，买家侧恒为 null
                 userSide ? null : session.status(),
-                peerCursor, myUnread, items, result.getTotal(), p, size);
+                peerCursor, myUnread, items, total, p, size);
+    }
+
+    /** 会话内按查看方过滤「本人已单向删除」消息的公共查询前缀（2026-10-25） */
+    private LambdaQueryWrapper<SupportMessageEntity> visibleQuery(Long sessionId, boolean userSide) {
+        LambdaQueryWrapper<SupportMessageEntity> wrapper = new LambdaQueryWrapper<SupportMessageEntity>()
+                .eq(SupportMessageEntity::getSessionId, sessionId);
+        if (userSide) {
+            wrapper.isNull(SupportMessageEntity::getHiddenForUserAt);
+        } else {
+            wrapper.isNull(SupportMessageEntity::getHiddenForSellerAt);
+        }
+        return wrapper;
     }
 
     private SupportSessionEntity requireSession(Long sessionId) {

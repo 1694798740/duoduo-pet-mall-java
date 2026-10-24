@@ -49,6 +49,10 @@ public class SupportMessageEntity {
     private LocalDateTime recalledAt;
     /** 引用的消息 id（2026-10-24，同会话内） */
     private Long replyToId;
+    /** 用户侧单向删除时间（2026-10-25）；NULL = 对用户可见。只影响本人视角，对方仍可见 */
+    private LocalDateTime hiddenForUserAt;
+    /** 商家侧单向删除时间（2026-10-25）；NULL = 对商家可见 */
+    private LocalDateTime hiddenForSellerAt;
     private LocalDateTime createdAt;
 
     public Long getId() {
@@ -177,6 +181,22 @@ public class SupportMessageEntity {
 
     public void setReplyToId(Long replyToId) {
         this.replyToId = replyToId;
+    }
+
+    public LocalDateTime getHiddenForUserAt() {
+        return hiddenForUserAt;
+    }
+
+    public void setHiddenForUserAt(LocalDateTime hiddenForUserAt) {
+        this.hiddenForUserAt = hiddenForUserAt;
+    }
+
+    public LocalDateTime getHiddenForSellerAt() {
+        return hiddenForSellerAt;
+    }
+
+    public void setHiddenForSellerAt(LocalDateTime hiddenForSellerAt) {
+        this.hiddenForSellerAt = hiddenForSellerAt;
     }
 
     public LocalDateTime getCreatedAt() {

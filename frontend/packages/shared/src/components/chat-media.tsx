@@ -1280,42 +1280,77 @@ export const VoiceBubble: React.FC<{ url: string; durationMs: number | null }> =
 };
 
 /**
- * 按住录音（web）：MediaRecorder，60 秒上限自动停。
- * 不做暂停/重录的花活：松手即发送，录音失败给明确报错。
+ * 点击录音（2026-10-25 重构）：点麦克风开始 → 可暂停/继续 → 点结束发送。
+ *
+ * <p>为什么不再「按住说话」：按住对手指按压力道、按钮焦点都敏感，实测大量用户
+ * 按一下就松手，反复弹出「说话时间太短」。点击式把「开始」变成显式动作，
+ * 暂停/继续是 MediaRecorder 原生能力，时长只累计「正在录」的片段。
  */
 export const VOICE_MAX_MS_WEB = 60_000;
+
+export type VoiceRecorderStatus = 'idle' | 'recording' | 'paused';
 
 export const useVoiceRecorder: (opts: {
   onReady: (blob: Blob, durationMs: number) => void;
   onError: (message: string) => void;
 }) => {
+  status: VoiceRecorderStatus;
   recording: boolean;
   seconds: number;
   start: () => void;
+  pause: () => void;
+  resume: () => void;
   stop: () => void;
+  cancel: () => void;
 } = ({ onReady, onError }) => {
-  const [recording, setRecording] = useState(false);
+  const [status, setStatus] = useState<VoiceRecorderStatus>('idle');
   const [seconds, setSeconds] = useState(0);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const startedAtRef = useRef(0);
+  const segmentStartRef = useRef(0);
+  const activeMsRef = useRef(0);
+  const mimeRef = useRef('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const optsRef = useRef({ onReady, onError });
   optsRef.current = { onReady, onError };
+
+  const totalMs = useCallback(
+    () => activeMsRef.current + (recRef.current?.state === 'recording' ? Date.now() - segmentStartRef.current : 0),
+    [],
+  );
 
   const cleanup = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     recRef.current = null;
-    setRecording(false);
+    activeMsRef.current = 0;
+    setStatus('idle');
     setSeconds(0);
   }, []);
 
-  const stop = useCallback(() => {
-    recRef.current?.state === 'recording' && recRef.current.stop();
+  const finish = useCallback(() => {
+    const rec = recRef.current;
+    if (!rec) return;
+    if (rec.state === 'paused') rec.resume(); // stop() 在 paused 态不触发 ondataavailable 收尾
+    rec.stop();
   }, []);
+
+  const stop = useCallback(() => { finish(); }, [finish]);
+
+  const cancel = useCallback(() => {
+    const rec = recRef.current;
+    chunksRef.current = [];
+    if (rec) {
+      rec.onstop = () => cleanup(); // 丢弃数据，不回调 onReady
+      if (rec.state === 'paused') rec.resume();
+      rec.stop();
+      recRef.current = null;
+    } else {
+      cleanup();
+    }
+  }, [cleanup]);
 
   const start = useCallback(() => {
     if (recRef.current) return;
@@ -1327,37 +1362,55 @@ export const useVoiceRecorder: (opts: {
       streamRef.current = stream;
       const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
         : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+      mimeRef.current = mime;
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
+      activeMsRef.current = 0;
       rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       rec.onstop = () => {
-        const durationMs = Date.now() - startedAtRef.current;
-        const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' });
+        const durationMs = activeMsRef.current;
+        const blob = new Blob(chunksRef.current, { type: mimeRef.current || 'audio/webm' });
         cleanup();
         if (durationMs < 600) {
-          optsRef.current.onError('说话时间太短，再按久一点');
+          optsRef.current.onError('录音太短，请按住麦克风图标后再结束');
           return;
         }
         optsRef.current.onReady(blob, Math.min(durationMs, VOICE_MAX_MS_WEB));
       };
-      startedAtRef.current = Date.now();
+      segmentStartRef.current = Date.now();
       rec.start();
       recRef.current = rec;
-      setRecording(true);
+      setStatus('recording');
       timerRef.current = setInterval(() => {
-        const s = Math.floor((Date.now() - startedAtRef.current) / 1000);
-        setSeconds(s);
-        if (Date.now() - startedAtRef.current >= VOICE_MAX_MS_WEB) stop();
+        const ms = totalMs();
+        setSeconds(Math.floor(ms / 1000));
+        if (ms >= VOICE_MAX_MS_WEB) finish(); // 60 秒自动结束并发送
       }, 250);
     }).catch(() => optsRef.current.onError('无法访问麦克风，请检查浏览器权限'));
-  }, [cleanup, stop]);
+  }, [cleanup, finish, totalMs]);
+
+  const pause = useCallback(() => {
+    const rec = recRef.current;
+    if (!rec || rec.state !== 'recording') return;
+    activeMsRef.current += Date.now() - segmentStartRef.current;
+    rec.pause();
+    setStatus('paused');
+  }, []);
+
+  const resume = useCallback(() => {
+    const rec = recRef.current;
+    if (!rec || rec.state !== 'paused') return;
+    segmentStartRef.current = Date.now();
+    rec.resume();
+    setStatus('recording');
+  }, []);
 
   useEffect(() => () => {
-    recRef.current?.state === 'recording' && recRef.current.stop();
+    recRef.current?.state !== 'inactive' && recRef.current?.stop();
     cleanup();
   }, [cleanup]);
 
-  return { recording, seconds, start, stop };
+  return { status, recording: status === 'recording', seconds, start, pause, resume, stop, cancel };
 };
 
 /** 引用条：气泡顶部灰条 + 点击定位到原消息 */
@@ -1375,7 +1428,80 @@ export const QuotedStrip: React.FC<{
   </div>
 );
 
-/** 撤回后整条消息替换为系统灰字 */
+/** 撤回后整行替换为居中系统灰字（2026-10-25：文案居中，不再是气泡内小字） */
 export const RecallLine: React.FC<{ mine: boolean }> = ({ mine }) => (
   <div className="chat-recalled">{mine ? '你撤回了一条消息' : '对方撤回了一条消息'}</div>
+);
+
+/**
+ * 消息操作菜单（2026-10-25）：悬停消息行尾出现「···」，点击弹出 引用/删除/撤回/多选。
+ * 移动端触摸没有 hover —— 长按场景在小程序端实现，web 端也兼容点按（菜单按钮始终可点）。
+ */
+export const MessageActions: React.FC<{
+  onQuote?: (() => void) | null;
+  onRecall?: (() => void) | null;
+  onDelete?: (() => void) | null;
+  onMultiSelect?: (() => void) | null;
+  /** 复选模式下整行不可再弹菜单 */
+  disabled?: boolean;
+}> = ({ onQuote, onRecall, onDelete, onMultiSelect, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  if (disabled) return null;
+  const hasAny = onQuote || onRecall || onDelete || onMultiSelect;
+  if (!hasAny) return null;
+  return (
+    <div className="msg-menu-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="msg-menu-trigger"
+        aria-label="消息操作"
+        onClick={() => setOpen((v) => !v)}
+      >
+        ···
+      </button>
+      {open ? (
+        <div className="msg-menu" role="menu">
+          {onQuote ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onQuote(); }}>引用</button> : null}
+          {onDelete ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}>删除</button> : null}
+          {onRecall ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onRecall(); }}>撤回</button> : null}
+          {onMultiSelect ? <button type="button" role="menuitem" onClick={() => { setOpen(false); onMultiSelect(); }}>多选</button> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/** 多选删除工具条（2026-10-25）：进入选择模式后固定在会话底部 */
+export const MultiSelectBar: React.FC<{
+  count: number;
+  totalCount: number;
+  onToggleAll: () => void;
+  onDelete: () => void;
+  onCancel: () => void;
+}> = ({ count, totalCount, onToggleAll, onDelete, onCancel }) => (
+  <div className="msg-select-bar" role="toolbar">
+    <button type="button" className="btn btn-sm btn-ghost" onClick={onToggleAll}>
+      {count === totalCount && totalCount > 0 ? '取消全选' : '全选'}
+    </button>
+    <span className="small muted">已选 {count} 条</span>
+    <span style={{ flex: 1 }} />
+    <button type="button" className="btn btn-sm btn-ghost" onClick={onCancel}>取消</button>
+    <button type="button" className="btn btn-sm btn-danger" disabled={count === 0} onClick={onDelete}>
+      删除
+    </button>
+  </div>
 );

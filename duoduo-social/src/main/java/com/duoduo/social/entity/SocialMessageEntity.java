@@ -42,6 +42,10 @@ public class SocialMessageEntity {
     private LocalDateTime recalledAt;
     /** 引用的消息 id（2026-10-24，同会话内） */
     private Long replyToId;
+    /** 发送方单向删除时间（2026-10-25）；NULL = 对发送方可见 */
+    private LocalDateTime hiddenForSenderAt;
+    /** 接收方单向删除时间（2026-10-25）；NULL = 对接收方可见 */
+    private LocalDateTime hiddenForReceiverAt;
     private LocalDateTime createdAt;
 
     public Long getId() {
@@ -178,6 +182,22 @@ public class SocialMessageEntity {
 
     public void setReplyToId(Long replyToId) {
         this.replyToId = replyToId;
+    }
+
+    public LocalDateTime getHiddenForSenderAt() {
+        return hiddenForSenderAt;
+    }
+
+    public void setHiddenForSenderAt(LocalDateTime hiddenForSenderAt) {
+        this.hiddenForSenderAt = hiddenForSenderAt;
+    }
+
+    public LocalDateTime getHiddenForReceiverAt() {
+        return hiddenForReceiverAt;
+    }
+
+    public void setHiddenForReceiverAt(LocalDateTime hiddenForReceiverAt) {
+        this.hiddenForReceiverAt = hiddenForReceiverAt;
     }
 
     public LocalDateTime getCreatedAt() {

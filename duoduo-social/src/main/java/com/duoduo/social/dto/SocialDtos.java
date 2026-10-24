@@ -403,4 +403,8 @@ public final class SocialDtos {
             long total
     ) {
     }
+
+    /** 单向删除私信（2026-10-25）：批量隐藏本人视角的消息，对方仍可见 */
+    public record DeleteRequest(java.util.List<Long> messageIds) {
+    }
 }

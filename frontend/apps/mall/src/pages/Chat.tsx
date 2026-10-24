@@ -20,24 +20,31 @@ import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
-  isEmojiOnly, type MediaPayload } from '@duoduo/shared/components/chat-media';
+  isEmojiOnly, MessageActions, MultiSelectBar, type MediaPayload } from '@duoduo/shared/components/chat-media';
 import { realtime, useRealtime } from '@duoduo/shared/realtime';
-import { formatBjShort } from '@duoduo/shared/lib/time';
+import { chatSeparatorLabel } from '@duoduo/shared/lib/time';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 
 const PAGE_SIZE = 30;
-
-const timeText = (iso: string | null | undefined): string => formatBjShort(iso);
 
 export const ChatPage: React.FC = () => {
   const { peerId = '' } = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
   const { push } = useToast();
+  const confirm = useConfirm();
 
   const productId = search.get('productId') ?? undefined;
   const listingId = search.get('listingId') ?? undefined;
 
   const [page, setPage] = useState(1);
+  /** 引用跳转定位窗口（2026-10-25）：非空时服务端返回以该消息为中心的一页 */
+  const [aroundId, setAroundId] = useState<string | undefined>(undefined);
+  /** 多选删除模式 */
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** aroundId 拉回后待滚动的消息 id */
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -49,14 +56,14 @@ export const ChatPage: React.FC = () => {
   const typingTimer = useRef<number | null>(null);
 
   const ctx = useCallback(
-    () => ({ productId, listingId, page, pageSize: PAGE_SIZE }),
-    [productId, listingId, page],
+    () => ({ productId, listingId, page, pageSize: PAGE_SIZE, aroundId }),
+    [productId, listingId, page, aroundId],
   );
 
   const { data, loading, error } = useAsync(
     useCallback(() => messageApi.conversation(peerId, ctx()), [peerId, ctx]),
     Boolean(peerId),
-    [peerId, tick, page],
+    [peerId, tick, page, aroundId],
   );
 
   const items = data?.items ?? [];
@@ -120,7 +127,7 @@ export const ChatPage: React.FC = () => {
     m.mine && !m.recalledAt && Date.now() - new Date(m.createdAt).getTime() < 120_000;
 
   const recallMessage = async (m: import('@duoduo/api-sdk/types').ChatMessageView) => {
-    if (!window.confirm('撤回这条消息？')) return;
+    if (!(await confirm({ title: '撤回消息', message: '撤回后双方都看不到这条消息，确定撤回吗？' }))) return;
     try {
       await messageApi.recall(m.id);
       setTick((v) => v + 1);
@@ -129,6 +136,57 @@ export const ChatPage: React.FC = () => {
       push(toFriendlyMessage(err), 'error');
     }
   };
+
+  /** 单向删除（2026-10-25）：只对我隐藏，对方仍可见 */
+  const deleteMessages = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    if (!(await confirm({
+      title: '删除消息',
+      message: ids.length === 1 ? '删除后仅自己看不到这条消息，对方不受影响。确定删除吗？'
+        : `已选 ${ids.length} 条，删除后仅自己看不到，对方不受影响。确定删除吗？`,
+      danger: true,
+      confirmText: '删除',
+    }))) return;
+    try {
+      await messageApi.deleteMessages(ids);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      setTick((v) => v + 1);
+    } catch (err) {
+      setSendError(toFriendlyMessage(err));
+      push(toFriendlyMessage(err), 'error');
+    }
+  };
+
+  /** 引用跳转定位（2026-10-25）：目标不在当前窗口时用 aroundId 拉一页 */
+  const scrollToMessage = (messageId: string) => {
+    const el = bodyRef.current?.querySelector(`[data-mid="${messageId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      el.classList.remove('msg-flash');
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add('msg-flash');
+    }
+  };
+  const jumpToQuoted = async (messageId: string | null | undefined) => {
+    if (!messageId) return;
+    if (items.some((x) => x.id === messageId)) {
+      scrollToMessage(messageId);
+    } else {
+      setPendingScrollId(messageId);
+      setPage(1);
+      setAroundId(messageId);
+    }
+  };
+  // aroundId 拉回的目标消息渲染完成后滚动定位并清掉窗口参数
+  useEffect(() => {
+    if (!pendingScrollId || !items.length) return;
+    if (!items.some((x) => x.id === pendingScrollId)) return;
+    scrollToMessage(pendingScrollId);
+    setPendingScrollId(null);
+    setAroundId(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items[items.length - 1]?.id, pendingScrollId]);
 
   const sendVoice = async (blob: Blob, durationMs: number) => {
     setBusy(true);
@@ -264,46 +322,86 @@ export const ChatPage: React.FC = () => {
         <Empty icon="💬" title="还没有消息" desc="发一条打个招呼吧" />
       ) : (
         <div className="col" ref={bodyRef} style={{ gap: 8, marginTop: 8 }}>
-          {items.map((m, idx) => (
-            <div
-              key={m.id}
-              className="row"
-              style={{ justifyContent: m.mine ? 'flex-end' : 'flex-start' }}
-              data-first-unread={
-                !m.mine && !m.read && !items.slice(0, idx).some((x) => !x.mine && !x.read) ? '1' : undefined
-              }
-              data-mid={m.id}
-            >
-              <div
-                className="card card-pad"
-                style={{
-                  maxWidth: '72%',
-                  background: m.mine ? 'var(--brand-soft, #fff3e6)' : undefined,
-                }}
-              >
-                {m.recalledAt ? (
-                  <RecallLine mine={m.mine} />
+          {items.map((m, idx) => {
+            const separator = chatSeparatorLabel(m.createdAt, idx > 0 ? items[idx - 1]?.createdAt : null);
+            const checked = selectedIds.has(m.id);
+            return (
+              <React.Fragment key={m.id}>
+                {separator ? <div className="chat-time-sep">{separator}</div> : null}
+                {selectMode ? (
+                  <label
+                    className="row msg-select-row"
+                    style={{ justifyContent: m.mine ? 'flex-end' : 'flex-start' }}
+                    data-mid={m.id}
+                  >
+                    <input
+                      type="checkbox"
+                      className="msg-check"
+                      checked={checked}
+                      onChange={() =>
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+                          return next;
+                        })
+                      }
+                    />
+                    <div className="card card-pad" style={{ maxWidth: '72%' }}>
+                      {m.recalledAt ? <RecallLine mine={m.mine} /> : <MessageBody message={m} />}
+                    </div>
+                  </label>
+                ) : m.recalledAt ? (
+                  // 撤回文案独立整行居中（2026-10-25）
+                  <div className="row" style={{ justifyContent: 'center' }} data-mid={m.id}>
+                    <RecallLine mine={m.mine} />
+                  </div>
                 ) : (
-                  <MessageBody message={m} />
+                  <div
+                    className="row"
+                    style={{ justifyContent: m.mine ? 'flex-end' : 'flex-start' }}
+                    data-first-unread={
+                      !m.mine && !m.read && !items.slice(0, idx).some((x) => !x.mine && !x.read) ? '1' : undefined
+                    }
+                    data-mid={m.id}
+                  >
+                    <div
+                      className="card card-pad"
+                      style={{
+                        maxWidth: '72%',
+                        background: m.mine ? 'var(--brand-soft, #fff3e6)' : undefined,
+                      }}
+                    >
+                      <MessageBody message={m} onQuotedClick={() => void jumpToQuoted(m.replyToId)} />
+                      <div className="small muted" style={{ marginTop: 4, textAlign: 'right' }}>
+                        {m.mine ? (m.read ? '已读' : '未读') : ''}
+                        <MessageActions
+                          onQuote={() => setReplyTo(m)}
+                          onRecall={recallWithinWindow(m) ? () => void recallMessage(m) : null}
+                          onDelete={() => void deleteMessages([m.id])}
+                          onMultiSelect={() => { setSelectMode(true); setSelectedIds(new Set()); }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 )}
-                <div className="small muted" style={{ marginTop: 4, textAlign: 'right' }}>
-                  {timeText(m.createdAt)}
-                  {m.mine ? (m.read ? ' · 已读' : ' · 未读') : ''}
-                  {!m.recalledAt ? (
-                    <span className="sup-acts">
-                      <button type="button" className="sup-act" onClick={() => setReplyTo(m)}>引用</button>
-                      {recallWithinWindow(m) ? (
-                        <button type="button" className="sup-act" onClick={() => void recallMessage(m)}>撤回</button>
-                      ) : null}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ))}
+              </React.Fragment>
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       )}
+
+      {selectMode ? (
+        <MultiSelectBar
+          count={selectedIds.size}
+          totalCount={items.length}
+          onToggleAll={() =>
+            setSelectedIds((prev) => (prev.size === items.length ? new Set() : new Set(items.map((x) => x.id))))
+          }
+          onDelete={() => void deleteMessages([...selectedIds])}
+          onCancel={() => { setSelectMode(false); setSelectedIds(new Set()); }}
+        />
+      ) : null}
 
       {peerTyping ? <div className="sup-typing">对方正在输入…</div> : null}
       {sendError ? <Alert kind="error">{sendError}</Alert> : null}
@@ -313,8 +411,15 @@ export const ChatPage: React.FC = () => {
           {'　✕'}
         </div>
       ) : null}
-      {recorder.recording ? (
-        <div className="recording-tip" role="status">录音中 {recorder.seconds}s … 松开发送（最长 60 秒）</div>
+      {recorder.status !== 'idle' ? (
+        <div className="recording-tip recording-bar" role="status">
+          <span>{recorder.status === 'paused' ? '已暂停' : '录音中'} {recorder.seconds}s（最长 60 秒）</span>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.cancel}>取消</button>
+          {recorder.status === 'paused'
+            ? <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.resume}>继续</button>
+            : <button type="button" className="btn btn-sm btn-ghost" onClick={recorder.pause}>暂停</button>}
+          <button type="button" className="btn btn-sm btn-primary" onClick={recorder.stop}>结束并发送</button>
+        </div>
       ) : null}
 
       <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'flex-start' }}>
@@ -328,15 +433,17 @@ export const ChatPage: React.FC = () => {
         />
         <button
           type="button"
-          className="btn btn-sm btn-ghost"
+          className="btn btn-sm btn-ghost mic-btn"
           disabled={busy || !canSend}
-          style={recorder.recording ? { background: '#d03050', color: '#fff' } : undefined}
-          onPointerDown={(e) => { e.preventDefault(); recorder.start(); }}
-          onPointerUp={(e) => { e.preventDefault(); recorder.stop(); }}
-          onPointerLeave={() => { if (recorder.recording) recorder.stop(); }}
-          aria-label="按住说话"
+          onClick={() => (recorder.status === 'idle' ? recorder.start() : recorder.stop())}
+          aria-label={recorder.status === 'idle' ? '开始录音' : '结束并发送'}
+          title={recorder.status === 'idle' ? '点击开始录音' : '点击结束并发送'}
         >
-          {recorder.recording ? '松开发送' : '按住说话'}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" />
+            <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+            <path d="M12 18v3M8.5 21h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
         </button>
         <textarea
           className="input"
@@ -378,8 +485,8 @@ export const ChatPage: React.FC = () => {
 };
 
 
-/** 私信消息体：媒体走专用渲染，纯表情放大 */
-const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessageView }> = ({ message }) => {
+/** 私信消息体：媒体走专用渲染，纯表情放大；引用条可点击定位原消息 */
+const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessageView; onQuotedClick?: () => void }> = ({ message, onQuotedClick }) => {
   if (message.bizType === 'VOICE') {
     return <VoiceBubble url={message.mediaUrl || ''} durationMs={message.durationMs ?? null} />;
   }
@@ -409,7 +516,7 @@ const MessageBody: React.FC<{ message: import('@duoduo/api-sdk/types').ChatMessa
       className="small"
       style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: emojiOnly ? 28 : undefined }}
     >
-      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} /> : null}
+      {message.quoted ? <QuotedStrip excerpt={message.quoted.excerpt} onClick={onQuotedClick} /> : null}
       {message.content}
     </div>
   );

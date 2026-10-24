@@ -93,3 +93,33 @@ export function historyGroupLabel(iso: string): string {
   const monthDay = `${Number(p.m)}月${Number(p.d)}日`;
   return p.y === bjDayKey(0).slice(0, 4) ? monthDay : `${p.y}年${monthDay}`;
 }
+
+// ---------------- 聊天时间分隔条（2026-10-25） ----------------
+
+/** 分隔阈值：相邻两条消息间隔 ≥10 分钟才再显示时间 */
+export const CHAT_GAP_MS = 10 * 60_000;
+
+/** 聊天场景的时间文案：当天只显示 HH:mm；昨天/前天带相对称呼；更早「M月D日 HH:mm」 */
+export function chatTimeLabel(iso: string | null | undefined): string {
+  const p = parts(iso);
+  if (!p) return '';
+  const key = `${p.y}-${p.m}-${p.d}`;
+  const hm = `${p.h}:${p.mi}`;
+  if (key === bjDayKey(0)) return hm;
+  if (key === bjDayKey(1)) return `昨天 ${hm}`;
+  if (key === bjDayKey(2)) return `前天 ${hm}`;
+  return `${Number(p.m)}月${Number(p.d)}日 ${hm}`;
+}
+
+/**
+ * 会话内第 idx 条消息要不要插时间分隔条：
+ * 第一条必插；与上一条间隔 ≥10 分钟插。返回 null = 不显示。
+ */
+export function chatSeparatorLabel(iso: string | null | undefined, prevIso?: string | null): string | null {
+  if (!iso) return null;
+  if (prevIso) {
+    const gap = new Date(iso).getTime() - new Date(prevIso).getTime();
+    if (Number.isFinite(gap) && gap < CHAT_GAP_MS) return null;
+  }
+  return chatTimeLabel(iso);
+}

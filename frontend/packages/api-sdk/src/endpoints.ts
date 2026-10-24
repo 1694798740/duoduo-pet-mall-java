@@ -1160,8 +1160,12 @@ export const messageApi = {
    */
   conversation: (
     peerId: string,
-    query?: { productId?: string; listingId?: string; page?: number; pageSize?: number },
+    query?: { productId?: string; listingId?: string; page?: number; pageSize?: number; aroundId?: string },
   ) => api.get<MessagePageData>(`/api/socials/messages/conversations/${peerId}`, { query }),
+
+  /** 单向删除私信（2026-10-25）：批量隐藏本人视角，对方仍可见。返回本次隐藏条数 */
+  deleteMessages: (messageIds: string[]) =>
+    api.post<number>('/api/socials/messages/delete', { messageIds }),
 
   /** 打开会话即标记已读（幂等），返回被标记的条数 */
   markRead: (peerId: string, query?: { productId?: string; listingId?: string }) =>
@@ -1286,8 +1290,12 @@ export const supportApi = {
     api.get<SupportSessionView>('/api/support/session', { query: { sellerId } }),
   /** 我的客服会话列表（自营 + 各商家各一条） */
   sessions: () => api.get<SupportSessionView[]>('/api/support/sessions'),
-  messages: (query?: { sellerId?: string; page?: number; pageSize?: number }) =>
+  messages: (query?: { sellerId?: string; page?: number; pageSize?: number; aroundId?: string }) =>
     api.get<SupportThreadView>('/api/support/messages', { query }),
+
+  /** 单向删除客服消息（2026-10-25）：批量隐藏本人视角，对方仍可见。返回本次隐藏条数 */
+  deleteMessages: (messageIds: string[]) =>
+    api.post<number>('/api/support/messages/delete', { messageIds }),
   /** 发消息；productId 非空 = 附商品卡（服务端会校验商品归属该店铺） */
   send: (body: {
     sellerId?: string;
@@ -1340,8 +1348,11 @@ export const sellerSupportApi = {
     page?: number;
     pageSize?: number;
   }) => api.get<PageResult<SupportSessionView>>('/api/seller/support/sessions', { query }),
-  messages: (id: string, query?: { page?: number; pageSize?: number }) =>
+  messages: (id: string, query?: { page?: number; pageSize?: number; aroundId?: string }) =>
     api.get<SupportThreadView>(`/api/seller/support/sessions/${id}/messages`, { query }),
+  /** 单向删除客服消息（2026-10-25，商家侧）：批量隐藏本人视角，用户仍可见 */
+  deleteMessages: (id: string, messageIds: string[]) =>
+    api.post<number>(`/api/seller/support/sessions/${id}/messages/delete`, { messageIds }),
   reply: (id: string, payload: {
     content: string;
     type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'EMOJI' | 'VOICE';

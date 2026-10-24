@@ -134,3 +134,17 @@
 - 单实例 Redis 故障时票据/扇出有本地兜底，但多实例间推送会失效——生产部署必须保证 Redis 可用。
 - 网关 `/ws/**` 早放行 + 预检是安全关键路径，改动网关时勿动该 filter 的 order。
 - 小程序真机需在 mp 后台配置 wss 域名（生产为 HTTPS/WSS，本地开发为 ws://localhost）。
+
+## 十、第九十二轮收尾打磨（2026-10-24，全部落地）
+
+1. **录音改点击式**：web `useVoiceRecorder`（pause/resume，只累计「正在录」片段）+ 小程序
+   RecorderManager pause/resume；「按住说话」全链路下线。
+2. **自定义弹窗**：web 确认统一 useConfirm（项目规范：一律不用浏览器原生弹窗）；小程序用 wx.showModal。
+3. **时间分隔条**：10 分钟间隔阈值；当天 HH:mm / 昨天·前天 / M月D日 HH:mm；web `chatSeparatorLabel`、
+   小程序 `chatTimeLabel`（UTC+8 口径）。
+4. **消息操作 + 单向删除**：长按 / 悬停「···」菜单（引用/删除/撤回/多选）；单向删除按查看方分列
+   （`incremental/45` 四个 hidden 时间戳列），读取与 aroundId 窗口统一 isNull 过滤；幂等返回隐藏条数。
+5. **引用跳转 + aroundId 定位窗口**：目标不在当前窗口时，服务端返回「往前 half+1 + 往后 half」一页。
+
+验证：`message-self-delete-around-smoke.mjs` 30/0；回归 9 套全绿。**本迭代方案四批（实时化、
+撤回/引用/语音、多端对齐、终版打磨）全部收官。**

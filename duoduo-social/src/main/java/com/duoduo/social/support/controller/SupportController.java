@@ -2,6 +2,7 @@ package com.duoduo.social.support.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.social.support.dto.SupportDtos;
 import com.duoduo.social.support.dto.SupportDtos.MessageView;
 import com.duoduo.social.support.dto.SupportDtos.SendRequest;
 import com.duoduo.social.support.dto.SupportDtos.SessionView;
@@ -47,12 +48,19 @@ public class SupportController {
         return ApiResponse.ok(supportService.listForUser(UserContext.requireUserId()));
     }
 
-    /** 会话消息（时间正序，分页取最新一页） */
+    /** 会话消息（时间正序，分页取最新一页）；{@code aroundId} 非空 = 引用跳转定位窗口（2026-10-25） */
     @GetMapping("/api/support/messages")
     public ApiResponse<ThreadView> messages(@RequestParam(required = false) Long sellerId,
                                             @RequestParam(defaultValue = "1") int page,
-                                            @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(supportService.userThread(UserContext.requireUserId(), sellerId, page, pageSize));
+                                            @RequestParam(defaultValue = "20") int pageSize,
+                                            @RequestParam(required = false) Long aroundId) {
+        return ApiResponse.ok(supportService.userThread(UserContext.requireUserId(), sellerId, page, pageSize, aroundId));
+    }
+
+    /** 单向删除（2026-10-25）：批量隐藏本人视角的消息，对方仍可见。幂等 */
+    @PostMapping("/api/support/messages/delete")
+    public ApiResponse<Integer> delete(@RequestBody SupportDtos.DeleteRequest request) {
+        return ApiResponse.ok(supportService.deleteByUser(UserContext.requireUserId(), request.messageIds()));
     }
 
     /**
