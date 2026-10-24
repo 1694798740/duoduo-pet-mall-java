@@ -21,9 +21,32 @@
   ],
   "skill": "skills/duoduo-takeover/SKILL.md",
   "targets": {
-    "github": { "status": "pending", "path": "docs/ai-handover-2026-10-24/" },
-    "feishu": { "status": "pending", "folder_token": null, "url": null },
-    "tencent_docs": { "status": "pending", "folder_id": null, "url": null },
-    "ima": { "status": "pending", "knowledge_base_id": "ima_kb_d6LoVzYa", "media_ids": [] }
-  }
+    "github": {
+      "status": "done",
+      "commit": "d4f104e",
+      "path": "docs/ai-handover-2026-10-24/",
+      "url": "https://github.com/1694798740/duoduo-pet-mall-java/tree/main/docs/ai-handover-2026-10-24"
+    },
+    "feishu": {
+      "status": "done",
+      "folder_token": "DopCf7Sahlgi2Ydh0DBcHv2xnzd",
+      "url": "https://w0khqzr2tyz.feishu.cn/drive/folder/DopCf7Sahlgi2Ydh0DBcHv2xnzd",
+      "files": 15,
+      "note": "14 篇 + 技能文件（另存为 14-AI接管技能-SKILL.md）"
+    },
+    "tencent_docs": {
+      "status": "blocked",
+      "reason": "connector 授权失效（bad_mcp_config / 无 TDOC token），重新连接被用户取消",
+      "action": "用户在连接器面板重新授权腾讯文档后可一键补传"
+    },
+    "ima": {
+      "status": "done",
+      "knowledge_base_id": "ima_kb_d6LoVzYa",
+      "media_id": "markdown_cls1_9204d9392c2a86f50e361385cf8c8792_731f10991d443d29be2f11843078cd027519657363789036",
+      "file": "多多宠物商店-AI交接文档集-合并版.md",
+      "parse_state": "MEDIA_PARSE_SUCCESS",
+      "file_size": 68863
+    }
+  },
+  "consolidated_file": "多多宠物商店-AI交接文档集-合并版.md"
 }
