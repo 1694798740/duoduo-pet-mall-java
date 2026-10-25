@@ -122,6 +122,24 @@ public enum AuditAction {
     /** 删除类目。 */
     CATEGORY_DELETE(AuditCategory.CONTENT, "CATEGORY"),
 
+    /**
+     * A-10 · 新建类目属性模板项。
+     *
+     * <p>归入 CONTENT：模板决定「这个类目的商品能不能发布」，改动会立即影响所有商家的发布闸门，
+     * 与类目本身的增删改同性质。目标类型用 {@code CATEGORY_ATTR} 而非 {@code CATEGORY}，
+     * 因为追责时要回答的是「谁改了哪个属性」，而不是「谁动了这个类目」。
+     */
+    CATEGORY_ATTR_CREATE(AuditCategory.CONTENT, "CATEGORY_ATTR"),
+
+    /** A-10 · 修改类目属性（类型 / 必填 / 选项），会改变既有商家的发布校验结果。 */
+    CATEGORY_ATTR_UPDATE(AuditCategory.CONTENT, "CATEGORY_ATTR"),
+
+    /** A-10 · 停用 / 启用类目属性（停用后不再参与发布校验，历史值保留）。 */
+    CATEGORY_ATTR_STATUS(AuditCategory.CONTENT, "CATEGORY_ATTR"),
+
+    /** A-10 · 删除类目属性模板项。已发布商品的历史属性值不受影响。 */
+    CATEGORY_ATTR_DELETE(AuditCategory.CONTENT, "CATEGORY_ATTR"),
+
     /** 新建品牌。 */
     BRAND_CREATE(AuditCategory.CONTENT, "BRAND"),
 

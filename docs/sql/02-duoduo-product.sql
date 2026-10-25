@@ -28,6 +28,7 @@ DROP TABLE IF EXISTS t_listing;
 DROP TABLE IF EXISTS t_sku;
 DROP TABLE IF EXISTS t_spu;
 DROP TABLE IF EXISTS t_brand;
+DROP TABLE IF EXISTS t_category_attr;
 DROP TABLE IF EXISTS t_category;
 
 -- ---------- 类目：两级树（parent_id=0 为一级） ----------
@@ -44,6 +45,25 @@ CREATE TABLE t_category (
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_category_parent ON t_category (parent_id);
+
+-- ---------- 类目属性模板（A-10） ----------
+-- 只定义「这个类目要求填哪些属性、什么类型、可选值」，属性值仍存在 t_spu.spec_params（KV）；
+-- 不建值表：历史自由 KV 需继续可读可编辑，模板只做发布/编辑时的校验闸门。
+CREATE TABLE t_category_attr (
+    id          BIGINT       NOT NULL,
+    category_id BIGINT       NOT NULL,
+    name        VARCHAR(30)  NOT NULL,
+    input_type  VARCHAR(16)  NOT NULL DEFAULT 'TEXT',
+    is_required TINYINT      NOT NULL DEFAULT 0,
+    options     VARCHAR(1000),
+    sort_no     INT          NOT NULL DEFAULT 0,
+    status      VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
+    created_at  TIMESTAMP    NOT NULL,
+    updated_at  TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_category_attr_name UNIQUE (category_id, name)
+);
+CREATE INDEX idx_category_attr ON t_category_attr (category_id, status, sort_no);
 
 -- ---------- 品牌 ----------
 CREATE TABLE t_brand (

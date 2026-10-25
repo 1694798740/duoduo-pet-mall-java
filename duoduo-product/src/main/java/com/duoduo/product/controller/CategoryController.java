@@ -1,7 +1,9 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.product.dto.ProductDtos.CategoryAttrView;
 import com.duoduo.product.dto.ProductDtos.CategoryNode;
+import com.duoduo.product.service.CategoryAttrService;
 import com.duoduo.product.service.CategoryService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,9 +20,11 @@ import java.util.List;
 public class CategoryController {
 
     private final CategoryService categoryService;
+    private final CategoryAttrService categoryAttrService;
 
-    public CategoryController(CategoryService categoryService) {
+    public CategoryController(CategoryService categoryService, CategoryAttrService categoryAttrService) {
         this.categoryService = categoryService;
+        this.categoryAttrService = categoryAttrService;
     }
 
     /** 两级类目树，用于首页金刚区与筛选面板 */
@@ -38,5 +42,11 @@ public class CategoryController {
     @GetMapping("/{id:\\d+}")
     public ApiResponse<CategoryNode> get(@PathVariable Long id) {
         return ApiResponse.ok(categoryService.get(id));
+    }
+
+    /** A-10 · 类目属性模板：只返回启用项，供商家发布 / 编辑商品时渲染 */
+    @GetMapping("/{id:\\d+}/attrs")
+    public ApiResponse<List<CategoryAttrView>> attrs(@PathVariable Long id) {
+        return ApiResponse.ok(categoryAttrService.activeFor(id));
     }
 }

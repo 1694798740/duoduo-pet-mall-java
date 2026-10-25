@@ -4,6 +4,22 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-25（八十）· 类目属性模板（A-10）：必填缺失拒绝发布，老商品不被后来新增的模板阻断**
+
+- **问题**：规格参数是自由 KV，运营无法要求「净含量必填」「适用阶段只能选固定值」，发布质量与后续筛选没有可依赖口径。
+- **方案**：新增 `t_category_attr`（`incremental/51`，`category_id + name` 唯一索引）；**不建属性值表**，
+  值仍存 `t_spu.spec_params`、按属性名匹配，模板只做发布 / 改规格时的校验闸门，存量商品零回填。
+- **校验**：新建始终校验；编辑仅在**改规格或换类目**时校验。必填缺失一次性汇总；
+  NUMBER 用 `BigDecimal` 判数字；SELECT 必须在选项内；停用项立即失效、公开接口不可见。
+- **接口**：`GET /api/categories/{id}/attrs`（公开只读启用项）；运营
+  `GET|POST /api/admin/categories/{id}/attrs`、`PUT|DELETE /api/admin/category-attrs/{id}`、
+  `PUT /api/admin/category-attrs/{id}/status`；四个动作独立审计。
+- **前端**：后台类目行新增「属性模板」维护弹窗；商家发布 / 编辑弹窗按模板渲染 TEXT / NUMBER / SELECT，
+  与自定义 KV 合并提交；顺带修复类目搜索的 TDZ 崩溃。
+- **验证**：商品单测 **196/0**（A-10 新增 15）、A-10 冒烟 **56/0**、A-10 UI e2e **35/0**；
+  回归 r93 **43/0**、A-08 **52/0**、A-09 **64/0**、audit-sla **62/0**、商品管理 UI **22/0**；
+  product / user / gateway 与三端 Web 镜像重建，17 个容器 healthy，模板与 `spec_params` 回库断言通过。
+
 **2026-10-24（七十九）· 商品删除与回收站（A-09）：软删 30 天可恢复，前台/审核/检索处处不可见**
 
 - **问题**：卖家只能下架不能删除，废弃或违规商品长期堆在「我的商品」；误删也没有恢复机制。

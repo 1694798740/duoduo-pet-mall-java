@@ -162,6 +162,31 @@ export interface CategoryNode {
   children: CategoryNode[];
 }
 
+/**
+ * A-10 · 类目属性模板项。
+ *
+ * <p>它只定义「这个类目要填哪些属性」，属性值仍存在商品的 `specParams` KV 里（按 name 匹配）。
+ * `inputType`：TEXT / NUMBER / SELECT；SELECT 时 `options` 非空。
+ */
+export interface CategoryAttrView {
+  id: string;
+  categoryId: string;
+  name: string;
+  inputType: 'TEXT' | 'NUMBER' | 'SELECT' | string;
+  required: boolean;
+  options: string[] | null;
+  sortNo: number;
+  status: 'ACTIVE' | 'INACTIVE' | string;
+}
+
+export interface CategoryAttrSaveRequest {
+  name: string;
+  inputType?: 'TEXT' | 'NUMBER' | 'SELECT';
+  required?: boolean;
+  options?: string[];
+  sortNo?: number;
+}
+
 export interface BrandView {
   id: string;
   name: string;

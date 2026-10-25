@@ -45,6 +45,8 @@ import type {
   CartView,
   CategoryNode,
   CategorySaveRequest,
+  CategoryAttrSaveRequest,
+  CategoryAttrView,
   CouponClaimResult,
   CouponTemplateView,
   CouponView,
@@ -317,6 +319,8 @@ export const addressApi = {
 export const catalogApi = {
   /** 两级类目树 */
   categories: () => api.get<CategoryNode[]>('/api/categories'),
+  /** 类目属性模板（A-10）：只返回 ACTIVE 项，发布 / 编辑商品时按它渲染与校验 */
+  categoryAttrs: (categoryId: string) => api.get<CategoryAttrView[]>(`/api/categories/${categoryId}/attrs`),
   /** 品牌列表 */
   brands: () => api.get<BrandView[]>('/api/meta/brands'),
   /** 筛选字典：物种 / 生命阶段 / 成色 / 供货类型 / 排序 */
@@ -713,6 +717,18 @@ export const adminApi = {
   setCategoryStatus: (id: string, active: boolean) =>
     api.put<void>(`/api/admin/categories/${id}/status?active=${active}`),
   deleteCategory: (id: string) => api.del<void>(`/api/admin/categories/${id}`),
+
+  // ---- 类目属性模板（A-10） ----
+  // 与类目 CRUD 同一个控制器：模板是类目的从属主数据，运营在类目页里原地维护。
+  categoryAttrs: (categoryId: string) =>
+    api.get<CategoryAttrView[]>(`/api/admin/categories/${categoryId}/attrs`),
+  createCategoryAttr: (categoryId: string, body: CategoryAttrSaveRequest) =>
+    api.post<CategoryAttrView>(`/api/admin/categories/${categoryId}/attrs`, body),
+  updateCategoryAttr: (id: string, body: CategoryAttrSaveRequest) =>
+    api.put<CategoryAttrView>(`/api/admin/category-attrs/${id}`, body),
+  setCategoryAttrStatus: (id: string, active: boolean) =>
+    api.put<void>(`/api/admin/category-attrs/${id}/status?active=${active}`),
+  deleteCategoryAttr: (id: string) => api.del<void>(`/api/admin/category-attrs/${id}`),
 
   brands: () => api.get<BrandView[]>('/api/admin/brands'),
   createBrand: (body: BrandSaveRequest) => api.post<BrandView>('/api/admin/brands', body),

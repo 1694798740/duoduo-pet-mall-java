@@ -7,11 +7,17 @@
 
 import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
-import type { CategoryNode, CategorySaveRequest } from '@duoduo/api-sdk/types';
+import type {
+  CategoryAttrSaveRequest,
+  CategoryAttrView,
+  CategoryNode,
+  CategorySaveRequest,
+} from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
@@ -31,10 +37,32 @@ const PAGE_SIZE = 10;
 
 const emptyForm: CategorySaveRequest = { name: '', parentId: TOP_PARENT, sortNo: 0, icon: '' };
 
+const emptyAttrForm: CategoryAttrSaveRequest = {
+  name: '', inputType: 'TEXT', required: false, options: [], sortNo: 0,
+};
+
+const ATTR_TYPE_LABEL: Record<string, string> = {
+  TEXT: '文本',
+  NUMBER: '数字',
+  SELECT: '单选',
+};
+
 export const AdminCategoriesPage: React.FC = () => {
   const { user } = useAuth();
   const operator = isOperator(user?.role);
   const { push } = useToast();
+  const confirm = useConfirm();
+
+  // ---- A-10 · 类目属性模板（在类目行内打开，作为类目的从属主数据） ----
+  const [attrCategory, setAttrCategory] = useState<CategoryNode | null>(null);
+  const [attrs, setAttrs] = useState<CategoryAttrView[]>([]);
+  const [attrsLoading, setAttrsLoading] = useState(false);
+  const [attrError, setAttrError] = useState<string | null>(null);
+  const [attrForm, setAttrForm] = useState<CategoryAttrSaveRequest>(emptyAttrForm);
+  const [attrOptionsText, setAttrOptionsText] = useState('');
+  const [editingAttr, setEditingAttr] = useState<CategoryAttrView | null>(null);
+  const [attrFormOpen, setAttrFormOpen] = useState(false);
+  const [attrBusy, setAttrBusy] = useState(false);
 
   const [editing, setEditing] = useState<CategoryNode | null>(null);
   const [creating, setCreating] = useState(false);
@@ -57,17 +85,19 @@ export const AdminCategoriesPage: React.FC = () => {
   const items = data ?? [];
   // 接口返回全量（品牌 / 类目通常只有几十条），搜索与分页在本地做；
   // 与服务端分页的页面用同一套 SearchBar / Pagination，交互保持一致。
+  // nameOf 必须定义在 filtered 之前：搜索函数会在 filter 回调里同步调用它，
+  // 放在后面会命中 const 的暂时性死区（输入关键词瞬间整页崩掉）。
+  /** 列出父类目名；parentId 为 null 或哨兵 '0' 都表示顶级 */
+  const nameOf = (parentId: string | null) =>
+    parentId && parentId !== TOP_PARENT
+      ? (items.find((c) => c.id === parentId)?.name ?? `#${parentId}`)
+      : '（顶级）';
   const filtered = keyword
     ? items.filter((it) => ([it.name, nameOf(it.parentId)].join(' ')).toLowerCase().includes(keyword.toLowerCase()))
     : items;
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, pageCount);
   const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-  /** 列出父类目名；parentId 为 null 或哨兵 '0' 都表示顶级 */
-  const nameOf = (parentId: string | null) =>
-    parentId && parentId !== TOP_PARENT
-      ? (items.find((c) => c.id === parentId)?.name ?? `#${parentId}`)
-      : '（顶级）';
 
   const openCreate = () => {
     setEditing(null);
@@ -128,6 +158,119 @@ export const AdminCategoriesPage: React.FC = () => {
     }
   };
 
+  // ---------------- 类目属性模板 ----------------
+
+  const loadAttrs = async (categoryId: string) => {
+    setAttrsLoading(true);
+    setAttrError(null);
+    try {
+      setAttrs(await adminApi.categoryAttrs(categoryId));
+    } catch (err) {
+      setAttrError(toFriendlyMessage(err));
+    } finally {
+      setAttrsLoading(false);
+    }
+  };
+
+  const openAttrs = (category: CategoryNode) => {
+    setAttrCategory(category);
+    setAttrs([]);
+    setEditingAttr(null);
+    setAttrFormOpen(false);
+    setAttrError(null);
+    void loadAttrs(category.id);
+  };
+
+  const closeAttrs = () => {
+    setAttrCategory(null);
+    setAttrs([]);
+    setEditingAttr(null);
+    setAttrFormOpen(false);
+    setAttrError(null);
+  };
+
+  const openAttrCreate = () => {
+    setEditingAttr(null);
+    setAttrForm({ ...emptyAttrForm });
+    setAttrOptionsText('');
+    setAttrFormOpen(true);
+    setAttrError(null);
+  };
+
+  const openAttrEdit = (attr: CategoryAttrView) => {
+    setEditingAttr(attr);
+    setAttrForm({
+      name: attr.name,
+      inputType: attr.inputType as CategoryAttrSaveRequest['inputType'],
+      required: attr.required,
+      options: attr.options ?? [],
+      sortNo: attr.sortNo,
+    });
+    setAttrOptionsText((attr.options ?? []).join('，'));
+    setAttrFormOpen(true);
+    setAttrError(null);
+  };
+
+  const saveAttr = async () => {
+    if (!attrCategory) return;
+    const options = attrForm.inputType === 'SELECT'
+      ? attrOptionsText.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
+      : [];
+    const body: CategoryAttrSaveRequest = { ...attrForm, name: attrForm.name.trim(), options };
+    if (!body.name) {
+      setAttrError('属性名不能为空');
+      return;
+    }
+    setAttrBusy(true);
+    setAttrError(null);
+    try {
+      if (editingAttr) {
+        await adminApi.updateCategoryAttr(editingAttr.id, body);
+        push('属性已更新', 'success');
+      } else {
+        await adminApi.createCategoryAttr(attrCategory.id, body);
+        push('属性已新增', 'success');
+      }
+      setAttrFormOpen(false);
+      setEditingAttr(null);
+      await loadAttrs(attrCategory.id);
+    } catch (err) {
+      setAttrError(toFriendlyMessage(err));
+    } finally {
+      setAttrBusy(false);
+    }
+  };
+
+  const toggleAttr = async (attr: CategoryAttrView, active: boolean) => {
+    if (!attrCategory) return;
+    setAttrError(null);
+    try {
+      await adminApi.setCategoryAttrStatus(attr.id, active);
+      push(active ? '属性已启用' : '属性已停用', 'success');
+      await loadAttrs(attrCategory.id);
+    } catch (err) {
+      setAttrError(toFriendlyMessage(err));
+    }
+  };
+
+  const removeAttr = async (attr: CategoryAttrView) => {
+    if (!attrCategory) return;
+    if (!(await confirm({
+      title: '删除类目属性',
+      message: `删除「${attr.name}」后，已发布商品里的同名参数会退化为自定义属性；下次改规格时不再校验它。`,
+      danger: true,
+      confirmText: '删除',
+    }))) return;
+    setAttrError(null);
+    try {
+      await adminApi.deleteCategoryAttr(attr.id);
+      push('属性已删除', 'success');
+      await loadAttrs(attrCategory.id);
+    } catch (err) {
+      setAttrError(toFriendlyMessage(err));
+    }
+  };
+
   return (
     <div>
       <h2 className="section-title">平台管理后台 · 类目管理</h2>
@@ -177,6 +320,7 @@ export const AdminCategoriesPage: React.FC = () => {
                   <td>
                     <div className="row" style={{ gap: 6 }}>
                       <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>编辑</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => openAttrs(item)}>属性模板</button>
                       {item.status === 'INACTIVE' ? (
                         <button className="btn btn-ghost btn-sm" onClick={() => toggle(item, true)}>启用</button>
                       ) : (
@@ -232,6 +376,138 @@ export const AdminCategoriesPage: React.FC = () => {
         <Field label="图标（emoji 或图标类名，可空）">
           <input className="input" value={form.icon ?? ''} onChange={(e) => setForm({ ...form, icon: e.target.value })} placeholder="如 🐱" maxLength={20} />
         </Field>
+      </Modal>
+
+      <Modal
+        open={attrCategory !== null}
+        title={`类目属性模板 · ${attrCategory?.name ?? ''}`}
+        onClose={closeAttrs}
+        wide
+        footer={<button className="btn btn-ghost" onClick={closeAttrs}>关闭</button>}
+      >
+        <div className="row-between row-wrap" style={{ marginBottom: 8 }}>
+          <span className="small muted">
+            模板只做发布 / 改规格时的校验（必填、数字格式、单选取值）；属性值仍保存在商品的规格参数里。
+          </span>
+          <button className="btn btn-primary btn-sm" onClick={openAttrCreate}>+ 新增属性</button>
+        </div>
+
+        {attrError ? <Alert kind="error">{attrError}</Alert> : null}
+
+        {attrsLoading ? (
+          <LoadingBlock text="正在加载属性模板…" />
+        ) : attrs.length === 0 ? (
+          <Empty
+            title="该类目还没有属性模板"
+            desc="新增属性后，商家发布该分类商品时会按它校验；不填必填项将无法发布"
+          />
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>属性名</th><th>类型</th><th>必填</th><th>选项</th><th>排序</th><th>状态</th>
+                <th style={{ width: 200 }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attrs.map((attr) => (
+                <tr key={attr.id}>
+                  <td>{attr.name}</td>
+                  <td className="small muted">{ATTR_TYPE_LABEL[attr.inputType] ?? attr.inputType}</td>
+                  <td>{attr.required ? '必填' : '选填'}</td>
+                  <td className="small muted">{(attr.options ?? []).join(' / ') || '—'}</td>
+                  <td>{attr.sortNo}</td>
+                  <td>{attr.status === 'INACTIVE' ? <span className="muted">已停用</span> : '启用中'}</td>
+                  <td>
+                    <div className="row" style={{ gap: 6 }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => openAttrEdit(attr)}>编辑</button>
+                      {attr.status === 'INACTIVE' ? (
+                        <button className="btn btn-ghost btn-sm" onClick={() => toggleAttr(attr, true)}>启用</button>
+                      ) : (
+                        <button className="btn btn-ghost btn-sm" onClick={() => toggleAttr(attr, false)}>停用</button>
+                      )}
+                      <button className="btn btn-ghost btn-sm" onClick={() => removeAttr(attr)}>删除</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {attrFormOpen ? (
+          <div className="card card-pad" style={{ marginTop: 12 }}>
+            <h4 style={{ marginTop: 0 }}>
+              {editingAttr ? `编辑属性 · ${editingAttr.name}` : '新增属性'}
+            </h4>
+            <Field label="属性名" required hint="商家规格参数里同名的条目会按此模板校验；最多 30 字">
+              <input
+                className="input"
+                value={attrForm.name}
+                maxLength={30}
+                onChange={(e) => setAttrForm({ ...attrForm, name: e.target.value })}
+              />
+            </Field>
+            <Field label="类型">
+              <select
+                className="input"
+                value={attrForm.inputType}
+                onChange={(e) => setAttrForm({
+                  ...attrForm,
+                  inputType: e.target.value as CategoryAttrSaveRequest['inputType'],
+                })}
+              >
+                <option value="TEXT">文本</option>
+                <option value="NUMBER">数字</option>
+                <option value="SELECT">单选（从选项里选）</option>
+              </select>
+            </Field>
+            {attrForm.inputType === 'SELECT' ? (
+              <Field label="选项" required hint="用逗号分隔，例如：幼犬，成犬，老年犬">
+                <input
+                  className="input"
+                  value={attrOptionsText}
+                  onChange={(e) => setAttrOptionsText(e.target.value)}
+                  placeholder="幼犬，成犬，老年犬"
+                />
+              </Field>
+            ) : null}
+            <Field label="排序号" hint="越小越靠前">
+              <input
+                className="input"
+                type="number"
+                value={attrForm.sortNo ?? 0}
+                onChange={(e) => setAttrForm({ ...attrForm, sortNo: Number(e.target.value) })}
+              />
+            </Field>
+            <label className="row" style={{ gap: 6, marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={attrForm.required ?? false}
+                onChange={(e) => setAttrForm({ ...attrForm, required: e.target.checked })}
+              />
+              <span>必填（商家发布该分类商品时必须填写）</span>
+            </label>
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                disabled={attrBusy || !attrForm.name.trim()}
+                onClick={saveAttr}
+              >
+                {attrBusy ? '保存中…' : '保存属性'}
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setAttrFormOpen(false);
+                  setEditingAttr(null);
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

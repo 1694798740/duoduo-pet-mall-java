@@ -7,8 +7,11 @@ import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.product.dto.ProductDtos.BrandSaveRequest;
 import com.duoduo.product.dto.ProductDtos.BrandView;
+import com.duoduo.product.dto.ProductDtos.CategoryAttrSaveRequest;
+import com.duoduo.product.dto.ProductDtos.CategoryAttrView;
 import com.duoduo.product.dto.ProductDtos.CategoryNode;
 import com.duoduo.product.dto.ProductDtos.CategorySaveRequest;
+import com.duoduo.product.service.CategoryAttrService;
 import com.duoduo.product.service.CategoryService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 运营侧基础数据维护（类目 / 品牌），平台管理后台（M10）。
+ * 运营侧基础数据维护（类目 / 品牌 / 类目属性模板），平台管理后台（M10）。
  *
  * <p>全部接口要求运营或管理员角色，由 {@link OperatorGuard#requireOperator()} 把关 ——
  * 网关只负责把角色透传成 {@code X-User-Role}，真正的准入边界在这里，前端按角色显隐入口不算安全边界。
@@ -33,9 +36,11 @@ import java.util.List;
 public class AdminCatalogController {
 
     private final CategoryService categoryService;
+    private final CategoryAttrService categoryAttrService;
 
-    public AdminCatalogController(CategoryService categoryService) {
+    public AdminCatalogController(CategoryService categoryService, CategoryAttrService categoryAttrService) {
         this.categoryService = categoryService;
+        this.categoryAttrService = categoryAttrService;
     }
 
     // ---------------- 类目 ----------------
@@ -77,6 +82,53 @@ public class AdminCatalogController {
         OperatorGuard.requireOperator();
         AuditTrail.target(id, "CATEGORY");
         categoryService.deleteCategory(id);
+        return ApiResponse.ok(null);
+    }
+
+    // ---------------- 类目属性模板（A-10） ----------------
+
+    @GetMapping("/categories/{categoryId}/attrs")
+    public ApiResponse<List<CategoryAttrView>> categoryAttrs(@PathVariable Long categoryId) {
+        OperatorGuard.requireOperator();
+        return ApiResponse.ok(categoryAttrService.adminList(categoryId));
+    }
+
+    @PostMapping("/categories/{categoryId}/attrs")
+    @Audited(action = AuditAction.CATEGORY_ATTR_CREATE)
+    public ApiResponse<CategoryAttrView> createCategoryAttr(@PathVariable Long categoryId,
+                                                            @RequestBody CategoryAttrSaveRequest request) {
+        OperatorGuard.requireOperator();
+        CategoryAttrView view = categoryAttrService.create(categoryId, request);
+        AuditTrail.target(view.id(), "CATEGORY_ATTR");
+        AuditTrail.note("类目 " + categoryId + " 新增属性「" + view.name() + "」");
+        return ApiResponse.ok(view);
+    }
+
+    @PutMapping("/category-attrs/{id}")
+    @Audited(action = AuditAction.CATEGORY_ATTR_UPDATE)
+    public ApiResponse<CategoryAttrView> updateCategoryAttr(@PathVariable Long id,
+                                                            @RequestBody CategoryAttrSaveRequest request) {
+        OperatorGuard.requireOperator();
+        AuditTrail.target(id, "CATEGORY_ATTR");
+        return ApiResponse.ok(categoryAttrService.update(id, request));
+    }
+
+    @PutMapping("/category-attrs/{id}/status")
+    @Audited(action = AuditAction.CATEGORY_ATTR_STATUS)
+    public ApiResponse<Void> setCategoryAttrStatus(@PathVariable Long id, @RequestParam boolean active) {
+        OperatorGuard.requireOperator();
+        AuditTrail.target(id, "CATEGORY_ATTR");
+        AuditTrail.note("类目属性启用状态 -> " + active);
+        categoryAttrService.setStatus(id, active);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/category-attrs/{id}")
+    @Audited(action = AuditAction.CATEGORY_ATTR_DELETE)
+    public ApiResponse<Void> deleteCategoryAttr(@PathVariable Long id) {
+        OperatorGuard.requireOperator();
+        AuditTrail.target(id, "CATEGORY_ATTR");
+        categoryAttrService.delete(id);
         return ApiResponse.ok(null);
     }
 

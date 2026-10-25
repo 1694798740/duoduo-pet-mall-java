@@ -17,9 +17,15 @@
 
 import React, { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { sellerApi } from '@duoduo/api-sdk/endpoints';
+import { sellerApi, catalogApi } from '@duoduo/api-sdk/endpoints';
 import { ApiError } from '@duoduo/api-sdk/client';
-import type { PageResult, SellerProductDetailView, SellerProductUpdateRequest, SellerProductView } from '@duoduo/api-sdk/types';
+import type {
+  CategoryAttrView,
+  PageResult,
+  SellerProductDetailView,
+  SellerProductUpdateRequest,
+  SellerProductView,
+} from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { useConfirm } from '@duoduo/shared/components/confirm';
 import {
@@ -110,6 +116,8 @@ export const SellerProductsPage: React.FC = () => {
   const [pricingBusy, setPricingBusy] = useState(false);
   /** 打开编辑时的 SKU 基准值：用来判断「哪几行真的改了」，只提交差异 */
   const [skuBase, setSkuBase] = useState<Record<string, { price: number; stock: number }>>({});
+  /** A-10 · 该商品所属类目的属性模板（编辑期若换了类目是换不了的，模板固定） */
+  const [editTemplateAttrs, setEditTemplateAttrs] = useState<CategoryAttrView[]>([]);
 
   const fetcher = useCallback(
     () =>
@@ -219,6 +227,7 @@ export const SellerProductsPage: React.FC = () => {
     setEditing(null);
     setDraft(null);
     setEditDetail(null);
+    setEditTemplateAttrs([]);
   };
 
   /**
@@ -255,6 +264,14 @@ export const SellerProductsPage: React.FC = () => {
         skuPrices,
         skuLabels: labels,
       });
+      // 模板失败不阻塞编辑：它只决定渲染与「改规格时」的端上预校验，服务端仍会兜底
+      try {
+        setEditTemplateAttrs(detail.categoryId
+          ? await catalogApi.categoryAttrs(detail.categoryId)
+          : []);
+      } catch {
+        setEditTemplateAttrs([]);
+      }
     } catch (err) {
       push(err instanceof Error ? err.message : '读取商品详情失败', 'error');
       setEditing(null);
@@ -263,9 +280,30 @@ export const SellerProductsPage: React.FC = () => {
     }
   };
 
+  // 模板属性与自定义 KV 共用 specParams（口径同发布弹窗）：模板项按属性名匹配，
+  // 自定义编辑器只显示其余项，提交时仍是同一份 KV。
+  const editTemplateNames = editTemplateAttrs.map((attr) => attr.name);
+  const editCustomSpecs = draft
+    ? draft.specParams.filter((item) => !editTemplateNames.includes(item.name.trim()))
+    : [];
+  const editSpecValueOf = (name: string) =>
+    draft?.specParams.find((item) => item.name.trim() === name)?.value ?? '';
+  const setEditSpecValue = (name: string, value: string) => {
+    if (!draft) return;
+    const index = draft.specParams.findIndex((item) => item.name.trim() === name);
+    const specParams = index < 0
+      ? [...draft.specParams, { name, value }]
+      : draft.specParams.map((item, i) => (i === index ? { ...item, value } : item));
+    setDraft({ ...draft, specParams });
+  };
+  const setEditCustomSpecs = (next: KvItem[]) => {
+    if (!draft) return;
+    const templateRows = draft.specParams.filter((item) => editTemplateNames.includes(item.name.trim()));
+    setDraft({ ...draft, specParams: [...templateRows, ...next] });
+  };
+
   const submitEdit = async () => {
-    if (!editing || !draft || !editDetail) return;
-    const title = draft.title.trim();
+    if (!editing || !draft || !editDetail) return;    const title = draft.title.trim();
     if (!title) {
       push('商品标题不能为空', 'error');
       return;
@@ -301,7 +339,28 @@ export const SellerProductsPage: React.FC = () => {
     if (draft.detailHtml.trim() !== originals.detailHtml) body.detailHtml = draft.detailHtml.trim();
     const kvKey = (list: KvItem[]) => list.filter((x) => x.name.trim() || x.value.trim())
       .map((x) => `${x.name.trim()}=${x.value.trim()}`).join('\u0001');
-    if (kvKey(draft.specParams) !== kvKey(originals.specParams)) body.specParams = draft.specParams;
+    const specsChanged = kvKey(draft.specParams) !== kvKey(originals.specParams);
+    // A-10：只有「改了规格参数」才按模板校验 —— 只改标题的老商品不能被后来新增的必填项卡住
+    if (specsChanged) {
+      for (const attr of editTemplateAttrs) {
+        const value = editSpecValueOf(attr.name).trim();
+        if (attr.required && !value) {
+          push(`请填写必填属性「${attr.name}」`, 'error');
+          return;
+        }
+        if (!value) continue;
+        if (attr.inputType === 'NUMBER' && !/^-?\d+(\.\d+)?$/.test(value)) {
+          push(`属性「${attr.name}」必须是数字`, 'error');
+          return;
+        }
+        if (attr.inputType === 'SELECT' && (attr.options?.length ?? 0) > 0
+          && !(attr.options ?? []).includes(value)) {
+          push(`属性「${attr.name}」只能选：${(attr.options ?? []).join(' / ')}`, 'error');
+          return;
+        }
+      }
+    }
+    if (specsChanged) body.specParams = draft.specParams;
     if (kvKey(draft.packaging) !== kvKey(originals.packaging)) body.packaging = draft.packaging;
 
     if (Object.keys(body).length === 0) {
@@ -797,10 +856,46 @@ export const SellerProductsPage: React.FC = () => {
                 )}
               </div>
             </Field>
-            <Field label="规格参数" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
+            {editTemplateAttrs.length > 0 ? (
+              <Field label="类目属性" hint="由类目模板决定：标 * 的必填，数字与单选项会按规则校验">
+                <div className="card card-pad" style={{ padding: 10 }}>
+                  {editTemplateAttrs.map((attr) => (
+                    <div key={attr.id} className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 8 }}>
+                      <span className="small" style={{ width: 120 }}>
+                        {attr.name}{attr.required ? ' *' : ''}
+                      </span>
+                      <div style={{ flex: 1 }} data-attr-name={attr.name}>
+                        {attr.inputType === 'SELECT' ? (
+                          <select
+                            className="input"
+                            value={editSpecValueOf(attr.name)}
+                            onChange={(e) => setEditSpecValue(attr.name, e.target.value)}
+                          >
+                            <option value="">请选择</option>
+                            {(attr.options ?? []).map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="input"
+                            value={editSpecValueOf(attr.name)}
+                            maxLength={200}
+                            inputMode={attr.inputType === 'NUMBER' ? 'decimal' : undefined}
+                            placeholder={attr.inputType === 'NUMBER' ? '请输入数字' : '选填'}
+                            onChange={(e) => setEditSpecValue(attr.name, e.target.value)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
+            <Field label="其他规格参数（自定义）" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
               <KeyValueEditor
-                value={draft.specParams}
-                onChange={(next) => setDraft({ ...draft, specParams: next })}
+                value={editCustomSpecs}
+                onChange={setEditCustomSpecs}
                 namePlaceholder="参数名（如 净含量）"
                 valuePlaceholder="参数值（如 2kg）"
               />

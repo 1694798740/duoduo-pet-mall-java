@@ -157,6 +157,7 @@ public class SellerProductService {
     private final CatalogLookup catalogLookup;
     private final ObjectMapper objectMapper;
     private final SpuAuditHistoryService auditHistoryService;
+    private final CategoryAttrService categoryAttrService;
 
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
@@ -167,7 +168,8 @@ public class SellerProductService {
                                 BannedWordGuard bannedWordGuard,
                                 CatalogLookup catalogLookup,
                                 ObjectMapper objectMapper,
-                                SpuAuditHistoryService auditHistoryService) {
+                                SpuAuditHistoryService auditHistoryService,
+                                CategoryAttrService categoryAttrService) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
@@ -178,6 +180,7 @@ public class SellerProductService {
         this.catalogLookup = catalogLookup;
         this.objectMapper = objectMapper;
         this.auditHistoryService = auditHistoryService;
+        this.categoryAttrService = categoryAttrService;
     }
 
     // ---------------- 准入与归属 ----------------
@@ -387,6 +390,8 @@ public class SellerProductService {
         List<ProductDtos.KvItem> packaging = ProductContent.normalizeKv(request.packaging(), "包装规格");
         List<String> images = normalizeImages(request.images());
         requireCategoryExists(request.categoryId());
+        // A-10：新建商品始终按类目属性模板校验（必填缺失直接拒绝发布）
+        categoryAttrService.validateForPublish(request.categoryId(), specParams);
         requireBrandExists(request.brandId());
         List<NormalizedSku> skus = normalizeSkus(request.skus());
 
@@ -597,8 +602,10 @@ public class SellerProductService {
                 changed = true;
             }
         }
+        List<ProductDtos.KvItem> normalizedSpecs = null;
         if (request.specParams() != null) {
             List<ProductDtos.KvItem> items = ProductContent.normalizeKv(request.specParams(), "规格参数");
+            normalizedSpecs = items;
             String normalized = ProductContent.toJson(items);
             if (!java.util.Objects.equals(normalized, spu.getSpecParams())) {
                 spu.setSpecParams(normalized);
@@ -613,10 +620,20 @@ public class SellerProductService {
                 changed = true;
             }
         }
+        boolean categoryChanged = false;
         if (request.categoryId() != null && !request.categoryId().equals(spu.getCategoryId())) {
             requireCategoryExists(request.categoryId());
             spu.setCategoryId(request.categoryId());
+            categoryChanged = true;
             changed = true;
+        }
+        // A-10：只有碰了规格参数或换了类目才校验 —— 否则运营给类目新增一个必填项，
+        // 存量商品连改标题都会被卡住（历史自由 KV 无法凭空补齐模板要求的字段）。
+        if (request.specParams() != null || categoryChanged) {
+            List<ProductDtos.KvItem> effectiveSpecs = request.specParams() != null
+                    ? normalizedSpecs
+                    : ProductContent.parseKv(spu.getSpecParams());
+            categoryAttrService.validateForPublish(spu.getCategoryId(), effectiveSpecs);
         }
         if (request.brandId() != null && !request.brandId().equals(spu.getBrandId())) {
             requireBrandExists(request.brandId());

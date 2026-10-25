@@ -2,6 +2,35 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 类目属性模板冒烟（`scripts/category-attr-a10-smoke.mjs`，56 项，第九十九轮）
+
+```bash
+NO_PROXY="*" node scripts/category-attr-a10-smoke.mjs
+```
+
+前置：容器在跑；`incremental/51` 已执行；卖家 13600003333、运营 13684295254 可用。
+覆盖：运营新建冒烟类目 +「模板出现前」的老商品；模板新增（TEXT 必填 / SELECT 必填带选项 / NUMBER 选填）、
+同名 409、SELECT 空选项 400、非法类型 400、空属性名 400、后台列表排序与必填标记、公开接口只返回启用项、
+卖家读写后台模板 403；编辑属性（改必填 / 排序）后恢复；发布闸门（必填全缺一次性汇总、只缺一项不误报、
+SELECT 越界、NUMBER 非数字、齐全放行）；老商品只改标题不校验、改规格缺必填 400、补齐后成功；
+模板停用后不拦截、重新启用后改规格立即恢复拦截；删除模板后不再要求；回库断言模板三列、
+商品 `spec_params` 三项值与审计 `CATEGORY_ATTR_CREATE/UPDATE/STATUS/DELETE` 计数。
+结束软删商品、删除模板与类目，并断言库内无残留模板。2026-10-25 实测 **56/0**。
+
+## 类目属性模板 UI e2e（`scripts/e2e/category-attr-a10-ui-check.mjs`，35 项，第九十九轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/category-attr-a10-ui-check.mjs
+```
+
+前置：三站点均为最新产物（先 `npm run build:admin` / `build:merchant` 再重建镜像）；容器在跑。
+覆盖：后台类目页搜索夹具 →「属性模板」弹窗展示类型 / 必填 / 选项 → 新增 SELECT 属性（含必填与排序）→
+停用（公开接口同步消失）→ 编辑改名（保持停用，不被意外启用）→ 走 `useConfirm` 删除；
+商家端发布弹窗按模板渲染 TEXT / NUMBER / SELECT，必填缺失被前端拦下且服务端无半成品，
+本地上传主图后补齐模板值发布成功（回库断言 `spec_params` 含 2kg / 成年 / 32.5）；
+编辑弹窗回填模板值、改规格落库，NUMBER 填非数字被拦且服务端值不变；全程 0 个 pageerror。
+结束清理商品、模板与类目。2026-10-25 实测 **35/0**。
+
 ## 商品回收站冒烟（`scripts/spu-recycle-a09-smoke.mjs`，64 项，第九十八轮）
 
 ```bash

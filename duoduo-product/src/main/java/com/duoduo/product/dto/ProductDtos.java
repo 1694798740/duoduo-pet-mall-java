@@ -71,6 +71,34 @@ public final class ProductDtos {
     ) {
     }
 
+    /**
+     * 类目属性模板项（A-10）。
+     *
+     * <p>{@code inputType}：TEXT / NUMBER / SELECT；SELECT 时 {@code options} 非空。
+     * 属性值不单独建表，仍保存在商品 {@code specParams} 的 KV 里，按 {@code name} 匹配。
+     */
+    public record CategoryAttrView(
+            Long id,
+            Long categoryId,
+            String name,
+            String inputType,
+            boolean required,
+            List<String> options,
+            int sortNo,
+            String status
+    ) {
+    }
+
+    /** 类目属性保存请求（A-10）；启停走独立端点，避免普通编辑被误记成状态变更 */
+    public record CategoryAttrSaveRequest(
+            String name,
+            String inputType,
+            Boolean required,
+            List<String> options,
+            Integer sortNo
+    ) {
+    }
+
     /** 品牌保存请求（创建 / 更新共用） */
     public record BrandSaveRequest(
             String name,

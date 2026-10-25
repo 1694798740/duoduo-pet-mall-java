@@ -13,7 +13,9 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { catalogApi, sellerApi } from '@duoduo/api-sdk/endpoints';
-import type { BrandView, CategoryNode, SellerSkuInput } from '@duoduo/api-sdk/types';
+import type {
+  BrandView, CategoryAttrView, CategoryNode, SellerSkuInput,
+} from '@duoduo/api-sdk/types';
 import { Field, Modal, useToast } from '@duoduo/shared/components/ui';
 import { ImageUploader } from '@duoduo/shared/components/ImageUploader';
 import { KeyValueEditor, RichTextEditor, type KvItem } from '@duoduo/shared/components/RichText';
@@ -67,6 +69,9 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
   const [detailHtml, setDetailHtml] = useState('');
   const [specParams, setSpecParams] = useState<KvItem[]>([]);
   const [packaging, setPackaging] = useState<KvItem[]>([]);
+  /** A-10 · 当前类目的属性模板：必填 / 类型 / 选项由平台运营配置 */
+  const [templateAttrs, setTemplateAttrs] = useState<CategoryAttrView[]>([]);
+  const [attrsLoading, setAttrsLoading] = useState(false);
   const [skus, setSkus] = useState<SkuDraft[]>([emptySku()]);
 
   // 类目 / 品牌是超小字典表，弹窗打开时取一次；失败不阻塞表单（类目会在提交时被服务端拦）
@@ -86,6 +91,31 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
     }
   }, [open, loadCatalog]);
 
+  // 类目一变就换模板。模板只影响「必填 / 类型 / 选项」的校验与渲染，
+  // 商品里存的仍是 specParams —— 所以换类目不需要清空已填的自定义参数。
+  useEffect(() => {
+    let cancelled = false;
+    if (!open || !categoryId) {
+      setTemplateAttrs([]);
+      return undefined;
+    }
+    setAttrsLoading(true);
+    catalogApi.categoryAttrs(categoryId)
+      .then((list) => {
+        if (!cancelled) setTemplateAttrs(list);
+      })
+      .catch(() => {
+        // 模板加载失败不阻塞填写：服务端在提交时仍会按同一份模板校验
+        if (!cancelled) setTemplateAttrs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAttrsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, categoryId]);
+
   const reset = () => {
     setTitle('');
     setSubtitle('');
@@ -99,6 +129,7 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
     setDetailHtml('');
     setSpecParams([]);
     setPackaging([]);
+    setTemplateAttrs([]);
     setSkus([emptySku()]);
   };
 
@@ -109,6 +140,24 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
 
   const patchSku = (index: number, patch: Partial<SkuDraft>) => {
     setSkus((prev) => prev.map((sku, i) => (i === index ? { ...sku, ...patch } : sku)));
+  };
+
+  // 模板属性与自定义 KV 共用 specParams：模板项按属性名匹配，自定义编辑器只显示其余项。
+  // 这样后端拿到的仍是「一份 KV」，不需要为模板另建一套提交字段。
+  const templateNames = templateAttrs.map((attr) => attr.name);
+  const customSpecs = specParams.filter((item) => !templateNames.includes(item.name.trim()));
+  const specValueOf = (name: string) =>
+    specParams.find((item) => item.name.trim() === name)?.value ?? '';
+  const setSpecValue = (name: string, value: string) => {
+    setSpecParams((prev) => {
+      const index = prev.findIndex((item) => item.name.trim() === name);
+      if (index < 0) return [...prev, { name, value }];
+      return prev.map((item, i) => (i === index ? { ...item, value } : item));
+    });
+  };
+  const setCustomSpecs = (next: KvItem[]) => {
+    const templateRows = specParams.filter((item) => templateNames.includes(item.name.trim()));
+    setSpecParams([...templateRows, ...next]);
   };
 
   const submit = async () => {
@@ -125,6 +174,29 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
       push('请上传商品主图', 'error');
       return;
     }
+
+    // A-10：类目模板的必填 / 类型 / 选项先在端上拦一遍（服务端仍会再校验一次，端上只为少一次往返）
+    for (const attr of templateAttrs) {
+      const value = specValueOf(attr.name).trim();
+      if (attr.required && !value) {
+        push(`请填写必填属性「${attr.name}」`, 'error');
+        return;
+      }
+      if (!value) continue;
+      if (attr.inputType === 'NUMBER' && !/^-?\d+(\.\d+)?$/.test(value)) {
+        push(`属性「${attr.name}」必须是数字`, 'error');
+        return;
+      }
+      if (attr.inputType === 'SELECT' && (attr.options?.length ?? 0) > 0
+        && !(attr.options ?? []).includes(value)) {
+        push(`属性「${attr.name}」只能选：${(attr.options ?? []).join(' / ')}`, 'error');
+        return;
+      }
+    }
+    const mergedSpecs: KvItem[] = [
+      ...templateAttrs.map((attr) => ({ name: attr.name, value: specValueOf(attr.name).trim() })),
+      ...customSpecs.map((item) => ({ name: item.name.trim(), value: item.value.trim() })),
+    ].filter((item) => item.name || item.value);
 
     // 价格换算：表单是元，接口是分。用 Math.round 避免 19.9 * 100 = 1989.9999… 这类浮点误差
     const payloadSkus: SellerSkuInput[] = [];
@@ -166,7 +238,7 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
         detail: intro.trim() || detail.trim() || null,
         intro: intro.trim() || null,
         detailHtml: detailHtml.trim() || null,
-        specParams: specParams.filter((x) => x.name.trim() || x.value.trim()),
+        specParams: mergedSpecs,
         packaging: packaging.filter((x) => x.name.trim() || x.value.trim()),
         skus: payloadSkus,
       });
@@ -285,8 +357,47 @@ export const ProductPublishModal: React.FC<Props> = ({ open, onClose, onSuccess 
           <RichTextEditor value={detailHtml} onChange={setDetailHtml} />
         </Field>
 
-        <Field label="规格参数" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
-          <KeyValueEditor value={specParams} onChange={setSpecParams} />
+        {attrsLoading ? (
+          <p className="small muted">正在加载类目属性…</p>
+        ) : templateAttrs.length > 0 ? (
+          <Field label="类目属性" hint="由类目模板决定：标 * 的必填，数字与单选项会按规则校验">
+            <div className="card card-pad" style={{ padding: 10 }}>
+              {templateAttrs.map((attr) => (
+                <div key={attr.id} className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 8 }}>
+                  <span className="small" style={{ width: 120 }}>
+                    {attr.name}{attr.required ? ' *' : ''}
+                  </span>
+                  <div style={{ flex: 1 }} data-attr-name={attr.name}>
+                    {attr.inputType === 'SELECT' ? (
+                      <select
+                        className="input"
+                        value={specValueOf(attr.name)}
+                        onChange={(e) => setSpecValue(attr.name, e.target.value)}
+                      >
+                        <option value="">请选择</option>
+                        {(attr.options ?? []).map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        className="input"
+                        value={specValueOf(attr.name)}
+                        maxLength={200}
+                        inputMode={attr.inputType === 'NUMBER' ? 'decimal' : undefined}
+                        placeholder={attr.inputType === 'NUMBER' ? '请输入数字' : '选填'}
+                        onChange={(e) => setSpecValue(attr.name, e.target.value)}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Field>
+        ) : null}
+
+        <Field label="其他规格参数（自定义）" hint="如 品牌 / 净含量 / 适用阶段；最多 20 条">
+          <KeyValueEditor value={customSpecs} onChange={setCustomSpecs} />
         </Field>
 
         <Field label="包装规格" hint="如 包装形式 / 单包重量 / 箱规；最多 20 条">

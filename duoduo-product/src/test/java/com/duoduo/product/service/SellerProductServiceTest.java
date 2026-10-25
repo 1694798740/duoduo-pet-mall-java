@@ -86,11 +86,12 @@ class SellerProductServiceTest {
     private final BannedWordGuard bannedWordGuard = mock(BannedWordGuard.class);
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
     private final SpuAuditHistoryService auditHistoryService = mock(SpuAuditHistoryService.class);
+    private final CategoryAttrService categoryAttrService = mock(CategoryAttrService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
             new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
-            auditHistoryService);
+            auditHistoryService, categoryAttrService);
 
     /**
      * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
@@ -480,6 +481,25 @@ class SellerProductServiceTest {
         // 无变化不发 UPDATE：省一次写，也避免 updated_at 被无意义地刷新
         // （刷新 updated_at 还会让索引同步任务白跑一轮）
         verify(spuMapper, never()).update(isNull(), any());
+        // A-10：没碰规格参数、没换类目 —— 不校验模板，存量商品不被新模板卡住
+        verify(categoryAttrService, never()).validateForPublish(any(), any());
+    }
+
+    @Test
+    void A10_只改标题不校验属性模板_改规格时才校验() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "旧标题", null);
+        spu.setSpecParams("[{\"name\":\"净含量\",\"value\":\"2kg\"}]");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.update(9001L, titleUpdate("新标题"));
+        verify(categoryAttrService, never()).validateForPublish(any(), any());
+
+        service.update(9001L, new SellerProductUpdateRequest(null, null, null, null, null, null,
+                null, List.of(new com.duoduo.product.dto.ProductDtos.KvItem("净含量", "2kg")),
+                null, null, null, 1));
+        verify(categoryAttrService).validateForPublish(eq(500L), any());
     }
 
     // ---------------- E14 + E28 · 提交商品：自动放行判定 ----------------
@@ -514,6 +534,8 @@ class SellerProductServiceTest {
         assertThat(view.auditLabel()).isEqualTo("已通过");
         assertThat(view.skuCount()).isEqualTo(2);
         assertThat(view.totalStock()).isEqualTo(15);
+        // A-10：新建商品必须按类目属性模板校验（模板为空时校验直接放行）
+        verify(categoryAttrService).validateForPublish(eq(500L), any());
         // 两个规格都要落库
         verify(skuMapper, times(2)).insert(any(SkuEntity.class));
     }
