@@ -691,6 +691,27 @@ export interface SellerProductView {
   purgeAt?: string | null;
 }
 
+/** 批量上下架的单条结果（A-13）：HTTP 200 不代表这条成功，只看 success */
+export interface SellerProductBatchItemView {
+  id: string;
+  success: boolean;
+  /** 成功时的目标状态；失败为 null */
+  status: 'ON_SALE' | 'OFF_SHELF' | null;
+  statusLabel: string | null;
+  /** 失败时的错误码（如 FORBIDDEN / BUSINESS_RULE）；成功为 null */
+  errorCode: string | null;
+  /** 失败原因，可直接展示；成功为 null */
+  message: string | null;
+}
+
+/** 批量上下架汇总：total = successCount + failedCount */
+export interface SellerProductBatchResultView {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  items: SellerProductBatchItemView[];
+}
+
 /** 提交商品时的规格项；价格单位是**分**（表单填元，提交前 ×100） */
 export interface SellerSkuInput {
   specName?: string | null;

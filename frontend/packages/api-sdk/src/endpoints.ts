@@ -81,6 +81,7 @@ import type {
   RoleChangeRequest,
   RoleChangeResult,
   SellerProductCreateRequest,
+  SellerProductBatchResultView,
   SellerProductDetailView,
   SellerProductUpdateRequest,
   SellerProductView,
@@ -576,6 +577,16 @@ export const sellerApi = {
   /** 上下架（幂等开关）：action = ON_SALE | OFF_SHELF；越权操作别人的商品返回 403 */
   changeProductStatus: (spuId: string, action: 'ON_SALE' | 'OFF_SHELF') =>
     api.post<SellerProductView>(`/api/seller/products/${spuId}/status`, { action }),
+
+  /**
+   * 批量上下架（A-13）：逐条结果，部分失败不回滚。
+   *
+   * 服务端对每件商品独立执行与单品相同的门禁（归属 / 资质 / 审核态）；
+   * 请求整体 200 只代表处理完成，成败看返回里每条的 success。
+   * 单次上限 100 件，重复 id 去重。
+   */
+  batchChangeProductStatus: (ids: string[], action: 'ON_SALE' | 'OFF_SHELF') =>
+    api.post<SellerProductBatchResultView>('/api/seller/products/batch-status', { ids, action }),
 
   /**
    * 重新提审（E14）：被驳回且**无需改内容**的商品回到审核队列。

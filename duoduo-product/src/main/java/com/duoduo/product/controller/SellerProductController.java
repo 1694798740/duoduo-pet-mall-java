@@ -2,6 +2,7 @@ package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
@@ -16,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 商家端 · 商品管理接口（{@code /api/seller/products/**}，M9 商品侧 + E14 上架审核）。
@@ -91,6 +94,24 @@ public class SellerProductController {
     public ApiResponse<SellerProductView> changeStatus(@PathVariable Long spuId,
                                                        @RequestBody StatusRequest request) {
         return ApiResponse.ok(sellerProductService.changeStatus(spuId, request == null ? null : request.action()));
+    }
+
+    /** 批量上下架请求体：{@code {"ids": ["<spuId>"], "action": "ON_SALE" | "OFF_SHELF"}}；ids 去重、上限 100 */
+    public record BatchStatusRequest(List<Long> ids, String action) {
+    }
+
+    /**
+     * 批量上下架（A-13）：逐条结果，部分失败不回滚。
+     *
+     * <p>HTTP 200 只表示「批量请求已被处理」，每条的成败看 {@code items[].success}。
+     * 用整体 4xx 表达「其中一件失败」会让前端拿不到逐条原因，也会诱使调用方重试整批 ——
+     * 已经成功的条目会被重复执行。只有请求本身不合法（未登录 / ids 空 / 超上限 / action 非法）才走 4xx。
+     */
+    @PostMapping("/batch-status")
+    public ApiResponse<SellerProductBatchResultView> batchStatus(@RequestBody BatchStatusRequest request) {
+        return ApiResponse.ok(sellerProductService.changeStatusBatch(
+                request == null ? null : request.ids(),
+                request == null ? null : request.action()));
     }
 
     /** 重新提审（E14）：被驳回且无需改内容的商品回到审核队列（申请复核） */

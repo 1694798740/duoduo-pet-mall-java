@@ -2,6 +2,36 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 批量上下架冒烟（`scripts/product-batch-status-a13-smoke.mjs`，53 项，第一百零二轮）
+
+```bash
+NO_PROXY="*" node scripts/product-batch-status-a13-smoke.mjs
+```
+
+前置：容器在跑；product 已部署 A-13；卖家 13600003333、另一店主 13959064118、运营 13684295254 可用；
+ES 可达 `localhost:9200`。
+覆盖：**全成功**（批量下架 / 上架逐条返回 `status/statusLabel`，整体 200，id 为字符串，上下架不改 version，
+updated_at 确实写新，买家详情随状态 404/200）；**部分失败不回滚**（混入待审 / 已删除 / 别人商品：
+成功条目照常落库、失败条目逐条 `errorCode + message`、items 保持请求顺序、失败条目零改动）；
+**门禁复用**（PENDING 上架 `BUSINESS_RULE`；运营经商家入口批量第三方商品逐条 `FORBIDDEN` 且状态零改动）；
+**幂等去重**（重复 id 只执行一次；已处于目标态重复调用成功且 updated_at 不变；action 大小写 / 空白归一）；
+**参数边界**（空 ids / null 元素 / 101 件 / 非法 action / 缺 action → 400 `VALIDATION_ERROR`；未登录 401）；
+收尾物理清理夹具并全量重建 ES，断言 SPU / SKU / 图片 / 审核历史与 A13 文档零残留。
+2026-10-25 实测 **53/0**。
+
+## 批量上下架 UI e2e（`scripts/e2e/product-batch-status-a13-ui-check.mjs`，24 项，第一百零二轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/product-batch-status-a13-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（先 `npm run build:merchant` 再重建 `duoduo-merchant-web-app`）；容器在跑。
+覆盖：搜索夹具 → 勾选 A/B 出现「已选 2 件（仅当前页）」→ 切换审核筛选自动清空选择 → 全选本页 / 清空选择 →
+批量下架走 `useConfirm`（说明仅当前页、部分失败不回滚）→ 结果弹窗汇总 + 逐条「已下架」→ 列表刷新与接口回读；
+混合「已下架 + 待审核」批量上架：成功 1 / 失败 1，失败条目直接展示审核原因，列表 A 回在售、C 仍待审核；
+全程 0 个原生弹窗、0 个 pageerror。结束物理清理夹具并重建 ES。
+2026-10-25 实测 **24/0**。
+
 ## 搜索索引同步冒烟（`scripts/search-sync-a12-smoke.mjs`，56 项，第一百零一轮）
 
 ```bash

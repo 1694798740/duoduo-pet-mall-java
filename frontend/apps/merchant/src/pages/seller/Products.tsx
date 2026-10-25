@@ -1,9 +1,10 @@
 /**
- * 商家端 · 商品管理（M9 商品侧 + E14 上架审核 + A-09 回收站）。
+ * 商家端 · 商品管理（M9 商品侧 + E14 上架审核 + A-09 回收站 + A-13 批量上下架）。
  *
  * 数据来源：GET /api/seller/products + POST /{spuId}/status + POST /{spuId}/resubmit
  *          + POST /api/seller/products（发布）+ GET /{spuId}（编辑回填）
  *          + POST /{spuId}/delete（软删）+ POST /{spuId}/restore（恢复）
+ *          + POST /api/seller/products/batch-status（批量，逐条结果）
  *
  * 三个口径：
  *  · 这里看到的是<b>归属自己店铺的商品</b>（t_spu.seller_id = 店铺主体）——
@@ -15,13 +16,14 @@
  *    「我就改了个标题怎么商品不见了」），所以提示语必须说清下一步，而不是只说「不行」。
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { sellerApi, catalogApi } from '@duoduo/api-sdk/endpoints';
 import { ApiError } from '@duoduo/api-sdk/client';
 import type {
   CategoryAttrView,
   PageResult,
+  SellerProductBatchResultView,
   SellerProductDetailView,
   SellerProductUpdateRequest,
   SellerProductView,
@@ -118,6 +120,12 @@ export const SellerProductsPage: React.FC = () => {
   const [skuBase, setSkuBase] = useState<Record<string, { price: number; stock: number }>>({});
   /** A-10 · 该商品所属类目的属性模板（编辑期若换了类目是换不了的，模板固定） */
   const [editTemplateAttrs, setEditTemplateAttrs] = useState<CategoryAttrView[]>([]);
+  /** A-13 · 批量选择只作用于**当前页**：切页、筛选、搜索都会清空，避免误操作看不见的商品 */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResult, setBatchResult] = useState<SellerProductBatchResultView | null>(null);
+  /** 结果弹窗里要显示商品标题，但那时列表可能已经 reload —— 先按 id 快照住 */
+  const [batchTitles, setBatchTitles] = useState<Record<string, string>>({});
 
   const fetcher = useCallback(
     () =>
@@ -137,12 +145,85 @@ export const SellerProductsPage: React.FC = () => {
   );
 
   const setQuery = (patch: Record<string, string | undefined>, replace = false) => {
+    // 切页/筛选/搜索后，上一页的勾选不能再生效 —— 批量操作只认「眼前这一页」
+    setSelectedIds([]);
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) {
       if (v) next.set(k, v);
       else next.delete(k);
     }
     setParams(next, { replace });
+  };
+
+  // 列表刷新后剔除已不在当前页的勾选（例如刚被删除的商品），防止批量请求带上看不见的 id
+  useEffect(() => {
+    const pageIds = new Set((data?.items ?? []).map((item) => item.id));
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => pageIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [data]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    const pageIds = (data?.items ?? []).map((item) => item.id);
+    const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+    setSelectedIds(allSelected ? [] : pageIds);
+  };
+
+  /**
+   * 批量上下架（A-13）：服务端逐条执行、逐条返回结果，**不整体回滚**。
+   *
+   * 所有条目都走单品同一套规则（归属、审核、店铺资质），所以「部分失败」是常态：
+   * 选中的商品里可能混着待审核、被驳回、已删除或不属于本店的条目。
+   * 结果必须逐条列出来 —— 只报「成功 8 件」而不说哪 2 件失败，卖家只能挨个重点。
+   */
+  const runBatchStatus = async (action: 'ON_SALE' | 'OFF_SHELF') => {
+    if (!selectedIds.length || batchBusy) return;
+    const label = action === 'ON_SALE' ? '上架' : '下架';
+    const ok = await confirm({
+      title: action === 'ON_SALE' ? '批量上架' : '批量下架',
+      message: (
+        <>
+          将尝试{label} <b>{selectedIds.length}</b> 件商品（仅当前页）。
+          <br />
+          {action === 'ON_SALE'
+            ? '只有审核通过、店铺资质有效的商品会上架成功；未过审或无权操作的商品会逐条失败。'
+            : '下架后买家端立即不可见；已下架的商品会视为成功。'}
+          <br />
+          部分失败不会回滚已成功的商品，结果会逐条列出。
+        </>
+      ),
+      confirmText: `批量${label}`,
+      danger: action === 'OFF_SHELF',
+    });
+    if (!ok) return;
+
+    const titles: Record<string, string> = {};
+    for (const item of data?.items ?? []) {
+      if (selectedIds.includes(item.id)) titles[item.id] = item.title;
+    }
+    setBatchTitles(titles);
+    setBatchBusy(true);
+    try {
+      const result = await sellerApi.batchChangeProductStatus(selectedIds, action);
+      setBatchResult(result);
+      setSelectedIds([]);
+      push(
+        result.failedCount === 0
+          ? `批量${label}完成：${result.successCount} 件全部成功`
+          : `批量${label}完成：成功 ${result.successCount} 件，失败 ${result.failedCount} 件`,
+        result.failedCount === 0 ? 'success' : 'error',
+      );
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : `批量${label}失败，请重试`, 'error');
+    } finally {
+      setBatchBusy(false);
+    }
   };
 
   const toggle = async (item: SellerProductView) => {
@@ -457,6 +538,8 @@ export const SellerProductsPage: React.FC = () => {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const pageCount = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const allSelected = items.length > 0 && items.every((item) => selectedIds.includes(item.id));
+  const selectedCount = items.filter((item) => selectedIds.includes(item.id)).length;
 
   return (
     <div>
@@ -531,6 +614,38 @@ export const SellerProductsPage: React.FC = () => {
         </div>
       ) : null}
 
+      {!inRecycle && selectedCount > 0 ? (
+        <div
+          className="card card-pad"
+          style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
+        >
+          <span className="small">
+            已选 <b>{selectedCount}</b> 件（仅当前页）
+          </span>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={batchBusy}
+            onClick={() => runBatchStatus('ON_SALE')}
+          >
+            {batchBusy ? '处理中…' : '批量上架'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={batchBusy}
+            onClick={() => runBatchStatus('OFF_SHELF')}
+          >
+            批量下架
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={batchBusy}
+            onClick={() => setSelectedIds([])}
+          >
+            清空选择
+          </button>
+        </div>
+      ) : null}
+
       {error ? (
         <Alert kind="error">
           {error}
@@ -548,6 +663,17 @@ export const SellerProductsPage: React.FC = () => {
             <table className="table">
               <thead>
                 <tr>
+                  {!inRecycle ? (
+                    <th style={{ width: 40 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="全选本页"
+                        checked={allSelected}
+                        disabled={batchBusy}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
+                  ) : null}
                   <th>商品</th>
                   <th style={{ textAlign: 'right' }}>价格区间</th>
                   {inRecycle ? (
@@ -572,6 +698,17 @@ export const SellerProductsPage: React.FC = () => {
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
+                    {!inRecycle ? (
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`选择「${item.title}」`}
+                          checked={selectedIds.includes(item.id)}
+                          disabled={batchBusy}
+                          onChange={() => toggleSelect(item.id)}
+                        />
+                      </td>
+                    ) : null}
                     <td>
                       <div className="row" style={{ gap: 10, alignItems: 'center' }}>
                         {item.mainImage ? (
@@ -915,6 +1052,61 @@ export const SellerProductsPage: React.FC = () => {
             </p>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={batchResult !== null}
+        title="批量操作结果"
+        onClose={() => setBatchResult(null)}
+        footer={
+          <button className="btn btn-primary" onClick={() => setBatchResult(null)}>
+            知道了
+          </button>
+        }
+      >
+        {batchResult ? (
+          <div>
+            <Alert
+              kind={
+                batchResult.failedCount === 0
+                  ? 'success'
+                  : batchResult.successCount === 0
+                    ? 'error'
+                    : 'warn'
+              }
+            >
+              共 {batchResult.total} 件：成功 {batchResult.successCount} 件，失败{' '}
+              {batchResult.failedCount} 件。
+              {batchResult.failedCount > 0
+                ? '失败的商品保持原状态，本次操作不会回滚已成功的部分；可修正原因后重新提交。'
+                : ''}
+            </Alert>
+            <table className="table" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>商品</th>
+                  <th style={{ width: 200 }}>结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batchResult.items.map((entry) => (
+                  <tr key={entry.id}>
+                    <td style={{ wordBreak: 'break-all' }}>{batchTitles[entry.id] ?? entry.id}</td>
+                    <td>
+                      {entry.success ? (
+                        <span className="tag">{entry.statusLabel ?? '成功'}</span>
+                      ) : (
+                        <span className="small" style={{ color: '#c0392b' }}>
+                          {entry.message ?? '操作失败'}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </Modal>
 
       <ProductPublishModal

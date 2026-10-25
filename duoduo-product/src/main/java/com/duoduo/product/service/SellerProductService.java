@@ -17,6 +17,8 @@ import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.client.dto.MerchantRiskInfo;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
+import com.duoduo.product.dto.ProductDtos.SellerProductBatchItemView;
+import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
@@ -105,6 +107,9 @@ public class SellerProductService {
 
     private static final String SUPPLY_SELF = "self";
     private static final String SUPPLY_MERCHANT = "merchant";
+
+    /** 批量上下架单次上限：再大就该走异步任务，而不是让一个同步请求承担 */
+    private static final int MAX_BATCH_STATUS = 100;
 
     /** 平台自营在 {@code t_spu.seller_id} 上的哨兵值（不是一个真实的店铺 id） */
     private static final long PLATFORM_SELF_SELLER_ID = 0L;
@@ -804,8 +809,68 @@ public class SellerProductService {
      */
     public SellerProductView changeStatus(Long spuId, String action) {
         SellerScope scope = requireSellerScope();
-        String target = normalizeAction(action);
+        return changeStatus(spuId, normalizeAction(action), scope);
+    }
 
+    /**
+     * 批量上下架（A-13）：逐条走与单品完全相同的门禁，单条失败只记录原因、不影响其它条。
+     *
+     * <p><b>为什么刻意不加 {@code @Transactional}</b>：批量语义是「尽力而为 + 逐条结果」。
+     * 整批回滚会让已经成功的条目一起退回，卖家看到的是「20 件里 1 件失败，结果一件都没变」；
+     * 而上下架本身只是一条 UPDATE，逐条提交没有跨行一致性要求。
+     *
+     * <p>ids 去重后按请求顺序执行；单次上限 {@value #MAX_BATCH_STATUS} 件 ——
+     * 超过这个量级说明调用方在拿同步接口做全店批处理，那需要异步任务与进度查询，
+     * 不应该藏在一个 HTTP 请求里。
+     */
+    public SellerProductBatchResultView changeStatusBatch(List<Long> ids, String action) {
+        // 准入与参数只解析一次：店员身份要查成员服务，逐条解析会让 100 件商品多打 100 次 Feign
+        SellerScope scope = requireSellerScope();
+        String target = normalizeAction(action);
+        List<Long> distinct = normalizeBatchIds(ids);
+        List<SellerProductBatchItemView> items = new ArrayList<>(distinct.size());
+        int success = 0;
+        for (Long spuId : distinct) {
+            try {
+                SellerProductView view = changeStatus(spuId, target, scope);
+                success++;
+                items.add(new SellerProductBatchItemView(spuId, true, view.status(),
+                        view.statusLabel(), null, null));
+            } catch (BizException ex) {
+                // 预期内的逐条拒绝（越权 / 未过审 / 已删除 / 资质过期）：原因原样交给卖家
+                items.add(new SellerProductBatchItemView(spuId, false, null, null,
+                        ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                // 单条异常不能拖垮整单：记日志 + 一条可读失败，其余条目继续
+                log.warn("批量上下架单条失败 spuId={} action={}", spuId, target, ex);
+                items.add(new SellerProductBatchItemView(spuId, false, null, null,
+                        "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new SellerProductBatchResultView(
+                distinct.size(), success, distinct.size() - success, items);
+    }
+
+    /** ids 去重、拒绝空值、限制单次规模；顺序保留请求顺序，结果与选择顺序一致 */
+    private List<Long> normalizeBatchIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw BizException.validation("ids 不能为空");
+        }
+        LinkedHashSet<Long> distinct = new LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id == null) {
+                throw BizException.validation("ids 不能包含空值");
+            }
+            distinct.add(id);
+        }
+        if (distinct.size() > MAX_BATCH_STATUS) {
+            throw BizException.validation("单次最多批量操作 " + MAX_BATCH_STATUS + " 件商品");
+        }
+        return new ArrayList<>(distinct);
+    }
+
+    /** 批量复用：scope 由调用方解析一次，避免每件商品重复查成员身份 */
+    private SellerProductView changeStatus(Long spuId, String target, SellerScope scope) {
         SpuEntity spu = requireOwned(spuId, scope);
         // ★ E23 收窄：`requireOwned` 对平台运营一律放行（platformScope），
         //   这在商品还没有第三方归属时是对的，但 E27 之后

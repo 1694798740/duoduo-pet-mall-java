@@ -16,6 +16,8 @@ import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.client.dto.MerchantRiskInfo;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
+import com.duoduo.product.dto.ProductDtos.SellerProductBatchItemView;
+import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
@@ -305,6 +307,133 @@ class SellerProductServiceTest {
         when(skuMapper.selectList(any())).thenReturn(List.of());
 
         assertThat(service.changeStatus(9001L, "OFF_SHELF").status()).isEqualTo("OFF_SHELF");
+    }
+
+    // ---------------- A-13 · 批量上下架：逐条结果，部分失败不回滚 ----------------
+
+    @Test
+    void A13_批量下架全部成功_逐条返回目标状态() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "商品A", null));
+        when(spuMapper.selectById(9002L)).thenReturn(spu(9002L, 101L, "商品B", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L, 9002L), "OFF_SHELF");
+
+        assertThat(result.total()).isEqualTo(2);
+        assertThat(result.successCount()).isEqualTo(2);
+        assertThat(result.failedCount()).isZero();
+        assertThat(result.items()).allMatch(SellerProductBatchItemView::success);
+        assertThat(result.items()).extracting(SellerProductBatchItemView::status)
+                .containsExactly("OFF_SHELF", "OFF_SHELF");
+        verify(spuMapper, times(2)).update(isNull(), any());
+    }
+
+    /**
+     * 批量语义的核心：一条失败不能拖垮整单，也不能把已经成功的条目回滚。
+     * 这里用「别人的商品」制造失败，断言另一条仍然落库（写入恰好一次）。
+     */
+    @Test
+    void A13_一条失败不影响其它条_已成功的条目不回滚() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "我的商品", null));
+        when(spuMapper.selectById(9002L)).thenReturn(spu(9002L, 202L, "别人的商品", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L, 9002L), "OFF_SHELF");
+
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        SellerProductBatchItemView failed = result.items().get(1);
+        assertThat(failed.success()).isFalse();
+        assertThat(failed.errorCode()).isEqualTo(ErrorCode.FORBIDDEN.name());
+        assertThat(failed.message()).contains("不属于当前账号");
+        verify(spuMapper, times(1)).update(isNull(), any());
+    }
+
+    @Test
+    void A13_批量上架时未过审条目单条失败_失败理由指向下一步() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L))
+                .thenReturn(spu(9001L, 101L, "已过审", null, "merchant", "APPROVED", "OFF_SHELF"));
+        when(spuMapper.selectById(9002L))
+                .thenReturn(spu(9002L, 101L, "待审核", null, "merchant", "PENDING", "OFF_SHELF"));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L, 9002L), "ON_SALE");
+
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.items().get(0).status()).isEqualTo("ON_SALE");
+        assertThat(result.items().get(1).message()).contains("审核");
+        // 只有过审那一件真的写了库
+        verify(spuMapper, times(1)).update(isNull(), any());
+    }
+
+    @Test
+    void A13_已是目标状态仍记为成功且不写库() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "已在售", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L), "ON_SALE");
+
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.items().get(0).status()).isEqualTo("ON_SALE");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A13_重复id只处理一次() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "商品A", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L, 9001L, 9001L), "OFF_SHELF");
+
+        assertThat(result.total()).isEqualTo(1);
+        assertThat(result.successCount()).isEqualTo(1);
+        verify(spuMapper, times(1)).update(isNull(), any());
+    }
+
+    @Test
+    void A13_空列表_null_超上限_非法action都整体拒绝() {
+        UserContext.set(seller(101L));
+
+        assertThatThrownBy(() -> service.changeStatusBatch(null, "OFF_SHELF"))
+                .isInstanceOf(BizException.class).hasMessageContaining("ids");
+        assertThatThrownBy(() -> service.changeStatusBatch(List.of(), "OFF_SHELF"))
+                .isInstanceOf(BizException.class).hasMessageContaining("ids");
+        assertThatThrownBy(() -> service.changeStatusBatch(java.util.Arrays.asList(9001L, null), "OFF_SHELF"))
+                .isInstanceOf(BizException.class).hasMessageContaining("空值");
+        List<Long> tooMany = java.util.stream.LongStream.rangeClosed(1, 101).boxed().toList();
+        assertThatThrownBy(() -> service.changeStatusBatch(tooMany, "OFF_SHELF"))
+                .isInstanceOf(BizException.class).hasMessageContaining("100");
+        assertThatThrownBy(() -> service.changeStatusBatch(List.of(9001L), "DELETE"))
+                .isInstanceOf(BizException.class).hasMessageContaining("ON_SALE");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A13_运营批量操作第三方商品_逐条403而不是整单失败() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "第三方商品", null));
+        when(spuMapper.selectById(9002L))
+                .thenReturn(spu(9002L, 0L, "自营商品", null, "self", "APPROVED", "ON_SALE"));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductBatchResultView result =
+                service.changeStatusBatch(List.of(9001L, 9002L), "OFF_SHELF");
+
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.items().get(0).message()).contains("第三方店铺");
+        assertThat(result.items().get(1).status()).isEqualTo("OFF_SHELF");
     }
 
     /**

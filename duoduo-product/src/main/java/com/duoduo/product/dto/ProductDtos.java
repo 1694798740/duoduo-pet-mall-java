@@ -296,6 +296,34 @@ public final class ProductDtos {
     ) {
     }
 
+    // ---------------- 批量上下架（A-13） ----------------
+
+    /**
+     * 单条执行结果：HTTP 200 不代表每条都成功，成败只看 {@code success}。
+     * 失败条目带回错误码与可直接展示的原因，前端不需要自己拼提示语。
+     */
+    public record SellerProductBatchItemView(
+            Long id,
+            boolean success,
+            /** 成功时的目标状态：ON_SALE / OFF_SHELF；失败为 null */
+            String status,
+            String statusLabel,
+            /** 失败时的错误码（ErrorCode 名称，如 FORBIDDEN / BUSINESS_RULE）；成功为 null */
+            String errorCode,
+            /** 失败原因；成功为 null */
+            String message
+    ) {
+    }
+
+    /** 批量上下架汇总：total = successCount + failedCount，items 顺序与去重后的请求一致 */
+    public record SellerProductBatchResultView(
+            int total,
+            int successCount,
+            int failedCount,
+            List<SellerProductBatchItemView> items
+    ) {
+    }
+
     // ---------------- 商品提交与审核（E14） ----------------
 
     /**
