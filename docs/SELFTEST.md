@@ -2,6 +2,36 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商品回收站冒烟（`scripts/spu-recycle-a09-smoke.mjs`，64 项，第九十八轮）
+
+```bash
+NO_PROXY="*" node scripts/spu-recycle-a09-smoke.mjs
+```
+
+前置：容器在跑；`incremental/50` 已执行；卖家 13600003333、另一卖家 13959064118、运营 13684295254 可用。
+覆盖：发布（自动 / 人工审核均可）→ 删除的**回库语义**（`deleted_at` 非空、`purgeAt = deletedAt + 30 天`、
+`status=OFF_SHELF`、审核态与 version 未变）；重复删除幂等且不刷新保留期；删除后的全部读路径
+（公开详情 404、ES 检索排除、商家普通列表排除、回收站列表包含、卖家详情 404、审核队列 / 审核详情排除、审核历史仍可读）；
+全部写路径（编辑 / 上下架 / 重提 / 改价改库存 / 审核）均 404 且库内标题与版本不变；越权（别的店主 404/403、
+运营从商家入口操作 403、卖家调 purge 403）且库不变；恢复语义（`deleted_at` 清空、仍为 `OFF_SHELF`、审核态保留、
+version 不变、回到普通列表、回收站消失、公开详情仍 404、重复恢复 422、重新上架后公开详情 200）；
+30 天边界（库内把夹具改为 31 天前删除 → 恢复 422；运营 purge 后过期 SPU+SKU 物理消失、审核历史保留、
+保留期内商品与 SKU 不受影响；二次 purge 幂等）。检索前置若命中不到，脚本会调用一次全量重索引后复检，
+以规避 ES 增量扫描窗口，不改变业务断言。2026-10-24 实测 **64/0**。
+
+## 商家端回收站 UI e2e（`scripts/e2e/spu-recycle-a09-ui-check.mjs`，19 项，第九十八轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/spu-recycle-a09-ui-check.mjs
+```
+
+前置：商家站点为最新产物（先 `npm run build:merchant` 再重建镜像）；容器在跑。
+覆盖：API 造一件在售商品 → 浏览器登录商家端 → 点「删除」弹出**自定义确认框**（`role=dialog`，
+文案含「买家端立即不可见 / 30 天内可恢复 / 恢复后为下架态」）→ 取消后商品仍在 → 确认后进入回收站；
+回收站视图表头含「删除时间 / 预计清理 / 删除前审核态」，不显示「发布商品」与审核状态页签，行内只有「恢复」；
+恢复后回到「我的商品」并显示「已下架」；全程 **0 次原生 confirm/alert/prompt**、0 个 pageerror / 5xx；
+截图留存 `verify-a09-recycle.png`，结束清理夹具（删除→改成 31 天前→purge）。2026-10-24 实测 **19/0**。
+
 ## 商品审核历史冒烟（`scripts/spu-audit-history-a08-smoke.mjs`，52 项，第九十七轮）
 
 ```bash

@@ -303,9 +303,14 @@ public class ProductService {
                 var expanded = query.categoryId() == null ? null
                         : categoryService.expandCategoryIds(query.categoryId());
                 var hits = esSearch.searchProducts(query, expanded, pageNo, pageSize);
+                // A-09：索引对账有 15s 窗口，刚被软删的商品可能还留在 ES 命中里。
+                // 回表后必须再按 deleted_at 过一遍 —— 可见性的每个出口各自把守，
+                // 不能指望「另一条链路的同步会及时删文档」。
                 List<SpuEntity> records = hits.ids().isEmpty()
                         ? List.of()
-                        : orderByIds(spuMapper.selectBatchIds(hits.ids()), hits.ids());
+                        : orderByIds(spuMapper.selectBatchIds(hits.ids()), hits.ids()).stream()
+                                .filter(spu -> spu.getDeletedAt() == null)
+                                .toList();
                 // 检索行为日志：分析"哪些词搜不到精确结果""搜索慢在哪一步"的第一手数据
                 // （looseFallback=true 表示严格召回为零、结果来自逐字兜底 —— 这类词值得补同义词）
                 log.info("商品检索 keyword={} 引擎=es 命中={} 兜底={} 页={}/{} 返回={} 耗时={}ms",
@@ -423,7 +428,9 @@ public class ProductService {
      */
     public ProductDetail detail(Long spuId) {
         SpuEntity spu = spuMapper.selectById(spuId);
+        // A-09：回收站商品与「不存在」同样 404 —— 卖家删掉的东西不能靠直链继续访问
         if (spu == null
+                || spu.getDeletedAt() != null
                 || !STATUS_ON_SALE.equals(spu.getStatus())
                 || !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
             throw BizException.notFound("商品");
@@ -661,7 +668,9 @@ public class ProductService {
             // 都读这个字段，把审核维度一起算进来，那种条目就会自然变成「不可售」，
             // 而不是等到下单时才在交易域炸一个语焉不详的错误。
             String spuAudit = spu == null ? null : spu.getAuditStatus();
-            boolean sellable = STATUS_ON_SALE.equals(spuStatus)
+            // A-09：已删除商品即使购物车里还躺着，也必须变成「不可售」
+            boolean sellable = spu != null && spu.getDeletedAt() == null
+                    && STATUS_ON_SALE.equals(spuStatus)
                     && AUDIT_APPROVED.equals(spuAudit)
                     && SKU_ACTIVE.equals(sku.getStatus())
                     && available > 0;
@@ -774,7 +783,10 @@ public class ProductService {
     private LambdaQueryWrapper<SpuEntity> visibleSpuWrapper() {
         return new LambdaQueryWrapper<SpuEntity>()
                 .eq(SpuEntity::getStatus, STATUS_ON_SALE)
-                .eq(SpuEntity::getAuditStatus, AUDIT_APPROVED);
+                .eq(SpuEntity::getAuditStatus, AUDIT_APPROVED)
+                // A-09：软删即下架。status 在删除时已压成 OFF_SHELF，这里再显式排除，
+                // 是为了让「回收站永不可见」成为一道独立闸门，而不是依赖删除动作恰好写了 status。
+                .isNull(SpuEntity::getDeletedAt);
     }
 
     /** 只取前 N 条，不执行 count 查询（列表页之外的场景不需要总数） */

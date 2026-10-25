@@ -134,6 +134,8 @@ public class AuditSampleService {
         List<SpuEntity> released = spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
                 .eq(SpuEntity::getSupplyType, "merchant")
                 .eq(SpuEntity::getAuditSource, SellerProductService.AUDIT_SOURCE_AUTO)
+                // A-09：已删除商品不抽 —— 抽查的目的是复核「还在卖的自动放行」，删了就没意义
+                .isNull(SpuEntity::getDeletedAt)
                 .ge(SpuEntity::getAuditAt, dayStart)
                 .lt(SpuEntity::getAuditAt, dayEnd)
                 .orderByAsc(SpuEntity::getId)
@@ -243,6 +245,7 @@ public class AuditSampleService {
             List<SpuEntity> top = spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
                     .select(SpuEntity::getId)
                     .eq(SpuEntity::getSellerId, sellerId)
+                    .isNull(SpuEntity::getDeletedAt)
                     .orderByAsc(SpuEntity::getCreatedAt)
                     .orderByAsc(SpuEntity::getId)
                     .last("LIMIT " + NEW_SELLER_FIRST_N));

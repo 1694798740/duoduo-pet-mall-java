@@ -1,8 +1,9 @@
 /**
- * 商家端 · 商品管理（M9 商品侧 + E14 上架审核）。
+ * 商家端 · 商品管理（M9 商品侧 + E14 上架审核 + A-09 回收站）。
  *
  * 数据来源：GET /api/seller/products + POST /{spuId}/status + POST /{spuId}/resubmit
  *          + POST /api/seller/products（发布）+ GET /{spuId}（编辑回填）
+ *          + POST /{spuId}/delete（软删）+ POST /{spuId}/restore（恢复）
  *
  * 三个口径：
  *  · 这里看到的是<b>归属自己店铺的商品</b>（t_spu.seller_id = 店铺主体）——
@@ -20,6 +21,7 @@ import { sellerApi } from '@duoduo/api-sdk/endpoints';
 import { ApiError } from '@duoduo/api-sdk/client';
 import type { PageResult, SellerProductDetailView, SellerProductUpdateRequest, SellerProductView } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { useConfirm } from '@duoduo/shared/components/confirm';
 import {
   Alert,
   Empty,
@@ -69,13 +71,23 @@ interface EditDraft {
   skuLabels: Record<string, string>;
 }
 
+/** 时间展示：回收站要让人看清「什么时候删的、什么时候会被清掉」 */
+function fmtTime(iso?: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false });
+}
+
 export const SellerProductsPage: React.FC = () => {
   const { user } = useAuth();
   const { push } = useToast();
+  const confirm = useConfirm();
   const [params, setParams] = useSearchParams();
 
   const keyword = params.get('keyword') ?? '';
   const auditStatus = params.get('auditStatus') ?? '';
+  /** A-09：回收站是独立视图，不与「我的商品」混排 */
+  const inRecycle = params.get('deleted') === '1';
   const page = num(params.get('page')) ?? 1;
   const allowed = canAccessSellerConsole(user?.role);
 
@@ -104,15 +116,16 @@ export const SellerProductsPage: React.FC = () => {
       sellerApi.products({
         keyword: keywordQuery || undefined,
         auditStatus: auditStatus || undefined,
+        deleted: inRecycle || undefined,
         page,
         pageSize: 20,
       }),
-    [keywordQuery, auditStatus, page],
+    [keywordQuery, auditStatus, inRecycle, page],
   );
   const { data, loading, error, reload } = useAsync<PageResult<SellerProductView>>(
     fetcher,
     allowed,
-    [allowed, keywordQuery, auditStatus, page],
+    [allowed, keywordQuery, auditStatus, inRecycle, page],
   );
 
   const setQuery = (patch: Record<string, string | undefined>, replace = false) => {
@@ -138,6 +151,52 @@ export const SellerProductsPage: React.FC = () => {
       reload();
     } catch (err) {
       push(err instanceof Error ? err.message : '操作失败，请重试', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * 删除商品（A-09）：软删进回收站。
+   *
+   * 必须说清三件事，否则卖家会把它当成「永久删除」而不敢点、或删完以为再也找不回：
+   * ① 买家端立即不可见；② 30 天内可恢复；③ 恢复后是下架态，需要自己重新上架。
+   */
+  const removeProduct = async (item: SellerProductView) => {
+    const ok = await confirm({
+      title: '删除商品',
+      message: (
+        <>
+          「{item.title}」将移入回收站，买家端立即不可见。
+          <br />
+          30 天内可在这里恢复；恢复后为下架状态，需要你核对内容后重新上架。
+        </>
+      ),
+      confirmText: '移入回收站',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusyId(item.id);
+    try {
+      await sellerApi.deleteProduct(item.id);
+      push(`「${item.title}」已移入回收站，30 天内可恢复`, 'success');
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '删除失败，请重试', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 从回收站恢复（A-09）：恢复后保持下架，避免卖家删过的商品悄悄回到前台 */
+  const restoreProduct = async (item: SellerProductView) => {
+    setBusyId(item.id);
+    try {
+      await sellerApi.restoreProduct(item.id);
+      push(`「${item.title}」已恢复为下架状态，请核对内容后重新上架`, 'success');
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '恢复失败，请重试', 'error');
     } finally {
       setBusyId(null);
     }
@@ -345,11 +404,37 @@ export const SellerProductsPage: React.FC = () => {
       <div className="section-head" style={{ marginTop: 8 }}>
         <h2 className="section-title">商品管理</h2>
         <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-          <span className="section-sub">{data ? `共 ${total} 件商品` : ''}</span>
-          <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>
-            + 发布商品
-          </button>
+          <span className="section-sub">
+            {data ? `共 ${total} 件${inRecycle ? '已删除商品' : '商品'}` : ''}
+          </span>
+          {!inRecycle ? (
+            <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>
+              + 发布商品
+            </button>
+          ) : null}
         </div>
+      </div>
+
+      {/* A-09：商品 / 回收站是两个视图，不混排 —— 否则卖家分不清「这件还在卖吗」 */}
+      <div className="row" style={{ marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className={`btn btn-sm ${!inRecycle ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => {
+            setKeywordDraft('');
+            setQuery({ deleted: undefined, auditStatus: undefined, keyword: undefined, page: undefined });
+          }}
+        >
+          我的商品
+        </button>
+        <button
+          className={`btn btn-sm ${inRecycle ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => {
+            setKeywordDraft('');
+            setQuery({ deleted: '1', auditStatus: undefined, keyword: undefined, page: undefined });
+          }}
+        >
+          回收站
+        </button>
       </div>
 
       <div className="list-toolbar">
@@ -367,20 +452,25 @@ export const SellerProductsPage: React.FC = () => {
         {keywordDraft.trim() ? (
           <span className="small muted">匹配「{keywordDraft.trim()}」的商品 {total} 件</span>
         ) : null}
+        {inRecycle ? (
+          <span className="small muted">删除后保留 30 天；到期由系统自动清理，无法恢复</span>
+        ) : null}
       </div>
 
-      {/* 审核维度筛选：与交易维度是两个维度，不能合并成一组标签 */}
-      <div className="row" style={{ marginBottom: 16, gap: 8, flexWrap: 'wrap' }}>
-        {AUDIT_TABS.map((tab) => (
-          <button
-            key={tab.key || 'all'}
-            className={`btn btn-sm ${auditStatus === tab.key ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setQuery({ auditStatus: tab.key || undefined, page: undefined })}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* 审核维度筛选：与交易维度是两个维度，不能合并成一组标签；回收站不按审核态筛 */}
+      {!inRecycle ? (
+        <div className="row" style={{ marginBottom: 16, gap: 8, flexWrap: 'wrap' }}>
+          {AUDIT_TABS.map((tab) => (
+            <button
+              key={tab.key || 'all'}
+              className={`btn btn-sm ${auditStatus === tab.key ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setQuery({ auditStatus: tab.key || undefined, page: undefined })}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {error ? (
         <Alert kind="error">
@@ -401,12 +491,23 @@ export const SellerProductsPage: React.FC = () => {
                 <tr>
                   <th>商品</th>
                   <th style={{ textAlign: 'right' }}>价格区间</th>
-                  <th style={{ textAlign: 'right' }}>SKU</th>
-                  <th style={{ textAlign: 'right' }}>库存</th>
-                  <th style={{ textAlign: 'right' }}>销量</th>
-                  <th>交易状态</th>
-                  <th>审核</th>
-                  <th>操作</th>
+                  {inRecycle ? (
+                    <>
+                      <th>删除时间</th>
+                      <th>预计清理</th>
+                      <th>删除前审核态</th>
+                      <th>操作</th>
+                    </>
+                  ) : (
+                    <>
+                      <th style={{ textAlign: 'right' }}>SKU</th>
+                      <th style={{ textAlign: 'right' }}>库存</th>
+                      <th style={{ textAlign: 'right' }}>销量</th>
+                      <th>交易状态</th>
+                      <th>审核</th>
+                      <th>操作</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -432,56 +533,96 @@ export const SellerProductsPage: React.FC = () => {
                       {formatPrice(item.minPrice)}
                       {item.maxPrice > item.minPrice ? ` ~ ${formatPrice(item.maxPrice)}` : ''}
                     </td>
-                    <td style={{ textAlign: 'right' }}>{item.skuCount}</td>
-                    <td style={{ textAlign: 'right' }}>{item.totalStock}</td>
-                    <td style={{ textAlign: 'right' }}>{item.salesCount}</td>
-                    <td>
-                      <span className="tag">{item.statusLabel}</span>
-                    </td>
-                    <td>
-                      <span
-                        className="tag"
-                        style={
-                          item.auditStatus === 'REJECTED'
-                            ? { color: '#c0392b', borderColor: '#c0392b' }
-                            : undefined
-                        }
-                      >
-                        {item.auditLabel}
-                      </span>
-                      {item.auditStatus === 'REJECTED' && item.auditReason ? (
-                        <div className="small muted" style={{ marginTop: 4, maxWidth: 220 }}>
-                          驳回原因：{item.auditReason}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td>
-                      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          disabled={busyId === item.id}
-                          onClick={() => openEdit(item)}
-                        >
-                          编辑
-                        </button>
-                        {item.auditStatus === 'REJECTED' ? (
-                          <button
-                            className="btn btn-sm btn-primary"
-                            disabled={busyId === item.id}
-                            onClick={() => resubmit(item)}
+                    {inRecycle ? (
+                      <>
+                        <td>{fmtTime(item.deletedAt)}</td>
+                        <td>{fmtTime(item.purgeAt)}</td>
+                        <td>
+                          <span
+                            className="tag"
+                            style={
+                              item.auditStatus === 'REJECTED'
+                                ? { color: '#c0392b', borderColor: '#c0392b' }
+                                : undefined
+                            }
                           >
-                            重新提交
-                          </button>
-                        ) : null}
-                        <button
-                          className={`btn btn-sm ${item.status === 'ON_SALE' ? 'btn-ghost' : 'btn-primary'}`}
-                          disabled={busyId === item.id}
-                          onClick={() => toggle(item)}
-                        >
-                          {busyId === item.id ? '处理中…' : item.status === 'ON_SALE' ? '下架' : '上架'}
-                        </button>
-                      </div>
-                    </td>
+                            {item.auditLabel}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              disabled={busyId === item.id}
+                              onClick={() => restoreProduct(item)}
+                            >
+                              {busyId === item.id ? '恢复中…' : '恢复'}
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={{ textAlign: 'right' }}>{item.skuCount}</td>
+                        <td style={{ textAlign: 'right' }}>{item.totalStock}</td>
+                        <td style={{ textAlign: 'right' }}>{item.salesCount}</td>
+                        <td>
+                          <span className="tag">{item.statusLabel}</span>
+                        </td>
+                        <td>
+                          <span
+                            className="tag"
+                            style={
+                              item.auditStatus === 'REJECTED'
+                                ? { color: '#c0392b', borderColor: '#c0392b' }
+                                : undefined
+                            }
+                          >
+                            {item.auditLabel}
+                          </span>
+                          {item.auditStatus === 'REJECTED' && item.auditReason ? (
+                            <div className="small muted" style={{ marginTop: 4, maxWidth: 220 }}>
+                              驳回原因：{item.auditReason}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>
+                          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={busyId === item.id}
+                              onClick={() => openEdit(item)}
+                            >
+                              编辑
+                            </button>
+                            {item.auditStatus === 'REJECTED' ? (
+                              <button
+                                className="btn btn-sm btn-primary"
+                                disabled={busyId === item.id}
+                                onClick={() => resubmit(item)}
+                              >
+                                重新提交
+                              </button>
+                            ) : null}
+                            <button
+                              className={`btn btn-sm ${item.status === 'ON_SALE' ? 'btn-ghost' : 'btn-primary'}`}
+                              disabled={busyId === item.id}
+                              onClick={() => toggle(item)}
+                            >
+                              {busyId === item.id ? '处理中…' : item.status === 'ON_SALE' ? '下架' : '上架'}
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: '#c0392b' }}
+                              disabled={busyId === item.id}
+                              onClick={() => removeProduct(item)}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -497,12 +638,24 @@ export const SellerProductsPage: React.FC = () => {
         </>
       ) : (
         <Empty
-          icon="📦"
-          title={keyword || auditStatus ? '没有匹配的商品' : '名下还没有商品'}
+          icon={inRecycle ? '🗑️' : '📦'}
+          title={
+            inRecycle
+              ? keyword
+                ? '没有匹配的回收站商品'
+                : '回收站是空的'
+              : keyword || auditStatus
+                ? '没有匹配的商品'
+                : '名下还没有商品'
+          }
           desc={
-            keyword || auditStatus
-              ? '换个关键词或切换审核状态试试。'
-              : '点右上角「发布商品」提交第一件商品，平台审核通过后自动上架。'
+            inRecycle
+              ? keyword
+                ? '换个关键词试试。'
+                : '删除的商品会在这里保留 30 天，期间随时可以恢复；到期后由系统自动清理。'
+              : keyword || auditStatus
+                ? '换个关键词或切换审核状态试试。'
+                : '点右上角「发布商品」提交第一件商品，平台审核通过后自动上架。'
           }
         />
       )}

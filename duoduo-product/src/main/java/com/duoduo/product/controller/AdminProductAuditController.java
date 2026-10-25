@@ -81,4 +81,19 @@ public class AdminProductAuditController {
                 request == null ? null : request.reason(),
                 request == null ? null : request.version()));
     }
+
+    /** 回收站清理结果：{@code purged} = 本轮物理删除的商品数 */
+    public record RecyclePurgeResult(int purged) {
+    }
+
+    /**
+     * 立即清理一次回收站（A-09）。
+     *
+     * <p>与每日定时任务走同一条服务路径，只是多一道运营权限校验；
+     * 存在的意义是验收与事故排查需要「现在就跑一轮看效果」，而不是等第二天。
+     */
+    @PostMapping("/recycle/purge")
+    public ApiResponse<RecyclePurgeResult> purgeRecycleBin() {
+        return ApiResponse.ok(new RecyclePurgeResult(sellerProductService.purgeExpiredByOperator()));
+    }
 }

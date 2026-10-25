@@ -176,7 +176,9 @@ public class SearchIndexer {
     /** 索引单个商品（含 SKU 冗余属性）。失败返回 false，不抛出 —— 索引层绝不拖垮主链路 */
     public boolean indexProduct(Long spuId) {
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null) {
+        // A-09：软删 = 从检索里摘掉。与闲置同一口径（见 indexListing）：
+        // 即使 status 已被压成 OFF_SHELF，仍显式删文档，避免索引里长期留着永远不会命中的脏数据。
+        if (spu == null || spu.getDeletedAt() != null) {
             return deleteDoc(TYPE_PRODUCT, spuId);
         }
         List<SkuEntity> skus = skuMapper.selectList(new LambdaQueryWrapper<SkuEntity>().eq(SkuEntity::getSpuId, spuId));

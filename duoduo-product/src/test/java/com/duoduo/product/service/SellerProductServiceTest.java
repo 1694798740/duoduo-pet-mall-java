@@ -6,7 +6,9 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.MerchantRiskClient;
@@ -37,6 +39,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -1594,5 +1598,219 @@ class SellerProductServiceTest {
         assertThatThrownBy(() -> service.update(9001L, titleUpdate("新标题")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("历史表不可写");
+    }
+
+    // ---------------- A-09 · 商品软删 / 回收站 / 30 天清理 ----------------
+
+    private static SpuEntity deletedSpu(long id, long sellerId, LocalDateTime deletedAt) {
+        SpuEntity spu = spu(id, sellerId, "回收站商品", null);
+        spu.setDeletedAt(deletedAt);
+        spu.setStatus("OFF_SHELF");
+        return spu;
+    }
+
+    @Test
+    void A09_删除自己的商品_只写deleted_at并压成下架_不动审核态() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "要删的商品", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductView view = service.remove(9001L);
+
+        assertThat(view.deletedAt()).isNotNull();
+        assertThat(view.purgeAt()).isNotNull();
+        assertThat(view.status()).isEqualTo("OFF_SHELF");
+        // 删除不是合规判定：审核结论保留，恢复后无需重新走审核
+        assertThat(view.auditStatus()).isEqualTo("APPROVED");
+
+        LambdaUpdateWrapper<SpuEntity> write = captureSpuUpdate();
+        assertThat(write.getSqlSegment()).contains("deleted_at IS NULL");
+        assertThat(write.getSqlSet()).contains("deleted_at").contains("status");
+        // 删除是生命周期动作，不参与 A-07 版本
+        assertThat(write.getSqlSet()).doesNotContain("version").doesNotContain("version = version + 1");
+    }
+
+    @Test
+    void A09_重复删除幂等_不刷新删除时间与保留期() {
+        UserContext.set(seller(101L));
+        LocalDateTime firstDelete = LocalDateTime.now(ZoneOffset.UTC).minusDays(3);
+        when(spuMapper.selectById(9001L)).thenReturn(deletedSpu(9001L, 101L, firstDelete));
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductView view = service.remove(9001L);
+
+        // 保留期按第一次删除算；重复删除若刷新 deleted_at，商品就永远清不掉
+        assertThat(view.deletedAt()).isEqualTo(firstDelete.toInstant(ZoneOffset.UTC).toString());
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_不能删除别人的商品_403而不是404() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 202L, "别人的商品", null));
+
+        assertThatThrownBy(() -> service.remove(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不属于当前账号");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_运营不能删除第三方商品_必须由店主自己操作() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "第三方商品", null));
+
+        assertThatThrownBy(() -> service.remove(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("第三方店铺");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_回收站商品不能再编辑_上下架_重提_改价() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(
+                deletedSpu(9001L, 101L, LocalDateTime.now(ZoneOffset.UTC).minusDays(1)));
+
+        assertThatThrownBy(() -> service.update(9001L, titleUpdate("删了还想改")))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+        assertThatThrownBy(() -> service.changeStatus(9001L, "ON_SALE"))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+        assertThatThrownBy(() -> service.resubmit(9001L))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+        assertThatThrownBy(() -> service.updateSkuPriceStock(9001L,
+                new SellerSkuPriceStockRequest(List.of(new SkuPriceStockInput(1L, 1990L, 5)))))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_恢复回收站商品_清空deleted_at并保持下架() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = deletedSpu(9001L, 101L, LocalDateTime.now(ZoneOffset.UTC).minusDays(10));
+        spu.setAuditStatus("APPROVED");
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(spuMapper.update(isNull(), any())).thenReturn(1);
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        SellerProductView view = service.restore(9001L);
+
+        assertThat(view.deletedAt()).isNull();
+        assertThat(view.purgeAt()).isNull();
+        // 恢复后不自动回到前台：卖家核对内容后自己上架
+        assertThat(view.status()).isEqualTo("OFF_SHELF");
+        assertThat(view.auditStatus()).isEqualTo("APPROVED");
+
+        LambdaUpdateWrapper<SpuEntity> write = captureSpuUpdate();
+        assertThat(write.getSqlSegment()).contains("deleted_at");
+        assertThat(write.getSqlSet()).contains("deleted_at");
+    }
+
+    @Test
+    void A09_超过30天保留期不能恢复_即使清理任务还没跑() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(
+                deletedSpu(9001L, 101L, LocalDateTime.now(ZoneOffset.UTC).minusDays(31)));
+
+        assertThatThrownBy(() -> service.restore(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("保留期")
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode())
+                        .isEqualTo(ErrorCode.BUSINESS_RULE));
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_恢复不在回收站的商品_业务错误() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "正常商品", null));
+
+        assertThatThrownBy(() -> service.restore(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不在回收站");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A09_清理只物理删除超过保留期的商品_先删SPU再删SKU() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        Page<SpuEntity> expired = new Page<>(1, 500, false);
+        expired.setRecords(List.of(
+                deletedSpu(1L, 101L, now.minusDays(31)),
+                deletedSpu(2L, 101L, now.minusDays(45))));
+        when(spuMapper.selectPage(any(), any())).thenReturn(expired);
+        when(spuMapper.delete(any())).thenReturn(2);
+        when(spuMapper.selectBatchIds(any())).thenReturn(List.of());
+        when(skuMapper.delete(any())).thenReturn(2);
+
+        int purged = service.purgeExpired(now);
+
+        assertThat(purged).isEqualTo(2);
+        ArgumentCaptor<LambdaQueryWrapper<SpuEntity>> selectCaptor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(spuMapper).selectPage(any(), selectCaptor.capture());
+        assertThat(selectCaptor.getValue().getSqlSegment())
+                .contains("deleted_at IS NOT NULL")
+                .contains("deleted_at <");
+
+        ArgumentCaptor<LambdaQueryWrapper<SkuEntity>> skuCaptor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(skuMapper).delete(skuCaptor.capture());
+        assertThat(skuCaptor.getValue().getSqlSegment()).contains("spu_id");
+        assertThat(skuCaptor.getValue().getParamNameValuePairs().values()).contains(1L, 2L);
+    }
+
+    @Test
+    void A09_清理期间被并发恢复的商品_不删它的SKU() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        SpuEntity a = deletedSpu(1L, 101L, now.minusDays(31));
+        SpuEntity b = deletedSpu(2L, 101L, now.minusDays(31));
+        Page<SpuEntity> expired = new Page<>(1, 500, false);
+        expired.setRecords(List.of(a, b));
+        when(spuMapper.selectPage(any(), any())).thenReturn(expired);
+        // 条件删除只删掉了 1（b 在那一刻被卖家恢复）
+        when(spuMapper.delete(any())).thenReturn(1);
+        when(spuMapper.selectBatchIds(any())).thenReturn(List.of(b));
+        when(skuMapper.delete(any())).thenReturn(1);
+
+        int purged = service.purgeExpired(now);
+
+        assertThat(purged).isEqualTo(1);
+        ArgumentCaptor<LambdaQueryWrapper<SkuEntity>> skuCaptor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(skuMapper).delete(skuCaptor.capture());
+        // 先触发 SQL 片段渲染：MyBatis-Plus 的命名参数是惰性填充的，
+        // 直接读 paramNameValuePairs 会得到空 Map（第一次跑这条用例就踩到了）
+        assertThat(skuCaptor.getValue().getSqlSegment()).contains("spu_id");
+        // 若先删 SKU 再删 SPU，恢复的 b 会变成「商品还在、规格全没了」的残缺数据
+        assertThat(skuCaptor.getValue().getParamNameValuePairs().values())
+                .contains(1L)
+                .doesNotContain(2L);
+    }
+
+    @Test
+    void A09_回收站列表只看已删除_正常列表排除回收站() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectPage(any(), any())).thenReturn(new Page<>());
+        when(skuMapper.selectList(any())).thenReturn(List.of());
+
+        service.list(null, null, null, true, 1, 20);
+
+        ArgumentCaptor<LambdaQueryWrapper<SpuEntity>> captor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(spuMapper).selectPage(any(), captor.capture());
+        assertThat(captor.getValue().getSqlSegment())
+                .contains("deleted_at IS NOT NULL")
+                .contains("ORDER BY deleted_at DESC");
+
+        when(spuMapper.selectPage(any(), any())).thenReturn(new Page<>());
+        service.list(null, null, null, false, 1, 20);
+        ArgumentCaptor<LambdaQueryWrapper<SpuEntity>> normalCaptor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(spuMapper, times(2)).selectPage(any(), normalCaptor.capture());
+        assertThat(normalCaptor.getAllValues().get(1).getSqlSegment())
+                .contains("deleted_at IS NULL");
     }
 }

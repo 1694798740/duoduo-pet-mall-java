@@ -528,8 +528,26 @@ export const sellerApi = {
    *
    * 运营 / 管理员可显式按 sellerId 筛选（普通卖家传了也会被服务端忽略）。
    */
-  products: (query?: { keyword?: string; auditStatus?: string; sellerId?: number; page?: number; pageSize?: number }) =>
-    api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
+  products: (query?: {
+    keyword?: string;
+    auditStatus?: string;
+    sellerId?: number;
+    /** true = 回收站（A-09）；缺省 = 正常商品 */
+    deleted?: boolean;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
+
+  /**
+   * 删除商品（A-09，软删进回收站，30 天内可恢复）。
+   *
+   * 语义是「移入回收站」而不是「资源消失」，所以走 POST 动作式端点、不是 HTTP DELETE。
+   * 幂等：重复删除不会报错，也不会刷新保留期。
+   */
+  deleteProduct: (spuId: string) => api.post<SellerProductView>(`/api/seller/products/${spuId}/delete`),
+
+  /** 从回收站恢复（A-09）：超期返回业务错误；恢复后为下架态，需卖家核对后重新上架 */
+  restoreProduct: (spuId: string) => api.post<SellerProductView>(`/api/seller/products/${spuId}/restore`),
 
   /**
    * 商品详情（商家视角，编辑回填用）。

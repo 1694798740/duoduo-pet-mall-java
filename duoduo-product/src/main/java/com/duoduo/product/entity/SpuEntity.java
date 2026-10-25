@@ -99,6 +99,15 @@ public class SpuEntity {
      */
     private Integer version;
 
+    /**
+     * 软删时间（A-09）：非空 = 在回收站中，所有读路径（前台、商家端、审核台）一律排除。
+     *
+     * <p>为什么不物理删：卖家误删要能 30 天内恢复；也不参与 {@link #version} ——
+     * 删除 / 恢复是生命周期动作，与上下架同理，并发安全由写路径的
+     * {@code deleted_at IS NULL} 条件更新兜底，而不是制造 409 噪音。
+     */
+    private LocalDateTime deletedAt;
+
     public Long getId() {
         return id;
     }
@@ -337,5 +346,13 @@ public class SpuEntity {
 
     public void setVersion(Integer version) {
         this.version = version;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
     }
 }

@@ -117,7 +117,9 @@ public class ProxyOpsService {
 
         Long spuId = parseSpuId(targetRef);
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null || !Objects.equals(nz(spu.getSellerId()), ownerUserId)) {
+        // A-09：回收站商品不能发起代运营 —— 它已经不在卖，没有「下架」这个动作可代
+        if (spu == null || spu.getDeletedAt() != null
+                || !Objects.equals(nz(spu.getSellerId()), ownerUserId)) {
             // 「不存在」与「不是你的」统一 404：商品 id 不可枚举，但一旦区分就会
             // 把「这个 id 真实存在」这个事实泄露出去 —— 与订单侧防枚举口径一致。
             throw BizException.notFound("商品");
@@ -228,7 +230,7 @@ public class ProxyOpsService {
         String reason = requireText(req == null ? null : req.reason(), "执行说明", MAX_REASON_LEN);
 
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null) {
+        if (spu == null || spu.getDeletedAt() != null) {
             throw BizException.notFound("商品");
         }
         requireNotSelfSupplied(spu, "代下架");

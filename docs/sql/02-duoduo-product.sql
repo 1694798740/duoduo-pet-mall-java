@@ -95,6 +95,10 @@ CREATE TABLE t_spu (
     -- A-07 · 乐观锁：内容编辑与审核判定都以读到的 version 为条件更新，成功则 +1。
     --   上下架 / 改价改库存不参与（正交高频动作，纳入只会制造 409 噪音）。
     version      INT          NOT NULL DEFAULT 0,
+    -- A-09 · 软删时间：非空 = 回收站中，所有读路径一律排除（增量脚本 50-spu-recycle-bin.sql）。
+    --   不物理删行，是为了 30 天内可恢复；到期由定时清理任务物理删除 SPU/SKU，
+    --   审核历史 t_spu_audit_log 保留（append-only 审计语义）。
+    deleted_at   TIMESTAMP    NULL COMMENT '软删时间（A-09）；非空=回收站中，所有读路径排除',
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_spu_category ON t_spu (category_id, status);
@@ -104,6 +108,9 @@ CREATE INDEX idx_spu_price ON t_spu (min_price);
 CREATE INDEX idx_spu_seller ON t_spu (seller_id, status);
 -- E14：审核台按「审核状态 + 交易状态」筛（增量脚本 27-e14-spu-audit.sql）
 CREATE INDEX idx_spu_audit ON t_spu (audit_status, status);
+-- A-09：回收站列表按卖家 + 删除时间倒排；清理任务扫 deleted_at 非空的行
+CREATE INDEX idx_spu_recycle ON t_spu (seller_id, deleted_at, updated_at);
+CREATE INDEX idx_spu_deleted ON t_spu (deleted_at);
 
 -- ---------- E28 · 审核 SLA 事后抽查（增量脚本 29-e28-audit-sla.sql） ----------
 -- 为什么抽查任务是独立表而不是 t_spu 上再加几列：

@@ -171,7 +171,8 @@ public class ProductInteractionService {
         List<PickerProduct> items = new ArrayList<>(spuIds.size());
         for (Long id : spuIds) {
             SpuEntity spu = spus.get(id);
-            if (spu == null) {
+            // A-09：回收站商品不再出现在收藏 / 足迹选择器里，否则点进去只会得到 404
+            if (spu == null || spu.getDeletedAt() != null) {
                 continue;
             }
             LocalDateTime viewed = viewedAt.get(id);

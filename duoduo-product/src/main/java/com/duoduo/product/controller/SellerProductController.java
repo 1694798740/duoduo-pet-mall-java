@@ -51,9 +51,12 @@ public class SellerProductController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String auditStatus,
             @RequestParam(required = false) Long sellerId,
+            /** true = 回收站（A-09）；缺省 false = 正常商品 */
+            @RequestParam(defaultValue = "false") boolean deleted,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.ok(sellerProductService.list(keyword, auditStatus, sellerId, page, pageSize));
+        return ApiResponse.ok(sellerProductService.list(
+                keyword, auditStatus, sellerId, deleted, page, pageSize));
     }
 
     /**
@@ -94,6 +97,24 @@ public class SellerProductController {
     @PostMapping("/{spuId}/resubmit")
     public ApiResponse<SellerProductView> resubmit(@PathVariable Long spuId) {
         return ApiResponse.ok(sellerProductService.resubmit(spuId));
+    }
+
+    /**
+     * 删除商品（A-09，软删进回收站，30 天内可恢复）。
+     *
+     * <p>用 POST 动作式端点而不是 HTTP DELETE，与闲置删除（{@code POST /api/listings/{id}/delete}）
+     * 保持一致：语义是「移入回收站」而非「资源消失」，恢复端点是它的逆操作。
+     * 幂等：重复删除返回 200 与当前视图，不刷新保留期。
+     */
+    @PostMapping("/{spuId}/delete")
+    public ApiResponse<SellerProductView> delete(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.remove(spuId));
+    }
+
+    /** 从回收站恢复（A-09）：超过 30 天保留期返回业务错误；恢复后为下架态，需手动重新上架 */
+    @PostMapping("/{spuId}/restore")
+    public ApiResponse<SellerProductView> restore(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.restore(spuId));
     }
 
     /**

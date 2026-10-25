@@ -260,7 +260,11 @@ public final class ProductDtos {
             double rating,
             int ratingCount,
             int skuCount,
-            int totalStock
+            int totalStock,
+            /** 软删时间（A-09）：非空 = 回收站条目；正常列表恒为 null */
+            String deletedAt,
+            /** 回收站条目将被物理清理的时间（deletedAt + 30 天）；正常商品为 null */
+            String purgeAt
     ) {
     }
 

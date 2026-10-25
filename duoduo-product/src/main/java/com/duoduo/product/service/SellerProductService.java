@@ -142,6 +142,11 @@ public class SellerProductService {
     private static final int MAX_STOCK = 999_999;
     private static final long MAX_PRICE_CENTS = 9_999_900L;
 
+    /** 回收站保留期（A-09）：软删满 30 天后由清理任务物理删除，期间可恢复 */
+    public static final int RECYCLE_RETENTION_DAYS = 30;
+    /** 单轮清理上限：正常一天删不了这么多；有上限才能保证任务跑完而不是拖成慢查询 */
+    private static final int RECYCLE_PURGE_BATCH = 500;
+
     private final SpuMapper spuMapper;
     private final SkuMapper skuMapper;
     private final MembershipClient membershipClient;
@@ -238,6 +243,17 @@ public class SellerProductService {
      * 「ownerUserId 恰好也算出 0」之类的边界糊过去，第三方就有机会改到自营商品。
      */
     private SpuEntity requireOwned(Long spuId, SellerScope scope) {
+        SpuEntity spu = requireOwnedIncludingDeleted(spuId, scope);
+        // A-09：回收站里的商品对「编辑 / 上下架 / 改价 / 重提 / 审核」等同于不存在 ——
+        // 否则「删了还能改」会让 30 天保留期变成一条谁都能绕过的规则。
+        if (spu.getDeletedAt() != null) {
+            throw BizException.notFound("商品");
+        }
+        return spu;
+    }
+
+    /** 归属校验（含回收站条目）：只有删除 / 恢复需要看见已软删的商品 */
+    private SpuEntity requireOwnedIncludingDeleted(Long spuId, SellerScope scope) {
         SpuEntity spu = spuMapper.selectById(spuId);
         if (spu == null) {
             throw BizException.notFound("商品");
@@ -265,12 +281,30 @@ public class SellerProductService {
      */
     public PageResult<SellerProductView> list(String keyword, String auditStatus, Long sellerId,
                                               int page, int pageSize) {
+        return list(keyword, auditStatus, sellerId, false, page, pageSize);
+    }
+
+    /**
+     * 我的商品列表（A-09 增加回收站视图）。
+     *
+     * <p>{@code deleted=false}（默认）= 正常商品，回收站条目一律不出现；
+     * {@code deleted=true} = 回收站，按删除时间倒序（最近删的在最上面）。
+     * 两个视图互斥，不提供「全部（含回收站）」—— 那种列表会让卖家分不清
+     * 「这件商品还在卖吗」，回收站存在的意义就是把它和日常管理分开。
+     */
+    public PageResult<SellerProductView> list(String keyword, String auditStatus, Long sellerId,
+                                              boolean deleted, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
 
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
 
         LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
+        if (deleted) {
+            wrapper.isNotNull(SpuEntity::getDeletedAt);
+        } else {
+            wrapper.isNull(SpuEntity::getDeletedAt);
+        }
         if (scope.platformScope()) {
             // ★ 修掉一个既有缺陷：旧版把 forcedSellerId = sellerId 直接塞进 eq()，
             //   而 MyBatis-Plus 的 eq 对 null **不会跳过条件**，会生成 `seller_id = NULL`
@@ -290,7 +324,12 @@ public class SellerProductService {
         if (audit != null) {
             wrapper.eq(SpuEntity::getAuditStatus, audit);
         }
-        wrapper.orderByDesc(SpuEntity::getUpdatedAt).orderByDesc(SpuEntity::getId);
+        if (deleted) {
+            // 回收站按「删除时间」排：卖家找的是「我刚刚删掉的那件」，不是「最近编辑过的」
+            wrapper.orderByDesc(SpuEntity::getDeletedAt).orderByDesc(SpuEntity::getId);
+        } else {
+            wrapper.orderByDesc(SpuEntity::getUpdatedAt).orderByDesc(SpuEntity::getId);
+        }
 
         Page<SpuEntity> result = spuMapper.selectPage(new Page<>(p, size), wrapper);
         List<SpuEntity> records = result.getRecords();
@@ -603,6 +642,8 @@ public class SellerProductService {
         LambdaUpdateWrapper<SpuEntity> write = new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
                 .eq(SpuEntity::getVersion, request.version())
+                // A-09：编辑期间若被并发删除，不能把内容写回一个已进回收站的商品
+                .isNull(SpuEntity::getDeletedAt)
                 .set(SpuEntity::getTitle, spu.getTitle())
                 .set(SpuEntity::getSubtitle, spu.getSubtitle())
                 .set(SpuEntity::getMainImage, spu.getMainImage())
@@ -702,6 +743,7 @@ public class SellerProductService {
         spu.setMaxPrice(max);
         spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
+                .isNull(SpuEntity::getDeletedAt)
                 .set(SpuEntity::getMinPrice, min)
                 .set(SpuEntity::getMaxPrice, max)
                 .set(SpuEntity::getUpdatedAt, now));
@@ -754,6 +796,7 @@ public class SellerProductService {
             // 整行写会把并发落下的审核结论一起覆盖。状态本身不参与版本，避免制造 409 噪音。
             spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                     .eq(SpuEntity::getId, spuId)
+                    .isNull(SpuEntity::getDeletedAt)
                     .set(SpuEntity::getStatus, target)
                     .set(SpuEntity::getUpdatedAt, now));
             spu.setStatus(target);
@@ -806,7 +849,7 @@ public class SellerProductService {
     @Transactional
     public SellerProductView forceOffShelfByProxy(Long spuId, String reason) {
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null) {
+        if (spu == null || spu.getDeletedAt() != null) {
             throw BizException.notFound("商品");
         }
         if (isPlatformSelf(spu)) {
@@ -818,6 +861,7 @@ public class SellerProductService {
             LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
             spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                     .eq(SpuEntity::getId, spuId)
+                    .isNull(SpuEntity::getDeletedAt)
                     .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
                     .set(SpuEntity::getUpdatedAt, now));
             spu.setStatus(STATUS_OFF_SHELF);
@@ -845,10 +889,10 @@ public class SellerProductService {
      * 已在 2026-10-13 还上：{@link #update} 现在走同一道门禁。
      * <p>★ 两次改动**分两次落地、各有各的实测**（`E23_*` 与 `A1_*` 两组用例），
      * 就是为了保住"可归因"这一点 —— 顺手扩大改动范围，代价是把两次变更的边界搞模糊。
-     * <p>仍然**没有**拦的：改价与删除（这两条在本服务里本就没有对第三方开放的入口，
-     * 见类注释里的调价边界；若有新入口加进来，必须一并挂上本门禁）。
+     * <p>改价与删除同样挂了这道门禁（A-09 起删除是对商家开放的入口）：
+     * 平台能处置的只有自己的货，第三方商品的生命周期由店主自己决定。
      *
-     * @param action 动作名（"上下架" / "编辑"），只用于把提示语说到点子上
+     * @param action 动作名（"上下架" / "编辑" / "删除" / "恢复"），只用于把提示语说到点子上
      */
     private static void requireProxyForThirdParty(SpuEntity spu, SellerScope scope, String action) {
         if (!scope.platformScope()) {
@@ -976,6 +1020,7 @@ public class SellerProductService {
         int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getSellerId, sellerId)
                 .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                .isNull(SpuEntity::getDeletedAt)
                 .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
                 .set(SpuEntity::getUpdatedAt, LocalDateTime.now(ZoneOffset.UTC)));
         log.info("店铺 {} 因资质停业，在售商品下架 {} 件", sellerId, rows);
@@ -1024,6 +1069,7 @@ public class SellerProductService {
         int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
                 .eq(SpuEntity::getAuditStatus, AUDIT_REJECTED)
+                .isNull(SpuEntity::getDeletedAt)
                 .set(SpuEntity::getAuditStatus, AUDIT_PENDING)
                 .set(SpuEntity::getAuditReason, null)
                 .set(SpuEntity::getAuditSource, null)
@@ -1042,6 +1088,162 @@ public class SellerProductService {
         auditHistoryService.recordResubmit(auditBefore, spu, scope.staffMember());
         log.info("商品 {} 由卖家重新提审，回到待审核（版本={}）", spuId, spu.getVersion());
         return toView(spu, skuStatsOf(spuId));
+    }
+
+    // ---------------- 商家侧：回收站（A-09） ----------------
+
+    /**
+     * 删除自己的商品（软删，A-09）。
+     *
+     * <h2>为什么不物理删</h2>
+     * 商品会被订单快照、购物车、收藏、审核历史引用。物理删会让历史订单页出现
+     * 「查无此物」，也让「这条内容曾经存在、当时是什么样」失去证据。
+     * 删除只写 {@code deleted_at}，行留在库里，30 天内可恢复。
+     *
+     * <h2>为什么删除同时压成下架</h2>
+     * 公开可见性由 {@code deleted_at IS NULL} 把守，status 其实已经不影响。
+     * 但把 status 落成 OFF_SHELF 有两个实际好处：
+     * ① 卖家视角语义一致 —— 回收站里的东西不是「在售」；
+     * ② 恢复后不会瞬间回到前台，卖家可以先核对内容再手动上架。
+     * 审核态<b>不动</b>：删除不是合规判定，恢复后原有审核结论仍然有效。
+     *
+     * <p>幂等：重复删除返回当前视图，不报错也不刷新删除时间（否则保留期会被无限续期）。
+     * <p>不参与 A-07 版本：与上下架同理，删除是生命周期动作，不是内容修改；
+     * 并发安全由 {@code WHERE deleted_at IS NULL} 条件更新兜底。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public SellerProductView remove(Long spuId) {
+        SellerScope scope = requireSellerScope();
+        SpuEntity spu = requireOwnedIncludingDeleted(spuId, scope);
+        // 平台运营不能直接删第三方商品：删除比编辑更难挽回，必须由店主自己操作
+        requireProxyForThirdParty(spu, scope, "删除");
+        if (spu.getDeletedAt() != null) {
+            return toView(spu, skuStatsOf(spuId));
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .isNull(SpuEntity::getDeletedAt)
+                .set(SpuEntity::getDeletedAt, now)
+                .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                .set(SpuEntity::getUpdatedAt, now));
+        if (rows == 0) {
+            // 并发删除：另一请求已经删掉了，目标达成，不制造 409 噪音
+            SpuEntity latest = spuMapper.selectById(spuId);
+            if (latest == null) {
+                throw BizException.notFound("商品");
+            }
+            if (latest.getDeletedAt() == null) {
+                throw BizException.conflict("商品状态已变化，请刷新后重试");
+            }
+            return toView(latest, skuStatsOf(spuId));
+        }
+        spu.setDeletedAt(now);
+        spu.setStatus(STATUS_OFF_SHELF);
+        spu.setUpdatedAt(now);
+        log.info("商品 {} 由 {} 删除（软删，进入回收站 30 天；原审核态={}）", spuId,
+                scope.staffMember() ? "店员" : (scope.platformScope() ? "运营" : "店主"),
+                spu.getAuditStatus());
+        return toView(spu, skuStatsOf(spuId));
+    }
+
+    /**
+     * 从回收站恢复（A-09）。
+     *
+     * <p>保留期以<b>删除时间</b>为准而不是「打开恢复页的时间」：超过 30 天即拒绝，
+     * 哪怕清理任务还没轮到它。清理任务是物理删除的执行者，不是保留期的定义者 ——
+     * 两者口径必须分开，否则任务停摆时保留期会被无限延长。
+     *
+     * <p>恢复后 status 保持 OFF_SHELF（删除时已压成下架），卖家核对后再手动上架；
+     * 审核态原样保留：删除期间没有人改内容，审核结论不应被作废。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public SellerProductView restore(Long spuId) {
+        SellerScope scope = requireSellerScope();
+        SpuEntity spu = requireOwnedIncludingDeleted(spuId, scope);
+        requireProxyForThirdParty(spu, scope, "恢复");
+        if (spu.getDeletedAt() == null) {
+            throw BizException.businessRule("该商品不在回收站中");
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime cutoff = now.minusDays(RECYCLE_RETENTION_DAYS);
+        if (spu.getDeletedAt().isBefore(cutoff)) {
+            throw BizException.businessRule("商品已超过 " + RECYCLE_RETENTION_DAYS
+                    + " 天保留期，无法恢复（可重新提交同款商品）");
+        }
+        int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .eq(SpuEntity::getDeletedAt, spu.getDeletedAt())
+                .set(SpuEntity::getDeletedAt, null)
+                .set(SpuEntity::getUpdatedAt, now));
+        if (rows == 0) {
+            // 恢复期间被清理任务物理删除，或在另一端点过一次恢复
+            SpuEntity latest = spuMapper.selectById(spuId);
+            if (latest == null) {
+                throw BizException.notFound("商品");
+            }
+            if (latest.getDeletedAt() == null) {
+                throw BizException.conflict("商品已被恢复，请刷新后重试");
+            }
+            throw BizException.conflict("商品状态已变化，请刷新后重试");
+        }
+        spu.setDeletedAt(null);
+        spu.setUpdatedAt(now);
+        log.info("商品 {} 从回收站恢复（保留审核态={}，status={}），需卖家确认后重新上架",
+                spuId, spu.getAuditStatus(), spu.getStatus());
+        return toView(spu, skuStatsOf(spuId));
+    }
+
+    /**
+     * 清理回收站中超过保留期的商品（A-09）：物理删除 SPU 与 SKU。
+     *
+     * <p><b>不做鉴权</b>：这是系统任务入口，调用方是 {@code ProductRecycleJob}；
+     * 运营手动触发走 {@link #purgeExpiredByOperator()}，权限在那里校验。
+     *
+     * <p><b>审核历史刻意不删</b>：{@code t_spu_audit_log} 是 append-only 审计记录，
+     * 它的价值恰恰在于「商品没了，当时为什么删、谁审过还在」。物理删商品不能连带抹掉审计。
+     *
+     * <p>删除顺序：先条件删 SPU，再删「确实已经不在库里的那些 id」的 SKU ——
+     * 反过来先删 SKU 的话，万一 SPU 那一刻被恢复（update 抢先），就会留下
+     * 「商品还在、规格全没了」的残缺数据。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public int purgeExpired(LocalDateTime now) {
+        LocalDateTime cutoff = now.minusDays(RECYCLE_RETENTION_DAYS);
+        List<SpuEntity> expired = spuMapper.selectPage(
+                new Page<>(1, RECYCLE_PURGE_BATCH, false),
+                new LambdaQueryWrapper<SpuEntity>()
+                        .select(SpuEntity::getId, SpuEntity::getTitle)
+                        .isNotNull(SpuEntity::getDeletedAt)
+                        .lt(SpuEntity::getDeletedAt, cutoff)
+                        .orderByAsc(SpuEntity::getDeletedAt)).getRecords();
+        if (expired.isEmpty()) {
+            return 0;
+        }
+        List<Long> ids = expired.stream().map(SpuEntity::getId).toList();
+        int deletedSpu = spuMapper.delete(new LambdaQueryWrapper<SpuEntity>()
+                .in(SpuEntity::getId, ids)
+                .isNotNull(SpuEntity::getDeletedAt)
+                .lt(SpuEntity::getDeletedAt, cutoff));
+        if (deletedSpu == 0) {
+            return 0;
+        }
+        // 只删真正被删掉的 SPU 的 SKU：条件删除可能因并发恢复而少删几条
+        Set<Long> nowExisting = spuMapper.selectBatchIds(ids).stream()
+                .map(SpuEntity::getId).collect(Collectors.toSet());
+        List<Long> purgedIds = ids.stream().filter(id -> !nowExisting.contains(id)).toList();
+        if (!purgedIds.isEmpty()) {
+            skuMapper.delete(new LambdaQueryWrapper<SkuEntity>().in(SkuEntity::getSpuId, purgedIds));
+        }
+        log.info("回收站清理：物理删除 {} 件商品（删除时间早于 {}），SKU 同步清理 {} 行",
+                purgedIds.size(), cutoff, purgedIds.size());
+        return purgedIds.size();
+    }
+
+    /** 运营手动清理（排查 / 验收用）：与定时任务同一条路径，只是多一道权限 */
+    public int purgeExpiredByOperator() {
+        OperatorGuard.requireOperator();
+        return purgeExpired(LocalDateTime.now(ZoneOffset.UTC));
     }
 
     // ---------------- 平台侧：上架审核台 ----------------
@@ -1069,7 +1271,9 @@ public class SellerProductService {
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
 
         LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
-                .eq(SpuEntity::getSupplyType, SUPPLY_MERCHANT);
+                .eq(SpuEntity::getSupplyType, SUPPLY_MERCHANT)
+                // A-09：回收站里的商品不再进审核队列 —— 它已经不在卖，审核它没有意义
+                .isNull(SpuEntity::getDeletedAt);
         if (sellerId != null) {
             wrapper.eq(SpuEntity::getSellerId, sellerId);
         }
@@ -1106,7 +1310,7 @@ public class SellerProductService {
     public AdminProductAuditView auditDetail(Long spuId) {
         OperatorGuard.requireOperator();
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null) {
+        if (spu == null || spu.getDeletedAt() != null) {
             throw BizException.notFound("商品");
         }
         Map<Long, String> categoryNames = catalogLookup.categoryNames(List.of(spu.getCategoryId()));
@@ -1147,7 +1351,8 @@ public class SellerProductService {
             default -> throw BizException.validation("action 仅支持 APPROVE / REJECT");
         };
         SpuEntity spu = spuMapper.selectById(spuId);
-        if (spu == null) {
+        if (spu == null || spu.getDeletedAt() != null) {
+            // 删除中的商品可能停在待审页签上（打开页面后才被卖家删掉），审核必须落空
             throw BizException.notFound("商品");
         }
         if (!isMerchantSupplied(spu)) {
@@ -1187,6 +1392,8 @@ public class SellerProductService {
         int rows = spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
                 .eq(SpuEntity::getId, spuId)
                 .eq(SpuEntity::getVersion, version)
+                // A-09：审核打开后商品被卖家删除 → 结论不能落到回收站条目上
+                .isNull(SpuEntity::getDeletedAt)
                 .set(SpuEntity::getAuditStatus, target)
                 .set(SpuEntity::getAuditReason, reject ? trimToNull(reason) : null)
                 .set(SpuEntity::getAuditAt, now)
@@ -1231,8 +1438,9 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public void rejectBySample(Long spuId, String reason, Integer sampledVersion) {
         SpuEntity spu = spuId == null ? null : spuMapper.selectById(spuId);
-        if (spu == null || !isMerchantSupplied(spu)) {
-            return;             // 自营商品不进抽查队列；查不到就什么都不做
+        if (spu == null || spu.getDeletedAt() != null || !isMerchantSupplied(spu)) {
+            // 自营商品不进抽查队列；查不到 / 已进回收站就什么都不做（不制造无对象的驳回）
+            return;
         }
         SpuAuditHistoryService.ContentSnapshot auditBefore = SpuAuditHistoryService.ContentSnapshot.of(spu);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -1410,6 +1618,8 @@ public class SellerProductService {
                     .eq(SpuEntity::getCategoryId, categoryId)
                     .eq(SpuEntity::getSupplyType, SUPPLY_MERCHANT)
                     .eq(SpuEntity::getStatus, STATUS_ON_SALE)
+                    // A-09：回收站商品不在售，不能拿它的价格当同类基准
+                    .isNull(SpuEntity::getDeletedAt)
                     .gt(SpuEntity::getMinPrice, 0)
                     .last("LIMIT " + PRICE_BENCHMARK_SAMPLE));
             if (peers == null || peers.isEmpty()) {
@@ -1703,7 +1913,11 @@ public class SellerProductService {
                 spu.getRating() == null ? 0d : spu.getRating().doubleValue(),
                 spu.getRatingCount() == null ? 0 : spu.getRatingCount(),
                 stats[0],
-                stats[1]);
+                stats[1],
+                isoOf(spu.getDeletedAt()),
+                spu.getDeletedAt() == null ? null
+                        : spu.getDeletedAt().plusDays(RECYCLE_RETENTION_DAYS)
+                                .toInstant(ZoneOffset.UTC).toString());
     }
 
     private SellerProductDetailView toDetailView(SpuEntity spu, List<SkuEntity> skus) {

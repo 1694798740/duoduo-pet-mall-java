@@ -660,6 +660,10 @@ export interface SellerProductView {
   ratingCount?: number;
   skuCount: number;
   totalStock: number;
+  /** 软删时间（A-09）：回收站条目非空，正常商品为 null */
+  deletedAt?: string | null;
+  /** 回收站条目将被物理清理的时间（deletedAt + 30 天）；正常商品为 null */
+  purgeAt?: string | null;
 }
 
 /** 提交商品时的规格项；价格单位是**分**（表单填元，提交前 ×100） */
