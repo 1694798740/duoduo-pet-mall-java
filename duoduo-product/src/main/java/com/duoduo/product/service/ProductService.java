@@ -303,7 +303,7 @@ public class ProductService {
                 var expanded = query.categoryId() == null ? null
                         : categoryService.expandCategoryIds(query.categoryId());
                 var hits = esSearch.searchProducts(query, expanded, pageNo, pageSize);
-                // A-09：索引对账有 15s 窗口，刚被软删的商品可能还留在 ES 命中里。
+                // A-09：索引同步有秒级窗口，刚被软删的商品可能还留在 ES 命中里。
                 // 回表后必须再按 deleted_at 过一遍 —— 可见性的每个出口各自把守，
                 // 不能指望「另一条链路的同步会及时删文档」。
                 List<SpuEntity> records = hits.ids().isEmpty()

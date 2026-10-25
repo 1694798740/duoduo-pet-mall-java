@@ -1,11 +1,14 @@
 package com.duoduo.product.controller;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.audit.AuditAction;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
+import com.duoduo.product.entity.ListingEntity;
+import com.duoduo.product.entity.SpuEntity;
 import com.duoduo.product.support.search.SearchIndexer;
 import com.duoduo.product.support.search.SearchSyncJob;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -89,12 +92,18 @@ public class SearchAdminController {
         String docType = "listing".equalsIgnoreCase(type) ? SearchIndexer.TYPE_LISTING : SearchIndexer.TYPE_PRODUCT;
         Map<Long, Long> dbFacts = new LinkedHashMap<>();
         if (SearchIndexer.TYPE_LISTING.equals(docType)) {
-            listingMapper.selectList(null).forEach(l ->
-                    dbFacts.put(l.getId(), l.getUpdatedAt() == null ? 0L
+            // A-12：回收站条目**不算缺失**。A-09 起软删商品会被索引显式摘除，
+            // 若仍把已删行当成「库里有、索引没有」，每删一件商品都会在报告里
+            // 多一条假缺失，运营再也看不出真正的同步故障。
+            // 反过来，软删后仍留在索引里的文档会落进 extraInIndex —— 那才是要清的东西。
+            listingMapper.selectList(new LambdaQueryWrapper<ListingEntity>()
+                            .isNull(ListingEntity::getDeletedAt))
+                    .forEach(l -> dbFacts.put(l.getId(), l.getUpdatedAt() == null ? 0L
                             : l.getUpdatedAt().toInstant(java.time.ZoneOffset.UTC).toEpochMilli()));
         } else {
-            spuMapper.selectList(null).forEach(s ->
-                    dbFacts.put(s.getId(), s.getUpdatedAt() == null ? 0L
+            spuMapper.selectList(new LambdaQueryWrapper<SpuEntity>()
+                            .isNull(SpuEntity::getDeletedAt))
+                    .forEach(s -> dbFacts.put(s.getId(), s.getUpdatedAt() == null ? 0L
                             : s.getUpdatedAt().toInstant(java.time.ZoneOffset.UTC).toEpochMilli()));
         }
         Map<Long, Long> indexDocs = indexer.listDocs(docType);

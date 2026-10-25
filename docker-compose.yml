@@ -202,7 +202,8 @@ services:
       # OPS-SWITCH 默认 true —— 关掉即搜索直接走 MySQL（ES 未起时不报错、只是少一层）
       DUODUO_SEARCH_ENABLED: ${DUODUO_SEARCH_ENABLED:-true}
       DUODUO_ES_URL: 'http://duoduo-es:9200'
-      DUODUO_SEARCH_SWEEP_MS: '15000'
+      # A-12：3 秒一轮 + ES 默认 1 秒刷新 → 变更最迟约 4 秒可见（验收线 5 秒）
+      DUODUO_SEARCH_SWEEP_MS: '3000'
     ports:
       - '8082:8082'
     depends_on:
@@ -465,6 +466,10 @@ services:
       ES_JAVA_OPTS: '-Xms512m -Xmx512m'
     ports:
       - '9200:9200'
+    # A-12：索引数据落卷。没有卷时容器重建 / 重启就丢整库索引，
+    # 只能靠应用侧「检测索引重建 → 全量对齐」兜底；有卷时重启不需要重建。
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
@@ -649,6 +654,7 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  es-data:
   fulfilment-uploads:
   # E12 · 入驻资质材料的私有存储：不挂任何公开 nginx 路径，
   # 读取一律走鉴权端点（店主本人 / 运营），与公开的 /uploads/** 彻底分开

@@ -2,6 +2,25 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 搜索索引同步冒烟（`scripts/search-sync-a12-smoke.mjs`，56 项，第一百零一轮）
+
+```bash
+NO_PROXY="*" node scripts/search-sync-a12-smoke.mjs
+```
+
+前置：容器在跑（含 `docker compose --profile search up -d duoduo-es`）；`DUODUO_SEARCH_SWEEP_MS=3000`；
+卖家 13600003333 可用；ES 直连 `localhost:9200`，索引 `duoduo-search`、文档 ID `PRODUCT:{id}`。
+覆盖：重启后等增量扫描真正接管（`lastSweepAt` 前进）再开始计时；**十类变更的端到端延迟**（创建 / 改名 /
+下架 / 上架 / 驳回 / 重提 / 通过 / 软删 / 恢复 / 重新上架，逐项 `≤5000ms`，实测 2790–3352ms）；
+**文档内容正确性**（标题、状态、审核态、类目与价格区间）；**改名后旧标题在 ES 层 `match_phrase` 零命中**
+（不在公开搜索断言：应用侧严格召回为 0 时有逐字 OR 兜底，旧关键词仍可能命中，属既有设计）；
+**失败重试**（停 ES → 变更 → 启 ES，未手工重建即自动补进索引，`pendingProducts` 归零）；**索引自愈**
+（`DELETE /duoduo-search` 后下一轮自动重建为正确映射并全量补回，`docType=keyword` /
+`titlePinyin.analyzer=pinyin_ngram`）；**ES 停机再启**（停容器 → 变更照常落库不阻塞 → 启容器后索引仍在、变更补入）；
+**物理清理**（31 天前删除的夹具 purge 后文档立即消失，不依赖回表兜底）；**越权**（别的店主改不动，索引不变）；
+收尾删夹具、清审核历史并断言 A12 商品 / 审核历史 / ES 文档零残留。
+2026-10-25 实测 **56/0**。
+
 ## 商品图片表冒烟（`scripts/spu-image-a11-smoke.mjs`，52 项，第一百轮）
 
 ```bash

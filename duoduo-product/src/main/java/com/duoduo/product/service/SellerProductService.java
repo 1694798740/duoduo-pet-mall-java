@@ -33,9 +33,11 @@ import com.duoduo.product.support.CatalogLookup;
 import com.duoduo.product.support.Csv;
 import com.duoduo.product.support.ProductContent;
 import com.duoduo.product.support.SpuRiskJudge;
+import com.duoduo.product.support.search.SearchEvents;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -159,6 +161,7 @@ public class SellerProductService {
     private final SpuAuditHistoryService auditHistoryService;
     private final CategoryAttrService categoryAttrService;
     private final SpuImageService spuImageService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
@@ -171,7 +174,8 @@ public class SellerProductService {
                                 ObjectMapper objectMapper,
                                 SpuAuditHistoryService auditHistoryService,
                                 CategoryAttrService categoryAttrService,
-                                SpuImageService spuImageService) {
+                                SpuImageService spuImageService,
+                                ApplicationEventPublisher eventPublisher) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
@@ -184,6 +188,7 @@ public class SellerProductService {
         this.auditHistoryService = auditHistoryService;
         this.categoryAttrService = categoryAttrService;
         this.spuImageService = spuImageService;
+        this.eventPublisher = eventPublisher;
     }
 
     // ---------------- 准入与归属 ----------------
@@ -1026,7 +1031,7 @@ public class SellerProductService {
      * <b>不需要重新送审</b> —— 内容一个字没改，再走一遍审核等于白审。
      *
      * <h2>索引同步</h2>
-     * 只更新 {@code updated_at}，由 {@code SearchSyncJob} 的 15 秒补偿扫描自动重索引 ——
+     * 只更新 {@code updated_at}，由 {@code SearchSyncJob} 的秒级扫描自动重索引 ——
      * 与商家手动上下架走的是同一条路（{@link #changeStatus} 也只更新时间戳）。
      * 不在这里直接写 ES：搜索是「尽力而为」的旁路，让商品写路径依赖 ES 可用性，
      * 就成了「搜索挂了商家就下不了架」。
@@ -1262,6 +1267,9 @@ public class SellerProductService {
             skuMapper.delete(new LambdaQueryWrapper<SkuEntity>().in(SkuEntity::getSpuId, purgedIds));
             // A-11：图片是商品的从属数据，物理删商品时一并清掉，避免孤儿行
             spuImageService.deleteBySpuIds(purgedIds);
+            // A-12：库行消失后 updated_at 不复存在，增量扫描永远发现不了这几个 id，
+            // 只能靠事件通知搜索侧摘文档；监听器在事务提交后执行，失败会进重试队列。
+            eventPublisher.publishEvent(new SearchEvents.SpuPurged(purgedIds));
         }
         log.info("回收站清理：物理删除 {} 件商品（删除时间早于 {}），SKU 同步清理 {} 行",
                 purgedIds.size(), cutoff, purgedIds.size());

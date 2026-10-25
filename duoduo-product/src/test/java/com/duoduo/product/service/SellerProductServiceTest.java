@@ -29,6 +29,7 @@ import com.duoduo.product.mapper.SkuMapper;
 import com.duoduo.product.mapper.SpuMapper;
 import com.duoduo.product.support.BannedWordGuard;
 import com.duoduo.product.support.CatalogLookup;
+import com.duoduo.product.support.search.SearchEvents;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -88,11 +90,12 @@ class SellerProductServiceTest {
     private final SpuAuditHistoryService auditHistoryService = mock(SpuAuditHistoryService.class);
     private final CategoryAttrService categoryAttrService = mock(CategoryAttrService.class);
     private final SpuImageService spuImageService = mock(SpuImageService.class);
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
             new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
-            auditHistoryService, categoryAttrService, spuImageService);
+            auditHistoryService, categoryAttrService, spuImageService, eventPublisher);
 
     /**
      * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
@@ -1792,6 +1795,12 @@ class SellerProductServiceTest {
         assertThat(skuCaptor.getValue().getParamNameValuePairs().values()).contains(1L, 2L);
         // A-11：图片随商品物理删除
         verify(spuImageService).deleteBySpuIds(any());
+        // A-12：物理删除后没有任何 updated_at 可供扫描，必须发事件让搜索侧摘文档
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue()).isInstanceOf(SearchEvents.SpuPurged.class);
+        assertThat(((SearchEvents.SpuPurged) eventCaptor.getValue()).spuIds())
+                .containsExactlyInAnyOrder(1L, 2L);
     }
 
     @Test

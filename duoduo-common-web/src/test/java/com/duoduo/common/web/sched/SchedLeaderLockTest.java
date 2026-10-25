@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
@@ -91,5 +92,25 @@ class SchedLeaderLockTest {
         verify(jdbc).update(eq("UPDATE t_sched_leader SET owner = ?, expire_at = ?, updated_at = ? "
                         + "WHERE name = ? AND (expire_at < ? OR owner = ?)"),
                 any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void 优雅停机只删自己持有的锁() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+
+        lock(jdbc, true).release("search-sync");
+
+        // 只按 owner 删：另一个实例可能已经接管，不能把别人的锁删掉
+        verify(jdbc).update(eq("DELETE FROM t_sched_leader WHERE name = ? AND owner = ?"),
+                eq("search-sync"), eq("host-a#100"));
+    }
+
+    @Test
+    void 关闭选主时释放是空操作() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+
+        lock(jdbc, false).release("search-sync");
+
+        verify(jdbc, never()).update(anyString(), any(), any());
     }
 }

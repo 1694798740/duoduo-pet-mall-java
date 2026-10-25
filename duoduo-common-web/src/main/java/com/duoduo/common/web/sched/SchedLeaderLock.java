@@ -118,6 +118,24 @@ public class SchedLeaderLock {
         return enabled;
     }
 
+    /**
+     * 优雅停机时释放自己持有的锁。
+     *
+     * <p>只删 {@code owner = 本实例} 的行：另一个实例可能已经接管，不能把别人的锁删掉。
+     * 进程被 SIGKILL / 崩溃时走不到这里，仍由 {@code expire_at} 兜底 —— 这也是
+     * 调用方的 TTL 不能设得太长的原因（A-12：增量扫描租约 15s，全量扫描才用 120s）。
+     */
+    public void release(String task) {
+        if (!enabled) {
+            return;
+        }
+        try {
+            jdbc.update("DELETE FROM t_sched_leader WHERE name = ? AND owner = ?", task, owner);
+        } catch (DataAccessException ex) {
+            log.warn("定时任务选主释放失败（等 TTL 自然过期）task={} : {}", task, ex.getMessage());
+        }
+    }
+
     /** 本实例标识 */
     public String owner() {
         return owner;

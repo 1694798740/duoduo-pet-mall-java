@@ -1,6 +1,7 @@
 package com.duoduo.product.support.search;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.json.JsonData;
 import com.duoduo.product.entity.ListingEntity;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * ES 索引写入器（A10）。
  *
@@ -60,6 +62,15 @@ public class SearchIndexer {
     private final SkuMapper skuMapper;
     private final ListingMapper listingMapper;
     private volatile boolean indexReady;
+    /**
+     * 索引是否在「本进程认为它存在」之后被重建过。
+     *
+     * <p>ES 数据丢失（容器无卷重启、有人直接删索引）时，本进程的 {@code indexReady}
+     * 仍是 true，下一次写入会撞上 404；只把标记翻回 false 再重建索引，
+     * 也只会补回「之后变过的商品」—— 整库的其余文档永远回不来。
+     * 置这个标记让 {@code SearchSyncJob} 在下一轮做一次全量对齐。
+     */
+    private final AtomicBoolean recreated = new AtomicBoolean(false);
 
     public SearchIndexer(ElasticsearchClient es,
                          SpuMapper spuMapper,
@@ -93,8 +104,17 @@ public class SearchIndexer {
     public synchronized void ensureIndex() {
         try {
             if (es.indices().exists(r -> r.index(INDEX)).value()) {
-                indexReady = true;
-                return;
+                if (hasExpectedMapping()) {
+                    indexReady = true;
+                    return;
+                }
+                // 索引存在但形态不对：索引被删后，任意一次写入都会触发 ES 的
+                // action.auto_create_index，用**动态 mapping** 建出一个没有 pet_text /
+                // pinyin_ngram 分析器的同名索引。它 exists=true、写入也不报错，
+                // 只看「存在性」会永远认为索引就绪，自愈逻辑彻底失效
+                // （A-12 冒烟第一次跑就踩到：删索引后文档能写进去，但 term 过滤全空）。
+                log.warn("ES 索引形态不符（疑似被自动创建），删除重建 index={}", INDEX);
+                es.indices().delete(d -> d.index(INDEX));
             }
             // 分析器定义走 withJson（analysis 对象本身就是这段 JSON 的形态）；
             // 索引级设置（分片 / 副本 / max_ngram_diff）走类型化 API ——
@@ -146,6 +166,7 @@ public class SearchIndexer {
                             .analysis(a -> a.withJson(new StringReader(analysis))))
                     .mappings(m -> m.withJson(new StringReader(mappings))));
             indexReady = true;
+            recreated.set(true);
             log.info("ES 索引已创建 index={}（同义词由应用侧替换，不挂分析器）", INDEX);
         } catch (Exception ex) {
             indexReady = false;
@@ -155,6 +176,75 @@ public class SearchIndexer {
 
     public boolean isIndexReady() {
         return indexReady;
+    }
+
+    /**
+     * 索引是否存在且是「我们创建的形态」。
+     *
+     * <p>不能只看字段名：动态 mapping 也会给文档里出现过的 {@code titlePinyin} 建一个
+     * {@code text + keyword} 字段，看起来「字段都在」。必须校验**类型与分析器**：
+     * <ul>
+     *   <li>{@code docType} 是 {@code keyword}（动态 mapping 会给 text + keyword 子字段）；</li>
+     *   <li>{@code titlePinyin} 用 {@code pinyin_ngram} 分析器（自定义分析器只有显式建索引才有）。</li>
+     * </ul>
+     * 探测失败（索引不存在）返回 false，其余异常向上抛 ——
+     * 不能把「ES 抖动」误判成「形态不对」而删掉一个健康索引。
+     */
+    private boolean hasExpectedMapping() throws java.io.IOException {
+        try {
+            var response = es.indices().getMapping(g -> g.index(INDEX));
+            var record = response.get(INDEX);
+            if (record == null) {
+                return false;
+            }
+            var properties = record.mappings().properties();
+            var docType = properties.get("docType");
+            var pinyin = properties.get("titlePinyin");
+            return docType != null && docType.isKeyword()
+                    && pinyin != null && pinyin.isText()
+                    && "pinyin_ngram".equals(pinyin.text().analyzer());
+        } catch (ElasticsearchException ex) {
+            if (isIndexMissing(ex)) {
+                return false;
+            }
+            throw ex;
+        }
+    }
+
+    /** 只读查看「索引刚被重建」标记（不消费）：调用方先确认拿到全量租约，再让 fullSync 消费 */
+    public boolean isIndexRecreated() {
+        return recreated.get();
+    }
+
+    /** 取走「索引刚被重建」标记：调用方据此决定是否补一次全量对齐（只消费一次） */
+    public boolean consumeIndexRecreated() {
+        return recreated.getAndSet(false);
+    }
+
+    /** ES 明确说「这个索引不存在」 */
+    private static boolean isIndexMissing(Exception ex) {
+        return ex instanceof ElasticsearchException es
+                && es.status() == 404
+                && es.error() != null
+                && "index_not_found_exception".equals(es.error().type());
+    }
+
+    /**
+     * 删除文档时 404 ≠ 失败：目标本来就是「索引里没有这条」。
+     *
+     * <p>把「文档已不存在」当成失败会让重试队列永远清不掉 —— 每轮都重试、
+     * 每轮都失败，而搜索其实是正确的。只有「索引不存在」才是真失败（需要重建索引）。
+     */
+    private static boolean isDocumentMissing(Exception ex) {
+        return ex instanceof ElasticsearchException es
+                && es.status() == 404
+                && !isIndexMissing(ex);
+    }
+
+    /** 写失败后不再信任就绪标记：下一次写会重新探测 / 重建索引 */
+    private void markNotReady(Exception ex) {
+        indexReady = false;
+        log.warn("ES 写入失败，索引就绪标记已重置（下一轮重试）: {}", ex.getMessage());
     }
 
     /**
@@ -251,6 +341,10 @@ public class SearchIndexer {
             es.delete(d -> d.index(INDEX).id(docKey(docType, refId)).refresh(co.elastic.clients.elasticsearch._types.Refresh.True));
             return true;
         } catch (Exception ex) {
+            if (isDocumentMissing(ex)) {
+                return true;    // 目标已达成（文档本就不在），不能当成失败反复重试
+            }
+            markNotReady(ex);
             log.warn("ES 删除文档失败 docType={} refId={}: {}", docType, refId, ex.getMessage());
             return false;
         }
@@ -296,7 +390,11 @@ public class SearchIndexer {
                 }
             }
         } catch (Exception ex) {
-            log.warn("ES 对账拉取失败 docType={}: {}", docType, ex.getMessage());
+            if (isIndexMissing(ex)) {
+                markNotReady(ex);
+            } else {
+                log.warn("ES 对账拉取失败 docType={}: {}", docType, ex.getMessage());
+            }
         }
         return result;
     }
@@ -318,7 +416,11 @@ public class SearchIndexer {
             es.bulk(br.refresh(co.elastic.clients.elasticsearch._types.Refresh.False).build());
             return true;
         } catch (Exception ex) {
-            log.warn("ES 批量写入失败: {}", ex.getMessage());
+            if (isIndexMissing(ex)) {
+                markNotReady(ex);
+            } else {
+                log.warn("ES 批量写入失败: {}", ex.getMessage());
+            }
             return false;
         }
     }
@@ -331,7 +433,11 @@ public class SearchIndexer {
             es.index(i -> i.index(INDEX).id(docKey(docType, refId)).document(doc).refresh(co.elastic.clients.elasticsearch._types.Refresh.False));
             return true;
         } catch (Exception ex) {
-            log.warn("ES 索引写入失败 docType={} refId={}: {}", docType, refId, ex.getMessage());
+            if (isIndexMissing(ex)) {
+                markNotReady(ex);
+            } else {
+                log.warn("ES 索引写入失败 docType={} refId={}: {}", docType, refId, ex.getMessage());
+            }
             return false;
         }
     }

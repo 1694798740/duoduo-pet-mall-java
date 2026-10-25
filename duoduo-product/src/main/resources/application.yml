@@ -83,9 +83,10 @@ duoduo:
     # true 时 keyword 检索 ES 优先，**任何 ES 异常都原地降级回 MySQL**（验收④），
     # 因此本开关开错方向也不会让搜索挂掉。
     enabled: ${DUODUO_SEARCH_ENABLED:false}
-    # 对账扫描间隔（毫秒）：把 updated_at 变过的 SPU / 闲置与 SKU 库存变动重新入索引，
-    # 兼做「补偿任务」—— ES 写失败（重启、抖动）最迟一个周期后被追平（验收②③）。
-    sweep-interval-ms: ${DUODUO_SEARCH_SWEEP_MS:15000}
+    # 对账扫描间隔（毫秒）：把 updated_at 变过的 SPU / 闲置与 SKU 库存变动重新入索引。
+    # A-12：3 秒一轮 + ES 默认 1 秒刷新 ≈ 最迟 4 秒可搜（验收线 5 秒）。
+    # 单条写失败会进重试队列，下一轮继续补；不会因为一次抖动永久漏掉。
+    sweep-interval-ms: ${DUODUO_SEARCH_SWEEP_MS:3000}
     # 同义词（一条一组，';' 分隔；组内 ',' 分隔）。**由应用侧替换生效**：把查询串里出现的词
     # 换成同组其它词，作为额外的 or 召回分支（见 SearchSynonyms，内含「为什么不能交给 ES
     # synonym filter」的实测依据）。改配置即时生效，无需重建索引。
