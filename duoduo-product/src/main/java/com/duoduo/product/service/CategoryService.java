@@ -6,11 +6,14 @@ import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.BrandView;
 import com.duoduo.product.dto.ProductDtos.CategoryNode;
 import com.duoduo.product.entity.BrandEntity;
+import com.duoduo.product.entity.CategoryAttrEntity;
 import com.duoduo.product.entity.CategoryEntity;
 import com.duoduo.product.mapper.BrandMapper;
+import com.duoduo.product.mapper.CategoryAttrMapper;
 import com.duoduo.product.mapper.CategoryMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -32,12 +35,15 @@ public class CategoryService {
 
     private final CategoryMapper categoryMapper;
     private final BrandMapper brandMapper;
+    private final CategoryAttrMapper categoryAttrMapper;
     private final SnowflakeIdGenerator idGenerator;
 
     public CategoryService(CategoryMapper categoryMapper, BrandMapper brandMapper,
+                           CategoryAttrMapper categoryAttrMapper,
                            SnowflakeIdGenerator idGenerator) {
         this.categoryMapper = categoryMapper;
         this.brandMapper = brandMapper;
+        this.categoryAttrMapper = categoryAttrMapper;
         this.idGenerator = idGenerator;
     }
 
@@ -198,7 +204,8 @@ public class CategoryService {
         categoryMapper.updateById(entity);
     }
 
-    /** 删除类目：有子类目则拒绝，避免留下孤儿节点 */
+    /** 删除类目：有子类目则拒绝，避免留下孤儿节点；属性模板随类目一并清理 */
+    @Transactional(rollbackFor = Exception.class)
     public void deleteCategory(Long id) {
         if (categoryMapper.selectById(id) == null) {
             throw BizException.notFound("类目");
@@ -208,6 +215,9 @@ public class CategoryService {
         if (children != null && children > 0) {
             throw BizException.businessRule("该类目下还有子类目，请先删除子类目");
         }
+        // A-10 的模板行只对所属类目有意义：类目没了，模板既配不到商品也再没有入口
+        categoryAttrMapper.delete(new LambdaQueryWrapper<CategoryAttrEntity>()
+                .eq(CategoryAttrEntity::getCategoryId, id));
         categoryMapper.deleteById(id);
     }
 

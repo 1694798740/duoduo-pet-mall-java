@@ -87,11 +87,12 @@ class SellerProductServiceTest {
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
     private final SpuAuditHistoryService auditHistoryService = mock(SpuAuditHistoryService.class);
     private final CategoryAttrService categoryAttrService = mock(CategoryAttrService.class);
+    private final SpuImageService spuImageService = mock(SpuImageService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
             new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
-            auditHistoryService, categoryAttrService);
+            auditHistoryService, categoryAttrService, spuImageService);
 
     /**
      * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
@@ -536,6 +537,8 @@ class SellerProductServiceTest {
         assertThat(view.totalStock()).isEqualTo(15);
         // A-10：新建商品必须按类目属性模板校验（模板为空时校验直接放行）
         verify(categoryAttrService).validateForPublish(eq(500L), any());
+        // A-11：图片表与商品同事务双写
+        verify(spuImageService).sync(saved);
         // 两个规格都要落库
         verify(skuMapper, times(2)).insert(any(SkuEntity.class));
     }
@@ -1030,6 +1033,8 @@ class SellerProductServiceTest {
         // 若它同时被卖家手动下架过，则保持下架（尊重卖家的选择）
         assertThat(spu.getStatus()).isEqualTo("ON_SALE");
         assertThat(view.auditStatus()).isEqualTo("APPROVED");
+        // A-11：图片审核态跟随商品结论
+        verify(spuImageService).applyAuditStatus(spu, "APPROVED");
     }
 
     @Test
@@ -1051,6 +1056,7 @@ class SellerProductServiceTest {
         assertThat(spu.getAuditReason()).isEqualTo("主图与实物不符");
         // 驳回同时压成下架：让卖家视角的语义一致（被驳回的货不该挂在「在售」里）
         assertThat(spu.getStatus()).isEqualTo("OFF_SHELF");
+        verify(spuImageService).applyAuditStatus(spu, "REJECTED");
     }
 
     @Test
@@ -1107,6 +1113,7 @@ class SellerProductServiceTest {
         assertThat(spu.getAuditReason()).isNull();
         assertThat(spu.getStatus()).isEqualTo("ON_SALE");
         assertThat(view.auditLabel()).isEqualTo("待审核");
+        verify(spuImageService).applyAuditStatus(spu, "PENDING");
     }
 
     @Test
@@ -1603,6 +1610,7 @@ class SellerProductServiceTest {
         assertThat(afterCaptor.getValue().getAuditSource()).isEqualTo("SAMPLE");
         assertThat(afterCaptor.getValue().getAuditReason()).isEqualTo("主图违规");
         assertThat(afterCaptor.getValue().getVersion()).isEqualTo(4);
+        verify(spuImageService).applyAuditStatus(spu, "REJECTED");
     }
 
     /**
@@ -1782,6 +1790,8 @@ class SellerProductServiceTest {
         verify(skuMapper).delete(skuCaptor.capture());
         assertThat(skuCaptor.getValue().getSqlSegment()).contains("spu_id");
         assertThat(skuCaptor.getValue().getParamNameValuePairs().values()).contains(1L, 2L);
+        // A-11：图片随商品物理删除
+        verify(spuImageService).deleteBySpuIds(any());
     }
 
     @Test

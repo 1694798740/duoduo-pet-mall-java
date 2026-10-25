@@ -2,6 +2,24 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商品图片表冒烟（`scripts/spu-image-a11-smoke.mjs`，52 项，第一百轮）
+
+```bash
+NO_PROXY="*" node scripts/spu-image-a11-smoke.mjs
+```
+
+前置：容器在跑；`incremental/52-spu-image.sql` 已执行；卖家 13600003333、另一店主 13959064118、
+运营 13684295254 可用。
+覆盖：**回填完整性**（种子 1001 的 MAIN(0)+GALLERY(1)、有主图 SPU 必有 MAIN、MAIN 唯一且 sort 0、
+GALLERY 从 1 连续、无孤儿 / 重复 URL、图片审核态与 SPU 一致）；**发布双写**（主图重复 / 副图重复 / 空白项
+全部剔除，图片表 MAIN+GALLERY 与 CSV 同形，标题含联系方式强制 PENDING）；**编辑**（副图重排 g2,g3,g1 →
+图片表重建且顺序一致，CSV 同步）；**审核联动**（REJECT → 全部 REJECTED、resubmit → PENDING、
+APPROVE → APPROVED；三种动作只改 `audit_status`，图片 ID 不变）；**买家视角度**（通过后公开详情可见，
+图片 = 主图在前 + 副图按 CSV 顺序）；**越权**（别的店主编辑 404/403，图片表原样）；**边界**（无副图商品只有一条 MAIN、
+CSV images 为空）；**生命周期**（软删保留 4 行图片且审核态不变；把两件夹具改为 31 天前删除后 purge，
+SPU/SKU/图片物理消失、审核历史保留）；收尾清审核历史并断言 A11 夹具零残留。
+2026-10-25 实测 **52/0**。
+
 ## 类目属性模板冒烟（`scripts/category-attr-a10-smoke.mjs`，56 项，第九十九轮）
 
 ```bash

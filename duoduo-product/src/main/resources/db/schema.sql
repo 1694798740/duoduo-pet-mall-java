@@ -9,6 +9,7 @@
 
 DROP TABLE IF EXISTS t_listing;
 DROP TABLE IF EXISTS t_sku;
+DROP TABLE IF EXISTS t_spu_image;
 DROP TABLE IF EXISTS t_spu;
 DROP TABLE IF EXISTS t_brand;
 DROP TABLE IF EXISTS t_category_attr;
@@ -92,6 +93,22 @@ CREATE INDEX idx_spu_brand ON t_spu (brand_id);
 CREATE INDEX idx_spu_sales ON t_spu (sales_count);
 CREATE INDEX idx_spu_price ON t_spu (min_price);
 CREATE INDEX idx_spu_seller ON t_spu (seller_id, status);
+
+-- ---------- 商品图片（A-11） ----------
+-- 一条图片一行：类型 / 排序 / 审核态。与 t_spu.main_image、images(CSV) 双写；
+-- 读路径仍读 CSV，表是排序与单图审核的权威来源。
+CREATE TABLE t_spu_image (
+    id           BIGINT       NOT NULL,
+    spu_id       BIGINT       NOT NULL,
+    url          VARCHAR(500) NOT NULL,
+    image_type   VARCHAR(20)  NOT NULL,
+    sort_no      INT          NOT NULL DEFAULT 0,
+    audit_status VARCHAR(20)  NOT NULL DEFAULT 'APPROVED',
+    created_at   TIMESTAMP    NOT NULL,
+    updated_at   TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_spu_image_slot ON t_spu_image (spu_id, image_type, sort_no);
 
 -- ---------- SKU：可售最小单元（库存与价格落在这一层） ----------
 CREATE TABLE t_sku (

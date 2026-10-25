@@ -26,6 +26,7 @@ USE `duoduo_product`;
 DROP TABLE IF EXISTS t_listing_want;
 DROP TABLE IF EXISTS t_listing;
 DROP TABLE IF EXISTS t_sku;
+DROP TABLE IF EXISTS t_spu_image;
 DROP TABLE IF EXISTS t_spu;
 DROP TABLE IF EXISTS t_brand;
 DROP TABLE IF EXISTS t_category_attr;
@@ -131,6 +132,22 @@ CREATE INDEX idx_spu_audit ON t_spu (audit_status, status);
 -- A-09：回收站列表按卖家 + 删除时间倒排；清理任务扫 deleted_at 非空的行
 CREATE INDEX idx_spu_recycle ON t_spu (seller_id, deleted_at, updated_at);
 CREATE INDEX idx_spu_deleted ON t_spu (deleted_at);
+
+-- ---------- 商品图片（A-11，增量脚本 52-spu-image.sql） ----------
+-- 一条图片一行：类型 / 排序 / 审核态。与 t_spu.main_image、images(CSV) 双写；
+-- 读路径仍读 CSV，表是排序与单图审核的权威来源。
+CREATE TABLE t_spu_image (
+    id           BIGINT       NOT NULL,
+    spu_id       BIGINT       NOT NULL,
+    url          VARCHAR(500) NOT NULL,
+    image_type   VARCHAR(20)  NOT NULL COMMENT 'MAIN / GALLERY',
+    sort_no      INT          NOT NULL DEFAULT 0 COMMENT '同类型内升序，0 = 主图',
+    audit_status VARCHAR(20)  NOT NULL DEFAULT 'APPROVED' COMMENT '跟随商品审核态',
+    created_at   TIMESTAMP    NOT NULL,
+    updated_at   TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_spu_image_slot UNIQUE (spu_id, image_type, sort_no)
+);
 
 -- ---------- E28 · 审核 SLA 事后抽查（增量脚本 29-e28-audit-sla.sql） ----------
 -- 为什么抽查任务是独立表而不是 t_spu 上再加几列：
@@ -388,6 +405,30 @@ INSERT INTO t_spu (id, title, subtitle, category_id, brand_id, supply_type, main
 (1016, '卫仕 猫用复合维生素 200片', '日常营养补充', 402, 7, 'self', '/img/products/1016.svg', '/img/products/1016.svg', '补充多种维生素与微量元素，适用于自制粮或挑食猫咪。保健食品不能替代药物治疗。', 'ON_SALE', 2310, 4.51, 880, 6800, 6800, '2026-04-25 10:00:00', '2026-08-10 10:00:00'),
 (1017, '小佩 猫咪牵引绳 胸背式', '防挣脱设计', 303, 5, 'merchant', '/img/products/1017.svg', '/img/products/1017.svg', '胸背式受力分散，减少颈部压迫。请先在家中让猫咪适应穿戴。', 'ON_SALE', 1120, 4.36, 420, 7900, 7900, '2026-05-15 10:00:00', '2026-08-09 10:00:00'),
 (1018, '未卡 瓦楞纸猫抓板 加大号', '可翻面 双面可用', 304, 8, 'merchant', '/img/products/1018.svg', '/img/products/1018.svg', '高密度瓦楞纸，双面可翻用，配赠猫薄荷。建议配合抓挠引导使用。', 'ON_SALE', 3050, 4.44, 1180, 5900, 5900, '2026-05-20 10:00:00', '2026-08-08 10:00:00');
+
+-- ---------- 商品图片（A-11） ----------
+-- 与上面 main_image / images 保持一致：主图一行 MAIN(sort 0)，副图 GALLERY 从 1 编号。
+-- 1001 的 CSV 把主图重复放在第一项，按前台展示口径去重，只保留 1001-2 作为副图。
+INSERT INTO t_spu_image (id, spu_id, url, image_type, sort_no, audit_status, created_at, updated_at) VALUES
+(3001, 1001, '/img/products/1001.svg', 'MAIN', 0, 'APPROVED', '2026-03-01 10:00:00', '2026-08-20 10:00:00'),
+(3002, 1001, '/img/products/1001-2.svg', 'GALLERY', 1, 'APPROVED', '2026-03-01 10:00:00', '2026-08-20 10:00:00'),
+(3003, 1002, '/img/products/1002.svg', 'MAIN', 0, 'APPROVED', '2026-03-05 10:00:00', '2026-08-18 10:00:00'),
+(3004, 1003, '/img/products/1003.svg', 'MAIN', 0, 'APPROVED', '2026-02-10 10:00:00', '2026-08-21 10:00:00'),
+(3005, 1004, '/img/products/1004.svg', 'MAIN', 0, 'APPROVED', '2026-04-01 10:00:00', '2026-08-19 10:00:00'),
+(3006, 1005, '/img/products/1005.svg', 'MAIN', 0, 'APPROVED', '2026-03-12 10:00:00', '2026-08-15 10:00:00'),
+(3007, 1006, '/img/products/1006.svg', 'MAIN', 0, 'APPROVED', '2026-03-20 10:00:00', '2026-08-12 10:00:00'),
+(3008, 1007, '/img/products/1007.svg', 'MAIN', 0, 'APPROVED', '2026-02-18 10:00:00', '2026-08-22 10:00:00'),
+(3009, 1008, '/img/products/1008.svg', 'MAIN', 0, 'APPROVED', '2026-03-25 10:00:00', '2026-08-17 10:00:00'),
+(3010, 1009, '/img/products/1009.svg', 'MAIN', 0, 'APPROVED', '2026-04-10 10:00:00', '2026-08-16 10:00:00'),
+(3011, 1010, '/img/products/1010.svg', 'MAIN', 0, 'APPROVED', '2026-04-15 10:00:00', '2026-08-11 10:00:00'),
+(3012, 1011, '/img/products/1011.svg', 'MAIN', 0, 'APPROVED', '2026-04-02 10:00:00', '2026-08-14 10:00:00'),
+(3013, 1012, '/img/products/1012.svg', 'MAIN', 0, 'APPROVED', '2026-03-28 10:00:00', '2026-08-22 10:00:00'),
+(3014, 1013, '/img/products/1013.svg', 'MAIN', 0, 'APPROVED', '2026-05-01 10:00:00', '2026-08-20 10:00:00'),
+(3015, 1014, '/img/products/1014.svg', 'MAIN', 0, 'APPROVED', '2026-04-20 10:00:00', '2026-08-19 10:00:00'),
+(3016, 1015, '/img/products/1015.svg', 'MAIN', 0, 'APPROVED', '2026-05-10 10:00:00', '2026-08-13 10:00:00'),
+(3017, 1016, '/img/products/1016.svg', 'MAIN', 0, 'APPROVED', '2026-04-25 10:00:00', '2026-08-10 10:00:00'),
+(3018, 1017, '/img/products/1017.svg', 'MAIN', 0, 'APPROVED', '2026-05-15 10:00:00', '2026-08-09 10:00:00'),
+(3019, 1018, '/img/products/1018.svg', 'MAIN', 0, 'APPROVED', '2026-05-20 10:00:00', '2026-08-08 10:00:00');
 
 -- ---------- SKU ----------
 -- is_food=1 的商品才需要过敏原提示；1007 的两个规格库存均为 0，用于验证「无货」与 inStockOnly 筛选

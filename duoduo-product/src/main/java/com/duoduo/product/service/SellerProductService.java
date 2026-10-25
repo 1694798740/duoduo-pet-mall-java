@@ -158,6 +158,7 @@ public class SellerProductService {
     private final ObjectMapper objectMapper;
     private final SpuAuditHistoryService auditHistoryService;
     private final CategoryAttrService categoryAttrService;
+    private final SpuImageService spuImageService;
 
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
@@ -169,7 +170,8 @@ public class SellerProductService {
                                 CatalogLookup catalogLookup,
                                 ObjectMapper objectMapper,
                                 SpuAuditHistoryService auditHistoryService,
-                                CategoryAttrService categoryAttrService) {
+                                CategoryAttrService categoryAttrService,
+                                SpuImageService spuImageService) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
@@ -181,6 +183,7 @@ public class SellerProductService {
         this.objectMapper = objectMapper;
         this.auditHistoryService = auditHistoryService;
         this.categoryAttrService = categoryAttrService;
+        this.spuImageService = spuImageService;
     }
 
     // ---------------- 准入与归属 ----------------
@@ -469,6 +472,8 @@ public class SellerProductService {
         for (NormalizedSku sku : skus) {
             skuMapper.insert(toSkuEntity(spuId, ++seq, sku, now));
         }
+        // A-11：图片表与 CSV 同一事务双写；形状由 mainImage/images 决定，审核态跟随商品
+        spuImageService.sync(spu);
         // A-08：与业务写在同一个事务里 —— 历史写不进去，商品也不该悄悄发出去。
         // 自营免审，不属于「审核时间线」，连调用都不发起（服务内部还有一层 supplies 门禁）。
         if (isMerchantSupplied(spu)) {
@@ -686,6 +691,8 @@ public class SellerProductService {
         }
         spu.setUpdatedAt(now);
         spu.setVersion(request.version() + 1);
+        // A-11：内容 / 审核态都可能在这条路径变化（图片改了重建，仅重审则只改审核态）
+        spuImageService.sync(spu);
         // A-08：条件 UPDATE 成功之后才写历史 —— 版本冲突（0 行）已经抛出去了，不留假记录
         auditHistoryService.recordEdit(auditBefore, spu, scope.staffMember());
         log.info("商品 {} 由 {} 编辑：内容变更 → {}（来源={} 命中风险={} 版本={}）",
@@ -1102,6 +1109,8 @@ public class SellerProductService {
         spu.setAuditAt(null);
         spu.setUpdatedAt(now);
         spu.setVersion((spu.getVersion() == null ? 0 : spu.getVersion()) + 1);
+        // A-11：重提 = 上一次结论作废，图片同样回到待审
+        spuImageService.applyAuditStatus(spu, AUDIT_PENDING);
         auditHistoryService.recordResubmit(auditBefore, spu, scope.staffMember());
         log.info("商品 {} 由卖家重新提审，回到待审核（版本={}）", spuId, spu.getVersion());
         return toView(spu, skuStatsOf(spuId));
@@ -1251,6 +1260,8 @@ public class SellerProductService {
         List<Long> purgedIds = ids.stream().filter(id -> !nowExisting.contains(id)).toList();
         if (!purgedIds.isEmpty()) {
             skuMapper.delete(new LambdaQueryWrapper<SkuEntity>().in(SkuEntity::getSpuId, purgedIds));
+            // A-11：图片是商品的从属数据，物理删商品时一并清掉，避免孤儿行
+            spuImageService.deleteBySpuIds(purgedIds);
         }
         log.info("回收站清理：物理删除 {} 件商品（删除时间早于 {}），SKU 同步清理 {} 行",
                 purgedIds.size(), cutoff, purgedIds.size());
@@ -1425,6 +1436,8 @@ public class SellerProductService {
             throw BizException.conflict("商品内容已变化，请刷新后重新审核");
         }
         spu.setVersion(version + 1);
+        // A-11：图片审核态跟随商品结论（通过 / 驳回两种方向都要落）
+        spuImageService.applyAuditStatus(spu, target);
         // A-08：结论落库成功后才写历史，事件名由结论决定（APPROVE / REJECT）
         auditHistoryService.recordAudit(auditBefore, spu);
 
@@ -1492,6 +1505,8 @@ public class SellerProductService {
         spu.setRejectCount(rejectCount);
         spu.setUpdatedAt(now);
         spu.setVersion(expectedVersion + 1);
+        // A-11：抽查判违规与人工驳回同一口径，图片一并转为驳回态
+        spuImageService.applyAuditStatus(spu, AUDIT_REJECTED);
         auditHistoryService.recordSampleReject(auditBefore, spu, sampledVersion);
         log.info("商品 {} 抽查判违规 → 已驳回并强制下架（原因={}）", spuId, reason);
     }
