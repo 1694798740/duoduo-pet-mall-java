@@ -2,6 +2,24 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 下单支付主链路 UI e2e（`scripts/e2e/checkout-payment-j03-ui-check.mjs`，12 项，第一百二十一轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/checkout-payment-j03-ui-check.mjs
+```
+
+前置：容器在跑；商城 `http://localhost:8088`、网关 8080；运营 13684295254 可用。
+覆盖：临时卖家 / 商品 / 买家 / 地址 → 商品详情「立即购买」→ 购物车「去结算」→
+结算页默认地址 → 提交订单 → 下单成功页「去支付 / 查看详情」→ 沙箱「本机模拟扫码」→ 支付成功；
+回库断言订单 `PAID`、支付单 `SUCCESS`、库存预占 `DEDUCTED`，0 pageerror / 0 5xx；
+订单链路 / 商品 / 店铺 / 临时账号零残留。2026-10-26 实测 **12/0**。
+
+## 反向验证覆盖矩阵（`docs/manuals/negative-test-matrix.md`，第一百二十一轮）
+
+不新增脚本，固化「每条关键规则至少一次反向断言」的清单：商品并发 / 审核绕过 / 跨店 /
+CSV 超限 / SKU 有订单 / F-04 越权 / 2FA 重放 / 库存超卖 / 支付幂等 / 优惠券重复核销 /
+评价重复回复 / 客服并发认领 / 敏感词 / 后台权限 / 审计不可删改 / 变更历史权限 / 登出吊销 / 注销阻断。
+
 ## 后台待办角标 UI e2e（`scripts/e2e/admin-badges-h04-ui-check.mjs`，14 项，第一百一十九轮）
 
 ```bash

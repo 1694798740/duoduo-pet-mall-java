@@ -4,6 +4,14 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（一百零二）· 测试债收口（J-03 / J-05）**
+
+- **J-03**：新增 [下单支付 UI e2e](scripts/e2e/checkout-payment-j03-ui-check.mjs) ——
+  商品详情「立即购买」→ 购物车 → 结算 → 提交订单 → 沙箱「本机模拟扫码」→ 支付成功；
+  回库断言订单 `PAID`、支付单 `SUCCESS`、库存预占 `DEDUCTED`，**12/0**。
+- **J-05**：新增 [反向验证覆盖矩阵](docs/manuals/negative-test-matrix.md)，40 条关键规则逐条对应反向断言与脚本；
+  只有正向用例的规则视为未验收。
+
 **2026-10-26（一百零一）· Elasticsearch 检索启用回归（I-07）**
 
 - **现状**：容器 `DUODUO_SEARCH_ENABLED=true`、`duoduo-es` healthy、索引 `duoduo-search` 已建。
