@@ -10,6 +10,8 @@ import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.common.seller.StaffPermission;
+import com.duoduo.common.seller.StaffPermissions;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.MerchantRiskClient;
@@ -234,8 +236,10 @@ public class SellerProductService {
      * @param ownerUserId   本店主体（店主 user id）；运营 / 管理员为 {@code null}
      * @param platformScope 是否平台视角（运营 / 管理员）：可跨店管理全部商品
      * @param staffMember   是否店员（E13）：权限来自「以店铺主体行动」，不来自角色
+     * @param permissions   F-04 · 店员操作权限键；店主 / 平台为全量
      */
-    private record SellerScope(Long ownerUserId, boolean platformScope, boolean staffMember) {
+    private record SellerScope(Long ownerUserId, boolean platformScope, boolean staffMember,
+                               Set<String> permissions) {
     }
 
     /**
@@ -243,7 +247,7 @@ public class SellerProductService {
      * 而不是把一个格式正确的文件解析完、逐组失败后才知道自己没权限。
      */
     public void requireSellerAccess() {
-        requireSellerScope();
+        requireStaffPermission(requireSellerScope(), StaffPermission.PRODUCT_EDIT);
     }
 
     /**
@@ -258,18 +262,48 @@ public class SellerProductService {
     private SellerScope requireSellerScope() {
         LoginUser user = UserContext.require();
         if (user.isAdmin() || user.isOperator()) {
-            return new SellerScope(null, true, false);
+            return new SellerScope(null, true, false, ALL_PERMISSIONS);
         }
         if (user.canAccessSellerConsole()) {
-            return new SellerScope(user.userId(), false, false);
+            return new SellerScope(user.userId(), false, false, ALL_PERMISSIONS);
         }
         MembershipInfo membership = membershipOf(user.userId());
         if (membership != null && membership.activeStaff()) {
             // 店员以店铺主体（店主 userId）行动：商品归属写的是店主，
-            // 这与「订单挂在店主 userId 下」是同一个口径
-            return new SellerScope(Long.valueOf(membership.ownerUserId()), false, true);
+            // 这与「订单挂在店主 userId 下」是同一个口径。
+            // F-04：可见范围仍归店主，操作权限按成员行配置；清单缺失（老服务 / 历史行）按全量。
+            return new SellerScope(Long.valueOf(membership.ownerUserId()), false, true,
+                    permissionsOf(membership));
         }
         throw BizException.forbidden("该账号不是卖家，无法使用商家端");
+    }
+
+    /** 店主 / 平台的权限集合（全量）。 */
+    private static final Set<String> ALL_PERMISSIONS = Set.copyOf(StaffPermissions.all());
+
+    /**
+     * F-04 · 操作权限门禁：只约束店员；店主与平台角色不受限。
+     *
+     * <p>与归属校验分开：归属回答「这件商品是不是你的」，权限回答「你在这家店里能做什么」。
+     * 两者必须分别判 —— 只判归属，店员就仍然能改价；只判权限，店员就能改别家商品。
+     */
+    private void requireStaffPermission(SellerScope scope, StaffPermission permission) {
+        if (!scope.staffMember()) {
+            return;
+        }
+        if (!scope.permissions().contains(permission.name())) {
+            throw BizException.forbidden("当前店员账号没有「" + permission.label() + "」权限，请联系店主开通");
+        }
+    }
+
+    /**
+     * 成员权限集合。老版本用户域不回 {@code permissions} 时按全量 ——
+     * 这是升级窗口的兼容口径，与历史行 {@code NULL} 的解释一致。
+     */
+    private Set<String> permissionsOf(MembershipInfo membership) {
+        return membership.permissions() == null
+                ? ALL_PERMISSIONS
+                : Set.copyOf(membership.permissions());
     }
 
     /**
@@ -457,6 +491,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView create(SellerProductCreateRequest request) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_EDIT);
         if (request == null) {
             throw BizException.validation("请求体不能为空");
         }
@@ -588,6 +623,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView copy(Long spuId) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_EDIT);
         SpuEntity source = requireOwned(spuId, scope);
         requireProxyForThirdParty(source, scope, "复制");
         List<SkuEntity> skus = skusOf(spuId);
@@ -832,6 +868,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView update(Long spuId, SellerProductUpdateRequest request) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_EDIT);
         if (request == null) {
             throw BizException.validation("请求体不能为空");
         }
@@ -1041,6 +1078,7 @@ public class SellerProductService {
      */
     public SellerProductDetailView updateSkuPriceStock(Long spuId, SellerSkuPriceStockRequest request) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_PRICE);
         if (request == null || request.skus() == null || request.skus().isEmpty()) {
             throw BizException.validation("没有需要修改的规格");
         }
@@ -1128,6 +1166,10 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerSkuStructureResultView updateSkuStructure(Long spuId, SellerSkuStructureRequest request) {
         SellerScope scope = requireSellerScope();
+        // 结构保存同时可改价格与库存，因此两项权限都要有：只有编辑权、没有改价权的店员
+        // 不能借这个入口绕过 /skus/price-stock 的门禁。
+        requireStaffPermission(scope, StaffPermission.PRODUCT_EDIT);
+        requireStaffPermission(scope, StaffPermission.PRODUCT_PRICE);
         if (request == null) {
             throw BizException.validation("请求体不能为空");
         }
@@ -1468,6 +1510,7 @@ public class SellerProductService {
      */
     public SellerProductView changeStatus(Long spuId, String action) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_STATUS);
         return changeStatus(spuId, normalizeAction(action), scope);
     }
 
@@ -1485,6 +1528,7 @@ public class SellerProductService {
     public SellerProductBatchResultView changeStatusBatch(List<Long> ids, String action) {
         // 准入与参数只解析一次：店员身份要查成员服务，逐条解析会让 100 件商品多打 100 次 Feign
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_STATUS);
         String target = normalizeAction(action);
         List<Long> distinct = normalizeBatchIds(ids);
         List<SellerProductBatchItemView> items = new ArrayList<>(distinct.size());
@@ -1799,6 +1843,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView resubmit(Long spuId) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_STATUS);
         SpuEntity spu = requireOwned(spuId, scope);
         if (AUDIT_PENDING.equals(spu.getAuditStatus())) {
             throw BizException.businessRule("该商品正在审核中，请等待审核结果");
@@ -1869,6 +1914,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView remove(Long spuId) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_STATUS);
         SpuEntity spu = requireOwnedIncludingDeleted(spuId, scope);
         // 平台运营不能直接删第三方商品：删除比编辑更难挽回，必须由店主自己操作
         requireProxyForThirdParty(spu, scope, "删除");
@@ -1915,6 +1961,7 @@ public class SellerProductService {
     @Transactional(rollbackFor = Exception.class)
     public SellerProductView restore(Long spuId) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.PRODUCT_STATUS);
         SpuEntity spu = requireOwnedIncludingDeleted(spuId, scope);
         requireProxyForThirdParty(spu, scope, "恢复");
         if (spu.getDeletedAt() == null) {

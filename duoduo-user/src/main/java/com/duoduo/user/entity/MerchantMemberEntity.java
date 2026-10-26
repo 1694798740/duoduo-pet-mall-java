@@ -22,6 +22,13 @@ public class MerchantMemberEntity {
     private String role;
     /** ACTIVE / DISABLED（E13 停用） */
     private String status;
+    /**
+     * F-04 · 操作权限清单（逗号分隔，见 {@code StaffPermissions}）。
+     *
+     * <p>{@code NULL} = F-04 之前的历史行，按全量解释；空串 = 显式仅查看。
+     * 店主恒为全量，不读本列。
+     */
+    private String permissions;
     /** 邀请人（店主 user id；店主自建为 NULL） */
     private Long invitedBy;
     private LocalDateTime createdAt;
@@ -65,6 +72,14 @@ public class MerchantMemberEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(String permissions) {
+        this.permissions = permissions;
     }
 
     public Long getInvitedBy() {

@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS `t_merchant_member` (
     `user_id`     BIGINT      NOT NULL COMMENT '成员用户 id（t_user.id）',
     `role`        VARCHAR(20) NOT NULL COMMENT 'OWNER（店主）/ STAFF（店员，E13）',
     `status`      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE / DISABLED（E13 停用）',
+    `permissions` VARCHAR(255) NULL COMMENT 'F-04 店员权限键（逗号分隔；NULL=历史行按全量，空串=仅查看）',
     `invited_by`  BIGINT      NULL COMMENT '邀请人（店主 user id；店主自建为 NULL）',
     `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

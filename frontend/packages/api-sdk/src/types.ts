@@ -2146,7 +2146,28 @@ export interface MerchantBrief {
   storeName: string;
   memberRole: 'OWNER' | 'STAFF';
   status: 'ACTIVE' | 'DISABLED';
+  /** F-04 · 店员操作权限键；店主恒为全量 */
+  permissions?: StaffPermission[] | null;
 }
+
+/** F-04 · 店员操作权限（与后端 StaffPermission 枚举名一一对应） */
+export type StaffPermission =
+  | 'PRODUCT_EDIT'
+  | 'PRODUCT_PRICE'
+  | 'PRODUCT_STATUS'
+  | 'ORDER_SHIP'
+  | 'ORDER_REFUND'
+  | 'SUPPORT_REPLY';
+
+/** F-04 · 权限中文名（店主配置页与只读展示共用） */
+export const STAFF_PERMISSION_LABELS: Record<StaffPermission, string> = {
+  PRODUCT_EDIT: '商品内容编辑',
+  PRODUCT_PRICE: '商品改价 / 改库存',
+  PRODUCT_STATUS: '商品上下架 / 删除',
+  ORDER_SHIP: '订单发货',
+  ORDER_REFUND: '售后退款',
+  SUPPORT_REPLY: '客服回复',
+};
 
 /** 店员视图（店主管理页，E13） */
 export interface StaffView {
@@ -2156,6 +2177,8 @@ export interface StaffView {
   nickname: string;
   role: 'OWNER' | 'STAFF';
   status: 'ACTIVE' | 'DISABLED';
+  /** F-04 · 操作权限键（店主恒为全量） */
+  permissions: StaffPermission[];
   invitedBy: string | null;
   createdAt: string | null;
 }

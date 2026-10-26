@@ -14,6 +14,12 @@ public record MembershipBrief(
         String merchantId,
         String ownerUserId,
         String memberRole,
-        String status
+        String status,
+        /** F-04 · 店员生效权限键（店主不走本接口） */
+        java.util.List<String> permissions
 ) {
+    /** 是否具备某项操作权限（null 清单按无权限处理）。 */
+    public boolean hasPermission(com.duoduo.common.seller.StaffPermission permission) {
+        return com.duoduo.common.seller.StaffPermissions.has(permissions, permission);
+    }
 }

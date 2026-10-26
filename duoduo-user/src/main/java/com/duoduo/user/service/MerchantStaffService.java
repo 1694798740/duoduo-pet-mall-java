@@ -2,6 +2,7 @@ package com.duoduo.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.seller.StaffPermissions;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
@@ -45,9 +46,12 @@ import java.util.stream.Collectors;
  * <ol>
  *   <li><b>一人一店</b>（uk_user 唯一键兜底）：兼职/跨店是将来有真实需求再放宽的事；</li>
  *   <li><b>OWNER 不可停用</b>：店主被自己的店员停用等于店铺被劫持，接口层直接拒绝；</li>
- *   <li><b>店员不可管理成员</b>：邀请 / 停用是 OWNER-only —— 否则一个店员可以拉进
+ *   <li><b>店员不可管理成员</b>：邀请 / 停用 / 权限配置是 OWNER-only —— 否则一个店员可以拉进
  *       无限个"同事"，成员名单就不再是店主可控的范围。</li>
  * </ol>
+ *
+ * <p>F-04：店员的**操作范围**由 {@code t_merchant_member.permissions} 决定，
+ * 与「身份是否生效」正交 —— 停用仍然即时生效，权限收窄同样即时生效（下游每次现查，不缓存）。
  */
 @Service
 public class MerchantStaffService {
@@ -93,6 +97,9 @@ public class MerchantStaffService {
         member.setUserId(target.getId());
         member.setRole("STAFF");
         member.setStatus("ACTIVE");
+        // F-04：新邀请默认全量（与 F-04 之前的行为一致），店主随后按需收窄。
+        // 历史行 permissions=NULL 也按全量解释（见 StaffPermissions.effective）。
+        member.setPermissions(StaffPermissions.serialize(StaffPermissions.all()));
         member.setInvitedBy(ownerId);
         member.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
         member.setUpdatedAt(member.getCreatedAt());
@@ -146,6 +153,52 @@ public class MerchantStaffService {
             // 状态本来就一致 = 幂等确认，不构成事件（与 E18 之前同一口径）
             AuditTrail.skip("店员状态已是 " + target + "，无实际变更");
         }
+        return toView(member, userMapper.selectById(member.getUserId()));
+    }
+
+    /**
+     * F-04 · 店主配置店员操作权限（字段 / 操作级）。
+     *
+     * <p>只有 STAFF 成员行有权限清单：店主恒为全量、平台角色不受限 ——
+     * 对 OWNER 行改权限既没有语义，也会让「店主把自己锁死」成为可能。
+     *
+     * <p>空数组是合法输入，表示「仅查看」；缺少字段则拒绝（不能把"请求写漏了"
+     * 解释成"把权限清空"）。每次变更留痕，审计里能回答「谁在什么时候放开了什么」。
+     */
+    @Transactional
+    public StaffView updatePermissions(Long ownerId, long memberId, List<String> permissions) {
+        MerchantEntity store = requireOwnedStore(ownerId);
+        MerchantMemberEntity member = memberMapper.selectById(memberId);
+        if (member == null || !member.getMerchantId().equals(store.getId())) {
+            throw BizException.notFound("店员");
+        }
+        if ("OWNER".equals(member.getRole())) {
+            throw BizException.businessRule("店主权限为全量，不可修改");
+        }
+        if (permissions == null) {
+            throw BizException.validation("请提交权限清单；空数组表示仅查看");
+        }
+        List<String> normalized;
+        try {
+            normalized = StaffPermissions.normalize(permissions);
+        } catch (IllegalArgumentException ex) {
+            throw BizException.validation(ex.getMessage());
+        }
+        List<String> before = StaffPermissions.effective(member.getPermissions());
+        if (before.equals(normalized)) {
+            // 幂等确认：不写库、不构成事件（与停用/启用同一口径）
+            AuditTrail.skip("店员权限未变化");
+            return toView(member, userMapper.selectById(member.getUserId()));
+        }
+        member.setPermissions(StaffPermissions.serialize(normalized));
+        member.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        memberMapper.updateById(member);
+        AuditTrail.target(member.getUserId(), "STAFF");
+        AuditTrail.tenant(store.getOwnerUserId());
+        AuditTrail.change(StaffPermissions.labelOf(before), StaffPermissions.labelOf(normalized));
+        AuditTrail.note(store.getName() + " · 店员权限配置");
+        log.info("店员权限已更新 merchantId={} staff={} owner={} permissions={}",
+                store.getId(), member.getUserId(), ownerId, member.getPermissions());
         return toView(member, userMapper.selectById(member.getUserId()));
     }
 
@@ -248,7 +301,8 @@ public class MerchantStaffService {
             return null;
         }
         return new MembershipInfo(String.valueOf(store.getId()),
-                String.valueOf(store.getOwnerUserId()), member.getRole(), member.getStatus());
+                String.valueOf(store.getOwnerUserId()), member.getRole(), member.getStatus(),
+                StaffPermissions.effective(member.getPermissions()));
     }
 
     /**
@@ -338,6 +392,9 @@ public class MerchantStaffService {
                 user == null ? "—" : mask(user.getPhone()),
                 user == null ? "—" : user.getNickname(),
                 member.getRole(), member.getStatus(),
+                "OWNER".equals(member.getRole())
+                        ? StaffPermissions.all()
+                        : StaffPermissions.effective(member.getPermissions()),
                 member.getInvitedBy() == null ? null : String.valueOf(member.getInvitedBy()),
                 member.getCreatedAt() == null ? null : member.getCreatedAt().toString());
     }

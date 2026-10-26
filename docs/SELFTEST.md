@@ -2,6 +2,34 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 店员权限冒烟（`scripts/staff-permissions-f04-smoke.mjs`，37 项，第一百一十二轮）
+
+```bash
+NO_PROXY="*" node scripts/staff-permissions-f04-smoke.mjs
+```
+
+前置：容器在跑；user / product / trade / social 已部署 F-04；`incremental/59-staff-permissions.sql` 已执行；
+卖家 13600003333、运营 13684295254 可用。
+覆盖：新店员默认全量 6 项、店主行恒为全量；配置「仅 ORDER_SHIP」后 `/users/me` 与库内 CSV 即时一致；
+未知键 / 缺字段 400，店员自改 403，店主行 422，买家 404，未登录 401；
+只有发货权时改商品 / 改价 / 上下架 / 新建 / 退款 / 客服回复全部 403，查看订单与商品 200，发货 200；
+空数组 = 仅查看（读 200、写 403）；恢复全量后改价与客服回复 200；
+审计落 `UPDATE_STAFF_PERMISSIONS` 且租户 = 店铺主体 userId；订单链路 / 商品 / 客服会话 / 成员行 / 临时账号零残留。
+2026-10-26 实测 **37/0**。
+
+## 店员权限 UI e2e（`scripts/e2e/staff-permissions-f04-ui-check.mjs`，11 项，第一百一十二轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/staff-permissions-f04-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（`npm run build:merchant` + 重建 `duoduo-merchant-web-app`）；
+user 已部署 F-04；`incremental/59-staff-permissions.sql` 已执行。
+覆盖：新店员行显示 6 项权限、店主行显示「全部权限」；权限弹窗 6 个复选框；
+清空后只勾「订单发货」保存 → 表格与库内都只剩 `ORDER_SHIP`，被取消项不再显示；
+再次「全选」保存 → 恢复 6 项；0 pageerror / 0 5xx；夹具成员 / 店铺 / 临时账号零残留。
+2026-10-26 实测 **11/0**。
+
 ## 售后退款统计冒烟（`scripts/product-refund-stats-d05-smoke.mjs`，17 项，第一百一十一轮）
 
 ```bash

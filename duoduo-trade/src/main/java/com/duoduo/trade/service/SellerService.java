@@ -6,6 +6,8 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.common.seller.StaffPermission;
+import com.duoduo.common.seller.StaffPermissions;
 import com.duoduo.trade.dto.AnalyticsDtos;
 import com.duoduo.trade.dto.AnalyticsDtos.SellerAnalytics;
 import com.duoduo.trade.dto.AnalyticsDtos.Slice;
@@ -88,9 +90,11 @@ public class SellerService {
      * @param sellerId      卖家自己的用户 ID
      * @param platformScope 是否额外包含平台自营（{@code seller_id = 0}）
      * @param visibleSellerIds 归属校验用的卖家 ID 集合，至少含 {@code sellerId}
+     * @param permissions F-04 · 店员操作权限键；店主 / 平台为全量
      */
     public record SellerScope(Long sellerId, String role, boolean platformScope,
-                              List<Long> visibleSellerIds, boolean staffMember) {
+                              List<Long> visibleSellerIds, boolean staffMember,
+                              Set<String> permissions) {
     }
 
     // ---------------- 准入 ----------------
@@ -110,7 +114,10 @@ public class SellerService {
             com.duoduo.trade.client.dto.MembershipInfo membership = membershipOf(user.userId());
             if (membership != null && membership.activeStaff()) {
                 Long ownerUserId = Long.valueOf(membership.ownerUserId());
-                return new SellerScope(ownerUserId, "STAFF", false, List.of(ownerUserId), true);
+                return new SellerScope(ownerUserId, "STAFF", false, List.of(ownerUserId), true,
+                        membership.permissions() == null
+                                ? ALL_STAFF_PERMISSIONS
+                                : Set.copyOf(membership.permissions()));
             }
             throw BizException.forbidden("该账号不是卖家，无法进入商家端；请先在个人中心完成实名并申请成为卖家");
         }
@@ -120,7 +127,23 @@ public class SellerService {
         if (platformScope) {
             visible.add(OrderService.PLATFORM_SELLER_ID);
         }
-        return new SellerScope(user.userId(), user.role(), platformScope, visible, false);
+        return new SellerScope(user.userId(), user.role(), platformScope, visible, false,
+                ALL_STAFF_PERMISSIONS);
+    }
+
+    /** 店主 / 平台的权限集合（全量）。 */
+    private static final Set<String> ALL_STAFF_PERMISSIONS = Set.copyOf(StaffPermissions.all());
+
+    /**
+     * F-04 · 操作权限门禁：只约束店员；店主与平台角色不受限。
+     */
+    private void requireStaffPermission(SellerScope scope, StaffPermission permission) {
+        if (!scope.staffMember()) {
+            return;
+        }
+        if (!scope.permissions().contains(permission.name())) {
+            throw BizException.forbidden("当前店员账号没有「" + permission.label() + "」权限，请联系店主开通");
+        }
     }
 
     /**
@@ -192,6 +215,7 @@ public class SellerService {
      */
     public OrderView ship(String orderNo, ShipRequest request) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.ORDER_SHIP);
         OrderEntity order = requireOwnOrder(scope, orderNo);
         String reason = request == null ? "卖家发货" : request.describe();
         log.info("卖家 {} 对订单 {} 执行发货", scope.sellerId(), orderNo);
@@ -211,6 +235,7 @@ public class SellerService {
      */
     public RefundResult refund(String orderNo, String reason) {
         SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.ORDER_REFUND);
         OrderEntity order = requireOwnOrder(scope, orderNo);
         log.info("卖家 {} 对订单 {} 执行售后退款，原因：{}", scope.sellerId(), orderNo, reason);
         return orderService.refundInternal(order, reason, "卖家售后退款（已确认退货）");

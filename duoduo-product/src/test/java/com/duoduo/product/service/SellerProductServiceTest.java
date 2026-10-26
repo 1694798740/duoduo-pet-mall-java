@@ -6,6 +6,7 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.common.seller.StaffPermissions;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -1366,7 +1367,7 @@ class SellerProductServiceTest {
         UserContext.set(plainUser(777L));
         // 店员角色仍是 USER，权限来自成员身份（实时查，停用即时生效）
         when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
-                new MembershipInfo("123456", "101", "STAFF", "ACTIVE")));
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", StaffPermissions.all())));
         // 商品归属写的是**店主**（101），不是店员自己（777）
         SpuEntity spu = spu(9001L, 101L, "本店商品", null);
         when(spuMapper.selectById(9001L)).thenReturn(spu);
@@ -1386,7 +1387,7 @@ class SellerProductServiceTest {
     void 店员提交的商品归属店铺而不是店员个人() {
         UserContext.set(plainUser(777L));
         when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
-                new MembershipInfo("123456", "101", "STAFF", "ACTIVE")));
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", StaffPermissions.all())));
         stubCreateDeps();
 
         service.create(createRequest("店员发的商品"));
@@ -1404,7 +1405,7 @@ class SellerProductServiceTest {
     void 已停用店员按非店员处理() {
         UserContext.set(plainUser(777L));
         when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
-                new MembershipInfo("123456", "101", "STAFF", "DISABLED")));
+                new MembershipInfo("123456", "101", "STAFF", "DISABLED", StaffPermissions.all())));
 
         assertThatThrownBy(() -> service.changeStatus(9001L, "OFF_SHELF"))
                 .isInstanceOf(BizException.class)
@@ -1426,13 +1427,62 @@ class SellerProductServiceTest {
     void 店员管不了别家店的商品() {
         UserContext.set(plainUser(777L));
         when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
-                new MembershipInfo("123456", "101", "STAFF", "ACTIVE")));
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", StaffPermissions.all())));
         // 商品属于另一家店（店主 202）
         when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 202L, "别家商品", null));
 
         assertThatThrownBy(() -> service.changeStatus(9001L, "OFF_SHELF"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("不属于当前账号");
+    }
+
+    // ---------------- F-04 · 店员操作权限门禁 ----------------
+
+    @Test
+    void 店员没有改价权限时改价被拒() {
+        UserContext.set(plainUser(777L));
+        when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE",
+                        List.of("PRODUCT_EDIT", "ORDER_SHIP"))));
+
+        assertThatThrownBy(() -> service.updateSkuPriceStock(9001L, null))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("改价");
+    }
+
+    @Test
+    void 店员没有上下架权限时上下架被拒() {
+        UserContext.set(plainUser(777L));
+        when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", List.of("ORDER_SHIP"))));
+
+        assertThatThrownBy(() -> service.changeStatus(9001L, "OFF_SHELF"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("上下架");
+        // 连商品都没读：权限门禁在归属查询之前
+        verify(spuMapper, never()).selectById(9001L);
+    }
+
+    @Test
+    void 店员仅查看时不能编辑商品() {
+        UserContext.set(plainUser(777L));
+        when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", List.of())));
+
+        assertThatThrownBy(() -> service.update(9001L, null))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("商品内容编辑");
+    }
+
+    @Test
+    void 店员只有编辑权时不能保存含价格的规格结构() {
+        UserContext.set(plainUser(777L));
+        when(membershipClient.of(777L)).thenReturn(ApiResponse.ok(
+                new MembershipInfo("123456", "101", "STAFF", "ACTIVE", List.of("PRODUCT_EDIT"))));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L, null))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("改价");
     }
 
     @Test

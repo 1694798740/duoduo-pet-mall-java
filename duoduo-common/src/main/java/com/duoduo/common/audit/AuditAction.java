@@ -96,6 +96,14 @@ public enum AuditAction {
     /** 店主停用店员。E18 之前已有。 */
     DISABLE_STAFF(AuditCategory.SECURITY, "STAFF"),
 
+    /**
+     * F-04 · 店主修改店员操作权限。
+     *
+     * <p>与停用/启用同归 SECURITY：权限变更直接改变"这个账号能对店铺资产做什么"，
+     * 是最需要事后追溯的一类操作（「这笔退款是谁被放开的」往往要回到这条记录）。
+     */
+    UPDATE_STAFF_PERMISSIONS(AuditCategory.SECURITY, "STAFF"),
+
     /** 平台启用店员（跨租户处置）。E18 之前已有。 */
     ADMIN_ENABLE_STAFF(AuditCategory.SECURITY, "STAFF"),
 

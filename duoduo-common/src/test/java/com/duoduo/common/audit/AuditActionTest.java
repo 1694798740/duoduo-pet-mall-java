@@ -159,7 +159,7 @@ class AuditActionTest {
     }
 
     @Test
-    @DisplayName("清单规模：50 个真实动作 + 1 个兜底")
+    @DisplayName("清单规模：53 个真实动作 + 1 个兜底")
     void 清单规模() {
         // 钉住数量是刻意的：动作清单是**审计覆盖面的分母**。
         // 少了会红（有人删了动作），多了也会红（有人加了动作但没读本文件的说明）。
@@ -170,7 +170,8 @@ class AuditActionTest {
         // A-10：新增 4 个类目属性动作（CATEGORY_ATTR_CREATE / UPDATE / STATUS / DELETE），46 → 50。
         // H-02：新增 1 个评价审核动作（REVIEW_AUDIT），50 → 51。
         // A-16：新增 1 个商家回复动作（REVIEW_REPLY），51 → 52。
-        assertThat(AuditAction.values()).hasSize(52);
+        // F-04：新增 1 个店员权限配置动作（UPDATE_STAFF_PERMISSIONS），52 → 53。
+        assertThat(AuditAction.values()).hasSize(53);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

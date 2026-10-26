@@ -336,13 +336,15 @@ public final class UserDtos {
     ) {
     }
 
-    /** 店铺成员身份简报（E13）：只下发判定与展示必需的四个字段 */
+    /** 店铺成员身份简报（E13）：只下发判定与展示必需的字段 */
     public record MerchantBrief(
             String merchantId,
             String storeName,
             /** OWNER / STAFF */
             String memberRole,
-            String status
+            String status,
+            /** F-04 · 店员生效权限键（前端据此隐藏无权限的入口；店主为全量） */
+            java.util.List<String> permissions
     ) {
     }
 

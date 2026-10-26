@@ -5,6 +5,8 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.common.seller.StaffPermission;
+import com.duoduo.social.client.dto.MembershipBrief;
 import com.duoduo.social.support.dto.SupportDtos;
 import com.duoduo.social.support.dto.SupportDtos.MessageView;
 import com.duoduo.social.support.dto.SupportDtos.SellerSendRequest;
@@ -96,7 +98,10 @@ public class SellerSupportController {
     @PostMapping("/api/seller/support/sessions/{id}/messages")
     public ApiResponse<MessageView> reply(@PathVariable Long id,
                                           @Valid @RequestBody SellerSendRequest request) {
-        return ApiResponse.ok(supportService.sendBySeller(requireStoreOwnerId(), id, request));
+        // F-04：回复属于「客服回复」操作权限；店主 / 自营客服账号不受限，
+        // 店员按成员行配置判定（只读客服的店员可以看会话、不能发言）。
+        return ApiResponse.ok(supportService.sendBySeller(
+                requireStoreOwnerId(StaffPermission.SUPPORT_REPLY), id, request));
     }
 
     @PostMapping("/api/seller/support/sessions/{id}/read")
@@ -167,23 +172,46 @@ public class SellerSupportController {
      * 其他账号（平台运营、普通用户）一律 403 —— 运营不介入买卖双方会话内容。
      */
     private Long requireStoreOwnerId() {
+        return requireStoreOwnerId(null);
+    }
+
+    /**
+     * 登录账号 → 店铺主体 id（可选：同时校验某项店员操作权限）。
+     *
+     * <p>权限只约束 STAFF 成员行：店主与自营客服账号（SELLER，无入驻行）不受限；
+     * 传 {@code null} 表示只做身份解析（查看会话 / 工单等只读动作）。
+     */
+    private Long requireStoreOwnerId(StaffPermission requiredPermission) {
         LoginUser user = UserContext.require();
         if (user == null) {
             throw BizException.forbidden("仅店铺成员可处理客服消息");
         }
-        try {
-            var resp = userClient.merchantMembership(user.userId());
-            var membership = resp == null ? null : resp.data();
-            if (membership != null && membership.ownerUserId() != null && !membership.ownerUserId().isBlank()) {
-                return Long.valueOf(membership.ownerUserId());
+        MembershipBrief membership = membershipOf(user);
+        if (membership != null && membership.ownerUserId() != null && !membership.ownerUserId().isBlank()) {
+            // permissions == null = 老版本用户域未下发（升级窗口）→ 与商品 / 交易域同一口径按全量；
+            // 显式空清单才是「仅查看」。
+            if (requiredPermission != null && "STAFF".equals(membership.memberRole())
+                    && membership.permissions() != null
+                    && !membership.hasPermission(requiredPermission)) {
+                throw BizException.forbidden("当前店员账号没有「" + requiredPermission.label()
+                        + "」权限，请联系店主开通");
             }
-        } catch (Exception e) {
-            // 用户域暂时不可用时不让整个工作台 500：退回角色判断，店主仍可接待。
-            log.warn("解析店铺归属失败 userId={}", user.userId(), e);
+            return Long.valueOf(membership.ownerUserId());
         }
         if (user.isSeller()) {
             return user.userId();
         }
         throw BizException.forbidden("仅店铺成员可处理客服消息");
+    }
+
+    /** 查成员身份；用户域不可用时返回 null（由调用方退回角色判断，店主仍可接待）。 */
+    private MembershipBrief membershipOf(LoginUser user) {
+        try {
+            var resp = userClient.merchantMembership(user.userId());
+            return resp == null ? null : resp.data();
+        } catch (Exception e) {
+            log.warn("解析店铺归属失败 userId={}", user.userId(), e);
+            return null;
+        }
     }
 }

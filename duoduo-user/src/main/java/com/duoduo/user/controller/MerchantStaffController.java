@@ -21,8 +21,9 @@ import java.util.Map;
  * 服务端 OWNER 准入两层）。**OWNER-only**：店员调用一律 403 —— 店员能拉人进店，
  * 成员名单就不再是店主可控的范围。
  *
- * <p>E18 · 三个写端点带 {@link Audited}：店主对成员的操作也要留痕，
+ * <p>E18 · 写端点带 {@link Audited}：店主对成员的操作也要留痕，
  * 否则平台在需要复盘「这个店员是谁停的、什么时候停的」时无从查起。
+ * F-04 起权限配置也走同一套留痕（{@code UPDATE_STAFF_PERMISSIONS}）。
  * 动作标识与平台侧**刻意不同**（店主侧 ENABLE_STAFF / 平台侧 ADMIN_ENABLE_STAFF）——
  * 复盘时要能一眼分清是谁停的，这个区分是 E13 就定下的口径。
  */
@@ -62,5 +63,22 @@ public class MerchantStaffController {
     @Audited(action = AuditAction.ENABLE_STAFF)
     public ApiResponse<StaffView> enable(@PathVariable("memberId") long memberId) {
         return ApiResponse.ok(staffService.setStaffStatus(UserContext.requireUserId(), memberId, true));
+    }
+
+    /** F-04 · 权限配置请求体：空数组 = 仅查看；缺少 permissions 字段 = 拒绝 */
+    public record PermissionsRequest(List<String> permissions) {
+    }
+
+    /**
+     * F-04 · 配置店员操作权限（店主专属）。
+     *
+     * <p>逐项校验（未知键 422），店主行不可配置，幂等重复提交不写库。
+     */
+    @PostMapping("/{memberId}/permissions")
+    @Audited(action = AuditAction.UPDATE_STAFF_PERMISSIONS)
+    public ApiResponse<StaffView> updatePermissions(@PathVariable("memberId") long memberId,
+                                                    @RequestBody(required = false) PermissionsRequest request) {
+        return ApiResponse.ok(staffService.updatePermissions(UserContext.requireUserId(), memberId,
+                request == null ? null : request.permissions()));
     }
 }

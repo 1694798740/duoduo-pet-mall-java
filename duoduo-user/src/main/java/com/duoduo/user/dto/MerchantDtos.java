@@ -126,6 +126,8 @@ public final class MerchantDtos {
             String nickname,
             String role,
             String status,
+            /** F-04 · 操作权限键（店主恒为全量；店员按配置） */
+            List<String> permissions,
             String invitedBy,
             String createdAt
     ) {
@@ -147,17 +149,29 @@ public final class MerchantDtos {
     /**
      * 成员身份（内部端点下发，供交易/商品域做归属判定）。
      *
-     * <p>刻意**只回四个字段**：交易域需要的是「这个人以哪家店的身份行动」，
-     * 不是这个人是谁 —— 手机号、实名等不跨域扩散（与 briefs 同一裁剪纪律）。
+     * <p>刻意**只回身份与权限**：交易 / 商品 / 社交域需要的是「这个人以哪家店的身份行动、
+     * 能做什么」，不是这个人是谁 —— 手机号、实名等不跨域扩散（与 briefs 同一裁剪纪律）。
      */
     public record MembershipInfo(
             String merchantId,
             String ownerUserId,
             String memberRole,
-            String status
+            String status,
+            /**
+             * F-04 · 该店员的生效权限键（全量 / 精确清单）。
+             *
+             * <p>店主不走本接口（role=SELLER 自有通道），因此这里只承载 STAFF 的配置；
+             * 下游按 {@code StaffPermission} 判定，不自行解释角色。
+             */
+            List<String> permissions
     ) {
         public boolean activeStaff() {
             return "STAFF".equals(memberRole) && "ACTIVE".equals(status);
+        }
+
+        /** 是否具备某项操作权限（null 清单按无权限处理，防下游空指针）。 */
+        public boolean hasPermission(com.duoduo.common.seller.StaffPermission permission) {
+            return com.duoduo.common.seller.StaffPermissions.has(permissions, permission);
         }
     }
 

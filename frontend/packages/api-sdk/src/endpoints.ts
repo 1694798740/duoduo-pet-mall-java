@@ -680,6 +680,9 @@ export const merchantStaffApi = {
     api.post<StaffView>(`/api/seller/staff/${memberId}/disable`),
   enable: (memberId: string) =>
     api.post<StaffView>(`/api/seller/staff/${memberId}/enable`),
+  /** F-04 · 配置店员操作权限（空数组 = 仅查看） */
+  updatePermissions: (memberId: string, permissions: string[]) =>
+    api.post<StaffView>(`/api/seller/staff/${memberId}/permissions`, { permissions }),
 };
 
 /** 平台侧成员总览（E13；跨租户 + 平台处置） */

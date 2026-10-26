@@ -12,10 +12,17 @@ public record MembershipInfo(
         String merchantId,
         String ownerUserId,
         String memberRole,
-        String status
+        String status,
+        /** F-04 · 店员生效权限键（店主不走本接口，见用户域 {@code MembershipInfo}） */
+        java.util.List<String> permissions
 ) {
     /** 是否现役店员（角色为 STAFF 且状态 ACTIVE）。停用后 status 变 DISABLED → false */
     public boolean activeStaff() {
         return "STAFF".equals(memberRole) && "ACTIVE".equals(status);
+    }
+
+    /** 是否具备某项操作权限（null 清单按无权限处理）。 */
+    public boolean hasPermission(com.duoduo.common.seller.StaffPermission permission) {
+        return com.duoduo.common.seller.StaffPermissions.has(permissions, permission);
     }
 }

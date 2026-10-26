@@ -738,7 +738,8 @@ public class AuthService {
             return null;
         }
         return new UserDtos.MerchantBrief(String.valueOf(store.getId()), store.getName(),
-                member.getRole(), member.getStatus());
+                member.getRole(), member.getStatus(),
+                com.duoduo.common.seller.StaffPermissions.effective(member.getPermissions()));
     }
 
     /** ACTIVE 的店员成员行；不是店员（或已停用）返回 null。 */
