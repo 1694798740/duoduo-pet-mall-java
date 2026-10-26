@@ -42,6 +42,46 @@
                                                                                                }
                                                                              }
                                                                 },
+                  "/api/coupons/internal/users/{userId}/personal-data":  {
+                                                                             "post":  {
+                                                                                          "tags":  [
+                                                                                                       "coupon-internal-controller"
+                                                                                                   ],
+                                                                                          "operationId":  "cleanupPersonalData",
+                                                                                          "parameters":  [
+                                                                                                             {
+                                                                                                                 "name":  "userId",
+                                                                                                                 "in":  "path",
+                                                                                                                 "required":  true,
+                                                                                                                 "schema":  {
+                                                                                                                                "type":  "integer",
+                                                                                                                                "format":  "int64"
+                                                                                                                            }
+                                                                                                             },
+                                                                                                             {
+                                                                                                                 "name":  "dryRun",
+                                                                                                                 "in":  "query",
+                                                                                                                 "required":  false,
+                                                                                                                 "schema":  {
+                                                                                                                                "type":  "boolean",
+                                                                                                                                "default":  false
+                                                                                                                            }
+                                                                                                             }
+                                                                                                         ],
+                                                                                          "responses":  {
+                                                                                                            "200":  {
+                                                                                                                        "description":  "OK",
+                                                                                                                        "content":  {
+                                                                                                                                        "*/*":  {
+                                                                                                                                                    "schema":  {
+                                                                                                                                                                   "$ref":  "#/components/schemas/ApiResponsePersonalDataCleanupResult"
+                                                                                                                                                               }
+                                                                                                                                                }
+                                                                                                                                    }
+                                                                                                                    }
+                                                                                                        }
+                                                                                      }
+                                                                         },
                   "/api/coupons/internal/trial":  {
                                                       "post":  {
                                                                    "tags":  [
@@ -347,6 +387,51 @@
                                                                                          }
                                                                           }
                                                        },
+                                       "ApiResponsePersonalDataCleanupResult":  {
+                                                                                    "type":  "object",
+                                                                                    "properties":  {
+                                                                                                       "code":  {
+                                                                                                                    "type":  "string"
+                                                                                                                },
+                                                                                                       "message":  {
+                                                                                                                       "type":  "string"
+                                                                                                                   },
+                                                                                                       "data":  {
+                                                                                                                    "$ref":  "#/components/schemas/PersonalDataCleanupResult"
+                                                                                                                },
+                                                                                                       "requestId":  {
+                                                                                                                         "type":  "string"
+                                                                                                                     },
+                                                                                                       "timestamp":  {
+                                                                                                                         "type":  "integer",
+                                                                                                                         "format":  "int64"
+                                                                                                                     }
+                                                                                                   }
+                                                                                },
+                                       "PersonalDataCleanupResult":  {
+                                                                         "type":  "object",
+                                                                         "properties":  {
+                                                                                            "userId":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       },
+                                                                                            "domain":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                            "deleted":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int32"
+                                                                                                        },
+                                                                                            "masked":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int32"
+                                                                                                       },
+                                                                                            "blocking":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int32"
+                                                                                                         }
+                                                                                        }
+                                                                     },
                                        "LockRequest":  {
                                                            "required":  [
                                                                             "code",

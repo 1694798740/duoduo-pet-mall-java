@@ -32,6 +32,7 @@
 - `POST /api/auth/2fa/enable`
 - `POST /api/auth/2fa/setup`
 - `GET /api/auth/2fa/status`
+- `POST /api/auth/account-deletion/cancel`
 - `POST /api/auth/login`
 - `POST /api/auth/login/token`
 - `POST /api/auth/logout`
@@ -43,6 +44,8 @@
 - `POST /api/auth/wechat/rebind`
 - `POST /api/auth/wechat/token`
 - `POST /api/auth/wechat/unbind`
+- `GET /api/geo/jsapi-config`
+- `GET /api/geo/regeo`
 - `GET /api/merchant-materials/{merchantId}/{storedName}`
 - `GET /api/pets`
 - `POST /api/pets`
@@ -53,26 +56,34 @@
 - `POST /api/seller/staff`
 - `POST /api/seller/staff/{memberId}/disable`
 - `POST /api/seller/staff/{memberId}/enable`
+- `POST /api/seller/staff/{memberId}/permissions`
 - `POST /api/users/internal/{userId}/credit`
 - `POST /api/users/internal/audit-logs`
 - `GET /api/users/internal/briefs`
 - `GET /api/users/internal/merchant-license`
+- `GET /api/users/internal/merchant-members`
 - `GET /api/users/internal/merchant-membership`
 - `GET /api/users/internal/merchant-risk`
 - `POST /api/users/internal/merchant-violation`
 - `GET /api/users/internal/pet-profiles`
 - `GET /api/users/internal/roles`
+- `GET /api/users/internal/store-names`
 - `GET /api/users/me`
 - `PATCH /api/users/me`
+- `DELETE /api/users/me/delete-account`
+- `GET /api/users/me/delete-account`
+- `POST /api/users/me/delete-account`
 - `GET /api/users/me/merchant-application`
 - `PUT /api/users/me/merchant-application`
 - `POST /api/users/me/merchant-application/activate`
 - `POST /api/users/me/merchant-application/materials`
 - `POST /api/users/me/merchant-application/renewal`
+- `PATCH /api/users/me/merchant-application/store-name`
 - `POST /api/users/me/merchant-application/submit`
 - `POST /api/users/me/realname`
+- `GET /api/users/stores/{ownerUserId}`
 
-小计：**67** 个端点。
+小计：**78** 个端点。
 
 ## product （:8082）
 
@@ -87,21 +98,38 @@
 - `PUT /api/admin/brands/{id}/status`
 - `GET /api/admin/categories`
 - `POST /api/admin/categories`
+- `GET /api/admin/categories/{categoryId}/attrs`
+- `POST /api/admin/categories/{categoryId}/attrs`
 - `DELETE /api/admin/categories/{id}`
 - `PUT /api/admin/categories/{id}`
 - `PUT /api/admin/categories/{id}/status`
+- `DELETE /api/admin/category-attrs/{id}`
+- `PUT /api/admin/category-attrs/{id}`
+- `PUT /api/admin/category-attrs/{id}/status`
 - `GET /api/admin/listings`
 - `POST /api/admin/listings/{id}/audit`
 - `GET /api/admin/products`
 - `GET /api/admin/products/{spuId}`
 - `POST /api/admin/products/{spuId}/audit`
+- `GET /api/admin/products/{spuId}/history`
 - `POST /api/admin/products/{spuId}/proxy-off-shelf`
+- `GET /api/admin/products/change-history`
 - `GET /api/admin/products/proxy-work-orders`
+- `POST /api/admin/products/recycle/purge`
 - `GET /api/admin/search/reconcile`
 - `POST /api/admin/search/reindex`
 - `GET /api/categories`
 - `GET /api/categories/{id}`
+- `GET /api/categories/{id}/attrs`
 - `GET /api/categories/flat`
+- `DELETE /api/favorites/{spuId}`
+- `POST /api/favorites/{spuId}`
+- `GET /api/favorites/products`
+- `GET /api/favorites/status`
+- `DELETE /api/history`
+- `DELETE /api/history/{spuId}`
+- `DELETE /api/history/batch`
+- `GET /api/history/products`
 - `GET /api/home`
 - `POST /api/listings`
 - `GET /api/listings/{id}`
@@ -111,6 +139,7 @@
 - `POST /api/listings/{id}/status`
 - `POST /api/listings/internal/{id}/want`
 - `GET /api/listings/internal/cards`
+- `POST /api/listings/internal/users/{userId}/personal-data`
 - `GET /api/listings/mine/{id}`
 - `GET /api/listings/mine/list`
 - `GET /api/listings/search`
@@ -121,6 +150,7 @@
 - `GET /api/products/internal/candidates`
 - `GET /api/products/internal/cards`
 - `GET /api/products/internal/categories`
+- `GET /api/products/internal/ratings/candidates`
 - `POST /api/products/internal/ratings/recompute`
 - `POST /api/products/internal/seller/{sellerId}/off-shelf`
 - `GET /api/products/internal/skus/batch`
@@ -130,17 +160,29 @@
 - `POST /api/products/skus/stock/freeze`
 - `POST /api/products/skus/stock/release`
 - `POST /api/products/skus/stock/restock`
+- `GET /api/products/store/{sellerId}`
 - `GET /api/seller/products`
 - `POST /api/seller/products`
 - `GET /api/seller/products/{spuId}`
 - `PUT /api/seller/products/{spuId}`
+- `POST /api/seller/products/{spuId}/copy`
+- `POST /api/seller/products/{spuId}/delete`
+- `POST /api/seller/products/{spuId}/restore`
 - `POST /api/seller/products/{spuId}/resubmit`
+- `PUT /api/seller/products/{spuId}/skus`
+- `PUT /api/seller/products/{spuId}/skus/price-stock`
+- `GET /api/seller/products/{spuId}/skus/usage`
 - `POST /api/seller/products/{spuId}/status`
+- `POST /api/seller/products/batch-status`
+- `GET /api/seller/products/diagnostics`
+- `GET /api/seller/products/export`
+- `POST /api/seller/products/import`
+- `GET /api/seller/products/import-template`
 - `GET /api/seller/products/proxy-requests`
 - `POST /api/seller/products/proxy-requests`
 - `POST /api/seller/products/proxy-requests/{workOrderNo}/void`
 
-小计：**63** 个端点。
+小计：**94** 个端点。
 
 ## trade （:8083）
 
@@ -172,6 +214,8 @@
 - `POST /api/admin/settlements/debts/{id}/write-off`
 - `GET /api/admin/settlements/summary`
 - `GET /api/admin/settlements/wallets`
+- `GET /api/admin/tenant-health`
+- `GET /api/admin/tenant-health/limits`
 - `GET /api/cart`
 - `GET /api/cart/count`
 - `POST /api/cart/items`
@@ -190,9 +234,12 @@
 - `GET /api/orders/internal/{orderNo}/fact`
 - `POST /api/orders/internal/{orderNo}/refund`
 - `GET /api/orders/internal/seller/{sellerId}/stats`
+- `POST /api/orders/internal/sku-usage`
 - `POST /api/orders/internal/sweep`
+- `POST /api/orders/internal/users/{userId}/personal-data`
 - `GET /api/orders/placement/{idempotentKey}`
 - `POST /api/orders/preview`
+- `GET /api/orders/purchased-products`
 - `POST /api/orders/queued`
 - `GET /api/payments/{payNo}`
 - `POST /api/payments/callback/{channel}`
@@ -205,6 +252,8 @@
 - `GET /api/seller/orders/{orderNo}`
 - `POST /api/seller/orders/{orderNo}/refund`
 - `POST /api/seller/orders/{orderNo}/ship`
+- `GET /api/seller/product-refunds`
+- `GET /api/seller/product-stats`
 - `GET /api/seller/proxy-requests`
 - `POST /api/seller/proxy-requests`
 - `POST /api/seller/proxy-requests/{workOrderNo}/void`
@@ -214,12 +263,14 @@
 - `GET /api/seller/summary`
 - `GET /sandbox/pay/{payNo}`
 
-小计：**69** 个端点。
+小计：**76** 个端点。
 
 ## fulfilment （:8084）
 
 - `GET /api/admin/aftersales`
 - `POST /api/admin/aftersales/{id}/arbitrate`
+- `GET /api/admin/reviews`
+- `POST /api/admin/reviews/{id}/audit`
 - `GET /api/admin/share-reports`
 - `POST /api/admin/share-reports/{id}/handle`
 - `POST /api/aftersales`
@@ -228,18 +279,26 @@
 - `POST /api/aftersales/{id}/reply`
 - `POST /api/aftersales/{id}/return-receipt`
 - `POST /api/aftersales/{id}/return-shipment`
+- `GET /api/aftersales/internal/tenant-stats`
+- `POST /api/aftersales/internal/users/{userId}/personal-data`
 - `GET /api/aftersales/mine`
 - `GET /api/aftersales/seller`
+- `GET /api/logistics/couriers`
 - `POST /api/logistics/internal/{orderNo}/tracks`
+- `POST /api/logistics/internal/waybills/{orderNo}/advance`
 - `GET /api/logistics/orders/{orderNo}/tracks`
+- `GET /api/logistics/orders/{orderNo}/waybill`
+- `POST /api/logistics/waybills`
 - `POST /api/reviews`
 - `POST /api/reviews/{id}/append`
+- `POST /api/reviews/{id}/reply`
 - `POST /api/reviews/internal/credits/refresh`
 - `GET /api/reviews/mine`
 - `GET /api/reviews/order/{orderNo}`
 - `GET /api/reviews/product/{spuId}`
 - `GET /api/reviews/product/{spuId}/summary`
 - `GET /api/reviews/reviewed`
+- `GET /api/reviews/seller`
 - `GET /api/reviews/seller/{sellerId}/credit`
 - `POST /api/shares`
 - `GET /api/shares/{id}`
@@ -258,9 +317,11 @@
 - `GET /api/shares/topics`
 - `GET /api/shares/topics/{name}`
 - `POST /api/uploads`
+- `POST /api/uploads/from-url`
+- `POST /api/uploads/internal/delete`
 - `GET /uploads/{filename}`
 
-小计：**41** 个端点。
+小计：**53** 个端点。
 
 ## marketing （:8085）
 
@@ -270,12 +331,13 @@
 - `POST /api/coupons/internal/release`
 - `POST /api/coupons/internal/sweep`
 - `POST /api/coupons/internal/trial`
+- `POST /api/coupons/internal/users/{userId}/personal-data`
 - `GET /api/coupons/mine`
 - `GET /api/coupons/mine/usable`
 - `GET /api/coupons/templates`
 - `POST /api/coupons/templates/{templateId}/claim`
 
-小计：**10** 个端点。
+小计：**11** 个端点。
 
 ## ai （:8086）
 
@@ -284,4 +346,57 @@
 
 小计：**2** 个端点。
 
-合计：**252** 个端点（6 个业务服务）。
+## social （:8087）
+
+- `GET /api/seller/support/sessions`
+- `GET /api/seller/support/sessions/{id}/messages`
+- `POST /api/seller/support/sessions/{id}/messages`
+- `POST /api/seller/support/sessions/{id}/messages/{messageId}/recall`
+- `POST /api/seller/support/sessions/{id}/messages/delete`
+- `POST /api/seller/support/sessions/{id}/read`
+- `POST /api/seller/support/sessions/{id}/status`
+- `GET /api/seller/support/sessions/{id}/ticket`
+- `POST /api/seller/support/sessions/{id}/ticket/claim`
+- `POST /api/seller/support/sessions/{id}/ticket/release`
+- `POST /api/seller/support/sessions/{id}/ticket/transfer`
+- `GET /api/seller/support/unread-count`
+- `DELETE /api/socials/follows/{userId}`
+- `POST /api/socials/follows/{userId}`
+- `GET /api/socials/follows/{userId}/counts`
+- `GET /api/socials/follows/{userId}/state`
+- `GET /api/socials/follows/followers`
+- `GET /api/socials/follows/following`
+- `GET /api/socials/internal/following`
+- `POST /api/socials/internal/notices`
+- `POST /api/socials/internal/notices/announce`
+- `POST /api/socials/internal/support-sweep`
+- `POST /api/socials/internal/users/{userId}/personal-data`
+- `POST /api/socials/messages`
+- `POST /api/socials/messages/{messageId}/recall`
+- `GET /api/socials/messages/conversations`
+- `GET /api/socials/messages/conversations/{peerId}`
+- `POST /api/socials/messages/conversations/{peerId}/read`
+- `POST /api/socials/messages/delete`
+- `GET /api/socials/messages/unread-count`
+- `GET /api/socials/notices`
+- `POST /api/socials/notices/{noticeId}/read`
+- `POST /api/socials/notices/read-all`
+- `GET /api/socials/notices/unread-by-category`
+- `GET /api/socials/notices/unread-count`
+- `GET /api/socials/notices/unread-summary`
+- `GET /api/socials/realtime/online`
+- `POST /api/socials/realtime/ticket`
+- `GET /api/socials/users/{userId}/profile`
+- `POST /api/support/close`
+- `GET /api/support/messages`
+- `POST /api/support/messages`
+- `POST /api/support/messages/{messageId}/recall`
+- `POST /api/support/messages/delete`
+- `POST /api/support/read`
+- `GET /api/support/session`
+- `GET /api/support/sessions`
+- `GET /api/support/unread-count`
+
+小计：**48** 个端点。
+
+合计：**362** 个端点（7 个业务服务）。

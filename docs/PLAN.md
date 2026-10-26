@@ -1,6 +1,18 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-26 · 第一百一十七轮）**：**商家操作手册 + 客服 / 运营 SOP（K-03 / K-04）—— 把规则写成可执行的步骤**
+> **最新一轮（2026-10-26 · 第一百一十八轮）**：**OpenAPI 契约重导（K-02）—— 补上 social，362 个端点全覆盖**
+> 问题：`docs/openapi` 停留在 2026-10-12，之后新增的 A-16 / A-17 / B-05 / C-04 / C-05 / D-05 / F-04 / H-03
+> 都不在契约里；导出脚本的服务清单还漏了 **social（:8087）** —— 客服 / 私信 / 通知整块契约从未被导出。
+> ① **脚本**：`scripts/export-openapi.ps1` 补入 social，服务数 6 → 7；摘要脚注同步。
+> ② **重导结果**：**362 个端点** —— user 78 / product 94 / trade 76 / fulfilment 53 /
+> marketing 11 / ai 2 / social 48；产物写入 `docs/openapi/<service>.json` 与 `endpoints.md`。
+> ③ **覆盖核对**：本轮新端点均已入清单 ——
+> `POST /api/seller/staff/{memberId}/permissions`（F-04）、`GET /api/admin/products/change-history`（H-03）、
+> `GET /api/seller/product-refunds`（D-05）、面单三条（B-05）、工单四条（C-04）、实时票据（C-02）。
+> ④ **口径**：网关（WebFlux）没有 `/v3/api-docs`，不在导出范围；「端点覆盖 100%」指 7 个 MVC 业务服务。
+> ⑤ **验证**：导出脚本一次跑通、7 个服务全部 200；`endpoints.md` 与仓库控制器逐项对照无遗漏。
+
+> **上轮（2026-10-26 · 第一百一十七轮）**：**商家操作手册 + 客服 / 运营 SOP（K-03 / K-04）—— 把规则写成可执行的步骤**
 > 问题：功能都在跑，但新商家不知道怎么发品 / 改价 / 处理驳回；客服交接班靠口头，
 > 「谁能认领、谁能转交、什么话不能说」没有一份能直接照着做的文档。
 > ① **K-03 商家商品管理操作手册**（`docs/manuals/merchant-product-guide.md`）：

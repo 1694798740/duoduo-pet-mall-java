@@ -336,6 +336,82 @@
                                                                                                  }
                                                                                }
                                                                   },
+                  "/api/users/me/delete-account":  {
+                                                       "get":  {
+                                                                   "tags":  [
+                                                                                "user-controller"
+                                                                            ],
+                                                                   "operationId":  "deleteAccountBlockers",
+                                                                   "responses":  {
+                                                                                     "200":  {
+                                                                                                 "description":  "OK",
+                                                                                                 "content":  {
+                                                                                                                 "*/*":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/ApiResponseDeleteBlockersView"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                             }
+                                                                                             }
+                                                                                 }
+                                                               },
+                                                       "post":  {
+                                                                    "tags":  [
+                                                                                 "user-controller"
+                                                                             ],
+                                                                    "operationId":  "requestDeleteAccount",
+                                                                    "requestBody":  {
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/DeleteAccountRequest"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    },
+                                                                                        "required":  true
+                                                                                    },
+                                                                    "responses":  {
+                                                                                      "200":  {
+                                                                                                  "description":  "OK",
+                                                                                                  "content":  {
+                                                                                                                  "*/*":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/ApiResponseDeleteAccountView"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                              }
+                                                                                              }
+                                                                                  }
+                                                                },
+                                                       "delete":  {
+                                                                      "tags":  [
+                                                                                   "user-controller"
+                                                                               ],
+                                                                      "operationId":  "cancelDeleteAccount",
+                                                                      "requestBody":  {
+                                                                                          "content":  {
+                                                                                                          "application/json":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/DeleteAccountRequest"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                      },
+                                                                                          "required":  true
+                                                                                      },
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK",
+                                                                                                    "content":  {
+                                                                                                                    "*/*":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseVoid"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                                }
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                   },
                   "/api/users/internal/{userId}/credit":  {
                                                               "post":  {
                                                                            "tags":  [
@@ -497,6 +573,46 @@
                                                                        }
                                                      }
                                         },
+                  "/api/seller/staff/{memberId}/permissions":  {
+                                                                   "post":  {
+                                                                                "tags":  [
+                                                                                             "merchant-staff-controller"
+                                                                                         ],
+                                                                                "operationId":  "updatePermissions",
+                                                                                "parameters":  [
+                                                                                                   {
+                                                                                                       "name":  "memberId",
+                                                                                                       "in":  "path",
+                                                                                                       "required":  true,
+                                                                                                       "schema":  {
+                                                                                                                      "type":  "integer",
+                                                                                                                      "format":  "int64"
+                                                                                                                  }
+                                                                                                   }
+                                                                                               ],
+                                                                                "requestBody":  {
+                                                                                                    "content":  {
+                                                                                                                    "application/json":  {
+                                                                                                                                             "schema":  {
+                                                                                                                                                            "$ref":  "#/components/schemas/PermissionsRequest"
+                                                                                                                                                        }
+                                                                                                                                         }
+                                                                                                                }
+                                                                                                },
+                                                                                "responses":  {
+                                                                                                  "200":  {
+                                                                                                              "description":  "OK",
+                                                                                                              "content":  {
+                                                                                                                              "*/*":  {
+                                                                                                                                          "schema":  {
+                                                                                                                                                         "$ref":  "#/components/schemas/ApiResponseStaffView"
+                                                                                                                                                     }
+                                                                                                                                      }
+                                                                                                                          }
+                                                                                                          }
+                                                                                              }
+                                                                            }
+                                                               },
                   "/api/seller/staff/{memberId}/enable":  {
                                                               "post":  {
                                                                            "tags":  [
@@ -878,6 +994,14 @@
                                                                                 "schema":  {
                                                                                                "type":  "string"
                                                                                            }
+                                                                            },
+                                                                            {
+                                                                                "name":  "X-Duoduo-Entry",
+                                                                                "in":  "header",
+                                                                                "required":  false,
+                                                                                "schema":  {
+                                                                                               "type":  "string"
+                                                                                           }
                                                                             }
                                                                         ],
                                                          "requestBody":  {
@@ -948,6 +1072,16 @@
                                                                      "auth-controller"
                                                                  ],
                                                         "operationId":  "logout",
+                                                        "parameters":  [
+                                                                           {
+                                                                               "name":  "X-Duoduo-Entry",
+                                                                               "in":  "header",
+                                                                               "required":  false,
+                                                                               "schema":  {
+                                                                                              "type":  "string"
+                                                                                          }
+                                                                           }
+                                                                       ],
                                                         "requestBody":  {
                                                                             "content":  {
                                                                                             "application/json":  {
@@ -1067,6 +1201,36 @@
                                                                            }
                                                          }
                                             },
+                  "/api/auth/account-deletion/cancel":  {
+                                                            "post":  {
+                                                                         "tags":  [
+                                                                                      "auth-controller"
+                                                                                  ],
+                                                                         "operationId":  "cancelAccountDeletion",
+                                                                         "requestBody":  {
+                                                                                             "content":  {
+                                                                                                             "application/json":  {
+                                                                                                                                      "schema":  {
+                                                                                                                                                     "$ref":  "#/components/schemas/CancelDeleteAccountRequest"
+                                                                                                                                                 }
+                                                                                                                                  }
+                                                                                                         },
+                                                                                             "required":  true
+                                                                                         },
+                                                                         "responses":  {
+                                                                                           "200":  {
+                                                                                                       "description":  "OK",
+                                                                                                       "content":  {
+                                                                                                                       "*/*":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseVoid"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                                   }
+                                                                                                   }
+                                                                                       }
+                                                                     }
+                                                        },
                   "/api/auth/2fa/setup":  {
                                               "post":  {
                                                            "tags":  [
@@ -1587,6 +1751,97 @@
                                                                     }
                                                   }
                                     },
+                  "/api/users/me/merchant-application/store-name":  {
+                                                                        "patch":  {
+                                                                                      "tags":  [
+                                                                                                   "merchant-application-controller"
+                                                                                               ],
+                                                                                      "operationId":  "renameStore",
+                                                                                      "requestBody":  {
+                                                                                                          "content":  {
+                                                                                                                          "application/json":  {
+                                                                                                                                                   "schema":  {
+                                                                                                                                                                  "$ref":  "#/components/schemas/RenameStoreRequest"
+                                                                                                                                                              }
+                                                                                                                                               }
+                                                                                                                      },
+                                                                                                          "required":  true
+                                                                                                      },
+                                                                                      "responses":  {
+                                                                                                        "200":  {
+                                                                                                                    "description":  "OK",
+                                                                                                                    "content":  {
+                                                                                                                                    "*/*":  {
+                                                                                                                                                "schema":  {
+                                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseApplicationView"
+                                                                                                                                                           }
+                                                                                                                                            }
+                                                                                                                                }
+                                                                                                                }
+                                                                                                    }
+                                                                                  }
+                                                                    },
+                  "/api/users/stores/{ownerUserId}":  {
+                                                          "get":  {
+                                                                      "tags":  [
+                                                                                   "user-controller"
+                                                                               ],
+                                                                      "operationId":  "storeProfile",
+                                                                      "parameters":  [
+                                                                                         {
+                                                                                             "name":  "ownerUserId",
+                                                                                             "in":  "path",
+                                                                                             "required":  true,
+                                                                                             "schema":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        }
+                                                                                         }
+                                                                                     ],
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK",
+                                                                                                    "content":  {
+                                                                                                                    "*/*":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseStorePublicView"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                                }
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                      },
+                  "/api/users/internal/store-names":  {
+                                                          "get":  {
+                                                                      "tags":  [
+                                                                                   "user-controller"
+                                                                               ],
+                                                                      "operationId":  "storeNames",
+                                                                      "parameters":  [
+                                                                                         {
+                                                                                             "name":  "ownerIds",
+                                                                                             "in":  "query",
+                                                                                             "required":  true,
+                                                                                             "schema":  {
+                                                                                                            "type":  "string"
+                                                                                                        }
+                                                                                         }
+                                                                                     ],
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK",
+                                                                                                    "content":  {
+                                                                                                                    "*/*":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseListStoreBrief"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                                }
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                      },
                   "/api/users/internal/roles":  {
                                                     "get":  {
                                                                 "tags":  [
@@ -1710,6 +1965,37 @@
                                                                                             }
                                                                           }
                                                               },
+                  "/api/users/internal/merchant-members":  {
+                                                               "get":  {
+                                                                           "tags":  [
+                                                                                        "user-controller"
+                                                                                    ],
+                                                                           "operationId":  "merchantMembers",
+                                                                           "parameters":  [
+                                                                                              {
+                                                                                                  "name":  "ownerUserId",
+                                                                                                  "in":  "query",
+                                                                                                  "required":  true,
+                                                                                                  "schema":  {
+                                                                                                                 "type":  "integer",
+                                                                                                                 "format":  "int64"
+                                                                                                             }
+                                                                                              }
+                                                                                          ],
+                                                                           "responses":  {
+                                                                                             "200":  {
+                                                                                                         "description":  "OK",
+                                                                                                         "content":  {
+                                                                                                                         "*/*":  {
+                                                                                                                                     "schema":  {
+                                                                                                                                                    "$ref":  "#/components/schemas/ApiResponseListTicketMemberInfo"
+                                                                                                                                                }
+                                                                                                                                 }
+                                                                                                                     }
+                                                                                                     }
+                                                                                         }
+                                                                       }
+                                                           },
                   "/api/users/internal/merchant-license":  {
                                                                "get":  {
                                                                            "tags":  [
@@ -1811,6 +2097,73 @@
                                                                                                       }
                                                                                     }
                                                                         },
+                  "/api/geo/regeo":  {
+                                         "get":  {
+                                                     "tags":  [
+                                                                  "geo-controller"
+                                                              ],
+                                                     "operationId":  "regeo",
+                                                     "parameters":  [
+                                                                        {
+                                                                            "name":  "lng",
+                                                                            "in":  "query",
+                                                                            "required":  true,
+                                                                            "schema":  {
+                                                                                           "type":  "number"
+                                                                                       }
+                                                                        },
+                                                                        {
+                                                                            "name":  "lat",
+                                                                            "in":  "query",
+                                                                            "required":  true,
+                                                                            "schema":  {
+                                                                                           "type":  "number"
+                                                                                       }
+                                                                        },
+                                                                        {
+                                                                            "name":  "coord",
+                                                                            "in":  "query",
+                                                                            "required":  false,
+                                                                            "schema":  {
+                                                                                           "type":  "string",
+                                                                                           "default":  "gcj02"
+                                                                                       }
+                                                                        }
+                                                                    ],
+                                                     "responses":  {
+                                                                       "200":  {
+                                                                                   "description":  "OK",
+                                                                                   "content":  {
+                                                                                                   "*/*":  {
+                                                                                                               "schema":  {
+                                                                                                                              "$ref":  "#/components/schemas/ApiResponseRegeoView"
+                                                                                                                          }
+                                                                                                           }
+                                                                                               }
+                                                                               }
+                                                                   }
+                                                 }
+                                     },
+                  "/api/geo/jsapi-config":  {
+                                                "get":  {
+                                                            "tags":  [
+                                                                         "geo-controller"
+                                                                     ],
+                                                            "operationId":  "jsapiConfig",
+                                                            "responses":  {
+                                                                              "200":  {
+                                                                                          "description":  "OK",
+                                                                                          "content":  {
+                                                                                                          "*/*":  {
+                                                                                                                      "schema":  {
+                                                                                                                                     "$ref":  "#/components/schemas/ApiResponseJsApiConfig"
+                                                                                                                                 }
+                                                                                                                  }
+                                                                                                      }
+                                                                                      }
+                                                                          }
+                                                        }
+                                            },
                   "/api/auth/2fa/status":  {
                                                "get":  {
                                                            "tags":  [
@@ -1923,6 +2276,14 @@
                                                                                   "schema":  {
                                                                                                  "type":  "string"
                                                                                              }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "keyword",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "string"
+                                                                                             }
                                                                               }
                                                                           ],
                                                            "responses":  {
@@ -1978,6 +2339,14 @@
                                                                              "parameters":  [
                                                                                                 {
                                                                                                     "name":  "status",
+                                                                                                    "in":  "query",
+                                                                                                    "required":  false,
+                                                                                                    "schema":  {
+                                                                                                                   "type":  "string"
+                                                                                                               }
+                                                                                                },
+                                                                                                {
+                                                                                                    "name":  "keyword",
                                                                                                     "in":  "query",
                                                                                                     "required":  false,
                                                                                                     "schema":  {
@@ -2064,6 +2433,14 @@
                                                                                                       "type":  "integer",
                                                                                                       "format":  "int32",
                                                                                                       "default":  10
+                                                                                                  }
+                                                                                   },
+                                                                                   {
+                                                                                       "name":  "keyword",
+                                                                                       "in":  "query",
+                                                                                       "required":  false,
+                                                                                       "schema":  {
+                                                                                                      "type":  "string"
                                                                                                   }
                                                                                    }
                                                                                ],
@@ -2665,7 +3042,13 @@
                                                                                                },
                                                                                 "status":  {
                                                                                                "type":  "string"
-                                                                                           }
+                                                                                           },
+                                                                                "permissions":  {
+                                                                                                    "type":  "array",
+                                                                                                    "items":  {
+                                                                                                                  "type":  "string"
+                                                                                                              }
+                                                                                                }
                                                                             }
                                                          },
                                        "UserView":  {
@@ -2771,6 +3154,78 @@
                                                                                                              }
                                                                                     }
                                                                  },
+                                       "DeleteAccountRequest":  {
+                                                                    "required":  [
+                                                                                     "password"
+                                                                                 ],
+                                                                    "type":  "object",
+                                                                    "properties":  {
+                                                                                       "password":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                       "reason":  {
+                                                                                                      "maxLength":  200,
+                                                                                                      "minLength":  0,
+                                                                                                      "type":  "string"
+                                                                                                  }
+                                                                                   }
+                                                                },
+                                       "ApiResponseDeleteAccountView":  {
+                                                                            "type":  "object",
+                                                                            "properties":  {
+                                                                                               "code":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                               "message":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                               "data":  {
+                                                                                                            "$ref":  "#/components/schemas/DeleteAccountView"
+                                                                                                        },
+                                                                                               "requestId":  {
+                                                                                                                 "type":  "string"
+                                                                                                             },
+                                                                                               "timestamp":  {
+                                                                                                                 "type":  "integer",
+                                                                                                                 "format":  "int64"
+                                                                                                             }
+                                                                                           }
+                                                                        },
+                                       "BlockedItemView":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "type":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                  "ref":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                                  "detail":  {
+                                                                                                 "type":  "string"
+                                                                                             }
+                                                                              }
+                                                           },
+                                       "DeleteAccountView":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "accountStatus":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                    "scheduledAt":  {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                    "graceDays":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int32"
+                                                                                                  },
+                                                                                    "blockedItems":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "$ref":  "#/components/schemas/BlockedItemView"
+                                                                                                                   }
+                                                                                                     }
+                                                                                }
+                                                             },
                                        "CreditUpdateRequest":  {
                                                                    "type":  "object",
                                                                    "properties":  {
@@ -2985,6 +3440,12 @@
                                                                             "status":  {
                                                                                            "type":  "string"
                                                                                        },
+                                                                            "permissions":  {
+                                                                                                "type":  "array",
+                                                                                                "items":  {
+                                                                                                              "type":  "string"
+                                                                                                          }
+                                                                                            },
                                                                             "invitedBy":  {
                                                                                               "type":  "string"
                                                                                           },
@@ -2993,6 +3454,17 @@
                                                                                           }
                                                                         }
                                                      },
+                                       "PermissionsRequest":  {
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "permissions":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "type":  "string"
+                                                                                                                   }
+                                                                                                     }
+                                                                                 }
+                                                              },
                                        "WechatLoginRequest":  {
                                                                   "required":  [
                                                                                    "code"
@@ -3117,6 +3589,22 @@
                                                                                                 }
                                                                            }
                                                         },
+                                       "CancelDeleteAccountRequest":  {
+                                                                          "required":  [
+                                                                                           "password",
+                                                                                           "phone"
+                                                                                       ],
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "phone":  {
+                                                                                                           "pattern":  "^1[3-9]\\d{9}$",
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                             "password":  {
+                                                                                                              "type":  "string"
+                                                                                                          }
+                                                                                         }
+                                                                      },
                                        "ApiResponseTotpSetupView":  {
                                                                         "type":  "object",
                                                                         "properties":  {
@@ -3514,6 +4002,124 @@
                                                                                                   }
                                                                                    }
                                                                 },
+                                       "RenameStoreRequest":  {
+                                                                  "required":  [
+                                                                                   "storeName"
+                                                                               ],
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "storeName":  {
+                                                                                                       "type":  "string"
+                                                                                                   }
+                                                                                 }
+                                                              },
+                                       "ApiResponseStorePublicView":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/StorePublicView"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "StorePublicView":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "ownerUserId":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                  "name":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                  "openedAt":  {
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                              }
+                                                           },
+                                       "ApiResponseDeleteBlockersView":  {
+                                                                             "type":  "object",
+                                                                             "properties":  {
+                                                                                                "code":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                                "message":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                "data":  {
+                                                                                                             "$ref":  "#/components/schemas/DeleteBlockersView"
+                                                                                                         },
+                                                                                                "requestId":  {
+                                                                                                                  "type":  "string"
+                                                                                                              },
+                                                                                                "timestamp":  {
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              }
+                                                                                            }
+                                                                         },
+                                       "DeleteBlockersView":  {
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "blocked":  {
+                                                                                                     "type":  "boolean"
+                                                                                                 },
+                                                                                     "items":  {
+                                                                                                   "type":  "array",
+                                                                                                   "items":  {
+                                                                                                                 "$ref":  "#/components/schemas/BlockedItemView"
+                                                                                                             }
+                                                                                               }
+                                                                                 }
+                                                              },
+                                       "ApiResponseListStoreBrief":  {
+                                                                         "type":  "object",
+                                                                         "properties":  {
+                                                                                            "code":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                            "message":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                            "data":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "$ref":  "#/components/schemas/StoreBrief"
+                                                                                                                   }
+                                                                                                     },
+                                                                                            "requestId":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                            "timestamp":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int64"
+                                                                                                          }
+                                                                                        }
+                                                                     },
+                                       "StoreBrief":  {
+                                                          "type":  "object",
+                                                          "properties":  {
+                                                                             "ownerUserId":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int64"
+                                                                                             },
+                                                                             "name":  {
+                                                                                          "type":  "string"
+                                                                                      }
+                                                                         }
+                                                      },
                                        "ApiResponseListUserRoleBrief":  {
                                                                             "type":  "object",
                                                                             "properties":  {
@@ -3678,9 +4284,56 @@
                                                                                                 },
                                                                                  "status":  {
                                                                                                 "type":  "string"
-                                                                                            }
+                                                                                            },
+                                                                                 "permissions":  {
+                                                                                                     "type":  "array",
+                                                                                                     "items":  {
+                                                                                                                   "type":  "string"
+                                                                                                               }
+                                                                                                 }
                                                                              }
                                                           },
+                                       "ApiResponseListTicketMemberInfo":  {
+                                                                               "type":  "object",
+                                                                               "properties":  {
+                                                                                                  "code":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                                  "message":  {
+                                                                                                                  "type":  "string"
+                                                                                                              },
+                                                                                                  "data":  {
+                                                                                                               "type":  "array",
+                                                                                                               "items":  {
+                                                                                                                             "$ref":  "#/components/schemas/TicketMemberInfo"
+                                                                                                                         }
+                                                                                                           },
+                                                                                                  "requestId":  {
+                                                                                                                    "type":  "string"
+                                                                                                                },
+                                                                                                  "timestamp":  {
+                                                                                                                    "type":  "integer",
+                                                                                                                    "format":  "int64"
+                                                                                                                }
+                                                                                              }
+                                                                           },
+                                       "TicketMemberInfo":  {
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "userId":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                   "nickname":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                   "avatar":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                   "role":  {
+                                                                                                "type":  "string"
+                                                                                            }
+                                                                               }
+                                                            },
                                        "ApiResponseMerchantLicenseInfo":  {
                                                                               "type":  "object",
                                                                               "properties":  {
@@ -3810,6 +4463,125 @@
                                                                                                        }
                                                                                      }
                                                                   },
+                                       "ApiResponseRegeoView":  {
+                                                                    "type":  "object",
+                                                                    "properties":  {
+                                                                                       "code":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                       "message":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                       "data":  {
+                                                                                                    "$ref":  "#/components/schemas/RegeoView"
+                                                                                                },
+                                                                                       "requestId":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                       "timestamp":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     }
+                                                                                   }
+                                                                },
+                                       "Candidate":  {
+                                                         "type":  "object",
+                                                         "properties":  {
+                                                                            "name":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                            "address":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                            "distance":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32"
+                                                                                         },
+                                                                            "lng":  {
+                                                                                        "type":  "number",
+                                                                                        "format":  "double"
+                                                                                    },
+                                                                            "lat":  {
+                                                                                        "type":  "number",
+                                                                                        "format":  "double"
+                                                                                    }
+                                                                        }
+                                                     },
+                                       "RegeoView":  {
+                                                         "type":  "object",
+                                                         "properties":  {
+                                                                            "configured":  {
+                                                                                               "type":  "boolean"
+                                                                                           },
+                                                                            "coord":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                            "province":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                            "city":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                            "district":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                            "detail":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                            "adcode":  {
+                                                                                           "type":  "string"
+                                                                                       },
+                                                                            "lng":  {
+                                                                                        "type":  "number",
+                                                                                        "format":  "double"
+                                                                                    },
+                                                                            "lat":  {
+                                                                                        "type":  "number",
+                                                                                        "format":  "double"
+                                                                                    },
+                                                                            "candidates":  {
+                                                                                               "type":  "array",
+                                                                                               "items":  {
+                                                                                                             "$ref":  "#/components/schemas/Candidate"
+                                                                                                         }
+                                                                                           }
+                                                                        }
+                                                     },
+                                       "ApiResponseJsApiConfig":  {
+                                                                      "type":  "object",
+                                                                      "properties":  {
+                                                                                         "code":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                         "message":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                         "data":  {
+                                                                                                      "$ref":  "#/components/schemas/JsApiConfig"
+                                                                                                  },
+                                                                                         "requestId":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                         "timestamp":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       }
+                                                                                     }
+                                                                  },
+                                       "JsApiConfig":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "configured":  {
+                                                                                                 "type":  "boolean"
+                                                                                             },
+                                                                              "key":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                              "securityCode":  {
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                          }
+                                                       },
                                        "ApiResponseTotpStatusView":  {
                                                                          "type":  "object",
                                                                          "properties":  {

@@ -4,6 +4,14 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（九十九）· OpenAPI 契约重导（K-02）**
+
+- **问题**：`docs/openapi` 停留在 10-12；新增端点未入契约，导出脚本还漏了 social（:8087）。
+- **修复**：`export-openapi.ps1` 补入 social，服务数 6 → 7；重导 **362 个端点**
+  （user 78 / product 94 / trade 76 / fulfilment 53 / marketing 11 / ai 2 / social 48）。
+- **覆盖**：F-04 权限、H-03 变更历史、D-05 退款统计、B-05 面单、C-04 工单、C-02 实时票据均已入清单。
+- **口径**：网关 WebFlux 无 `/v3/api-docs`，100% 指 7 个 MVC 业务服务。
+
 **2026-10-26（九十八）· 商家操作手册 + 客服 / 运营 SOP（K-03 / K-04）**
 
 - **K-03**：[商家商品管理操作手册](docs/manuals/merchant-product-guide.md)：发布 / 审核 / 编辑 / 改价 /
