@@ -18,6 +18,7 @@ import { useAuth } from '@duoduo/shared/store/auth';
 import { formatBjDateTime } from '@duoduo/shared/lib/time';
 import { userApi } from '@duoduo/api-sdk/endpoints';
 import { useAsync } from '@duoduo/shared/components/hooks';
+import { TwoFactorSetupPanel } from '@duoduo/shared/components/TwoFactorSetup';
 import type { MerchantApplicationView } from '@duoduo/api-sdk/types';
 
 const ROLE_TEXT: Record<string, string> = {
@@ -190,6 +191,17 @@ export const SellerAccountPage: React.FC = () => {
           商家工作台与商城共用同一个账号（同一手机号）：商城侧的个人中心仍按商城登录态展示。
           若商城当前登录的不是本账号，进入时会提示登录已过期并要求重新登录。
         </p>
+      </div>
+
+      {/* F-05 · 两步验证：后端 /api/auth/2fa/** 本来就是账号自助能力，
+          商家端此前缺的只是入口。开启后商家端登录会要求输入认证器验证码。 */}
+      <div style={{ maxWidth: 720, marginTop: 18 }}>
+        <h3 className="section-title" style={{ fontSize: 17 }}>账号安全 · 两步验证</h3>
+        <p className="small muted" style={{ marginTop: 0, marginBottom: 10 }}>
+          商家账号能改商品、发货、退款与回复客服。开启两步验证后，即使密码泄露，
+          没有你手机上的验证码也进不了工作台；同时建议店主也提醒店员自行开启。
+        </p>
+        <TwoFactorSetupPanel audience="merchant" />
       </div>
     </div>
   );

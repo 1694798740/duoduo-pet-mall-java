@@ -10,7 +10,7 @@
  */
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { toFriendlyMessage, ApiError } from '@duoduo/api-sdk/client';
 import { canAccessMerchantWorkspace } from '@duoduo/shared/lib/roles';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -21,6 +21,10 @@ export const MerchantLoginPage: React.FC = () => {
   const expired = params.get('reason') === 'expired';
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  /** F-05 · 第二步：账号启用 2FA 后由后端 TOTP_REQUIRED 触发，前端不自行猜测 */
+  const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [needSecondStep, setNeedSecondStep] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,9 +35,21 @@ export const MerchantLoginPage: React.FC = () => {
       setError('请输入手机号与密码');
       return;
     }
+    if (needSecondStep && !code.trim()) {
+      setError(useRecovery ? '请输入一枚恢复码' : '请输入认证器 App 里的 6 位验证码');
+      return;
+    }
     setBusy(true);
     try {
-      const me = await login(phone.trim(), password);
+      const me = await login(
+        phone.trim(),
+        password,
+        needSecondStep
+          ? useRecovery
+            ? { recoveryCode: code.trim() }
+            : { totpCode: code.trim() }
+          : undefined,
+      );
       // 与平台后台**刻意不同**：这里不拒绝非商家账号，而是进入工作台由外壳渲染**入驻引导**
       // （"先实名 → 申请入驻"）—— 商家平台的登录页本身就是招商入口，拒登录会把漏斗掐断。
       if (!canAccessMerchantWorkspace(me.role, me.merchant)) {
@@ -41,6 +57,11 @@ export const MerchantLoginPage: React.FC = () => {
       }
       navigate('/seller', { replace: true });
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'TOTP_REQUIRED') {
+        setNeedSecondStep(true);
+        setCode('');
+        return;
+      }
       setError(toFriendlyMessage(err));
     } finally {
       setBusy(false);
@@ -66,6 +87,11 @@ export const MerchantLoginPage: React.FC = () => {
             {error}
           </div>
         ) : null}
+        {needSecondStep ? (
+          <div className="alert" style={{ margin: '12px 0', fontSize: 13 }} role="status">
+            该账号已启用两步验证。请打开认证器 App，输入当前显示的 6 位数字。
+          </div>
+        ) : null}
         <form onSubmit={submit} style={{ marginTop: 12 }}>
           <label style={{ display: 'block', marginBottom: 10 }}>
             <span className="text-muted" style={{ fontSize: 13 }}>
@@ -80,7 +106,7 @@ export const MerchantLoginPage: React.FC = () => {
               placeholder="11 位手机号"
             />
           </label>
-          <label style={{ display: 'block', marginBottom: 16 }}>
+          <label style={{ display: 'block', marginBottom: needSecondStep ? 10 : 16 }}>
             <span className="text-muted" style={{ fontSize: 13 }}>
               密码
             </span>
@@ -93,9 +119,39 @@ export const MerchantLoginPage: React.FC = () => {
               placeholder="请输入密码"
             />
           </label>
+          {needSecondStep ? (
+            <label style={{ display: 'block', marginBottom: 16 }}>
+              <span className="text-muted" style={{ fontSize: 13 }}>
+                {useRecovery ? '恢复码' : '验证码'}
+              </span>
+              <input
+                className="input"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={useRecovery ? '请输入恢复码（形如 ABCD-EFGH）' : '请输入 6 位数字'}
+              />
+            </label>
+          ) : null}
           <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%' }}>
-            {busy ? '登录中…' : '登录'}
+            {busy ? '登录中…' : needSecondStep ? '验证并登录' : '登录'}
           </button>
+          {needSecondStep ? (
+            <div style={{ marginTop: 10, textAlign: 'center' }}>
+              <button
+                type="button"
+                className="btn"
+                style={{ fontSize: 13, background: 'none', border: 'none', textDecoration: 'underline' }}
+                onClick={() => {
+                  setUseRecovery((v) => !v);
+                  setCode('');
+                  setError(null);
+                }}
+              >
+                {useRecovery ? '改用认证器验证码' : '手机丢了？改用恢复码'}
+              </button>
+            </div>
+          ) : null}
         </form>
       </div>
     </div>

@@ -2,6 +2,20 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商家端两步验证 UI e2e（`scripts/e2e/merchant-2fa-f05-ui-check.mjs`，17 项，第一百一十六轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/merchant-2fa-f05-ui-check.mjs
+```
+
+前置：容器在跑；user 已部署 E21（`/api/auth/2fa`）；merchant-web / admin-web 为最新产物；
+运营 13684295254 未启用 2FA（后台回归用）。
+覆盖：临时店主在账号中心开始绑定 → 从 otpauth 取密钥 → 动态码启用 → 恢复码一次性展示 →
+退出重登出现「该账号已启用两步验证」→ 错误验证码被拒 → 正确验证码进入工作台 →
+商城 Web 登录同一切到第二步并用恢复码完成登录 → 后台账号安全页仍正常渲染；
+商家端 / 商城 / 后台 0 pageerror / 0 5xx；2FA / 恢复码 / 店铺 / 临时账号零残留。
+2026-10-26 实测 **17/0**。
+
 ## 分享圈 UI e2e（`scripts/e2e/share-circle-ui-check.mjs`，21 项，第一百一十五轮）
 
 ```bash

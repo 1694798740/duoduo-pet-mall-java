@@ -13,7 +13,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { toFriendlyMessage, ApiError } from '@duoduo/api-sdk/client';
 import { Alert, Field, PHONE_PATTERN, useToast } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
 
@@ -22,6 +22,10 @@ export const LoginPage: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
+  /** F-05 · 账号启用 2FA 后，商城登录同样需要验证码（账号级能力，不能只让商家端能进） */
+  const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [needSecondStep, setNeedSecondStep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -51,6 +55,10 @@ export const LoginPage: React.FC = () => {
       setError(invalid);
       return;
     }
+    if (!isRegister && needSecondStep && !code.trim()) {
+      setError(useRecovery ? '请输入一枚恢复码' : '请输入认证器 App 里的 6 位验证码');
+      return;
+    }
 
     setBusy(true);
     try {
@@ -58,11 +66,24 @@ export const LoginPage: React.FC = () => {
         await register(phone, password, nickname.trim() || undefined);
         push('注册成功，已自动登录', 'success');
       } else {
-        await login(phone, password);
+        await login(
+          phone,
+          password,
+          needSecondStep
+            ? useRecovery
+              ? { recoveryCode: code.trim() }
+              : { totpCode: code.trim() }
+            : undefined,
+        );
         push('登录成功', 'success');
       }
       navigate(next, { replace: true });
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'TOTP_REQUIRED') {
+        setNeedSecondStep(true);
+        setCode('');
+        return;
+      }
       setError(toFriendlyMessage(err));
     } finally {
       setBusy(false);
@@ -110,6 +131,14 @@ export const LoginPage: React.FC = () => {
           </div>
         ) : null}
 
+        {!isRegister && needSecondStep ? (
+          <div style={{ marginBottom: 14 }}>
+            <Alert kind="warn">
+              该账号已启用两步验证。请打开认证器 App，输入当前显示的 6 位数字。
+            </Alert>
+          </div>
+        ) : null}
+
         {expired ? <Alert kind="warn">登录已过期，请重新登录。</Alert> : null}
       <form onSubmit={submit}>
           <Field label="手机号" required>
@@ -151,9 +180,38 @@ export const LoginPage: React.FC = () => {
             />
           </Field>
 
+          {!isRegister && needSecondStep ? (
+            <Field label={useRecovery ? '恢复码' : '验证码'} required>
+              <input
+                className="input"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={useRecovery ? '请输入恢复码（形如 ABCD-EFGH）' : '请输入 6 位数字'}
+                autoComplete="one-time-code"
+                inputMode={useRecovery ? 'text' : 'numeric'}
+              />
+            </Field>
+          ) : null}
+
           <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
-            {busy ? '处理中…' : isRegister ? '注册并登录' : '登录'}
+            {busy ? '处理中…' : isRegister ? '注册并登录' : needSecondStep ? '验证并登录' : '登录'}
           </button>
+
+          {!isRegister && needSecondStep ? (
+            <div style={{ marginTop: 10, textAlign: 'center' }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                type="button"
+                onClick={() => {
+                  setUseRecovery((v) => !v);
+                  setCode('');
+                  setError(null);
+                }}
+              >
+                {useRecovery ? '改用认证器验证码' : '手机丢了？改用恢复码'}
+              </button>
+            </div>
+          ) : null}
         </form>
 
         <div style={{ marginTop: 14, textAlign: 'center' }}>
@@ -163,6 +221,8 @@ export const LoginPage: React.FC = () => {
             onClick={() => {
               setIsRegister((v) => !v);
               setError(null);
+              setNeedSecondStep(false);
+              setCode('');
             }}
           >
             {isRegister ? '已有账号？去登录' : '还没有账号？立即注册'}
