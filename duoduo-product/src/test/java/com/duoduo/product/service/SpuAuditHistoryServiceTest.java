@@ -3,12 +3,15 @@ package com.duoduo.product.service;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.dto.SpuAuditDtos.FieldChange;
 import com.duoduo.product.dto.SpuAuditDtos.SpuAuditLogView;
+import com.duoduo.product.dto.SpuAuditDtos.SpuChangeHistoryItem;
 import com.duoduo.product.entity.SpuAuditLogEntity;
 import com.duoduo.product.entity.SpuEntity;
 import com.duoduo.product.mapper.SpuAuditLogMapper;
@@ -363,6 +366,53 @@ class SpuAuditHistoryServiceTest {
         // 一条脏 JSON 不能让整页 500；丢掉这一条的 diff 比丢掉整页历史更可接受
         assertThat(views.get(1).changes()).isEmpty();
         assertThat(views.get(1).actorPhone()).isEqualTo("13800000000");
+    }
+
+    // ---------------- H-03 · 跨商品变更历史 ----------------
+
+    @Test
+    void 跨商品变更历史按条件分页并回填商品标题() {
+        UserContext.set(operator());
+        Page<SpuAuditLogEntity> page = new Page<>(1, 20);
+        page.setRecords(List.of(row(2L, "EDIT", "SELLER", 101L, "13800000000")));
+        page.setTotal(1);
+        when(logMapper.selectPage(any(), any())).thenReturn(page);
+        when(spuMapper.selectBatchIds(any())).thenReturn(List.of(spu()));
+
+        PageResult<SpuChangeHistoryItem> result =
+                service.changeHistory("9001", "新标题", "edit", 101L, 1, 20);
+
+        assertThat(result.total()).isEqualTo(1);
+        assertThat(result.items()).hasSize(1);
+        SpuChangeHistoryItem item = result.items().get(0);
+        assertThat(item.spuId()).isEqualTo("9001");
+        assertThat(item.spuTitle()).isEqualTo("新标题");
+        assertThat(item.sellerId()).isEqualTo("101");
+        assertThat(item.event()).isEqualTo("EDIT");
+        assertThat(item.actorLabel()).isEqualTo("卖家");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaQueryWrapper<SpuAuditLogEntity>> captor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(logMapper).selectPage(any(), captor.capture());
+        assertThat(captor.getValue().getSqlSegment())
+                .contains("spu_id", "seller_id", "event", "LIKE", "ORDER BY", "DESC");
+    }
+
+    @Test
+    void 跨商品变更历史只对运营开放且拒绝非法条件() {
+        UserContext.set(seller());
+        assertThatThrownBy(() -> service.changeHistory(null, null, null, null, 1, 20))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("仅运营");
+
+        UserContext.set(operator());
+        assertThatThrownBy(() -> service.changeHistory("abc", null, null, null, 1, 20))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("商品 id");
+        assertThatThrownBy(() -> service.changeHistory(null, null, "WHATEVER", null, 1, 20))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未知事件");
     }
 
     private static SpuAuditLogEntity row(long id, String event, String actorType, Long actorId, String phone) {

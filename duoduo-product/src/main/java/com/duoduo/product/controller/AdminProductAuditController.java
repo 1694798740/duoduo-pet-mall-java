@@ -8,6 +8,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditRequest;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.SpuAuditDtos.SpuAuditLogView;
+import com.duoduo.product.dto.SpuAuditDtos.SpuChangeHistoryItem;
 import com.duoduo.product.service.SellerProductService;
 import com.duoduo.product.service.SpuAuditHistoryService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -69,6 +70,24 @@ public class AdminProductAuditController {
     public ApiResponse<List<SpuAuditLogView>> history(@PathVariable Long spuId,
                                                       @RequestParam(defaultValue = "50") Integer limit) {
         return ApiResponse.ok(auditHistoryService.history(spuId, limit));
+    }
+
+    /**
+     * H-03 · 跨商品变更历史：按商品 / 标题关键词 / 事件 / 店铺过滤，分页返回改前改后。
+     *
+     * <p>路径是字面量而不是 {@code /{spuId}}：本控制器已有 {@code GET /{spuId}}，
+     * Spring 会优先匹配更具体的字面量路径，不会把 {@code change-history} 当成商品 id。
+     */
+    @GetMapping("/change-history")
+    public ApiResponse<PageResult<SpuChangeHistoryItem>> changeHistory(
+            @RequestParam(required = false) String spuId,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String event,
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.ok(auditHistoryService.changeHistory(
+                spuId, keyword, event, sellerId, page, pageSize));
     }
 
     /** 审核结论：{@code {"action":"APPROVE"|"REJECT","reason":"...","version":0}}（驳回时 reason 必填；version 必带） */

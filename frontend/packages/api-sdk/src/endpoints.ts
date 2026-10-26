@@ -30,6 +30,7 @@ import type {
   AdminProductAuditView,
   AdminReviewView,
   SpuAuditLogView,
+  SpuChangeHistoryItem,
   AuditLogQuery,
   AuditLogView,
   AdminReport,
@@ -821,6 +822,16 @@ export const adminApi = {
     api.get<SpuAuditLogView[]>(`/api/admin/products/${spuId}/history`, {
       query: limit == null ? undefined : { limit },
     }),
+
+  /** H-03 · 跨商品变更历史：按商品 / 标题 / 事件 / 店铺过滤，分页返回改前改后 */
+  productChangeHistory: (query?: {
+    spuId?: string;
+    keyword?: string;
+    event?: string;
+    sellerId?: string;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<PageResult<SpuChangeHistoryItem>>('/api/admin/products/change-history', { query }),
 
   // ---- E28 · 商品侧事后抽查（落在 duoduo-product，路径族与审核台分开） ----
   //

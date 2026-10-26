@@ -1,6 +1,8 @@
 package com.duoduo.product.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
@@ -9,6 +11,7 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.SpuAuditDtos.FieldChange;
 import com.duoduo.product.dto.SpuAuditDtos.SpuAuditLogView;
+import com.duoduo.product.dto.SpuAuditDtos.SpuChangeHistoryItem;
 import com.duoduo.product.entity.SpuAuditLogEntity;
 import com.duoduo.product.entity.SpuEntity;
 import com.duoduo.product.mapper.SpuAuditLogMapper;
@@ -370,6 +373,87 @@ public class SpuAuditHistoryService {
             return List.of();
         }
         return rows.stream().map(this::toView).toList();
+    }
+
+    /**
+     * H-03 · 跨商品变更历史（运营后台独立页）。
+     *
+     * <p>与 {@link #history(Long, Integer)} 的分工：那个是「打开某件商品看它的时间线」，
+     * 这个是「先按条件找记录，再点开看改前改后」。因此必须支持商品 title 关键词、
+     * 事件、店铺归属与商品 id 过滤，并返回商品标题 —— 否则运营只能拿着 spuId 猜。
+     *
+     * <p>只读、只对运营开放；分页上限 100，避免把几年记录一次捞出来。
+     */
+    public PageResult<SpuChangeHistoryItem> changeHistory(String spuIdText, String keyword,
+                                                          String event, Long sellerId,
+                                                          int page, int pageSize) {
+        OperatorGuard.requireOperator();
+        Long spuId = parseSpuId(spuIdText);
+        String normalizedEvent = normalizeEvent(event);
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? 20 : Math.min(pageSize, MAX_LIMIT);
+        LambdaQueryWrapper<SpuAuditLogEntity> wrapper = new LambdaQueryWrapper<SpuAuditLogEntity>()
+                .orderByDesc(SpuAuditLogEntity::getId);
+        if (spuId != null) {
+            wrapper.eq(SpuAuditLogEntity::getSpuId, spuId);
+        }
+        if (sellerId != null) {
+            wrapper.eq(SpuAuditLogEntity::getSellerId, sellerId);
+        }
+        if (normalizedEvent != null) {
+            wrapper.eq(SpuAuditLogEntity::getEvent, normalizedEvent);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            wrapper.apply("spu_id IN (SELECT id FROM t_spu WHERE title LIKE {0})",
+                    "%" + keyword.trim() + "%");
+        }
+        Page<SpuAuditLogEntity> result = logMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        List<SpuAuditLogEntity> rows = result.getRecords();
+        if (rows == null || rows.isEmpty()) {
+            return PageResult.of(List.of(), result.getTotal(), pageNo, size);
+        }
+        List<Long> spuIds = rows.stream().map(SpuAuditLogEntity::getSpuId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, String> titles = spuIds.isEmpty() ? Map.of()
+                : spuMapper.selectBatchIds(spuIds).stream()
+                        .collect(Collectors.toMap(SpuEntity::getId, SpuEntity::getTitle));
+        List<SpuChangeHistoryItem> items = rows.stream().map(row -> {
+            SpuAuditLogView view = toView(row);
+            Long rowSpuId = row.getSpuId();
+            return new SpuChangeHistoryItem(
+                    view.id(),
+                    rowSpuId == null ? null : String.valueOf(rowSpuId),
+                    rowSpuId == null ? null : titles.getOrDefault(rowSpuId, "#" + rowSpuId),
+                    row.getSellerId() == null ? null : String.valueOf(row.getSellerId()),
+                    view.event(), view.eventLabel(),
+                    view.actorType(), view.actorLabel(), view.actorId(), view.actorPhone(),
+                    view.fromAuditStatus(), view.toAuditStatus(), view.reason(),
+                    view.versionBefore(), view.versionAfter(), view.changes(), view.createdAt());
+        }).toList();
+        return PageResult.of(items, result.getTotal(), pageNo, size);
+    }
+
+    private Long parseSpuId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.valueOf(raw.trim());
+        } catch (NumberFormatException ex) {
+            throw BizException.validation("商品 id 必须是数字");
+        }
+    }
+
+    private String normalizeEvent(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String event = raw.trim().toUpperCase();
+        return switch (event) {
+            case EVENT_SUBMIT, EVENT_EDIT, EVENT_RESUBMIT, EVENT_APPROVE, EVENT_REJECT,
+                 EVENT_SAMPLE_REJECT -> event;
+            default -> throw BizException.validation("未知事件：" + raw);
+        };
     }
 
     private SpuAuditLogView toView(SpuAuditLogEntity row) {

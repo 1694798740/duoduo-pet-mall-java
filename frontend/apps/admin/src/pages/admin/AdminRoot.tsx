@@ -23,6 +23,7 @@ import { AdminTenantHealthPage } from './TenantHealth';
 import { AdminAuditsPage } from './Audits';
 import { AdminOperationAuditsPage } from './OperationAudits';
 import { AdminProductAuditsPage } from './ProductAudits';
+import { AdminProductHistoryPage } from './ProductHistory';
 import { AdminAuditSlaPage } from './AuditSla';
 import { AdminMerchantsPage } from './Merchants';
 import { AdminMerchantStaffPage } from './MerchantStaff';
@@ -110,6 +111,8 @@ export const AdminRoot: React.FC = () => (
           路径刻意分开 —— 前者是「谁在后台做了什么」的追责台账，后者是「等我放行的内容」待办队列。 */}
       <Route path="/admin/operation-audits" element={<AdminOperationAuditsPage />} />
       <Route path="/admin/product-audits" element={<AdminProductAuditsPage />} />
+      {/* H-03 · 跨商品变更历史：先按条件找记录，再点开看字段级改前改后 */}
+      <Route path="/admin/product-history" element={<AdminProductHistoryPage />} />
       <Route path="/admin/audit-sla" element={<AdminAuditSlaPage />} />
       <Route path="/admin/categories" element={<AdminCategoriesPage />} />
       <Route path="/admin/brands" element={<AdminBrandsPage />} />

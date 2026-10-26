@@ -2,6 +2,31 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商品变更历史冒烟（`scripts/product-change-history-h03-smoke.mjs`，19 项，第一百一十四轮）
+
+```bash
+NO_PROXY="*" node scripts/product-change-history-h03-smoke.mjs
+```
+
+前置：容器在跑；product 已部署 H-03；卖家 13600003333、运营 13684295254 可用。
+覆盖：卖家提交 + 编辑商品后，跨商品接口按 spuId / 标题关键词 / 事件 / 店铺过滤，
+最新在前、标题回填、EDIT 行含标题改前改后、SUBMIT 行无 diff；
+pageSize=1 时 total 仍为全量；回归单商品时间线；卖家 403、未登录 401、非法 id / 未知事件 400；
+商品 / SKU / 图片 / 审核历史零残留。2026-10-26 实测 **19/0**。
+
+## 商品变更历史 UI e2e（`scripts/e2e/product-change-history-h03-ui-check.mjs`，11 项，第一百一十四轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/product-change-history-h03-ui-check.mjs
+```
+
+前置：后台端为最新容器产物（`npm run build:admin` + 重建 `duoduo-admin-web-app`）；
+product 已部署 H-03；卖家 / 运营账号可用。
+覆盖：导航含「变更历史」；按商品 ID + 标题查询出现记录并回填标题；
+行内显示「编辑内容」与操作人；「查看改动」弹窗展示旧标题 → 新标题；
+事件筛选 EDIT 仍有记录、APPROVE 显示空态；0 pageerror / 0 5xx；夹具零残留。
+2026-10-26 实测 **11/0**。
+
 ## 店员权限冒烟（`scripts/staff-permissions-f04-smoke.mjs`，37 项，第一百一十二轮）
 
 ```bash

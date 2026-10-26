@@ -997,6 +997,27 @@ export interface SpuAuditLogView {
   createdAt: string | null;
 }
 
+/** H-03 · 跨商品变更历史的一条（运营后台独立页，带商品标题与店铺归属） */
+export interface SpuChangeHistoryItem {
+  id: string;
+  spuId: string | null;
+  spuTitle: string | null;
+  sellerId: string | null;
+  event: string;
+  eventLabel: string;
+  actorType: string;
+  actorLabel: string;
+  actorId: string | null;
+  actorPhone: string | null;
+  fromAuditStatus: string | null;
+  toAuditStatus: string | null;
+  reason: string | null;
+  versionBefore: number | null;
+  versionAfter: number | null;
+  changes: SpuAuditFieldChange[];
+  createdAt: string | null;
+}
+
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------
 
 export interface CategorySaveRequest {

@@ -30,6 +30,9 @@ const TABS = [
   { to: '/admin/tenant-health', label: '租户健康度', end: false },
   { to: '/admin/audits', label: '内容审核', end: false },
   { to: '/admin/product-audits', label: '商品审核', end: false },
+  // H-03：审核台是「等我放行的队列」，变更历史是「回头查谁改过什么」的台账 ——
+  // 两者相邻但语义不同，因此独立入口。
+  { to: '/admin/product-history', label: '变更历史', end: false },
   // E28：抽查是「已经在卖了、我回头看」的复核，与上面两个「等着放行」的队列语义不同，
   // 因此是独立入口而不是并进审核台（混在一起运营会看错待办的紧急程度）。
   { to: '/admin/audit-sla', label: '抽查复核', end: false },

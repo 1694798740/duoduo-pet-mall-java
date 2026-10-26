@@ -53,4 +53,31 @@ public final class SpuAuditDtos {
             String createdAt
     ) {
     }
+
+    /**
+     * H-03 · 跨商品变更历史的一条（运营后台独立页）。
+     *
+     * <p>与 {@link SpuAuditLogView} 的区别：那条只属于某个商品的详情时间线；
+     * 这一条额外带商品 id / 标题 / 归属店铺，才能在没有「先选商品」的情况下展示与检索。
+     */
+    public record SpuChangeHistoryItem(
+            String id,
+            String spuId,
+            String spuTitle,
+            String sellerId,
+            String event,
+            String eventLabel,
+            String actorType,
+            String actorLabel,
+            String actorId,
+            String actorPhone,
+            String fromAuditStatus,
+            String toAuditStatus,
+            String reason,
+            Integer versionBefore,
+            Integer versionAfter,
+            List<FieldChange> changes,
+            String createdAt
+    ) {
+    }
 }
