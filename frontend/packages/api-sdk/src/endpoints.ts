@@ -85,6 +85,9 @@ import type {
   SellerProductDetailView,
   SellerProductUpdateRequest,
   SellerProductView,
+  SellerSkuStructureRequest,
+  SellerSkuStructureResultView,
+  SellerSkuUsageView,
   FollowCounts,
   FollowState,
   FollowView,
@@ -612,6 +615,20 @@ export const sellerApi = {
   /** SKU 改价 / 改库存（2026-10-24）：不触发内容重审，服务端会同步商品价格区间 */
   updateSkuPriceStock: (spuId: string, body: { skus: import('./types').SkuPriceStockInput[] }) =>
     api.put<import('./types').SellerProductDetailView>(`/api/seller/products/${spuId}/skus/price-stock`, body),
+
+  /**
+   * 规格增删改（A-14）：请求里的 skus 是保存后的**全部规格**。
+   *
+   * 结构变更（新增 / 删除 / 改名 / 换图）会让第三方商品重新进入审核并升版本；
+   * 只改价格 / 库存时不重审、不升版本。
+   * 有订单（或仍有冻结库存）的规格不能删除：服务端整单拒绝，不会删一半。
+   */
+  updateProductSkus: (spuId: string, body: SellerSkuStructureRequest) =>
+    api.put<SellerSkuStructureResultView>(`/api/seller/products/${spuId}/skus`, body),
+
+  /** 规格订单占用（A-14，只读）：列表里没有的规格才允许删除 */
+  productSkuUsage: (spuId: string) =>
+    api.get<SellerSkuUsageView[]>(`/api/seller/products/${spuId}/skus/usage`),
 };
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------

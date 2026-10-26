@@ -79,6 +79,22 @@ interface EditDraft {
   skuLabels: Record<string, string>;
 }
 
+/**
+ * 规格结构编辑的一行（A-14）。
+ * `id` 为空 = 本次新增；`key` 只用于 React 列表，与后端 id 无关。
+ */
+interface SpecDraftRow {
+  key: string;
+  id: string | null;
+  specName: string;
+  /** 元，字符串（提交前 ×100 转分） */
+  price: string;
+  stock: string;
+}
+
+let specKeySeq = 0;
+const nextSpecKey = () => `spec-${++specKeySeq}`;
+
 /** 时间展示：回收站要让人看清「什么时候删的、什么时候会被清掉」 */
 function fmtTime(iso?: string | null): string {
   if (!iso) return '—';
@@ -126,6 +142,19 @@ export const SellerProductsPage: React.FC = () => {
   const [batchResult, setBatchResult] = useState<SellerProductBatchResultView | null>(null);
   /** 结果弹窗里要显示商品标题，但那时列表可能已经 reload —— 先按 id 快照住 */
   const [batchTitles, setBatchTitles] = useState<Record<string, string>>({});
+  /** A-14 · 规格结构弹窗（与内容编辑分开：结构变更要重审，价格/库存不重审） */
+  const [specEditing, setSpecEditing] = useState<SellerProductView | null>(null);
+  const [specRows, setSpecRows] = useState<SpecDraftRow[]>([]);
+  /** 打开弹窗时读到的版本与原始规格：版本用于乐观锁，原始规格用于判断「结构是否真的变了」 */
+  const [specVersion, setSpecVersion] = useState(0);
+  const [specOriginal, setSpecOriginal] = useState<Record<string, { specName: string }>>({});
+  const [specMerchant, setSpecMerchant] = useState(false);
+  const [specLoading, setSpecLoading] = useState(false);
+  const [specBusy, setSpecBusy] = useState(false);
+  /** SKU id → 订单数；只含被订单引用过的规格（服务端口径） */
+  const [specUsage, setSpecUsage] = useState<Record<string, number>>({});
+  /** 占用查询失败时不能假装「都可以删」 */
+  const [specUsageUnknown, setSpecUsageUnknown] = useState(false);
 
   const fetcher = useCallback(
     () =>
@@ -524,6 +553,178 @@ export const SellerProductsPage: React.FC = () => {
     }
   };
 
+  // ---------------- A-14 · 规格结构（增 / 删 / 改名 / 改价） ----------------
+
+  const closeSpecs = () => {
+    setSpecEditing(null);
+    setSpecRows([]);
+    setSpecOriginal({});
+    setSpecUsage({});
+    setSpecUsageUnknown(false);
+  };
+
+  /**
+   * 打开规格弹窗：拉详情拿最新版本与全部规格，再拉「订单占用」提前标出不可删的行。
+   *
+   * 占用查询失败不阻塞编辑（价格库存照常改），但必须显式提示「无法确认」——
+   * 把查不到当成没有订单，等于诱导卖家删掉一个卖过的规格。
+   */
+  const openSpecs = async (item: SellerProductView) => {
+    setSpecEditing(item);
+    setSpecRows([]);
+    setSpecOriginal({});
+    setSpecUsage({});
+    setSpecUsageUnknown(false);
+    setSpecLoading(true);
+    try {
+      const detail = await sellerApi.productDetail(item.id);
+      const skus = detail.skus ?? [];
+      setSpecVersion(detail.version);
+      setSpecMerchant(detail.supplyType === 'merchant');
+      setSpecRows(
+        skus.map((sku) => ({
+          key: nextSpecKey(),
+          id: sku.id,
+          specName: sku.specName ?? '',
+          price: (sku.price / 100).toFixed(2),
+          stock: String(sku.stock),
+        })),
+      );
+      const original: Record<string, { specName: string }> = {};
+      for (const sku of skus) {
+        original[sku.id] = { specName: sku.specName || '默认' };
+      }
+      setSpecOriginal(original);
+      try {
+        const usage = await sellerApi.productSkuUsage(item.id);
+        const next: Record<string, number> = {};
+        for (const entry of usage) next[entry.skuId] = entry.orderCount;
+        setSpecUsage(next);
+      } catch {
+        setSpecUsageUnknown(true);
+      }
+    } catch (err) {
+      push(err instanceof Error ? err.message : '读取商品详情失败', 'error');
+      setSpecEditing(null);
+    } finally {
+      setSpecLoading(false);
+    }
+  };
+
+  const patchSpecRow = (key: string, patch: Partial<SpecDraftRow>) => {
+    setSpecRows((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  };
+
+  const addSpecRow = () => {
+    if (specRows.length >= 20) {
+      push('最多支持 20 个规格', 'error');
+      return;
+    }
+    setSpecRows((rows) => [...rows, {
+      key: nextSpecKey(), id: null, specName: '', price: '', stock: '0',
+    }]);
+  };
+
+  const removeSpecRow = (row: SpecDraftRow) => {
+    if (specRows.length <= 1) {
+      push('商品至少需要一个规格', 'error');
+      return;
+    }
+    if (row.id && specUsage[row.id]) {
+      push(`「${row.specName || '默认'}」已有 ${specUsage[row.id]} 笔订单，不能删除；可以改名后保留`, 'error');
+      return;
+    }
+    setSpecRows((rows) => rows.filter((x) => x.key !== row.key));
+  };
+
+  const submitSpecs = async () => {
+    if (!specEditing) return;
+    if (specRows.length === 0) {
+      push('商品至少需要一个规格', 'error');
+      return;
+    }
+    const inputs: { id: string | null; specName: string; price: number; stock: number }[] = [];
+    for (const row of specRows) {
+      const yuan = Number(row.price);
+      const stock = Number(row.stock);
+      const name = row.specName.trim();
+      if (name.length > 30) {
+        push('规格名最多 30 个字', 'error');
+        return;
+      }
+      if (!Number.isFinite(yuan) || yuan <= 0) {
+        push('每个规格都要填写大于 0 的价格', 'error');
+        return;
+      }
+      const cents = Math.round(yuan * 100);
+      if (cents > 9_999_900) {
+        push('价格超出上限（单个规格最高 99999 元）', 'error');
+        return;
+      }
+      if (!Number.isInteger(stock) || stock < 0 || stock > 999_999) {
+        push('库存必须是 0 ~ 999999 的整数', 'error');
+        return;
+      }
+      inputs.push({ id: row.id, specName: name, price: cents, stock });
+    }
+
+    const keptIds = inputs.filter((x) => x.id).map((x) => x.id as string);
+    const addedCount = inputs.filter((x) => !x.id).length;
+    const removedCount = Object.keys(specOriginal).length - keptIds.length;
+    const renamedCount = inputs.filter((x) => {
+      const originalName = x.id ? specOriginal[x.id]?.specName : undefined;
+      return originalName !== undefined && (x.specName || '默认') !== originalName;
+    }).length;
+    const structureChanged = addedCount > 0 || removedCount > 0 || renamedCount > 0;
+
+    // 只有第三方商品会因结构变更重审：自营免审，不必拦一道无意义的确认
+    if (structureChanged && specMerchant) {
+      const parts: string[] = [];
+      if (addedCount) parts.push(`新增 ${addedCount} 个`);
+      if (removedCount) parts.push(`删除 ${removedCount} 个`);
+      if (renamedCount) parts.push(`改规格名 ${renamedCount} 个`);
+      const ok = await confirm({
+        title: '保存规格结构',
+        message: (
+          <>
+            本次将{parts.join('、')}。保存后商品会<b>重新进入审核</b>，审核期间前台不可见，
+            审核通过后自动恢复展示。
+            <br />
+            已有订单的规格不能删除 —— 若下方标记了「已有订单」，请改名保留而不是删掉。
+          </>
+        ),
+        confirmText: '保存并重新提审',
+        danger: removedCount > 0,
+      });
+      if (!ok) return;
+    }
+
+    setSpecBusy(true);
+    try {
+      const result = await sellerApi.updateProductSkus(specEditing.id, {
+        version: specVersion,
+        skus: inputs,
+      });
+      const summary = `新增 ${result.added} / 修改 ${result.updated} / 删除 ${result.removed}`;
+      push(
+        result.reaudited
+          ? `规格已保存（${summary}）。商品已重新进入审核，审核通过后前台恢复展示`
+          : `规格已保存（${summary}）。价格与库存变更不会触发重新审核`,
+        'success',
+      );
+      closeSpecs();
+      reload();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        push('商品已被其他人修改，本次保存未生效。请关闭后重新打开规格确认最新内容', 'error');
+      } else {
+        push(err instanceof Error ? err.message : '保存规格失败，请重试', 'error');
+      }
+    } finally {
+      setSpecBusy(false);
+    }
+  };
+
   if (!allowed) {
     return (
       <div>
@@ -791,6 +992,13 @@ export const SellerProductsPage: React.FC = () => {
                             >
                               编辑
                             </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={busyId === item.id}
+                              onClick={() => openSpecs(item)}
+                            >
+                              规格
+                            </button>
                             {item.auditStatus === 'REJECTED' ? (
                               <button
                                 className="btn btn-sm btn-primary"
@@ -1050,6 +1258,120 @@ export const SellerProductsPage: React.FC = () => {
               审核期间前台不可见、审核通过后自动恢复展示。价格与库存牵动 SKU 与在途订单金额，
               不在编辑范围内。
             </p>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={specEditing !== null}
+        title={`管理规格${specEditing ? ` · ${specEditing.title}` : ''}`}
+        onClose={closeSpecs}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={closeSpecs}>
+              取消
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={specBusy || specLoading || specRows.length === 0}
+              onClick={submitSpecs}
+            >
+              {specBusy ? '保存中…' : '保存规格'}
+            </button>
+          </>
+        }
+      >
+        {specLoading ? (
+          <LoadingBlock text="正在读取规格…" />
+        ) : (
+          <div>
+            <Alert kind="info">
+              这里的保存会整体替换该商品的规格：新增、删除、改规格名都会让
+              {specMerchant ? '商品重新进入审核，审核期间前台不可见' : '规格立即生效（自营商品免审）'}。
+              只改价格 / 库存不会触发重新审核。
+            </Alert>
+            {specUsageUnknown ? (
+              <Alert kind="warn">
+                暂时无法确认哪些规格已被订单引用。已有订单的规格不能删除，
+                若保存时被拒绝，请按提示改名保留。
+              </Alert>
+            ) : null}
+            <table className="table" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>规格名</th>
+                  <th style={{ width: 130 }}>价格（元）</th>
+                  <th style={{ width: 110 }}>库存</th>
+                  <th style={{ width: 170 }}>状态</th>
+                  <th style={{ width: 80 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {specRows.map((row) => {
+                  const used = row.id ? (specUsage[row.id] ?? 0) : 0;
+                  return (
+                    <tr key={row.key}>
+                      <td>
+                        <input
+                          className="input"
+                          value={row.specName}
+                          maxLength={30}
+                          placeholder="如 2kg（留空为「默认」）"
+                          onChange={(e) => patchSpecRow(row.key, { specName: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          inputMode="decimal"
+                          value={row.price}
+                          onChange={(e) => patchSpecRow(row.key, { price: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          value={row.stock}
+                          onChange={(e) => patchSpecRow(row.key, { stock: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        {used ? (
+                          <span className="small" style={{ color: '#c0392b' }}>
+                            已有 {used} 笔订单，不可删除
+                          </span>
+                        ) : row.id ? (
+                          <span className="tag">可删除</span>
+                        ) : (
+                          <span className="tag">新增</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: used ? undefined : '#c0392b' }}
+                          disabled={specBusy || specRows.length <= 1 || used > 0}
+                          onClick={() => removeSpecRow(row)}
+                        >
+                          删除
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                disabled={specBusy || specRows.length >= 20}
+                onClick={addSpecRow}
+              >
+                + 新增规格
+              </button>
+              <span className="small muted">最多 20 个规格 · 已有订单的规格不能删除</span>
+            </div>
           </div>
         )}
       </Modal>

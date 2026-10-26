@@ -8,6 +8,9 @@ import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuUsageView;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureResultView;
 import com.duoduo.product.service.SellerProductService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -165,5 +168,39 @@ public class SellerProductController {
             @PathVariable Long spuId,
             @RequestBody(required = false) SellerSkuPriceStockRequest request) {
         return ApiResponse.ok(sellerProductService.updateSkuPriceStock(spuId, request));
+    }
+
+    /**
+     * SKU 规格结构保存（A-14）：全量集合语义。
+     *
+     * <p>请求里的 {@code skus} 就是保存后该商品应有的全部规格：{@code id} 为空 = 新增，
+     * 库里有、请求里没有 = 删除。一次保存只触发一次重审 / 一次版本递增 / 一次价格区间重算。
+     *
+     * <p>口径差异：
+     * <ul>
+     *   <li>新增 / 删除 / 改规格名 / 换规格图 → 第三方商品重新审核，{@code version + 1}；</li>
+     *   <li>仅改价格 / 库存 → 不重审、不升版本（与 {@code /skus/price-stock} 一致）；</li>
+     *   <li>已有订单（或仍有冻结库存）的规格禁止删除，返回业务错误且不落任何改动。</li>
+     * </ul>
+     *
+     * <p>为什么用 PUT 而不是拆成 POST / DELETE / PATCH 三个端点：结构编辑是一个整体，
+     * 全量提交才能保证「保存后正好是用户看到的那一套」；拆开后任意一条失败都会留下半套规格。
+     */
+    @PutMapping("/{spuId}/skus")
+    public ApiResponse<SellerSkuStructureResultView> updateSkuStructure(
+            @PathVariable Long spuId,
+            @RequestBody(required = false) SellerSkuStructureRequest request) {
+        return ApiResponse.ok(sellerProductService.updateSkuStructure(spuId, request));
+    }
+
+    /**
+     * 规格的订单占用（A-14，只读）：给规格弹窗提前标出「已有订单，不能删除」。
+     *
+     * <p>只返回被订单引用过的规格；列表外的规格可删。查询失败返回业务错误，
+     * 前端展示为「占用情况暂时无法确认」——不把「查不到」说成「没有订单」。
+     */
+    @GetMapping("/{spuId}/skus/usage")
+    public ApiResponse<List<SellerSkuUsageView>> skuUsage(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.skuUsage(spuId));
     }
 }

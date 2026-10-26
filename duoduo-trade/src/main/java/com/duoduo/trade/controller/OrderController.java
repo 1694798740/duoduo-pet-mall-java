@@ -308,6 +308,19 @@ public class OrderController {
     }
 
     /**
+     * 服务间只读：这些 SKU 是否被订单明细引用过（A-14 商品域删除规格的门禁）。
+     *
+     * <p><b>内部接口</b>，由 {@code InternalTokenFilter} 校验 {@code X-Internal-Token}。
+     * 只回「有订单」的 SKU 与次数，不回买家、金额、收货信息 ——
+     * 商品域只需要回答「能不能删」，不需要知道「卖给了谁」。
+     */
+    @PostMapping("/internal/sku-usage")
+    public ApiResponse<List<com.duoduo.trade.dto.OrderDtos.SkuUsageView>> internalSkuUsage(
+            @RequestBody(required = false) com.duoduo.trade.dto.OrderDtos.SkuUsageQuery request) {
+        return ApiResponse.ok(orderService.internalSkuUsage(request == null ? null : request.skuIds()));
+    }
+
+    /**
      * C7 · 账号注销的个人数据清理（服务间调用，见 {@code docs/account-deletion-design.md} 4.4）。
      *
      * <p><b>内部接口</b>：路径以 {@code /api/orders/internal/} 开头，由本域

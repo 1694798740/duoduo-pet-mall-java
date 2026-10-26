@@ -137,6 +137,26 @@ public class SpuAuditHistoryService {
                 diff(before, after), after, staffMember);
     }
 
+    /**
+     * 规格结构变更（A-14）：与普通内容编辑同属 EDIT 事件，额外落一条
+     * {@code field=skus / label=规格} 的改前 / 改后文本。
+     *
+     * <p>为什么规格不塞进 {@link ContentSnapshot}：快照是 SPU 主档的字段投影，
+     * 规格在另一张表、数量可变；把可变集合塞进「一行快照」会让 diff 逻辑与
+     * 版本语义都变复杂。这里由调用方在改前 / 改后各生成一段稳定文本，
+     * 与其它字段共用同一套截断与序列化。
+     */
+    public void recordSkuEdit(ContentSnapshot before, SpuEntity after,
+                              String skusBefore, String skusAfter, boolean staffMember) {
+        if (before == null || !recordable(after)) {
+            return;
+        }
+        List<FieldChange> changes = diff(before, after);
+        add(changes, "skus", "规格", skusBefore, skusAfter, skusBefore, skusAfter);
+        insert(EVENT_EDIT, before.auditStatus(), after.getAuditStatus(), after.getAuditSource(), null,
+                before.version(), zeroIfNull(after.getVersion()), null, changes, after, staffMember);
+    }
+
     public void recordResubmit(ContentSnapshot before, SpuEntity after, boolean staffMember) {
         if (before == null || !recordable(after)) {
             return;

@@ -30,6 +30,7 @@ import com.duoduo.trade.dto.OrderDtos.PreviewOrderRequest;
 import com.duoduo.trade.dto.OrderDtos.PreviewOrderResult;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
 import com.duoduo.trade.dto.OrderDtos.SellerOrderStats;
+import com.duoduo.trade.dto.OrderDtos.SkuUsageView;
 import com.duoduo.trade.dto.OrderDtos.SweepResult;
 import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.entity.CartItemEntity;
@@ -948,6 +949,35 @@ public class OrderService {
         int refunded = counts.getOrDefault(OrderStatus.REFUNDED.name(), 0);
         int total = pending + paid + shipped + completed + closed + refunded;
         return new SellerOrderStats(sellerId, pending, paid, shipped, completed, closed, refunded, total);
+    }
+
+    /**
+     * 服务间只读：这些 SKU 是否被订单明细引用过（A-14 删除规格门禁）。
+     *
+     * <p>只返回「有订单」的 SKU，不返回 0 计数 —— 调用方关心的是「哪些不能删」，
+     * 把没卖过的 SKU 也用零值铺满会让响应随请求规模膨胀。
+     *
+     * <p>不做归属校验：准入由内部凭据把关，商品域在调用前已经校验了
+     * 「这些 SKU 属于当前卖家要改的商品」。这里多传一个 sellerId 反而会制造
+     * 「商品域说是你的、交易域说不是」的两套归属口径。
+     */
+    public List<SkuUsageView> internalSkuUsage(List<Long> skuIds) {
+        if (skuIds == null || skuIds.isEmpty()) {
+            return List.of();
+        }
+        // 不做 limit 截断：少查一个 SKU 就可能让一个卖过的规格被误删，
+        // 宁可让 IN 长一点。商品侧单商品规格上限 20，正常调用不会放大。
+        List<Long> distinct = skuIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (distinct.isEmpty()) {
+            return List.of();
+        }
+        return orderItemMapper.countBySkuIds(distinct).stream()
+                .map(row -> new SkuUsageView(row.getSkuId(),
+                        row.getOrderCount() == null ? 0L : row.getOrderCount()))
+                .toList();
     }
 
     // ---------------- 取消（含释放冻结） ----------------

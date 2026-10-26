@@ -12,9 +12,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.MerchantRiskClient;
+import com.duoduo.product.client.SkuUsageClient;
 import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.client.dto.MerchantRiskInfo;
+import com.duoduo.product.client.dto.SkuUsageInfo;
+import com.duoduo.product.client.dto.SkuUsageQuery;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchItemView;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
@@ -24,6 +27,10 @@ import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
 import com.duoduo.product.dto.ProductDtos.SkuPriceStockInput;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureInput;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureResultView;
+import com.duoduo.product.dto.ProductDtos.SellerSkuUsageView;
 import com.duoduo.product.entity.CategoryEntity;
 import com.duoduo.product.entity.SkuEntity;
 import com.duoduo.product.entity.SpuEntity;
@@ -54,6 +61,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
@@ -87,6 +95,7 @@ class SellerProductServiceTest {
     private final MembershipClient membershipClient = mock(MembershipClient.class);
     private final MerchantLicenseClient merchantLicenseClient = mock(MerchantLicenseClient.class);
     private final MerchantRiskClient merchantRiskClient = mock(MerchantRiskClient.class);
+    private final SkuUsageClient skuUsageClient = mock(SkuUsageClient.class);
     private final BannedWordGuard bannedWordGuard = mock(BannedWordGuard.class);
     private final CatalogLookup catalogLookup = mock(CatalogLookup.class);
     private final SpuAuditHistoryService auditHistoryService = mock(SpuAuditHistoryService.class);
@@ -96,7 +105,7 @@ class SellerProductServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
-            new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
+            skuUsageClient, new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
             auditHistoryService, categoryAttrService, spuImageService, eventPublisher);
 
     /**
@@ -115,6 +124,8 @@ class SellerProductServiceTest {
                 new MerchantLicenseInfo("710000000000000101", "APPROVED", "NONE", null, null)));
         when(merchantRiskClient.of(any())).thenReturn(ApiResponse.ok(
                 new MerchantRiskInfo("710000000000000101", 0, false, false, false)));
+        // A-14：默认「没有任何 SKU 被订单引用」；要验删除门禁的用例显式覆盖
+        when(skuUsageClient.usage(any())).thenReturn(ApiResponse.ok(List.of()));
         // A-07：乐观锁写入成功（影响 1 行）。不 stub 的话 Mockito 默认返回 0，
         // 会被实现解读为「期间有他人写入」，把所有正常路径都变成 409。
         when(spuMapper.update(isNull(), any())).thenReturn(1);
@@ -1982,5 +1993,414 @@ class SellerProductServiceTest {
         verify(spuMapper, times(2)).selectPage(any(), normalCaptor.capture());
         assertThat(normalCaptor.getAllValues().get(1).getSqlSegment())
                 .contains("deleted_at IS NULL");
+    }
+
+    // ---------------- A-14 · 规格增删改（结构） ----------------
+
+    private static SkuEntity structureSku(long id, long spuId, String code, String specName,
+                                          long price, int stock) {
+        SkuEntity sku = sku(id, spuId, price, stock);
+        sku.setSkuCode(code);
+        sku.setSpecJson("{\"规格\":\"" + specName + "\"}");
+        return sku;
+    }
+
+    @SuppressWarnings("unchecked")
+    private LambdaUpdateWrapper<SkuEntity> captureSkuUpdate() {
+        ArgumentCaptor<LambdaUpdateWrapper<SkuEntity>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(skuMapper).update(isNull(), captor.capture());
+        return captor.getValue();
+    }
+
+    /**
+     * 新增规格是内容变更：必须重审、版本 +1、价格区间重算，并留下规格改前/改后文本。
+     * 新规格的 sku_code 由服务端按现有最大序号 +1 生成（不信任客户端）。
+     */
+    @Test
+    void A14_新增规格_触发重审_版本递增_价格区间同步并写历史() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        spu.setAuditSource("AUTO");
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 5);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a), List.of(a, b));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of(
+                        new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null),
+                        new SellerSkuStructureInput(null, "5kg", 3990L, 5, null))));
+
+        assertThat(result.added()).isEqualTo(1);
+        assertThat(result.updated()).isZero();
+        assertThat(result.removed()).isZero();
+        assertThat(result.reaudited()).isTrue();
+        assertThat(spu.getVersion()).isEqualTo(1);
+        assertThat(spu.getMinPrice()).isEqualTo(1990L);
+        assertThat(spu.getMaxPrice()).isEqualTo(3990L);
+        assertThat(result.product().minPrice()).isEqualTo(1990L);
+        assertThat(result.product().maxPrice()).isEqualTo(3990L);
+
+        ArgumentCaptor<SkuEntity> inserted = ArgumentCaptor.forClass(SkuEntity.class);
+        verify(skuMapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getSkuCode()).isEqualTo("SPU9001-2");
+        assertThat(inserted.getValue().getSpecJson()).contains("5kg");
+        assertThat(inserted.getValue().getPrice()).isEqualTo(3990L);
+        assertThat(inserted.getValue().getStock()).isEqualTo(5);
+
+        LambdaUpdateWrapper<SpuEntity> write = captureSpuUpdate();
+        assertVersionGuarded(write, 0);
+        assertThat(write.getSqlSet()).contains("min_price", "max_price");
+
+        verify(auditHistoryService).recordSkuEdit(any(), eq(spu),
+                contains("2kg"), contains("5kg"), eq(false));
+        verify(spuImageService).sync(spu);
+    }
+
+    /** 删除规格前必须问交易域；没卖过的可以删，新规格编码不能复用刚删掉的序号 */
+    @Test
+    void A14_删除无订单规格_真删并用交易域确认_编码序号不复用() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 0);
+        SkuEntity c = structureSku(13L, 9001L, "SPU9001-3", "8kg", 5990L, 2);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b), List.of(a, c));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of(
+                        new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null),
+                        new SellerSkuStructureInput(null, "8kg", 5990L, 2, null))));
+
+        assertThat(result.removed()).isEqualTo(1);
+        assertThat(result.added()).isEqualTo(1);
+        assertThat(result.reaudited()).isTrue();
+
+        ArgumentCaptor<SkuUsageQuery> usageQuery = ArgumentCaptor.forClass(SkuUsageQuery.class);
+        verify(skuUsageClient).usage(usageQuery.capture());
+        assertThat(usageQuery.getValue().skuIds()).containsExactly(12L);
+
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<SkuEntity>> deleteCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(skuMapper).delete(deleteCaptor.capture());
+        assertThat(deleteCaptor.getValue().getSqlSegment()).contains("spu_id", "id");
+
+        ArgumentCaptor<SkuEntity> inserted = ArgumentCaptor.forClass(SkuEntity.class);
+        verify(skuMapper).insert(inserted.capture());
+        // 序号 3 已被这次删除的行占用过，新行必须排到 3 —— 复用会与历史订单的 sku_code 撞车
+        assertThat(inserted.getValue().getSkuCode()).isEqualTo("SPU9001-3");
+    }
+
+    /** 卖过的规格禁止物理删除：售后与对账需要这个锚点；拒绝时必须一行都没改 */
+    @Test
+    void A14_有订单的规格禁止删除_且零写库() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 0);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b));
+        when(skuUsageClient.usage(any())).thenReturn(ApiResponse.ok(List.of(new SkuUsageInfo(12L, 1))));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("已有订单")
+                .hasMessageContaining("5kg");
+
+        verify(spuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).insert(any(SkuEntity.class));
+        verify(skuMapper, never()).delete(any());
+        verify(auditHistoryService, never()).recordSkuEdit(any(), any(), any(), any(), anyBoolean());
+    }
+
+    /** 还有冻结库存（未支付订单占着）也不能删 —— 本地门禁先于跨域查询 */
+    @Test
+    void A14_冻结库存大于0的规格禁止删除_不发起交易域查询() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 0);
+        b.setFrozenStock(2);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("冻结库存 2");
+
+        verify(skuUsageClient, never()).usage(any());
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    /** 交易域不可用时 fail-closed：删除不可逆，宁可不删也不能赌「应该没订单」 */
+    @Test
+    void A14_交易域不可用时拒绝删除_并说明未删除任何规格() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 0);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b));
+        when(skuUsageClient.usage(any())).thenThrow(new RuntimeException("connection refused"));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("暂时无法确认")
+                .hasMessageContaining("未删除任何规格");
+
+        verify(spuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).delete(any());
+    }
+
+    /**
+     * 仅改价格 / 库存不重审、不升版本 —— 与 /skus/price-stock 同一口径。
+     * 版本不动是刻意的：调价是高频运营动作，每次都 409 会让卖家无法连续改价。
+     */
+    @Test
+    void A14_仅改价改库存_不重审不升版本_只同步价格区间() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        spu.setAuditSource("AUTO");
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 5);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a, b), List.of(a, b));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of(
+                        new SellerSkuStructureInput(11L, "2kg", 2990L, 12, null),
+                        new SellerSkuStructureInput(12L, "5kg", 3990L, 5, null))));
+
+        assertThat(result.reaudited()).isFalse();
+        assertThat(result.updated()).isEqualTo(1);
+        assertThat(result.added()).isZero();
+        assertThat(result.removed()).isZero();
+        assertThat(result.product().minPrice()).isEqualTo(2990L);
+        assertThat(spu.getVersion()).isZero();
+        assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getAuditSource()).isEqualTo("AUTO");
+
+        LambdaUpdateWrapper<SkuEntity> skuWrite = captureSkuUpdate();
+        assertThat(skuWrite.getSqlSet()).contains("price", "stock").doesNotContain("spec_json");
+        LambdaUpdateWrapper<SpuEntity> spuWrite = captureSpuUpdate();
+        assertThat(spuWrite.getSqlSet()).contains("min_price", "max_price")
+                .doesNotContain("audit_status")
+                .doesNotContain("version");
+        verify(skuMapper, never()).insert(any(SkuEntity.class));
+        verify(skuMapper, never()).delete(any());
+        verify(auditHistoryService, never()).recordSkuEdit(any(), any(), any(), any(), anyBoolean());
+    }
+
+    /** 一字未改：不写库、不留历史，也不制造一次无意义的重审 */
+    @Test
+    void A14_规格无变化_直接返回且零写库() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null))));
+
+        assertThat(result.added()).isZero();
+        assertThat(result.updated()).isZero();
+        assertThat(result.removed()).isZero();
+        assertThat(result.reaudited()).isFalse();
+        verify(spuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).insert(any(SkuEntity.class));
+        verify(skuMapper, never()).delete(any());
+    }
+
+    /** 改规格名同样属于内容变更：曾被驳回的商品改完仍要人审，不能借改名洗白 */
+    @Test
+    void A14_改规格名_被驳回商品仍转人工并恢复在售() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null, "merchant", "REJECTED", "OFF_SHELF");
+        spu.setRejectedAt(LocalDateTime.now(ZoneOffset.UTC));
+        spu.setAuditSource("MANUAL");
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity renamed = structureSku(11L, 9001L, "SPU9001-1", "2kg装", 1990L, 10);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a), List.of(renamed));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg装", 1990L, 10, null))));
+
+        assertThat(result.reaudited()).isTrue();
+        assertThat(spu.getAuditStatus()).isEqualTo("PENDING");
+        assertThat(spu.getAuditSource()).isNull();
+        assertThat(spu.getStatus()).isEqualTo("ON_SALE");
+        assertThat(spu.getVersion()).isEqualTo(1);
+
+        LambdaUpdateWrapper<SpuEntity> write = captureSpuUpdate();
+        assertThat(write.getSqlSet()).contains("status", "audit_status");
+        verify(auditHistoryService).recordSkuEdit(any(), eq(spu),
+                contains("2kg（价格"), contains("2kg装（价格"), eq(false));
+    }
+
+    /** 自营免审：结构变更照样升版本（内容变了），但不进审核流程 */
+    @Test
+    void A14_自营商品结构变更_不重审但升版本() {
+        UserContext.set(operator());
+        SpuEntity spu = spu(9001L, 0L, "自营商品", null, "self", "APPROVED", "ON_SALE");
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        SkuEntity b = structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 5);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a), List.of(a, b));
+
+        SellerSkuStructureResultView result = service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of(
+                        new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null),
+                        new SellerSkuStructureInput(null, "5kg", 3990L, 5, null))));
+
+        assertThat(result.reaudited()).isFalse();
+        assertThat(spu.getAuditStatus()).isEqualTo("APPROVED");
+        assertThat(spu.getVersion()).isEqualTo(1);
+        verify(auditHistoryService, never()).recordSkuEdit(any(), any(), any(), any(), anyBoolean());
+    }
+
+    /** 运营同样不能直接改第三方商品的规格结构（E23 收窄的延续） */
+    @Test
+    void A14_运营不能改第三方商品的规格结构() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "第三方商品", null));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(null, "2kg", 1990L, 10, null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("第三方店铺");
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A14_版本冲突与未知规格id都拒绝且不写库() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        spu.setVersion(2);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(1,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("已被其他人修改");
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(2,
+                        List.of(new SellerSkuStructureInput(99L, "2kg", 1990L, 10, null)))))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode())
+                        .isEqualTo(ErrorCode.NOT_FOUND));
+
+        verify(spuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A14_空列表_重复规格名_超上限_价格库存边界均拒绝() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        SkuEntity a = structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+        when(skuMapper.selectList(any())).thenReturn(List.of(a));
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of())))
+                .hasMessageContaining("至少需要一个规格");
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, List.of(
+                        new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null),
+                        new SellerSkuStructureInput(null, "2kg", 2990L, 1, null)))))
+                .hasMessageContaining("规格名重复");
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0, java.util.stream.IntStream.rangeClosed(1, 21)
+                        .mapToObj(i -> new SellerSkuStructureInput(null, "规格" + i,
+                                1000L + i, 1, null))
+                        .toList())))
+                .hasMessageContaining("最多支持 20 个规格");
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 0L, 10, null)))))
+                .hasMessageContaining("价格必须大于 0");
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, -1, null)))))
+                .hasMessageContaining("库存必须是不小于 0");
+
+        verify(spuMapper, never()).update(isNull(), any());
+        verify(skuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A14_缺版本_回收站商品_越权访问都拒绝() {
+        UserContext.set(seller(101L));
+        SpuEntity spu = spu(9001L, 101L, "商品", null);
+        when(spuMapper.selectById(9001L)).thenReturn(spu);
+
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(null,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .hasMessageContaining("缺少版本号");
+
+        when(spuMapper.selectById(9001L)).thenReturn(
+                deletedSpu(9001L, 101L, LocalDateTime.now(ZoneOffset.UTC).minusDays(1)));
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .satisfies(ex -> assertThat(((BizException) ex).getErrorCode())
+                        .isEqualTo(ErrorCode.NOT_FOUND));
+
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 202L, "别人的商品", null));
+        assertThatThrownBy(() -> service.updateSkuStructure(9001L,
+                new SellerSkuStructureRequest(0,
+                        List.of(new SellerSkuStructureInput(11L, "2kg", 1990L, 10, null)))))
+                .hasMessageContaining("不属于当前账号");
+
+        verify(spuMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void A14_规格占用查询_按交易域结果返回且查询本商品全部规格() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "商品", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of(
+                structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10),
+                structureSku(12L, 9001L, "SPU9001-2", "5kg", 3990L, 5)));
+        when(skuUsageClient.usage(any())).thenReturn(ApiResponse.ok(
+                List.of(new SkuUsageInfo(12L, 3))));
+
+        List<SellerSkuUsageView> usage = service.skuUsage(9001L);
+
+        assertThat(usage).containsExactly(new SellerSkuUsageView(12L, 3));
+        ArgumentCaptor<SkuUsageQuery> captor = ArgumentCaptor.forClass(SkuUsageQuery.class);
+        verify(skuUsageClient).usage(captor.capture());
+        assertThat(captor.getValue().skuIds()).containsExactly(11L, 12L);
+    }
+
+    @Test
+    void A14_规格占用查询_交易域故障时报错而不是报空() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(9001L)).thenReturn(spu(9001L, 101L, "商品", null));
+        when(skuMapper.selectList(any())).thenReturn(List.of(
+                structureSku(11L, 9001L, "SPU9001-1", "2kg", 1990L, 10)));
+        when(skuUsageClient.usage(any())).thenThrow(new RuntimeException("trade down"));
+
+        assertThatThrownBy(() -> service.skuUsage(9001L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("暂时无法确认");
     }
 }

@@ -420,4 +420,18 @@ public final class OrderDtos {
             String refundedAt
     ) {
     }
+
+    /**
+     * 内部查询：这些 SKU 是否已被订单明细引用（A-14）。
+     *
+     * <p>只服务商品域删除规格前的门禁，不对外暴露；字段刻意只有 skuIds，
+     * 不允许调用方按买家 / 卖家 / 时间筛选 —— 它回答的是「能不能删」，
+     * 不是「卖得怎么样」。
+     */
+    public record SkuUsageQuery(List<Long> skuIds) {
+    }
+
+    /** 单个 SKU 的订单占用结果；orderCount 为订单明细条数（同一订单多次购买会合并为一条明细） */
+    public record SkuUsageView(Long skuId, long orderCount) {
+    }
 }

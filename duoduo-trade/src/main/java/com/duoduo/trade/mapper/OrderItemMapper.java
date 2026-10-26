@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.util.Collection;
 import java.util.List;
 
 @Mapper
@@ -43,4 +44,22 @@ public interface OrderItemMapper extends BaseMapper<OrderItemEntity> {
             WHERE o.user_id = #{userId} AND o.status IN ('PAID', 'SHIPPED', 'COMPLETED')
             """)
     long countPurchased(@Param("userId") Long userId);
+
+    /**
+     * 批量统计 SKU 被订单明细引用的次数（A-14）。
+     *
+     * <p>不过滤订单状态：取消、退款、已完成的订单都算「这个规格已经卖过」。
+     * 商品域用它在删除规格前做硬门禁 —— 规格一旦进入过订单，物理删除会让
+     * 售后与对账失去可追溯的锚点，宁可让卖家改名复用，也不能删掉。
+     */
+    @Select("""
+            <script>
+            SELECT sku_id AS skuId, COUNT(*) AS orderCount
+            FROM t_order_item
+            WHERE sku_id IN
+            <foreach collection="skuIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+            GROUP BY sku_id
+            </script>
+            """)
+    List<SkuUsageRow> countBySkuIds(@Param("skuIds") Collection<Long> skuIds);
 }

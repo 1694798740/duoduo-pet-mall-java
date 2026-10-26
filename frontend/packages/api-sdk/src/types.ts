@@ -782,6 +782,46 @@ export interface SkuPriceStockInput {
   stock?: number;
 }
 
+/**
+ * 规格结构保存项（A-14）。
+ *
+ * `id` 为空 = 新增；有 id = 修改已有规格。`specName` / `image` 不传 = 保持原值，
+ * 空串 = 清空图片（规格名空串落回「默认」）。price / stock 是保存后的目标值。
+ */
+export interface SellerSkuStructureInput {
+  id?: string | null;
+  specName?: string | null;
+  /** 单位：分 */
+  price: number;
+  stock?: number | null;
+  image?: string | null;
+}
+
+/**
+ * 规格结构保存请求（A-14）：**全量集合语义** ——
+ * 这里的 skus 就是保存后该商品应有的全部规格，库里有而请求里没有的会被删除。
+ */
+export interface SellerSkuStructureRequest {
+  /** 乐观锁版本：打开弹窗时读到，提交时原样带回 */
+  version: number;
+  skus: SellerSkuStructureInput[];
+}
+
+/** 规格结构保存结果（A-14）；reaudited = 本次是否触发重新审核 */
+export interface SellerSkuStructureResultView {
+  product: SellerProductDetailView;
+  reaudited: boolean;
+  added: number;
+  updated: number;
+  removed: number;
+}
+
+/** 被订单引用过的规格（A-14）：未出现在列表里的规格可以删除 */
+export interface SellerSkuUsageView {
+  skuId: string;
+  orderCount: number;
+}
+
 /** 规格视图（商家侧编辑回填 / 审核台核对） */
 export interface SellerSkuView {
   id: string;

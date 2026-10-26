@@ -3,6 +3,7 @@ package com.duoduo.product.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
@@ -12,9 +13,12 @@ import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.product.client.MembershipClient;
 import com.duoduo.product.client.MerchantLicenseClient;
 import com.duoduo.product.client.MerchantRiskClient;
+import com.duoduo.product.client.SkuUsageClient;
 import com.duoduo.product.client.dto.MembershipInfo;
 import com.duoduo.product.client.dto.MerchantLicenseInfo;
 import com.duoduo.product.client.dto.MerchantRiskInfo;
+import com.duoduo.product.client.dto.SkuUsageInfo;
+import com.duoduo.product.client.dto.SkuUsageQuery;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchItemView;
@@ -25,6 +29,9 @@ import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
 import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureInput;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureRequest;
+import com.duoduo.product.dto.ProductDtos.SellerSkuStructureResultView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuView;
 import com.duoduo.product.entity.SkuEntity;
 import com.duoduo.product.entity.SpuEntity;
@@ -159,6 +166,7 @@ public class SellerProductService {
     private final MembershipClient membershipClient;
     private final MerchantLicenseClient merchantLicenseClient;
     private final MerchantRiskClient merchantRiskClient;
+    private final SkuUsageClient skuUsageClient;
     private final SnowflakeIdGenerator idGenerator;
     private final BannedWordGuard bannedWordGuard;
     private final CatalogLookup catalogLookup;
@@ -173,6 +181,7 @@ public class SellerProductService {
                                 MembershipClient membershipClient,
                                 MerchantLicenseClient merchantLicenseClient,
                                 MerchantRiskClient merchantRiskClient,
+                                SkuUsageClient skuUsageClient,
                                 SnowflakeIdGenerator idGenerator,
                                 BannedWordGuard bannedWordGuard,
                                 CatalogLookup catalogLookup,
@@ -186,6 +195,7 @@ public class SellerProductService {
         this.membershipClient = membershipClient;
         this.merchantLicenseClient = merchantLicenseClient;
         this.merchantRiskClient = merchantRiskClient;
+        this.skuUsageClient = skuUsageClient;
         this.idGenerator = idGenerator;
         this.bannedWordGuard = bannedWordGuard;
         this.catalogLookup = catalogLookup;
@@ -364,6 +374,36 @@ public class SellerProductService {
         return toDetailView(spu, skusOf(spuId));
     }
 
+    /**
+     * 规格的订单占用（A-14，只读）。
+     *
+     * <p>给规格弹窗做「已被订单引用」的提前标记：删除这类规格服务端一定会拒绝，
+     * 让卖家删了才知道只会多一次往返。查询走交易域（与删除门禁同一权威口径）。
+     * 交易域不可用时**报错而不是当成「都没有订单」** —— 前端会把它展示成
+     * 「占用情况暂时无法确认」，与删除时的 fail-closed 方向一致。
+     */
+    public List<ProductDtos.SellerSkuUsageView> skuUsage(Long spuId) {
+        SellerScope scope = requireSellerScope();
+        SpuEntity spu = requireOwned(spuId, scope);
+        requireProxyForThirdParty(spu, scope, "查看规格订单占用");
+        List<Long> skuIds = skusOf(spuId).stream().map(SkuEntity::getId).toList();
+        if (skuIds.isEmpty()) {
+            return List.of();
+        }
+        try {
+            ApiResponse<List<SkuUsageInfo>> resp = skuUsageClient.usage(new SkuUsageQuery(skuIds));
+            if (resp == null || resp.data() == null) {
+                throw new IllegalStateException("empty usage response");
+            }
+            return resp.data().stream()
+                    .map(x -> new ProductDtos.SellerSkuUsageView(x.skuId(), x.orderCount()))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("查询商品 {} 规格订单占用失败：{}", spuId, e.toString());
+            throw BizException.businessRule("暂时无法确认规格是否已被订单引用，请稍后重试");
+        }
+    }
+
     // ---------------- 商家侧：提交 / 编辑 / 上下架 / 重提 ----------------
 
     /**
@@ -460,7 +500,8 @@ public class SellerProductService {
         //   （标题 / 副标题 / 详情 / 类目 / 最低价）。提前落状态就会变成
         //   「先判后写、判的全是空值」—— 而空值恰好不命中任何风险规则，
         //   于是**所有商品都会被自动放行**，而且测试很难发现（因为它看起来"都过了"）。
-        AuditDecision decision = decideAudit(spu);
+        AuditDecision decision = decideAudit(spu, skus.stream()
+                .map(NormalizedSku::specName).collect(Collectors.joining(" ")));
         boolean autoApproved = decision.autoApprove();
         spu.setAuditStatus(autoApproved ? AUDIT_APPROVED : AUDIT_PENDING);
         spu.setAuditSource(autoApproved
@@ -784,6 +825,351 @@ public class SellerProductService {
         log.info("商品 {} 价格/库存更新 {} 个 SKU（{}~{} 分）；审核态保持 {}（改价不重审）",
                 spuId, changed, min, max, spu.getAuditStatus());
         return toDetailView(spu, after);
+    }
+
+    /**
+     * 保存规格结构（A-14）：全量集合语义 —— 请求里的 skus 就是保存后该商品的全部规格。
+     *
+     * <h2>三类变更，两种待遇</h2>
+     * <ul>
+     *   <li><b>结构变更</b>（新增 / 删除 / 改规格名 / 换规格图）：属于内容变更，
+     *       第三方商品重新审核，版本 +1；</li>
+     *   <li><b>仅价格 / 库存</b>：属于运营动作，不重审、不升版本 ——
+     *       与 {@link #updateSkuPriceStock} 同一口径；</li>
+     *   <li>完全没变化：直接返回当前详情，不写库、不留历史。</li>
+     * </ul>
+     *
+     * <h2>删除规格的两道硬门禁</h2>
+     * <ol>
+     *   <li>本地 {@code frozen_stock > 0}：还有未支付订单占着这个规格；</li>
+     *   <li>交易域 {@code t_order_item} 有引用：哪怕订单已完结，物理删除也会让售后与对账
+     *       失去锚点。卖家要停售可以改名保留，而不是删掉历史。</li>
+     * </ol>
+     * 交易域查不通时<b>拒绝删除</b>（fail-closed）：删除不可逆，影响面只有这一件商品。
+     * 这与 {@link #requireShopActive} 在资质查询失败时放行（影响全店上架）方向相反 ——
+     * 两者的错误代价完全不对称。
+     *
+     * <p><b>为什么先做 SPU 条件更新、再写 SKU</b>：版本冲突必须一行都不改。
+     * 反过来先删 SKU 再更新 SPU，冲突时就会留下「规格没了、商品还是旧版本」的半套数据。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public SellerSkuStructureResultView updateSkuStructure(Long spuId, SellerSkuStructureRequest request) {
+        SellerScope scope = requireSellerScope();
+        if (request == null) {
+            throw BizException.validation("请求体不能为空");
+        }
+        SpuEntity spu = requireOwned(spuId, scope);
+        requireProxyForThirdParty(spu, scope, "编辑规格");
+        if (request.version() == null) {
+            throw BizException.validation("缺少版本号（version），请刷新后重试");
+        }
+        if (!Objects.equals(spu.getVersion(), request.version())) {
+            throw BizException.conflict("商品已被其他人修改，请刷新后重试");
+        }
+
+        List<SkuEntity> existing = skusOf(spuId);
+        Map<Long, SkuEntity> existingById = existing.stream()
+                .collect(Collectors.toMap(SkuEntity::getId, x -> x, (a, b) -> a));
+        List<StructureSku> inputs = normalizeStructureSkus(request.skus(), existingById);
+
+        Set<Long> keptIds = inputs.stream().map(StructureSku::id)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        List<SkuEntity> removed = existing.stream()
+                .filter(sku -> !keptIds.contains(sku.getId())).toList();
+        int added = (int) inputs.stream().filter(x -> x.id() == null).count();
+        int updated = (int) inputs.stream().filter(x -> x.id() != null
+                && (x.structureChanged() || x.priceStockChanged())).count();
+        boolean structureChanged = !removed.isEmpty() || added > 0
+                || inputs.stream().anyMatch(StructureSku::structureChanged);
+        boolean priceStockChanged = inputs.stream().anyMatch(StructureSku::priceStockChanged);
+
+        long minPrice = inputs.stream().mapToLong(StructureSku::price).min().orElse(0L);
+        long maxPrice = inputs.stream().mapToLong(StructureSku::price).max().orElse(0L);
+
+        if (!structureChanged && !priceStockChanged) {
+            return new SellerSkuStructureResultView(toDetailView(spu, existing), false, 0, 0, 0);
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (!structureChanged) {
+            // 仅价格 / 库存：与改价端点同口径，不重审、不升版本，只同步价格区间与 updated_at
+            for (StructureSku input : inputs) {
+                if (input.id() == null || !input.priceStockChanged()) {
+                    continue;
+                }
+                skuMapper.update(null, new LambdaUpdateWrapper<SkuEntity>()
+                        .eq(SkuEntity::getId, input.id())
+                        .eq(SkuEntity::getSpuId, spuId)
+                        .set(SkuEntity::getPrice, input.price())
+                        .set(SkuEntity::getStock, input.stock())
+                        .set(SkuEntity::getUpdatedAt, now));
+            }
+            spu.setMinPrice(minPrice);
+            spu.setMaxPrice(maxPrice);
+            spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                    .eq(SpuEntity::getId, spuId)
+                    .isNull(SpuEntity::getDeletedAt)
+                    .set(SpuEntity::getMinPrice, minPrice)
+                    .set(SpuEntity::getMaxPrice, maxPrice)
+                    .set(SpuEntity::getUpdatedAt, now));
+            log.info("商品 {} 规格仅改价/库存：{} 个规格，价格区间 {}~{} 分；审核态保持 {}（不重审）",
+                    spuId, updated, minPrice, maxPrice, spu.getAuditStatus());
+            return new SellerSkuStructureResultView(toDetailView(spu, skusOf(spuId)),
+                    false, 0, updated, 0);
+        }
+
+        // 结构变更：先确认要删的规格确实可以删（本地冻结 + 交易域订单引用）
+        requireSkuDeletable(removed);
+
+        boolean merchant = isMerchantSupplied(spu);
+        SpuAuditHistoryService.ContentSnapshot auditBefore =
+                merchant ? SpuAuditHistoryService.ContentSnapshot.of(spu) : null;
+        String skusBefore = merchant ? skuSnapshotTextOfEntities(existing) : null;
+        String skusAfter = merchant ? skuSnapshotTextOfInputs(inputs) : null;
+        // 与 update() 同一判定：只有「被驳回压成下架」才在结构变更后恢复在售
+        boolean restoreOnSale = AUDIT_REJECTED.equals(spu.getAuditStatus())
+                && STATUS_OFF_SHELF.equals(spu.getStatus());
+
+        // ★ 先写回内存再重判：价格风险规则读的是 spu.minPrice，
+        //   不先同步就会拿旧最低价去做「显著低于同类」的判定。
+        spu.setMinPrice(minPrice);
+        spu.setMaxPrice(maxPrice);
+        List<SpuRiskJudge.Hit> risks = applyContentReaudit(spu, skuRiskTextOfInputs(inputs));
+        spu.setUpdatedAt(now);
+
+        LambdaUpdateWrapper<SpuEntity> write = new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, spuId)
+                .eq(SpuEntity::getVersion, request.version())
+                .isNull(SpuEntity::getDeletedAt)
+                .set(SpuEntity::getMinPrice, minPrice)
+                .set(SpuEntity::getMaxPrice, maxPrice)
+                .set(SpuEntity::getAuditStatus, spu.getAuditStatus())
+                .set(SpuEntity::getAuditSource, spu.getAuditSource())
+                .set(SpuEntity::getAuditAt, spu.getAuditAt())
+                .set(SpuEntity::getAuditReason, null)
+                .set(SpuEntity::getUpdatedAt, now)
+                .setSql("version = version + 1");
+        if (restoreOnSale) {
+            write.set(SpuEntity::getStatus, STATUS_ON_SALE);
+        }
+        if (spuMapper.update(null, write) == 0) {
+            throw BizException.conflict("商品已被其他人修改，请刷新后重试");
+        }
+        spu.setVersion(request.version() + 1);
+
+        // 版本条件更新成功后才动 SKU：冲突时一行都不改
+        int nextSeq = nextSkuSeq(spuId, existing);
+        for (StructureSku input : inputs) {
+            if (input.id() == null) {
+                skuMapper.insert(toSkuEntity(spuId, nextSeq++,
+                        new NormalizedSku(input.specName(), input.price(), input.stock(), input.image()), now));
+                continue;
+            }
+            if (!input.structureChanged() && !input.priceStockChanged()) {
+                continue;
+            }
+            skuMapper.update(null, new LambdaUpdateWrapper<SkuEntity>()
+                    .eq(SkuEntity::getId, input.id())
+                    .eq(SkuEntity::getSpuId, spuId)
+                    .set(SkuEntity::getSpecJson, specJsonOf(input.specName()))
+                    .set(SkuEntity::getImage, input.image())
+                    .set(SkuEntity::getPrice, input.price())
+                    .set(SkuEntity::getStock, input.stock())
+                    .set(SkuEntity::getUpdatedAt, now));
+        }
+        if (!removed.isEmpty()) {
+            List<Long> removedIds = removed.stream().map(SkuEntity::getId).toList();
+            skuMapper.delete(new LambdaQueryWrapper<SkuEntity>()
+                    .eq(SkuEntity::getSpuId, spuId)
+                    .in(SkuEntity::getId, removedIds));
+        }
+
+        spuImageService.sync(spu);
+        if (merchant) {
+            auditHistoryService.recordSkuEdit(auditBefore, spu, skusBefore, skusAfter, scope.staffMember());
+        }
+        log.info("商品 {} 规格结构变更：新增 {} / 修改 {} / 删除 {}；审核态 {}（来源={} 命中风险={} 版本={}）",
+                spuId, added, updated, removed.size(), spu.getAuditStatus(),
+                spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(),
+                risks.stream().map(SpuRiskJudge.Hit::code).toList(), spu.getVersion());
+        return new SellerSkuStructureResultView(toDetailView(spu, skusOf(spuId)),
+                merchant, added, updated, removed.size());
+    }
+
+    /**
+     * 规格结构归一化：解析新增 / 修改，校验 id 归属、重复项与价格库存边界。
+     *
+     * <p>规格名缺省（{@code null}）= 保持原名；空串 = 落回「默认」。
+     * 图片缺省 = 保持原图；空串 = 清空 —— 三态与商品编辑一致。
+     */
+    private List<StructureSku> normalizeStructureSkus(List<SellerSkuStructureInput> inputs,
+                                                      Map<Long, SkuEntity> existingById) {
+        if (inputs == null || inputs.isEmpty()) {
+            throw BizException.validation("商品至少需要一个规格（价格与库存填在规格上）");
+        }
+        if (inputs.size() > MAX_SKUS) {
+            throw BizException.validation("最多支持 " + MAX_SKUS + " 个规格");
+        }
+        Set<Long> seenIds = new HashSet<>();
+        Set<String> seenLabels = new HashSet<>();
+        List<StructureSku> result = new ArrayList<>(inputs.size());
+        for (SellerSkuStructureInput input : inputs) {
+            if (input == null) {
+                throw BizException.validation("规格项不能为空");
+            }
+            if (input.id() != null) {
+                if (!seenIds.add(input.id())) {
+                    throw BizException.validation("规格 id 重复：" + input.id());
+                }
+                if (!existingById.containsKey(input.id())) {
+                    // 不区分「不存在」与「不是你的」：否则可以靠返回码探测别人的 SKU id
+                    throw BizException.notFound("规格");
+                }
+            }
+            SkuEntity existing = input.id() == null ? null : existingById.get(input.id());
+            String currentLabel = existing == null ? null : specNameOf(existing.getSpecJson());
+
+            String label;
+            if (input.specName() == null) {
+                label = existing == null ? "默认" : (currentLabel == null ? "默认" : currentLabel);
+            } else {
+                String normalized = optionalText(input.specName(), "规格名", SPEC_NAME_MAX);
+                label = normalized == null ? "默认" : normalized;
+            }
+            bannedWordGuard.rejectIfHit(label, "规格名");
+            if (!seenLabels.add(label)) {
+                // 规格名重复在库里不会报错，但会让卖家在订单里分不清买的是哪个
+                throw BizException.validation("规格名重复：" + label);
+            }
+
+            long price;
+            if (input.price() == null) {
+                if (existing == null) {
+                    throw BizException.validation("价格不能为空");
+                }
+                price = nz(existing.getPrice());
+            } else {
+                price = requirePrice(input.price());
+            }
+            int currentStock = existing == null || existing.getStock() == null ? 0 : existing.getStock();
+            int stock = input.stock() == null ? currentStock : requireStock(input.stock());
+            if (stock > MAX_STOCK) {
+                throw BizException.validation("库存不能超过 " + MAX_STOCK);
+            }
+            String currentImage = existing == null ? null : trimToNull(existing.getImage());
+            String image = input.image() == null
+                    ? currentImage
+                    : optionalText(input.image(), "规格图片", IMAGE_MAX);
+
+            boolean structureChanged = existing == null
+                    || !Objects.equals(label, currentLabel)
+                    || !Objects.equals(image, currentImage);
+            boolean priceStockChanged = existing != null
+                    && (price != nz(existing.getPrice()) || stock != currentStock);
+            result.add(new StructureSku(input.id(), label, price, stock, image,
+                    structureChanged, priceStockChanged));
+        }
+        return result;
+    }
+
+    /**
+     * 删除规格前的硬门禁（A-14）。
+     *
+     * <p>两组判据缺一不可：本地冻结量覆盖「还没付钱的在途订单」，交易域订单明细覆盖
+     * 「已经卖过的历史订单」。只看前者，删掉一个卖过但已完结的规格会让售后无法回溯；
+     * 只看后者，则会放过正在下单中的冻结库存。
+     */
+    private void requireSkuDeletable(List<SkuEntity> removed) {
+        if (removed.isEmpty()) {
+            return;
+        }
+        for (SkuEntity sku : removed) {
+            int frozen = sku.getFrozenStock() == null ? 0 : sku.getFrozenStock();
+            if (frozen > 0) {
+                throw BizException.businessRule("规格「" + labelOf(sku)
+                        + "」还有未完成的订单（冻结库存 " + frozen + " 件），请等订单结束后再删除");
+            }
+        }
+        List<Long> removedIds = removed.stream().map(SkuEntity::getId).toList();
+        List<SkuUsageInfo> usage;
+        try {
+            ApiResponse<List<SkuUsageInfo>> response =
+                    skuUsageClient.usage(new SkuUsageQuery(removedIds));
+            if (response == null || response.data() == null) {
+                throw new IllegalStateException("交易域返回空响应");
+            }
+            usage = response.data();
+        } catch (Exception ex) {
+            log.warn("SKU 订单占用查询失败，拒绝删除（fail-closed）skuIds={} : {}",
+                    removedIds, ex.getMessage());
+            throw BizException.businessRule("暂时无法确认规格是否已被订单引用，请稍后重试（未删除任何规格）");
+        }
+        Set<Long> used = usage.stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.orderCount() > 0)
+                .map(SkuUsageInfo::skuId)
+                .collect(Collectors.toSet());
+        if (used.isEmpty()) {
+            return;
+        }
+        String labels = removed.stream()
+                .filter(sku -> used.contains(sku.getId()))
+                .map(sku -> "「" + labelOf(sku) + "」")
+                .collect(Collectors.joining("、"));
+        throw BizException.businessRule("规格 " + labels
+                + " 已有订单，不能删除；如需停售，可以把规格名改成「已停售」后保留");
+    }
+
+    /** 新规格编码序号从现有最大后缀 +1 开始（含本次将删除的行，避免复用刚消失的编码） */
+    private static int nextSkuSeq(long spuId, List<SkuEntity> existing) {
+        String prefix = "SPU" + spuId + "-";
+        int max = 0;
+        for (SkuEntity sku : existing) {
+            String code = sku.getSkuCode();
+            if (code == null || !code.startsWith(prefix)) {
+                continue;
+            }
+            try {
+                max = Math.max(max, Integer.parseInt(code.substring(prefix.length())));
+            } catch (NumberFormatException ignored) {
+                // 历史脏编码跳过；新编码仍从可解析的最大序号之后开始
+            }
+        }
+        return max + 1;
+    }
+
+    private String labelOf(SkuEntity sku) {
+        String label = specNameOf(sku.getSpecJson());
+        return label == null ? "默认" : label;
+    }
+
+    private String skuSnapshotTextOfEntities(List<SkuEntity> skus) {
+        if (skus.isEmpty()) {
+            return null;
+        }
+        return skus.stream()
+                .map(sku -> skuLine(labelOf(sku), nz(sku.getPrice()),
+                        sku.getStock() == null ? 0 : sku.getStock(), trimToNull(sku.getImage())))
+                .collect(Collectors.joining("\n"));
+    }
+
+    private static String skuSnapshotTextOfInputs(List<StructureSku> skus) {
+        if (skus.isEmpty()) {
+            return null;
+        }
+        return skus.stream()
+                .map(sku -> skuLine(sku.specName(), sku.price(), sku.stock(), sku.image()))
+                .collect(Collectors.joining("\n"));
+    }
+
+    /** 「有图」也进 diff：只换规格图同样是结构变更，历史里必须看得出来 */
+    private static String skuLine(String label, long price, int stock, String image) {
+        return (label == null ? "默认" : label) + "（价格 " + price + " 分，库存 " + stock
+                + (image == null ? "" : "，有图") + "）";
+    }
+
+    private static String skuRiskTextOfInputs(List<StructureSku> skus) {
+        return skus.stream().map(StructureSku::specName).collect(Collectors.joining(" "));
     }
 
     /** 库存必须是不小于 0 的整数（缺省按 0 处理会掩盖脏数据，这里显式校验） */
@@ -1604,6 +1990,15 @@ public class SellerProductService {
      * @return 命中的风险（空列表 = 自动放行）。调用方据此决定要不要把 audit_source 显式清空
      */
     private List<SpuRiskJudge.Hit> applyContentReaudit(SpuEntity spu) {
+        return applyContentReaudit(spu, "");
+    }
+
+    /**
+     * 同 {@link #applyContentReaudit(SpuEntity)}，额外把一段「不在 SPU 主档里」的内容
+     * （A-14 的规格名）送进风险判定 —— 规格名会展示在商品详情与订单里，
+     * 同样可能藏联系方式；不送进去，改规格名就成了绕过自动放行规则的一条路。
+     */
+    private List<SpuRiskJudge.Hit> applyContentReaudit(SpuEntity spu, String extraRiskText) {
         if (!isMerchantSupplied(spu)) {
             return List.of();
         }
@@ -1619,7 +2014,7 @@ public class SellerProductService {
         AuditDecision decision = wasRejected
                 ? new AuditDecision(false, List.of(new SpuRiskJudge.Hit(
                         "PREVIOUSLY_REJECTED", "该商品此前被驳回或判违规，修改后需人工确认")))
-                : decideAudit(spu);
+                : decideAudit(spu, extraRiskText);
         // ★ 不无条件恢复在售：卖家主动下架（已过审）的商品，改个标题不该被悄悄上架。
         //   只有「被驳回压成下架」这种非自愿状态，才在编辑后恢复在售等待重审。
         boolean forcedOffByReject = AUDIT_REJECTED.equals(spu.getAuditStatus())
@@ -1666,10 +2061,19 @@ public class SellerProductService {
      * 而不是拒绝商家。把「需要多看一眼」做成「发不出去」，是对商家最粗暴的一种处理。
      */
     private AuditDecision decideAudit(SpuEntity spu) {
+        return decideAudit(spu, "");
+    }
+
+    private AuditDecision decideAudit(SpuEntity spu, String extraRiskText) {
         if (!isMerchantSupplied(spu)) {
             return new AuditDecision(true, List.of());     // 自营恒免审
         }
         Long categoryId = spu.getCategoryId();
+        String attrsText = kvText(ProductContent.parseKv(spu.getSpecParams()))
+                + " " + kvText(ProductContent.parseKv(spu.getPackaging()));
+        if (extraRiskText != null && !extraRiskText.isBlank()) {
+            attrsText = attrsText + " " + extraRiskText;
+        }
         List<SpuRiskJudge.Hit> hits = SpuRiskJudge.risks(new SpuRiskJudge.Context(
                 categoryNameOf(categoryId),
                 spu.getTitle(),
@@ -1680,8 +2084,7 @@ public class SellerProductService {
                 sellerFlagged(spu.getSellerId()),
                 // 2026-10-24：富文本与自定义参数同样可能藏联系方式，必须一起判
                 ProductContent.htmlText(spu.getDetailHtml()),
-                kvText(ProductContent.parseKv(spu.getSpecParams()))
-                        + " " + kvText(ProductContent.parseKv(spu.getPackaging()))));
+                attrsText));
         return new AuditDecision(hits.isEmpty(), hits);
     }
 
@@ -1813,6 +2216,11 @@ public class SellerProductService {
     private record NormalizedSku(String specName, long price, int stock, String image) {
     }
 
+    /** 规格结构提交项（A-14）：id 为空 = 新增；两个 changed 标记决定是否重审 / 写库 */
+    private record StructureSku(Long id, String specName, long price, int stock, String image,
+                                boolean structureChanged, boolean priceStockChanged) {
+    }
+
     private List<NormalizedSku> normalizeSkus(List<SellerSkuInput> inputs) {
         if (inputs == null || inputs.isEmpty()) {
             throw BizException.validation("商品至少需要一个规格（价格与库存填在规格上）");
@@ -1836,6 +2244,7 @@ public class SellerProductService {
             }
             String spec = optionalText(input.specName(), "规格名", SPEC_NAME_MAX);
             String label = spec == null ? "默认" : spec;
+            bannedWordGuard.rejectIfHit(label, "规格名");
             if (!seen.add(label)) {
                 // 规格名重复在库里不会报错，但会让卖家在订单里分不清买的是哪个 —— 必须在入口拦
                 throw BizException.validation("规格名重复：" + label);

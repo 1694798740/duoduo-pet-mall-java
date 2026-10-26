@@ -426,6 +426,66 @@ public final class ProductDtos {
     public record SellerSkuPriceStockRequest(List<SkuPriceStockInput> skus) {
     }
 
+    // ---------------- SKU 规格结构（A-14） ----------------
+
+    /**
+     * 规格结构提交项：{@code id} 为空 = 新增；有值 = 修改该规格。
+     *
+     * <p><b>全量集合语义</b>：请求里的 skus 就是保存后该商品应有的全部规格 ——
+     * 库里有、请求里没有的 id 视为删除。不做「增删改三个端点」是因为一次保存
+     * 应当只触发一次重审、一次版本递增、一次价格区间重算；拆成三个端点后，
+     * 前端保存一次要发三条请求，任何一条失败都会留下半套规格。
+     *
+     * <p>字段三态（与商品编辑一致）：{@code null} = 保持原值（新增时规格名默认「默认」），
+     * 空串 = 清空（规格名落回「默认」，图片清空）。价格在新增时必填；
+     * 已有规格价格为空 = 保持原价。
+     */
+    public record SellerSkuStructureInput(
+            Long id,
+            String specName,
+            Long price,
+            Integer stock,
+            String image
+    ) {
+    }
+
+    /**
+     * 规格结构保存请求。
+     *
+     * <p>{@code version} 必填：结构变更会递增版本，提交前读到的版本与库里不一致
+     * 说明期间有人改过商品（另一位店员 / 运营审核），必须刷新后重试。
+     */
+    public record SellerSkuStructureRequest(
+            Integer version,
+            List<SellerSkuStructureInput> skus
+    ) {
+    }
+
+    /**
+     * 规格结构保存结果。
+     *
+     * <p>{@code reaudited} = 本次是否触发了重新审核（第三方商品的增删规格 / 改名 / 换图）。
+     * 只改价格 / 库存时为 false —— 那属于运营动作，不重审、不升版本。
+     * {@code added / updated / removed} 是本次实际落库的条数，用于前端给出可核对的反馈。
+     */
+    public record SellerSkuStructureResultView(
+            SellerProductDetailView product,
+            boolean reaudited,
+            int added,
+            int updated,
+            int removed
+    ) {
+    }
+
+    /**
+     * 单个规格的订单占用（A-14）。
+     *
+     * <p>只返回**已被订单引用**的规格；未出现在列表里的规格就是可以删的。
+     * 前端据此在规格弹窗里提前标出「已有订单」，而不是等卖家点了删除才收到 422。
+     */
+    public record SellerSkuUsageView(Long skuId, long orderCount) {
+    }
+
     /** SKU 视图（商家侧编辑回填 / 审核台核对用） */
     public record SellerSkuView(
             Long id,
