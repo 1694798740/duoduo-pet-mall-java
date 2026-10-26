@@ -1117,6 +1117,38 @@ export interface ReviewView {
    * 「我的评价」用它提示「审核中 / 已下架」，避免买家以为评价丢了。
    */
   auditStatus: ReviewAuditStatus | string;
+  /** 商家回复（A-16）：公开内容，未回复为 null */
+  replyContent: string | null;
+  /** 商家回复时间（ISO8601 UTC） */
+  replyAt: string | null;
+}
+
+/**
+ * 商家端评价条目（A-16）。
+ *
+ * 与公开 `ReviewView` 的差别：**没有 userId / avatar** —— 商家没有追责需求，
+ * 匿名评价更不能借商家端反查身份；`replyable` 由服务端计算（已回复 / 未过审都不给入口）。
+ */
+export interface SellerReviewView {
+  id: string;
+  orderNo: string;
+  spuId: string;
+  skuId: string | null;
+  productTitle: string;
+  productImage: string | null;
+  rating: number;
+  content: string | null;
+  images: string[];
+  anonymous: boolean;
+  /** 匿名评价此处为「匿名用户」 */
+  nickname: string;
+  appendContent: string | null;
+  appendAt: string | null;
+  createdAt: string;
+  replyContent: string | null;
+  replyAt: string | null;
+  /** 当前是否还能回复：仅 APPROVED 且尚未回复 */
+  replyable: boolean;
 }
 
 export interface ReviewSummary {

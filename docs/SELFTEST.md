@@ -2,6 +2,41 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商家回复评价冒烟（`scripts/review-seller-reply-a16-smoke.mjs`，55 项，第一百零六轮）
+
+```bash
+NO_PROXY="*" node scripts/review-seller-reply-a16-smoke.mjs
+```
+
+前置：容器在跑；fulfilment 已部署 A-16；`incremental/55-review-seller-reply.sql` 已执行；
+卖家 13600003333、运营 13684295254 可用。覆盖：临时买家三张真实订单（下单 → 支付 → 发货 → 确认收货）→
+提交正常 / 匿名 / 命中手机号（转 PENDING）三条评价；商家列表**只含 APPROVED**、`replied` 待回复 / 已回复分流、
+评级 / 关键词筛选，条目 **无 userId / avatar / sellerId**，匿名昵称为「匿名用户」且 JSON 不含买家 userId；
+回复成功回库核对 `reply_content / reply_at / replied_by`，公开评价区与买家「我的评价」均可见；
+**重复回复 409 且不覆盖**；待审 422、已下架 422；空白 / 501 字 400 且零写库；
+回复命中手机号 → 422 且原因脱敏、零写库；跨店回复 **404（租户隔离）**、普通买家 403、未登录 401；
+三次成功回复各留一条 `REVIEW_REPLY` 审计；未知 / 非法 id 404；收尾评价、订单链路、商品与临时账号零残留。
+2026-10-26 实测 **55/0**。
+
+## 商家回复评价 UI e2e（`scripts/e2e/seller-review-reply-a16-ui-check.mjs`，29 项，第一百零六轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/seller-review-reply-a16-ui-check.mjs
+```
+
+前置：商家端 / 商城为最新容器产物（先 `npm run build` 再重建 `duoduo-merchant-web-app` / `duoduo-web-app`）；
+fulfilment 已部署 A-16；卖家 13600003333 可用。夹具现场注册两名买家并**直接插入两条 APPROVED 评价**
+（正常 / 匿名，真实提交链路由上面的接口冒烟覆盖），商品评分原值先记录、收尾复位。
+覆盖：商家端主导航出现「评价管理」（仅店主）、页面说明「只能回复一次」「匿名不暴露身份」；
+待回复页签两条夹具均可见、匿名只显示「匿名用户」且整页不含真实昵称；
+回复走站内弹窗（500 字计数 + 一次不可修改提示）→ 弹窗关闭 → 切「已回复」看到回复内容与
+「已回复，不可修改」、回库核对操作人；匿名评价回复后仍不泄露昵称；「待回复」清零、「已回复」命中两条且无回复按钮；
+买家商品详情页能看到两条评价、两条商家回复与时间，匿名仍脱敏；全程 0 原生弹窗、0 pageerror；夹具与临时买家零残留。
+2026-10-26 实测 **29/0**。
+**夹具注意**：`t_review.seller_id` 是 19 位雪花，**不能用 JS `Number()` 转**（会四舍五入成另一个 id，
+列表直接为空）；SQL 里按字符串拼接，断言用 BigInt / 字符串。JWT 原始载荷里的 `tid` 是精确的，
+精度丢失只发生在 JS `JSON.parse`。
+
 ## 评价机审冒烟（`scripts/review-auto-audit-a15-smoke.mjs`，45 项，第一百零五轮）
 
 ```bash

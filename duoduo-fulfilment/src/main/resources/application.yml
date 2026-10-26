@@ -108,6 +108,8 @@ duoduo:
     max-images: ${REVIEW_MAX_IMAGES:9}
     # 追评窗口：确认收货后多少天内可追评（0 表示不限期）
     append-window-days: ${REVIEW_APPEND_DAYS:30}
+    # A-16 商家回复最大长度（与 DDL 的 VARCHAR(500) 对齐）。一条评价只允许一次回复
+    max-reply-length: ${REVIEW_MAX_REPLY:500}
     # A-15 机审敏感词（逗号 / 顿号分隔，可留空）。
     # 除词表外，服务内置联系方式、站外链接、导流话术、违禁品四类规则；
     # 命中只转人工 PENDING，不自动下架。词表放配置而不是库表：

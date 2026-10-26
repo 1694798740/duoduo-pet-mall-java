@@ -17,6 +17,7 @@ import { canAccessMerchantWorkspace, isOperator } from '@duoduo/shared/lib/roles
 import { useAuth } from '@duoduo/shared/store/auth';
 import {
   afterSaleApi,
+  reviewApi,
   sellerApi,
   sellerSupportApi,
 } from '@duoduo/api-sdk/endpoints';
@@ -28,6 +29,7 @@ import { SellerProductsPage } from '../seller/Products';
 import { SellerProductInsightsPage } from '../seller/ProductInsights';
 import { SellerSettlementsPage } from '../seller/Settlements';
 import { SellerAfterSalesPage } from '../seller/AfterSales';
+import { SellerReviewsPage } from '../seller/Reviews';
 import { SellerSupportPage } from '../seller/SupportInbox';
 import { SellerAccountPage } from '../seller/Account';
 import { SellerApplyCard } from '../seller/shared';
@@ -46,6 +48,9 @@ const TABS_FOR_OWNER = [
   // 第三方店铺是各自商家 —— 同一页、同一套接口，靠登录态区分，不靠前端传参。
   { to: '/seller/support', label: '客服信息', end: false },
   { to: '/seller/after-sales', label: '售后处理', end: false },
+  // 评价回复（A-16）：只给店主 —— 回复是以店铺名义公开表态，
+  // 店员可看商品与订单，但不能代表店铺发言（后端同样按 canAccessSellerConsole 拒绝）
+  { to: '/seller/reviews', label: '评价管理', end: false },
   { to: '/seller/settlements', label: '结算对账', end: false },
   { to: '/seller/staff', label: '店员管理', end: false },
 ];
@@ -75,7 +80,8 @@ const ADMIN_URL = (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'htt
  *  · /seller/orders  ← sellerApi.summary().pendingShipCount（待发货 = 已付款，卖家该动了）；
  *  · /seller/support ← sellerSupportApi.unreadCount()（买家咨询未读总数）；
  *  · /seller/after-sales ← afterSaleApi.seller(PENDING).total + seller(RETURNING).total
- *    （待卖家处理 + 待签收退货 —— 这两类都需要商家动手）。
+ *    （待卖家处理 + 待签收退货 —— 这两类都需要商家动手）;
+ *  · /seller/reviews ← reviewApi.sellerList({ replied:false }).total（待回复的评价）。
  *
  * 触发：挂载即取 + 30s 轮询 + 路由切换时重取（点进去处理完，回来数字就更新）。
  * 清除逻辑：进入对应页面后由页面自身的已读动作（打开会话 / 处理工单）收敛数字，
@@ -90,11 +96,12 @@ const useNavBadges = (enabled: boolean): Record<string, number> => {
     if (!enabled) return undefined;
     let alive = true;
     const load = async () => {
-      const [support, summary, pending, returning] = await Promise.allSettled([
+      const [support, summary, pending, returning, reviews] = await Promise.allSettled([
         sellerSupportApi.unreadCount(),
         sellerApi.summary(),
         afterSaleApi.seller({ status: 'PENDING', page: 1, pageSize: 1 }),
         afterSaleApi.seller({ status: 'RETURNING', page: 1, pageSize: 1 }),
+        reviewApi.sellerList({ replied: false, page: 1, pageSize: 1 }),
       ]);
       const next: Record<string, number> = {
         '/seller/support': support.status === 'fulfilled' ? Number(support.value) || 0 : 0,
@@ -102,6 +109,7 @@ const useNavBadges = (enabled: boolean): Record<string, number> => {
         '/seller/after-sales':
           (pending.status === 'fulfilled' ? Number(pending.value?.total) || 0 : 0)
           + (returning.status === 'fulfilled' ? Number(returning.value?.total) || 0 : 0),
+        '/seller/reviews': reviews.status === 'fulfilled' ? Number(reviews.value?.total) || 0 : 0,
       };
       if (alive) setBadges(next);
     };
@@ -289,6 +297,7 @@ export const MerchantRoot: React.FC = () => (
       <Route path="/seller/settlements" element={<SellerSettlementsPage />} />
       <Route path="/seller/staff" element={<SellerStaffPage />} />
       <Route path="/seller/after-sales" element={<SellerAfterSalesPage />} />
+      <Route path="/seller/reviews" element={<SellerReviewsPage />} />
       {/* 商家页面里指向商城的个人中心链接（/me）→ 跨站点跳回商城 */}
       <Route path="/me" element={<BackToMall />} />
       <Route path="*" element={<Navigate to="/seller" replace />} />

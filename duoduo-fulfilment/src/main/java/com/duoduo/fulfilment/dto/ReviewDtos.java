@@ -75,6 +75,19 @@ public final class ReviewDtos {
     ) {
     }
 
+    /**
+     * 商家回复请求（A-16）。
+     *
+     * <p>一条评价只能回复一次；首次回复后不可修改或删除 —— 对外是公开承诺，
+     * 允许反复改写会让买家侧「先看到道歉、隔天变成辩解」。
+     */
+    public record ReviewReplyRequest(
+            @NotBlank(message = "回复内容不能为空")
+            @Size(max = 500, message = "回复内容不能超过 500 字")
+            String content
+    ) {
+    }
+
     // ---------------- 响应 ----------------
 
     /**
@@ -110,7 +123,47 @@ public final class ReviewDtos {
              * <p>公开评价区只会出现 APPROVED；「我的评价」需要它来告诉买家
              * 「这条还在审核」或「这条已下架」，否则买家会以为评价丢了。
              */
-            String auditStatus
+            String auditStatus,
+            /** 商家回复（A-16）：公开内容，未回复为 null */
+            String replyContent,
+            /** 商家回复时间（UTC） */
+            String replyAt
+    ) {
+    }
+
+    /**
+     * 商家端的评价条目（A-16）。
+     *
+     * <p>与公开 {@link ReviewView} 的差别：
+     * <ul>
+     *   <li>不带 {@code userId} / {@code avatar} —— 商家没有追责需求，
+     *       匿名评价更不能借商家端反查身份（验收口径：匿名评价不暴露身份）；</li>
+     *   <li>{@code nickname} 仍按匿名规则脱敏为「匿名用户」；</li>
+     *   <li>带 {@code replyable}，由服务端判断（已回复 / 未过审 / 已下架都不给入口）。</li>
+     * </ul>
+     *
+     * <p>只返回 {@code APPROVED} 的评价：待审与已下架内容商家看不到，
+     * 也就不存在「拿未公开内容去线下骚扰买家」的通道。
+     */
+    public record SellerReviewView(
+            Long id,
+            String orderNo,
+            Long spuId,
+            Long skuId,
+            String productTitle,
+            String productImage,
+            int rating,
+            String content,
+            List<String> images,
+            boolean anonymous,
+            String nickname,
+            String appendContent,
+            String appendAt,
+            String createdAt,
+            String replyContent,
+            String replyAt,
+            /** 当前是否还能回复：仅 APPROVED 且尚未回复 */
+            boolean replyable
     ) {
     }
 

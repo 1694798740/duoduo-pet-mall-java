@@ -4,6 +4,27 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（八十七）· 商家回复评价（A-16）：一条评价一次回复，匿名评价不泄身份**
+
+- **问题**：评价区一直单向 —— 商家没有公开回应入口，误会、差评、售后承诺只能私下处理，
+  「商家已回复」这个最基本的信任信号缺失。
+- **模型**：`t_review` 新增 `reply_content / reply_at / replied_by`；**一条评价最多一次回复**，
+  首次回复后不可修改 / 删除（409），回复不改变评分、审核态与追评。
+- **门禁**：只有 `APPROVED` 评价可回复（`PENDING` → 422 待审核，`REJECTED` → 422 已下架）；
+  商家只能回复本店评价（跨店在租户过滤层 404，服务层 `requireReplyScope` 第二道防线）；
+  普通买家 403、未登录 401；平台自营（`seller_id=0`）允许运营代回复。
+- **内容安全**：回复复用 `ReviewRiskJudge`，命中手机号 / 链接 / 导流话术 / 违禁词直接 422 退回
+  （回复区无人工审核队列）；空白 / 超 500 字 400。并发用条件 UPDATE（`reply_content IS NULL`）兜底。
+- **接口与 DTO**：`GET /api/reviews/seller`（只含 APPROVED，`replied / rating / keyword` 筛选）、
+  `POST /api/reviews/{id}/reply`；`SellerReviewView` 不含 `userId / avatar / sellerId`，匿名昵称脱敏为「匿名用户」。
+- **前端**：商家端新增「评价管理」（仅店主可见）：待回复 / 已回复 / 全部三页签 + 搜索 + 站内回复弹窗；
+  买家商品详情与「我的评价」展示「商家回复 · 时间」。
+- **数据**：`incremental/55-review-seller-reply.sql`；动作登记 `REVIEW_REPLY`。
+- **验证**：fulfilment 单测 **64/0**（新增 13）、common **149/0**、common-web **64/0（5 skipped）**；
+  A-16 冒烟 **55/0**、A-16 UI e2e **29/0**；回归 H-02 冒烟 **47/0**、H-02 UI **18/0**、
+  A-15 冒烟 **45/0**、A-15 UI **24/0**、评价接口 **62/0**、买家评价 UI **24/0**；
+  fulfilment / user / web / merchant-web 镜像重建，17 容器 healthy。
+
 **2026-10-26（八十六）· 评价机审（A-15）：干净内容自动放行，命中风险转人工，机器不自动下架**
 
 - **问题**：评价提交后直接 APPROVED 公开，联系方式 / 站外链接 / 导流话术只能靠运营事后翻列表；

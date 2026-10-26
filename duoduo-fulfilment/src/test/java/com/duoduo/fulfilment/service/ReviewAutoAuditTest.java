@@ -52,7 +52,7 @@ class ReviewAutoAuditTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final ReviewService service = new ReviewService(mapper, orderFacts, userClient, idGenerator,
-            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), 1000, 9, 30);
+            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), 1000, 9, 30, 500);
 
     @BeforeEach
     void setUp() {

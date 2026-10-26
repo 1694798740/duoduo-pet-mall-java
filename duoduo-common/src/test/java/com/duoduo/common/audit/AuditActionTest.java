@@ -169,7 +169,8 @@ class AuditActionTest {
         // S3：新增 1 个对账动作（RECON_RUN_MANUAL），45 → 46。
         // A-10：新增 4 个类目属性动作（CATEGORY_ATTR_CREATE / UPDATE / STATUS / DELETE），46 → 50。
         // H-02：新增 1 个评价审核动作（REVIEW_AUDIT），50 → 51。
-        assertThat(AuditAction.values()).hasSize(51);
+        // A-16：新增 1 个商家回复动作（REVIEW_REPLY），51 → 52。
+        assertThat(AuditAction.values()).hasSize(52);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

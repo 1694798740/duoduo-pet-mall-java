@@ -2,13 +2,17 @@ package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewAppendRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateResult;
+import com.duoduo.fulfilment.dto.ReviewDtos.ReviewReplyRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewSummary;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewedOrders;
+import com.duoduo.fulfilment.dto.ReviewDtos.SellerReviewView;
 import com.duoduo.fulfilment.service.ReviewService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -112,5 +116,41 @@ public class ReviewController {
                 .toList();
         return ApiResponse.ok(new ReviewedOrders(
                 reviewService.reviewedOrderNos(UserContext.requireUserId(), list)));
+    }
+
+    // ---------------- 商家端（A-16） ----------------
+
+    /**
+     * 我店铺的评价（商家端，需登录 + 卖家角色）。
+     *
+     * <p>可见范围由登录态推导，**没有 sellerId 参数**；只返回审核通过的评价。
+     * 匿名评价的昵称由服务端脱敏，且不返回 userId / avatar —— 商家无法借列表反查买家身份。
+     *
+     * @param replied true 只看已回复 / false 只看待回复 / 不传 全部
+     * @param rating  1-5；不传 = 全部星级
+     * @param keyword 评价正文 / 追评 / 商品标题 / 订单号（包含匹配）
+     */
+    @GetMapping("/seller")
+    public ApiResponse<PageResult<SellerReviewView>> seller(
+            @RequestParam(required = false) Boolean replied,
+            @RequestParam(required = false) Integer rating,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize) {
+        return ApiResponse.ok(reviewService.listForSeller(
+                UserContext.requireUserId(), replied, rating, keyword, page, pageSize));
+    }
+
+    /**
+     * 商家回复评价（一条评价一次，回复后不可修改）。
+     *
+     * <p>按 E18 纪律留痕：这是公开内容的写操作，审计要能回答「哪家店、什么时候、
+     * 回复了哪条评价」。归属校验在服务层（越权 403 / 状态不允许 422 / 重复回复 409）。
+     */
+    @PostMapping("/{id:\\d+}/reply")
+    @Audited(action = AuditAction.REVIEW_REPLY)
+    public ApiResponse<SellerReviewView> reply(@PathVariable Long id,
+                                               @Valid @RequestBody ReviewReplyRequest request) {
+        return ApiResponse.ok(reviewService.reply(UserContext.requireUserId(), id, request.content()));
     }
 }

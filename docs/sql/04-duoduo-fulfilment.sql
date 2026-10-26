@@ -52,6 +52,11 @@ CREATE TABLE t_review (
     -- 追评：一次机会，追加内容与时间
     append_content   VARCHAR(1000),
     append_at        TIMESTAMP    NULL,
+    -- 商家回复（A-16）：一条评价最多一次；回复是公开内容，展示在商品评价区
+    reply_content    VARCHAR(500),
+    reply_at         TIMESTAMP    NULL,
+    -- 回复的商家账号 userId（与 seller_id 同口径；平台自营由运营代回复）
+    replied_by       BIGINT,
     -- 运营审核：评价也可能含违禁内容；H-02 起后台可人工下架 / 恢复，A-15 起提交时先过机审
     audit_status     VARCHAR(20)  NOT NULL DEFAULT 'APPROVED',
     -- 审核结论说明（下架必填、恢复清空）、操作人快照与时间（UTC）、来源，供追责与列表展示

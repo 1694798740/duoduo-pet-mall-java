@@ -212,5 +212,20 @@ const ReviewItem: React.FC<{ review: ReviewView }> = ({ review }) => (
         <div className="small" style={{ marginTop: 4 }}>{review.appendContent}</div>
       </div>
     ) : null}
+
+    {/* 商家回复（A-16）：一次回复、公开可见，买家与访客都能看到 */}
+    {review.replyContent ? (
+      <div
+        style={{
+          marginTop: 10,
+          padding: '8px 10px',
+          borderLeft: '3px solid var(--success, #2f9e44)',
+          background: 'var(--surface-2, #fafafa)',
+        }}
+      >
+        <div className="small muted">商家回复 · {formatDate(review.replyAt)}</div>
+        <div className="small" style={{ marginTop: 4 }}>{review.replyContent}</div>
+      </div>
+    ) : null}
   </div>
 );

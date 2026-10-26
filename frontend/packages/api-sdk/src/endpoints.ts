@@ -74,6 +74,7 @@ import type {
   ReviewSummary,
   ReviewView,
   ReviewedOrders,
+  SellerReviewView,
   PetView,
   PlaceOrderRequest,
   PlaceOrderResult,
@@ -971,6 +972,26 @@ export const reviewApi = {
   /** 我在这批订单里已评价过的订单号（订单列表页一次判断） */
   reviewed: (orderNos: string[]) =>
     api.get<ReviewedOrders>('/api/reviews/reviewed', { query: { orderNos: orderNos.join(',') } }),
+
+  // ---- 商家端（A-16，需登录 + 卖家角色） ----
+
+  /**
+   * 我店铺的评价分页。
+   *
+   * 可见范围由登录态推导，**没有 sellerId 参数**；只返回审核通过的评价。
+   * `replied`：true 已回复 / false 待回复 / 不传 全部。
+   */
+  sellerList: (query?: {
+    replied?: boolean;
+    rating?: number;
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<PageResult<SellerReviewView>>('/api/reviews/seller', { query }),
+
+  /** 商家回复评价（每条一次；回复后不可修改） */
+  sellerReply: (id: string, content: string) =>
+    api.post<SellerReviewView>(`/api/reviews/${id}/reply`, { content }),
 };
 
 // ---------- 售后仲裁（/api/aftersales，履约域 A3） ----------

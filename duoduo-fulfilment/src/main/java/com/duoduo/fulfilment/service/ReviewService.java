@@ -7,6 +7,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
+import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.fulfilment.client.UserClient;
@@ -19,6 +20,7 @@ import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateResult;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewSummary;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
+import com.duoduo.fulfilment.dto.ReviewDtos.SellerReviewView;
 import com.duoduo.fulfilment.entity.ReviewEntity;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.ImageUrls;
@@ -98,6 +100,7 @@ public class ReviewService {
     private final int maxContentLength;
     private final int maxImages;
     private final int appendWindowDays;
+    private final int maxReplyLength;
 
     public ReviewService(ReviewMapper reviewMapper,
                          OrderFacts orderFacts,
@@ -108,7 +111,8 @@ public class ReviewService {
                          ReviewRiskJudge riskJudge,
                          @Value("${duoduo.review.max-content-length:1000}") int maxContentLength,
                          @Value("${duoduo.review.max-images:9}") int maxImages,
-                         @Value("${duoduo.review.append-window-days:30}") int appendWindowDays) {
+                         @Value("${duoduo.review.append-window-days:30}") int appendWindowDays,
+                         @Value("${duoduo.review.max-reply-length:500}") int maxReplyLength) {
         this.reviewMapper = reviewMapper;
         this.orderFacts = orderFacts;
         this.userClient = userClient;
@@ -119,6 +123,7 @@ public class ReviewService {
         this.maxContentLength = maxContentLength;
         this.maxImages = maxImages;
         this.appendWindowDays = appendWindowDays;
+        this.maxReplyLength = maxReplyLength;
     }
 
     // ---------------- 写：提交评价 ----------------
@@ -419,6 +424,185 @@ public class ReviewService {
         return reviewMapper.reviewedOrderNos(userId, distinct);
     }
 
+    // ---------------- 商家端：评价回复（A-16） ----------------
+
+    /**
+     * 我店铺的评价列表（商家端）。
+     *
+     * <p>只返回审核通过的评价：待审 / 已下架内容不对外公开，也不该出现在商家工作台 ——
+     * 否则商家能拿未公开内容去线下联系买家。可见范围由登录态推导：
+     * 卖家看自己的店，运营额外可见平台自营（{@code seller_id = 0}），与售后列表同一口径，
+     * 不接受任何 sellerId 参数。
+     *
+     * @param replied true 只看已回复 / false 只看待回复 / null 全部
+     */
+    public PageResult<SellerReviewView> listForSeller(Long userId, Boolean replied, Integer rating,
+                                                      String keyword, int page, int pageSize) {
+        LoginUser user = requireSellerConsole(userId);
+        if (rating != null) {
+            validateRating(rating);
+        }
+        String kw = trimToNull(keyword);
+        if (kw != null && kw.length() > MAX_KEYWORD_LENGTH) {
+            throw BizException.validation("搜索关键词不能超过 " + MAX_KEYWORD_LENGTH + " 字");
+        }
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+
+        LambdaQueryWrapper<ReviewEntity> wrapper = new LambdaQueryWrapper<ReviewEntity>()
+                .eq(ReviewEntity::getAuditStatus, AUDIT_APPROVED);
+        if (user.isOperator()) {
+            wrapper.in(ReviewEntity::getSellerId, List.of(userId, 0L));
+        } else {
+            wrapper.eq(ReviewEntity::getSellerId, userId);
+        }
+        if (replied != null) {
+            if (replied) {
+                wrapper.isNotNull(ReviewEntity::getReplyContent).ne(ReviewEntity::getReplyContent, "");
+            } else {
+                wrapper.and(w -> w.isNull(ReviewEntity::getReplyContent)
+                        .or().eq(ReviewEntity::getReplyContent, ""));
+            }
+        }
+        if (rating != null) {
+            wrapper.eq(ReviewEntity::getRating, rating);
+        }
+        if (kw != null) {
+            wrapper.and(w -> w.like(ReviewEntity::getContent, kw)
+                    .or().like(ReviewEntity::getAppendContent, kw)
+                    .or().like(ReviewEntity::getProductTitle, kw)
+                    .or().like(ReviewEntity::getOrderNo, kw));
+        }
+        wrapper.orderByDesc(ReviewEntity::getCreatedAt).orderByDesc(ReviewEntity::getId);
+
+        Page<ReviewEntity> result = reviewMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
+                .map(ReviewEntity::getUserId).distinct().toList());
+        List<SellerReviewView> views = result.getRecords().stream()
+                .map(e -> toSellerView(e, briefs))
+                .toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 商家回复评价：一条评价一次，回复后不可修改。
+     *
+     * <p>四条硬规则：
+     * <ol>
+     *   <li>只能回复自己店铺的 APPROVED 评价（运营可代回复平台自营 {@code seller_id = 0}）；</li>
+     *   <li>待审 / 已下架的评价不能回复 —— 回复是公开内容，挂在不公开的评价上只会制造悬空引用；</li>
+     *   <li>回复同样过机审：命中风险直接 422 退回，而不是静默发布。回复区没有人工审核队列，
+     *       放进去就等于无人把关；</li>
+     *   <li>并发下用条件 UPDATE（{@code reply_content IS NULL}）兜底，重复回复返回 409 而不是覆盖。</li>
+     * </ol>
+     */
+    @Transactional
+    public SellerReviewView reply(Long userId, Long id, String content) {
+        LoginUser user = requireSellerConsole(userId);
+        if (id == null) {
+            throw BizException.validation("评价 id 不能为空");
+        }
+        ReviewEntity entity = reviewMapper.selectById(id);
+        if (entity == null) {
+            throw BizException.notFound("评价");
+        }
+        requireReplyScope(entity, userId, user);
+        requireReplyable(entity);
+        String text = normalizeReply(content);
+        ReviewRiskJudge.Verdict verdict = riskJudge.judge(text);
+        if (verdict.risky()) {
+            throw BizException.businessRule("回复未通过内容校验（" + verdict.reason() + "），请修改后再提交");
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int rows = reviewMapper.update(null, new LambdaUpdateWrapper<ReviewEntity>()
+                .eq(ReviewEntity::getId, id)
+                .eq(ReviewEntity::getAuditStatus, AUDIT_APPROVED)
+                .and(w -> w.isNull(ReviewEntity::getReplyContent)
+                        .or().eq(ReviewEntity::getReplyContent, ""))
+                .set(ReviewEntity::getReplyContent, text)
+                .set(ReviewEntity::getReplyAt, now)
+                .set(ReviewEntity::getRepliedBy, userId)
+                .set(ReviewEntity::getUpdatedAt, now));
+        if (rows == 0) {
+            ReviewEntity latest = reviewMapper.selectById(id);
+            if (latest == null) {
+                throw BizException.notFound("评价");
+            }
+            if (hasText(latest.getReplyContent())) {
+                throw BizException.conflict("该评价已回复，不能重复回复");
+            }
+            requireReplyable(latest);
+            throw BizException.conflict("评价状态已被其他人修改，请刷新后重试");
+        }
+
+        entity.setReplyContent(text);
+        entity.setReplyAt(now);
+        entity.setRepliedBy(userId);
+        entity.setUpdatedAt(now);
+        // 审计补充：目标评价 + 人读摘要（拦截器负责「谁 / 何时 / IP / 结果」）
+        AuditTrail.target(id, "REVIEW");
+        AuditTrail.note("商家回复：" + text);
+        log.info("商家 {} 回复评价 {}（商品 {}）", userId, id, entity.getSpuId());
+        return toSellerView(entity, loadBriefs(List.of(entity.getUserId())));
+    }
+
+    private LoginUser requireSellerConsole(Long userId) {
+        if (userId == null) {
+            throw BizException.unauthorized("请先登录");
+        }
+        LoginUser user = UserContext.get();
+        if (user == null) {
+            throw BizException.unauthorized("请先登录");
+        }
+        if (!user.canAccessSellerConsole()) {
+            throw BizException.forbidden("仅卖家或运营可操作店铺评价");
+        }
+        return user;
+    }
+
+    private void requireReplyScope(ReviewEntity entity, Long userId, LoginUser user) {
+        if (userId.equals(entity.getSellerId())) {
+            return;
+        }
+        // 平台自营（seller_id = 0）没有卖家账号可登录，只能由运营代回复 —— 与售后同一口径
+        if (user.isOperator() && entity.getSellerId() != null && entity.getSellerId() == 0L) {
+            return;
+        }
+        throw BizException.forbidden("只能回复自己店铺的评价（平台运营仅可代回复自营）");
+    }
+
+    private void requireReplyable(ReviewEntity entity) {
+        String status = entity.getAuditStatus();
+        if (AUDIT_PENDING.equals(status)) {
+            throw BizException.businessRule("评价待审核，暂不能回复");
+        }
+        if (AUDIT_REJECTED.equals(status)) {
+            throw BizException.businessRule("评价已下架，不能回复");
+        }
+        if (!AUDIT_APPROVED.equals(status)) {
+            throw BizException.businessRule("评价状态异常，暂不能回复");
+        }
+        if (hasText(entity.getReplyContent())) {
+            throw BizException.conflict("该评价已回复，不能重复回复");
+        }
+    }
+
+    private String normalizeReply(String content) {
+        String trimmed = content == null ? null : content.trim();
+        if (trimmed == null || trimmed.isEmpty()) {
+            throw BizException.validation("回复内容不能为空");
+        }
+        if (trimmed.length() > maxReplyLength) {
+            throw BizException.validation("回复内容不能超过 " + maxReplyLength + " 字");
+        }
+        return trimmed;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     // ---------------- 运营后台：评价管理（H-02） ----------------
 
     /**
@@ -676,7 +860,39 @@ public class ReviewService {
                 iso(entity.getAppendAt()),
                 iso(entity.getCreatedAt()),
                 isAppendable(entity, now),
-                entity.getAuditStatus());
+                entity.getAuditStatus(),
+                entity.getReplyContent(),
+                iso(entity.getReplyAt()));
+    }
+
+    /**
+     * 商家端视图：不返回 userId / avatar，匿名评价昵称脱敏为「匿名用户」。
+     * 匿名是展示规则，但商家端没有运营的追责需求，因此连真实 userId 都不下发 ——
+     * 少一个字段就少一条反查身份的途径。
+     */
+    private SellerReviewView toSellerView(ReviewEntity entity, Map<Long, UserBrief> briefs) {
+        boolean anonymous = isAnonymous(entity);
+        UserBrief brief = briefs.get(entity.getUserId());
+        String nickname = anonymous ? ANONYMOUS_NICKNAME
+                : (brief != null && brief.nickname() != null ? brief.nickname() : "用户" + entity.getUserId());
+        return new SellerReviewView(
+                entity.getId(),
+                entity.getOrderNo(),
+                entity.getSpuId(),
+                entity.getSkuId(),
+                entity.getProductTitle(),
+                entity.getProductImage(),
+                entity.getRating() == null ? 0 : entity.getRating(),
+                entity.getContent(),
+                ImageUrls.fromJson(objectMapper, entity.getImages()),
+                anonymous,
+                nickname,
+                entity.getAppendContent(),
+                iso(entity.getAppendAt()),
+                iso(entity.getCreatedAt()),
+                entity.getReplyContent(),
+                iso(entity.getReplyAt()),
+                AUDIT_APPROVED.equals(entity.getAuditStatus()) && !hasText(entity.getReplyContent()));
     }
 
     private AdminReviewView toAdminView(ReviewEntity entity, Map<Long, UserBrief> briefs) {

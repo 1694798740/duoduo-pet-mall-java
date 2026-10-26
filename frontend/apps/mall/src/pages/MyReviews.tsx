@@ -138,6 +138,21 @@ export const MyReviewsPage: React.FC = () => {
                 </div>
               ) : null}
 
+              {/* 商家回复（A-16）：回复是公开内容，买家在自己的评价里也能看到 */}
+              {rv.replyContent ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: '8px 10px',
+                    borderLeft: '3px solid var(--success, #2f9e44)',
+                    background: 'var(--surface-2, #fafafa)',
+                  }}
+                >
+                  <div className="small muted">商家回复 · {formatDate(rv.replyAt)}</div>
+                  <div className="small" style={{ marginTop: 4 }}>{rv.replyContent}</div>
+                </div>
+              ) : null}
+
               {rv.auditStatus === 'PENDING' ? (
                 <div className="small muted" style={{ marginTop: 8 }}>
                   评价正在审核，通过后会展示在商品评价区。

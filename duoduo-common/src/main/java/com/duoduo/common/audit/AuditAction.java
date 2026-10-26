@@ -172,6 +172,14 @@ public enum AuditAction {
      */
     REVIEW_AUDIT(AuditCategory.CONTENT, "REVIEW"),
 
+    /**
+     * A-16 · 商家回复评价。
+     *
+     * <p>与 {@link #REVIEW_AUDIT} 同属 CONTENT：回复是公开可见内容，但它是商家的
+     * **一次性承诺**（回复后不可修改），审计要能回答「哪家店、谁、何时回复了哪条评价」。
+     */
+    REVIEW_REPLY(AuditCategory.CONTENT, "REVIEW"),
+
     // ---------------- 交易、营销、履约 ----------------
 
     /**

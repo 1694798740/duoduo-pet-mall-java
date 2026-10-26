@@ -46,6 +46,17 @@ public class ReviewEntity {
     private Integer anonymous;
     private String appendContent;
     private LocalDateTime appendAt;
+    /**
+     * 商家回复（A-16）：一条评价最多一次。
+     *
+     * <p>回复是公开内容（展示在商品评价区），但不改变评价本身的评分与审核态；
+     * 是否已回复只看 {@code replyContent} 是否有值，不另建回复表。
+     */
+    private String replyContent;
+    /** 商家回复时间（UTC） */
+    private LocalDateTime replyAt;
+    /** 回复的商家账号 userId（与 sellerId 同口径；平台自营由运营代回复） */
+    private Long repliedBy;
     /** PENDING / APPROVED / REJECTED（H-02 起后台可人工下架 / 恢复；A-15 起提交先过机审） */
     private String auditStatus;
     /** 审核结论说明：下架必填，恢复时清空；机审转人工时写命中原因 */
@@ -177,6 +188,30 @@ public class ReviewEntity {
 
     public void setAppendAt(LocalDateTime appendAt) {
         this.appendAt = appendAt;
+    }
+
+    public String getReplyContent() {
+        return replyContent;
+    }
+
+    public void setReplyContent(String replyContent) {
+        this.replyContent = replyContent;
+    }
+
+    public LocalDateTime getReplyAt() {
+        return replyAt;
+    }
+
+    public void setReplyAt(LocalDateTime replyAt) {
+        this.replyAt = replyAt;
+    }
+
+    public Long getRepliedBy() {
+        return repliedBy;
+    }
+
+    public void setRepliedBy(Long repliedBy) {
+        this.repliedBy = repliedBy;
     }
 
     public String getAuditStatus() {
