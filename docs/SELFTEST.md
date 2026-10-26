@@ -2,6 +2,31 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 售后退款统计冒烟（`scripts/product-refund-stats-d05-smoke.mjs`，17 项，第一百一十一轮）
+
+```bash
+NO_PROXY="*" node scripts/product-refund-stats-d05-smoke.mjs
+```
+
+前置：容器在跑；trade 已部署 D-05；卖家 13600003333、另一店主 13959064118 可用。
+覆盖：一件商品两个规格、两张已支付订单；退款规格 A 后统计只出现 A，
+退款件数 1 / 金额 1000 分 / 涉及订单 1，未退规格 B 不出现；
+再退规格 B 后按 SKU 各一行、商品合计 3500 分；
+别的店主看不到本店行、买家 403、未登录 401；订单链路 / 商品 / 临时买家零残留。
+2026-10-26 实测 **17/0**。
+
+## 售后退款统计 UI e2e（`scripts/e2e/product-refund-stats-d05-ui-check.mjs`，12 项，第一百一十一轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/product-refund-stats-d05-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（`npm run build:merchant` + 重建 `duoduo-merchant-web-app`）；
+trade 已部署 D-05；卖家 13600003333 可用。
+覆盖：售后页顶部出现「退款商品 / SKU 统计」并说明订单明细口径；
+退款 A 后只出现 A 行、合计 ¥10.00 / 1 件；再退 B 后两行、合计 ¥35.00 / 2 件；
+全程 0 原生弹窗、0 pageerror；夹具零残留。2026-10-26 实测 **12/0**。
+
 ## 聊天质检冒烟（`scripts/chat-moderation-c05-smoke.mjs`，16 项，第一百一十轮）
 
 ```bash

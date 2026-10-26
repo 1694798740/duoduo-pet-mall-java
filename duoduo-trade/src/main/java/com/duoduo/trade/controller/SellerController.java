@@ -69,6 +69,17 @@ public class SellerController {
     }
 
     /**
+     * 按商品 / SKU 的退款统计（D-05）：退款件数 / 退款金额 / 涉及订单数，商家端售后页用。
+     *
+     * <p>只列有退款明细的 SKU，最多 200 条；口径来自订单明细的 {@code refund_status}，
+     * 不按售后单金额分摊（售后单是订单级的，拆不到单品）。
+     */
+    @GetMapping("/product-refunds")
+    public ApiResponse<java.util.List<com.duoduo.trade.dto.AnalyticsDtos.ProductRefundStat>> productRefunds() {
+        return ApiResponse.ok(sellerService.productRefundStats());
+    }
+
+    /**
      * 卖出的订单列表。
      *
      * @param status  状态过滤（PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED）

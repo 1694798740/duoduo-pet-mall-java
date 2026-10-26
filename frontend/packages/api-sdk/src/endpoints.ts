@@ -23,6 +23,7 @@
 import { api } from './client';
 import type {
   SellerProductStat,
+  SellerProductRefundStat,
   AbnormalSettlement,
   AdminCharts,
   AdminProductAuditRequest,
@@ -495,6 +496,9 @@ export const sellerApi = {
 
   /** 按商品的经营统计（2026-10-24）：销量 / 成交额 / 退款件数，商品分析表用 */
   productStats: () => api.get<SellerProductStat[]>('/api/seller/product-stats'),
+
+  /** 按商品 / SKU 的退款统计（D-05）：退款件数 / 退款金额 / 涉及订单数，售后页用 */
+  productRefundStats: () => api.get<SellerProductRefundStat[]>('/api/seller/product-refunds'),
 
   /** 卖出的订单列表；status 可选 PENDING_PAYMENT / PAID / SHIPPED / COMPLETED / REFUNDED / CLOSED */
   orders: (query?: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>

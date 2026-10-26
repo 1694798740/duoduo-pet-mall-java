@@ -11,7 +11,7 @@
 
 import React, { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
+import { afterSaleApi, sellerApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import type { AfterSaleReplyAction, AfterSaleView } from '@duoduo/api-sdk/types';
 import {
@@ -46,6 +46,15 @@ export const SellerAfterSalesPage: React.FC = () => {
     allowed,
     [status, keyword, page],
   );
+
+  /** D-05 · 按商品 / SKU 的退款统计（订单明细口径，不随售后单筛选变化） */
+  const refundStats = useAsync(
+    useCallback(() => sellerApi.productRefundStats(), []),
+    allowed,
+  );
+  const refundRows = refundStats.data ?? [];
+  const refundTotalAmount = refundRows.reduce((sum, row) => sum + Number(row.refundAmount || 0), 0);
+  const refundTotalQty = refundRows.reduce((sum, row) => sum + Number(row.refundQty || 0), 0);
 
   if (!allowed) {
     return (
@@ -123,6 +132,52 @@ export const SellerAfterSalesPage: React.FC = () => {
         对<b>退货退款</b>则是「同意退货」—— 要等买家寄回、你<b>确认收货</b>后才退款。
         「拒绝」必须写清原因，买家可以据此<b>申请平台仲裁</b>。
       </Alert>
+
+      {/* D-05 · 退款商品 / SKU 统计：售后单是订单级的，拆不到单品；这里用订单明细的快照口径 */}
+      <div className="card card-pad" style={{ margin: '14px 0' }}>
+        <div className="row-between row-wrap" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>退款商品 / SKU 统计</h3>
+          <span className="small muted">
+            合计退款 <strong>{formatPrice(refundTotalAmount)}</strong> · {refundTotalQty} 件
+          </span>
+        </div>
+        <p className="small muted" style={{ margin: '0 0 8px' }}>
+          口径：按下单时的订单明细快照汇总，退款中 / 已退款的明细计入商品规格；
+          同一订单含多个规格时分别计入各自 SKU。
+        </p>
+        {refundStats.error ? (
+          <Alert kind="warn">退款商品统计读取失败：{refundStats.error}（售后单列表仍可查看）</Alert>
+        ) : refundStats.loading && !refundStats.data ? (
+          <span className="small muted">正在汇总退款明细…</span>
+        ) : refundRows.length === 0 ? (
+          <span className="small muted">暂无退款明细；发生退款后会在这里按商品与规格汇总。</span>
+        ) : (
+          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+            <table className="table" style={{ width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>商品</th>
+                  <th>规格</th>
+                  <th style={{ textAlign: 'right' }}>退款件数</th>
+                  <th style={{ textAlign: 'right' }}>退款金额</th>
+                  <th style={{ textAlign: 'right' }}>涉及订单</th>
+                </tr>
+              </thead>
+              <tbody>
+                {refundRows.map((row) => (
+                  <tr key={`${row.spuId}-${row.skuId}`}>
+                    <td style={{ maxWidth: 280, wordBreak: 'break-all' }}>{row.name || `商品 ${row.spuId}`}</td>
+                    <td>{row.specText || '默认规格'}</td>
+                    <td style={{ textAlign: 'right' }}>{row.refundQty}</td>
+                    <td style={{ textAlign: 'right' }}>{formatPrice(row.refundAmount)}</td>
+                    <td style={{ textAlign: 'right' }}>{row.refundOrderCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <div className="row row-wrap" style={{ gap: 8, margin: '14px 0' }}>
         {AFTER_SALE_STATUS_TABS.map((tab) => (

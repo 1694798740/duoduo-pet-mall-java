@@ -87,6 +87,27 @@ public final class AnalyticsDtos {
     }
 
     /**
+     * 按商品 / SKU 的退款统计（D-05）。
+     *
+     * <p>口径来自订单明细：{@code refund_status IN (REFUNDING, REFUNDED)} 的明细行
+     * 计入 {@code refundQty} / {@code refundAmount}；{@code refundOrderCount} 按订单去重，
+     * 用来区分「一件商品退了很多次」与「很多订单各退一次」。
+     *
+     * <p>为什么不在售后单上统计：售后单是订单级的，一笔订单可能含多个 SKU，
+     * 只按售后单金额无法拆到单品；订单明细本身就是下单时的 SKU 快照，是唯一的归属事实。
+     */
+    public record ProductRefundStat(
+            Long spuId,
+            String name,
+            Long skuId,
+            String specText,
+            long refundQty,
+            long refundAmount,
+            long refundOrderCount
+    ) {
+    }
+
+    /**
      * 平台后台图表数据（运营概览）。
      *
      * @param statusDistribution 全平台订单状态分布（分布图）

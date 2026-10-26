@@ -93,6 +93,9 @@ public class LongToStringJacksonModule extends SimpleModule {
             "claimedCount", "totalCount", "remainingCount", "usedCount",
             "salesCount", "viewCount", "ratingCount", "imageCount", "appendCount",
             "itemCount", "totalQuantity", "selectedCount", "orderCount",
+            // D-05：退款统计的件数 / 金额 / 订单数，以及订单明细的 quantity，
+            // 都是端侧要累加、排序、相除的量；漏列会让 KPI 求和退化成字符串拼接。
+            "quantity", "refundQty", "refundOrderCount",
             // A-17：商品曝光 / 点击是**被运算的量**（点击率 = 点击/曝光，端侧还要累加），
             // 漏列会让它们以字符串下发，`+` 退化成拼接、`===` 与 `>` 全部失真。
             "exposure", "clicks", "totalExposure", "totalClicks",

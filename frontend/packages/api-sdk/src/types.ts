@@ -1777,6 +1777,17 @@ export interface SellerProductStat {
   orderCount: number;
 }
 
+/** 按商品 / SKU 的退款统计（D-05）：退款件数、退款金额、涉及订单数 */
+export interface SellerProductRefundStat {
+  spuId: string;
+  name: string;
+  skuId: string;
+  specText: string | null;
+  refundQty: number;
+  refundAmount: number;
+  refundOrderCount: number;
+}
+
 export interface SellerAnalytics {
   /** 维度一：订单状态分布 */
   statusDistribution: AnalyticsSlice[];

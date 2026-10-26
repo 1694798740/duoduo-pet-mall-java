@@ -115,6 +115,33 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
     List<Map<String, Object>> productStatsBySeller(@Param("sellerIds") Collection<Long> sellerIds,
                                                    @Param("limit") int limit);
 
+    /**
+     * 按商品 / SKU 的退款统计（D-05）。
+     *
+     * <p>只统计有退款明细的 SKU；金额取明细行金额（下单时快照），
+     * 订单数按 {@code o.id} 去重 —— 同一订单退两个 SKU 不会把订单数算两次。
+     */
+    @Select("<script>"
+            + "SELECT i.spu_id AS spuId, MAX(i.title) AS name, i.sku_id AS skuId, "
+            + "MAX(i.spec_text) AS specText, "
+            + "COALESCE(SUM(CASE WHEN i.refund_status IN ('REFUNDING','REFUNDED') "
+            + "THEN i.quantity ELSE 0 END), 0) AS refundQty, "
+            + "COALESCE(SUM(CASE WHEN i.refund_status IN ('REFUNDING','REFUNDED') "
+            + "THEN i.amount ELSE 0 END), 0) AS refundAmount, "
+            + "COUNT(DISTINCT CASE WHEN i.refund_status IN ('REFUNDING','REFUNDED') "
+            + "THEN o.id END) AS refundOrderCount "
+            + "FROM t_order_item i JOIN t_order o ON o.id = i.order_id "
+            + "WHERE o.status IN ('PAID','SHIPPED','COMPLETED','REFUNDED') "
+            + "<if test='sellerIds != null'>AND o.seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "</if>"
+            + "GROUP BY i.spu_id, i.sku_id "
+            + "HAVING refundQty > 0 "
+            + "ORDER BY refundAmount DESC, i.spu_id ASC, i.sku_id ASC LIMIT #{limit}"
+            + "</script>")
+    List<Map<String, Object>> productRefundStatsBySeller(@Param("sellerIds") Collection<Long> sellerIds,
+                                                         @Param("limit") int limit);
+
     /** 订单类型分布（NORMAL / SECKILL），返回形如 {@code [{t:"SECKILL", cnt:28}, ...]} */
     @Select("<script>"
             + "SELECT order_type AS t, COUNT(*) AS cnt FROM t_order "

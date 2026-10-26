@@ -479,6 +479,26 @@ public class SellerService {
                 .toList();
     }
 
+    /**
+     * 按商品 / SKU 的退款统计（D-05，商家端售后页用）。
+     *
+     * <p>最多 200 个 SKU：退款分析看的是「哪些规格退得多」，不是无限翻台账。
+     * 归属口径与订单列表一致（店主 + 店员以店铺主体行动，平台视角含自营）。
+     */
+    public List<AnalyticsDtos.ProductRefundStat> productRefundStats() {
+        SellerScope scope = requireSellerScope();
+        return orderMapper.productRefundStatsBySeller(scope.visibleSellerIds(), 200).stream()
+                .map(row -> new AnalyticsDtos.ProductRefundStat(
+                        lng(row, "spuId"),
+                        str(row, "name"),
+                        lng(row, "skuId"),
+                        str(row, "specText"),
+                        lng(row, "refundQty"),
+                        lng(row, "refundAmount"),
+                        lng(row, "refundOrderCount")))
+                .toList();
+    }
+
     // ---------------- 内部实现 ----------------
 
     /**
