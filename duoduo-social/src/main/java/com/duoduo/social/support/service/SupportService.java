@@ -84,6 +84,7 @@ public class SupportService {
     private final NoticeService noticeService;
     private final OrderClient orderClient;
     private final com.duoduo.social.realtime.RealtimePublisher realtime;
+    private final com.duoduo.social.support.ChatModeration chatModeration;
     private final Long officialCsUserId;
 
     public SupportService(SupportSessionMapper sessionMapper,
@@ -94,6 +95,7 @@ public class SupportService {
                           NoticeService noticeService,
                           OrderClient orderClient,
                           com.duoduo.social.realtime.RealtimePublisher realtime,
+                          com.duoduo.social.support.ChatModeration chatModeration,
                           @Value("${duoduo.social.official-cs-user-id:710000000000000001}")
                           Long officialCsUserId) {
         this.sessionMapper = sessionMapper;
@@ -104,6 +106,7 @@ public class SupportService {
         this.noticeService = noticeService;
         this.orderClient = orderClient;
         this.realtime = realtime;
+        this.chatModeration = chatModeration;
         this.officialCsUserId = officialCsUserId;
     }
 
@@ -247,6 +250,8 @@ public class SupportService {
         if (text.isEmpty() && "ORDER".equals(type) && orderNo != null) {
             text = "咨询订单 · 尾号 " + (orderNo.length() > 4 ? orderNo.substring(orderNo.length() - 4) : orderNo);
         }
+        // C-05：聊天质检（站外链接 / 诈骗词 / 敏感词拦截；联系方式默认只告警）
+        chatModeration.enforce(text, "support-user");
 
         SupportSessionEntity session = ensureSession(target, userId);
         // 引用（2026-10-24）：必须同会话，摘要由服务端拼装，不信任端侧
@@ -472,6 +477,8 @@ public class SupportService {
                 text = "[语音]";
             }
         }
+        // C-05：客服回复同样过质检（防止客服把买家导流到站外 / 发送诈骗话术）
+        chatModeration.enforce(text, "support-seller");
         // 引用（2026-10-24）：必须同会话
         Long replyToId = requireReply(sessionId, request.replyToId());
         if (messageMapper.countSentInWindow(sessionId, sellerId, RATE_WINDOW_SECONDS) >= SELLER_RATE_LIMIT) {

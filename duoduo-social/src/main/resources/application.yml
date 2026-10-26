@@ -78,6 +78,15 @@ duoduo:
       # 频控：同一会话窗口期内最多发送条数（防骚扰；超限 429 RATE_LIMITED）。
       rate-window-seconds: ${SOCIAL_MSG_RATE_WINDOW:60}
       rate-limit: ${SOCIAL_MSG_RATE_LIMIT:10}
+  # C-05 · 聊天内容质检
+  chat:
+    # 总开关：关掉后客服与私信都不做命中检查（只建议在联调时临时关闭）
+    moderation-enabled: ${CHAT_MODERATION_ENABLED:true}
+    # 手机号 / QQ / 微信号默认只告警不拦截（售后沟通中交换电话是正常需求）；
+    # 需要严格拦截时置 true
+    block-contact: ${CHAT_BLOCK_CONTACT:false}
+    # 运营敏感词（逗号 / 顿号分隔）；命中直接拦截。站外链接与资金诈骗词内置，无需配置
+    sensitive-words: ${CHAT_SENSITIVE_WORDS:刷单,返利,博彩,套现,代开发票,枪支,毒品,色情,代练,外挂}
 
 management:
   endpoints:

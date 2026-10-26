@@ -2,6 +2,31 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 聊天质检冒烟（`scripts/chat-moderation-c05-smoke.mjs`，16 项，第一百一十轮）
+
+```bash
+NO_PROXY="*" node scripts/chat-moderation-c05-smoke.mjs
+```
+
+前置：容器在跑；social 已部署 C-05；聊天质检开关未关闭；卖家 13600003333 可用。
+覆盖：普通发货咨询 + 19 位订单号放行；裸词「微信」「二维码」不误伤；
+站外链接 / 转账诈骗词 / 配置敏感词「代练」→ 422；手机号默认放行（仅告警）；
+客服正常回复放行、客服回复链接 422；私信链接 422、正常内容放行；
+被拦截的客服消息与私信均未落库；客服 / 私信夹具与临时账号零残留。
+2026-10-26 实测 **16/0**。
+
+## 聊天质检 UI e2e（`scripts/e2e/chat-moderation-c05-ui-check.mjs`，11 项，第一百一十轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/chat-moderation-c05-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（`npm run build:merchant` + 重建 `duoduo-merchant-web-app`）；
+social 已部署 C-05；卖家 13600003333 可用。
+覆盖：商家工作台正常回复出现在气泡；含 `www.evil.com` 的回复出现「站外链接」拦截提示、
+不出现气泡、消息数不变；拦截后仍能正常发送；回库 3 条（买家 1 + 正常回复 2）；
+全程 0 原生弹窗、0 pageerror；夹具零残留。2026-10-26 实测 **11/0**。
+
 ## 客服工单冒烟（`scripts/support-ticket-c04-smoke.mjs`，32 项，第一百零九轮）
 
 ```bash

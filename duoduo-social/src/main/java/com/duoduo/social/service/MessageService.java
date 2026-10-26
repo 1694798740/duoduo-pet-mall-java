@@ -79,6 +79,8 @@ public class MessageService {
     private final Long officialCsUserId;
     /** 实时推送（2026-10-23）：私信送达与已读回执 */
     private final com.duoduo.social.realtime.RealtimePublisher realtime;
+    /** C-05 · 聊天内容质检 */
+    private final com.duoduo.social.support.ChatModeration chatModeration;
 
     public MessageService(SocialMessageMapper messageMapper,
                           FollowService followService,
@@ -88,6 +90,7 @@ public class MessageService {
                           SnowflakeIdGenerator idGenerator,
                           NoticeService noticeService,
                           com.duoduo.social.realtime.RealtimePublisher realtime,
+                          com.duoduo.social.support.ChatModeration chatModeration,
                           @Value("${duoduo.social.message.max-length:1000}") int maxLength,
                           @Value("${duoduo.social.message.rate-window-seconds:60}") int rateWindowSeconds,
                           @Value("${duoduo.social.message.rate-limit:10}") int rateLimit,
@@ -100,6 +103,7 @@ public class MessageService {
         this.idGenerator = idGenerator;
         this.noticeService = noticeService;
         this.realtime = realtime;
+        this.chatModeration = chatModeration;
         this.maxLength = maxLength;
         this.rateWindowSeconds = rateWindowSeconds;
         this.rateLimit = rateLimit;
@@ -236,7 +240,10 @@ public class MessageService {
         entity.setBizId(bizId);
         // 卡片类：用户附言优先，否则用商品/闲置标题兜底（摘要稳定，卡片视图读取时再取事实）
         String cardTitle = product != null ? product.title() : listing != null ? listing.title() : null;
-        entity.setContent(content.isEmpty() && cardTitle != null ? cardTitle : content);
+        String outgoing = content.isEmpty() && cardTitle != null ? cardTitle : content;
+        // C-05：聊天质检（站外链接 / 诈骗词 / 敏感词拦截；联系方式默认只告警）
+        chatModeration.enforce(outgoing, "social");
+        entity.setContent(outgoing);
         entity.setMediaUrl(request.mediaUrl());
         entity.setThumbUrl(request.thumbUrl());
         entity.setWidth(request.width());
