@@ -101,6 +101,15 @@ duoduo:
       # 私有桶（入驻资质材料）由用户域使用；本服务不读它，但配置项保持齐全，
       # 避免"两个服务各配一半、切环境时漏一个"这类问题。
       bucket-private: ${COS_BUCKET_PRIVATE:}
+  # B-05 · 电子面单 / 模拟物流
+  logistics:
+    # 本地没有快递鸟/菜鸟凭据时走模拟面单；接真实渠道后关闭模拟推进
+    simulate-enabled: ${DUODUO_LOGISTICS_SIMULATE_ENABLED:true}
+    # 模拟轨迹每步间隔（秒）：PICKED_UP → IN_TRANSIT → OUT_FOR_DELIVERY → SIGNED
+    simulate-step-seconds: ${DUODUO_LOGISTICS_SIMULATE_STEP_SECONDS:30}
+    # 扫描间隔与首次延迟（毫秒）
+    simulate-interval-ms: ${DUODUO_LOGISTICS_SIMULATE_INTERVAL_MS:10000}
+    simulate-initial-delay-ms: ${DUODUO_LOGISTICS_SIMULATE_INITIAL_DELAY_MS:30000}
   review:
     # 评价内容最大长度（与 DDL 的 VARCHAR(1000) 对齐）
     max-content-length: ${REVIEW_MAX_CONTENT:1000}

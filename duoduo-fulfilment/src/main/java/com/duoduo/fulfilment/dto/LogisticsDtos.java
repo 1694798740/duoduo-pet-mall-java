@@ -1,6 +1,7 @@
 package com.duoduo.fulfilment.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 
@@ -85,5 +86,44 @@ public final class LogisticsDtos {
      * 前端本来就要调订单详情，这里再回一份就出现了两个事实来源。
      */
     public record TrackListView(String orderNo, int total, List<TrackView> tracks) {
+    }
+
+    // ---------------- B-05 · 电子面单 ----------------
+
+    /**
+     * 申请电子面单请求。
+     *
+     * <p>{@code courierCode} 为空 = 默认顺丰；只接受 {@code Couriers} 白名单里的编码，
+     * 卖家不能自创 —— 自创编码会让真实渠道查不到这家快递，也会让两端叫法不一致。
+     */
+    public record WaybillCreateRequest(
+            @NotBlank(message = "订单号不能为空") @Size(max = 32, message = "订单号过长") String orderNo,
+            @Size(max = 20, message = "快递公司编码过长") String courierCode) {
+    }
+
+    /** 快递公司（前端下拉直接消费；中文名由服务端给出） */
+    public record CourierView(String code, String name) {
+    }
+
+    /**
+     * 电子面单视图。
+     *
+     * <p>{@code simulated=true} 表示当前没有接快递鸟/菜鸟，运单号与轨迹由本地模拟生成；
+     * 前端必须明示这一点，不能让卖家以为已经对接了真实物流。
+     *
+     * <p>{@code tracks} 直接带上，前端拿到面单后可以立即渲染时间线；没有轨迹时是空列表。
+     */
+    public record WaybillView(
+            String orderNo,
+            String courierCode,
+            String courierName,
+            String waybillNo,
+            /** SIMULATED / EXTERNAL */
+            String mode,
+            boolean simulated,
+            String status,
+            String statusLabel,
+            String createdAt,
+            List<TrackView> tracks) {
     }
 }

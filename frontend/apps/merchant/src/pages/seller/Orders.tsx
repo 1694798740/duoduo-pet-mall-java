@@ -16,8 +16,8 @@ import React, { useCallback, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { sellerApi } from '@duoduo/api-sdk/endpoints';
-import type { OrderView, PageResult } from '@duoduo/api-sdk/types';
+import { logisticsApi, sellerApi } from '@duoduo/api-sdk/endpoints';
+import type { OrderView, PageResult, WaybillView } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import {
   Alert,
@@ -79,11 +79,17 @@ export const SellerOrdersPage: React.FC = () => {
     allowed,
     [allowed, status, keyword, page],
   );
+  /** B-05 · 快递公司列表（服务端下发，前端不维护第二份编码表） */
+  const couriers = useAsync(useCallback(() => logisticsApi.couriers(), []), allowed);
 
   const [shipTarget, setShipTarget] = useState<OrderView | null>(null);
   const [refundTarget, setRefundTarget] = useState<OrderView | null>(null);
   const [company, setCompany] = useState('');
   const [logisticsNo, setLogisticsNo] = useState('');
+  /** B-05 · 电子面单：本地无快递鸟/菜鸟凭据时由服务端生成模拟面单 */
+  const [courierCode, setCourierCode] = useState('SF');
+  const [waybill, setWaybill] = useState<WaybillView | null>(null);
+  const [waybillBusy, setWaybillBusy] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -106,6 +112,8 @@ export const SellerOrdersPage: React.FC = () => {
     setActionError(null);
     setCompany('');
     setLogisticsNo('');
+    setCourierCode('SF');
+    setWaybill(null);
     setShipTarget(order);
   };
 
@@ -131,6 +139,32 @@ export const SellerOrdersPage: React.FC = () => {
       setActionError(toFriendlyMessage(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * 申请电子面单（B-05）。
+   *
+   * 服务端幂等：同一订单重复点击返回同一个运单号；本地没有真实渠道时
+   * 返回 simulated=true，界面必须明示「模拟面单」，不能让卖家以为已对接快递鸟/菜鸟。
+   */
+  const createWaybill = async () => {
+    if (!shipTarget || waybillBusy) return;
+    setWaybillBusy(true);
+    setActionError(null);
+    try {
+      const created = await logisticsApi.createWaybill({
+        orderNo: shipTarget.orderNo,
+        courierCode,
+      });
+      setWaybill(created);
+      setCompany(created.courierName);
+      setLogisticsNo(created.waybillNo);
+      push(created.simulated ? '模拟电子面单已生成，可直接用于发货' : '电子面单已生成', 'success');
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setWaybillBusy(false);
     }
   };
 
@@ -356,6 +390,39 @@ export const SellerOrdersPage: React.FC = () => {
           发货后资金<b>仍在平台托管</b>，放款要等买家确认收货（或超时自动确认）。
         </Alert>
         <div style={{ marginTop: 12 }}>
+          <Field
+            label="电子面单"
+            hint="本地未接快递鸟/菜鸟，生成的是模拟面单；运单号会直接填入下方物流信息"
+          >
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                className="input"
+                style={{ maxWidth: 180 }}
+                value={courierCode}
+                onChange={(e) => setCourierCode(e.target.value)}
+                aria-label="快递公司"
+              >
+                {(couriers.data ?? [{ code: 'SF', name: '顺丰速运' }]).map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={createWaybill}
+                disabled={waybillBusy || busy}
+              >
+                {waybillBusy ? '生成中…' : '获取电子面单'}
+              </button>
+              {waybill ? (
+                <span className="small muted">
+                  已生成 {waybill.courierName} {waybill.waybillNo}
+                  {waybill.simulated ? '（模拟面单）' : '（真实渠道）'}
+                </span>
+              ) : null}
+            </div>
+          </Field>
           <Field label="物流公司" hint="可留空；填写后随订单状态日志留痕">
             <input
               className="input"

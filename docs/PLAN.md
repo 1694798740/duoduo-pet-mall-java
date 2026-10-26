@@ -1,6 +1,39 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-26 · 第一百零七轮）**：**商品复制 / CSV 导入导出 / 曝光-点击诊断（A-17）—— 把「重复上新」与「上架后看不见效果」这两件事一次补齐**
+> **最新一轮（2026-10-26 · 第一百零八轮）**：**电子面单 / 物流适配层（B-05）—— 没有快递鸟凭据，也要让「面单 → 发货 → 轨迹」跑通**
+> 问题：卖家发货只能手填「物流公司 + 单号」，没有平台侧的面单凭据；轨迹只能靠外部手工推送，
+> 买家页面上的「物流轨迹」在本地几乎永远是空的。
+> ① **适配层**：新增 `LogisticsProvider` 接口（快递公司 + 运单号 + 模式），当前实现
+> `SimulatedLogisticsProvider`（编码 + 12 位雪花低位）；接快递鸟/菜鸟时只替换实现，
+> 订单、轨迹、前端不动。快递公司白名单收在 `Couriers`（SF/YTO/ZTO/STO/YD/JD/EMS）。
+> ② **数据**：新增 `t_waybill`，`uk_waybill_order` 保证**一个订单最多一张面单**，
+> 重复申请返回同一张、并发申请撞唯一键后回读；`mode=SIMULATED/EXTERNAL`，
+> `status=CREATED/PICKED_UP/IN_TRANSIT/OUT_FOR_DELIVERY/SIGNED`。
+> ③ **接口**：`POST /api/logistics/waybills`（卖家/运营，订单须 PAID/SHIPPED，幂等）、
+> `GET /api/logistics/orders/{no}/waybill`（买家本人/卖家/运营）、`GET /api/logistics/couriers`；
+> 内部 `POST /api/logistics/internal/waybills/{no}/advance`（模拟推进，HMAC 凭据）。
+> ④ **发货衔接**：卖家拿到面单号后走既有发货接口；交易域在发货后补推「已揽收」节点，
+> 面单与轨迹通过订单号关联，买家在订单详情直接看到时间线。
+> ⑤ **模拟推进**：`WaybillSimulationJob` 以轨迹最后节点为锚，默认 30 秒一步推进
+> IN_TRANSIT → OUT_FOR_DELIVERY → SIGNED；选主锁防多实例重复，节点唯一索引是第二道保险；
+> 只对 `SIMULATED` 面单生效，真实渠道绝不本地编节点。
+> ⑥ **前端**：商家端发货弹窗新增快递公司下拉 + 「获取电子面单」，生成后自动回填公司/单号，
+> 并明确标注「模拟面单」；订单详情时间线展示四个节点。
+> ⑦ **数据脚本**：`incremental/57-waybill.sql`；`schema.sql` 与 `docs/sql/04` 同步；
+> `application.yml` 新增 `duoduo.logistics.simulate-*` 配置（默认开启、步长 30s）。
+> ⑧ **验证**：fulfilment 单测 **79/0**（新增 `WaybillServiceTest` 13 条、`SimulatedLogisticsProviderTest` 2 条）、
+> common **149/0**、common-web **64/0（5 skipped）**、商家端 `tsc --noEmit` 全绿；
+> 新增 B-05 冒烟 **36/0**（面单幂等 / 权限 / 未支付 422 / 非法编码 400 / 发货衔接 /
+> 定时任务自动推进 / 内部推进四节点 / 轨迹权限 / 零残留）；
+> 新增 B-05 UI e2e **20/0**（下拉 + 生成 + 自动回填 + 模拟标识 + 发货 + 时间线四节点 +
+> 0 原生弹窗 / 0 pageerror）；回归 A-16 冒烟 **55/0**、A-16 UI **29/0**；
+> fulfilment / merchant-web 镜像重建，17 个容器 healthy。
+> 风险：当前只有模拟渠道，**没有真实运单号与快递回调**；模拟轨迹按固定步长推进，
+> 不代表真实运输时效；一个订单只能有一张面单（暂不支持作废重开）；没有面单打印排版。
+> 踩坑：内部接口不经网关 —— 冒烟最初用网关 `8080` 调 `/api/logistics/internal/**` 得到 401，
+> 正确姿势是直连履约域 `8084` 并带 HMAC 凭据；网关只放行业务前缀，`/internal/**` 本来就不路由。
+
+> **上轮（2026-10-26 · 第一百零七轮）**：**商品复制 / CSV 导入导出 / 曝光-点击诊断（A-17）—— 把「重复上新」与「上架后看不见效果」这两件事一次补齐**
 > 问题：商家上新只能一件件手填；同类商品做第二个规格/包装时要重抄全部内容；商品上架后只有「销量」，
 > 不知道是没人看到（曝光低）、看到了不点（点击率低），还是点了不买（转化低），运营动作只能凭感觉。
 > ① **复制**：`POST /api/seller/products/{id}/copy`，无请求体；复制内容、图片、规格参数/包装、全部 SKU

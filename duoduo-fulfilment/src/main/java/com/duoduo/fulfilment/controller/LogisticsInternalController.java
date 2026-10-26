@@ -3,7 +3,9 @@ package com.duoduo.fulfilment.controller;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.fulfilment.dto.LogisticsDtos.TrackIngestRequest;
 import com.duoduo.fulfilment.dto.LogisticsDtos.TrackIngestResult;
+import com.duoduo.fulfilment.dto.LogisticsDtos.WaybillView;
 import com.duoduo.fulfilment.service.LogisticsService;
+import com.duoduo.fulfilment.service.WaybillService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,9 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class LogisticsInternalController {
 
     private final LogisticsService logisticsService;
+    private final WaybillService waybillService;
 
-    public LogisticsInternalController(LogisticsService logisticsService) {
+    public LogisticsInternalController(LogisticsService logisticsService, WaybillService waybillService) {
         this.logisticsService = logisticsService;
+        this.waybillService = waybillService;
     }
 
     /**
@@ -45,5 +49,16 @@ public class LogisticsInternalController {
     public ApiResponse<TrackIngestResult> ingest(@PathVariable String orderNo,
                                                 @Valid @RequestBody TrackIngestRequest request) {
         return ApiResponse.ok(logisticsService.ingest(orderNo, request));
+    }
+
+    /**
+     * 推进一次模拟轨迹（B-05）。
+     *
+     * <p>给定时任务之外提供一个可控入口：本地演示与自动化测试不能等 30 秒一步。
+     * 只对模拟面单生效，真实渠道会返回业务错误 —— 平台不能替快递公司编造节点。
+     */
+    @PostMapping("/waybills/{orderNo}/advance")
+    public ApiResponse<WaybillView> advance(@PathVariable String orderNo) {
+        return ApiResponse.ok(waybillService.advance(orderNo));
     }
 }

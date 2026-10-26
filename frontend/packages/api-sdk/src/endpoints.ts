@@ -122,6 +122,8 @@ import type {
   ShipRequest,
   StorePublicView,
   TrackListView,
+  CourierView,
+  WaybillView,
   UsableCouponResult,
   UserView,
   PlaceSeckillResult,
@@ -1078,6 +1080,17 @@ export const afterSaleApi = {
 export const logisticsApi = {
   tracks: (orderNo: string, options?: { signal?: AbortSignal }) =>
     api.get<TrackListView>(`/api/logistics/orders/${encodeURIComponent(orderNo)}/tracks`, options),
+
+  /** 支持的快递公司（B-05）：卖家发货弹窗里的下拉选项 */
+  couriers: () => api.get<CourierView[]>('/api/logistics/couriers'),
+
+  /** 申请电子面单（B-05，幂等）：同订单重复申请返回同一张 */
+  createWaybill: (body: { orderNo: string; courierCode?: string }) =>
+    api.post<WaybillView>('/api/logistics/waybills', body),
+
+  /** 订单当前电子面单；没有面单返回 404（前端按「尚未申请」处理） */
+  waybill: (orderNo: string) =>
+    api.get<WaybillView>(`/api/logistics/orders/${encodeURIComponent(orderNo)}/waybill`),
 };
 
 // ---------- 信用分（/api/reviews/seller/{sellerId}/credit，履约域 A4） ----------

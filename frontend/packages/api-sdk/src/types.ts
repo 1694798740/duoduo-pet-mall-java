@@ -1404,6 +1404,32 @@ export interface TrackListView {
   tracks: TrackView[];
 }
 
+/** 快递公司（B-05）：编码与中文名由服务端下发，前端不维护第二份映射 */
+export interface CourierView {
+  code: string;
+  name: string;
+}
+
+/**
+ * 电子面单（B-05）。
+ *
+ * `simulated=true` 表示当前没接快递鸟/菜鸟，运单号与轨迹由本地模拟生成 ——
+ * 界面必须明示，不能让卖家误以为已对接真实物流。
+ * `tracks` 已随面单返回，前端拿到后可直接渲染时间线（没有轨迹时为空数组）。
+ */
+export interface WaybillView {
+  orderNo: string;
+  courierCode: string;
+  courierName: string;
+  waybillNo: string;
+  mode: 'SIMULATED' | 'EXTERNAL' | string;
+  simulated: boolean;
+  status: string;
+  statusLabel: string;
+  createdAt: string;
+  tracks: TrackView[];
+}
+
 // ---------- 信用分（/api/reviews/seller/{sellerId}/credit，履约域 A4） ----------
 
 /** 信用等级编码。中文文案由服务端下发，前端不维护第二份映射。 */

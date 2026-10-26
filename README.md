@@ -4,6 +4,28 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（八十九）· 电子面单 / 物流适配层（B-05）**
+
+- **问题**：发货只能手填物流公司与单号，没有平台面单凭据；轨迹只能靠外部手工推送，
+  本地买家页的「物流轨迹」几乎永远是空的。
+- **适配层**：`LogisticsProvider` 接口 + `SimulatedLogisticsProvider`（编码 + 12 位雪花低位）；
+  快递公司白名单 `Couriers`（SF/YTO/ZTO/STO/YD/JD/EMS）。接快递鸟/菜鸟时只替换实现。
+- **数据**：新增 `t_waybill`，`uk_waybill_order` 保证一单一张面单；重复申请返回同一张，
+  并发撞唯一键后回读；`mode=SIMULATED/EXTERNAL`，状态 CREATED → … → SIGNED。
+- **接口**：`POST /api/logistics/waybills`（卖家/运营，订单须 PAID/SHIPPED，幂等）、
+  `GET /api/logistics/orders/{no}/waybill`、`GET /api/logistics/couriers`；
+  内部 `POST /api/logistics/internal/waybills/{no}/advance`（模拟推进，HMAC 凭据）。
+- **发货衔接**：用面单号走既有发货接口，交易域补推「已揽收」；
+  `WaybillSimulationJob` 默认 30 秒一步推进到签收，只对模拟面单生效。
+- **前端**：商家端发货弹窗新增快递下拉 + 「获取电子面单」，自动回填公司/单号并明示「模拟面单」；
+  订单详情时间线展示四个节点。
+- **数据脚本**：`incremental/57-waybill.sql`；`schema.sql` 与 `docs/sql/04` 同步。
+- **验证**：fulfilment 单测 **79/0**（新增 15）、common **149/0**、common-web **64/0（5 skipped）**、
+  商家端 tsc 全绿；B-05 冒烟 **36/0**、B-05 UI e2e **20/0**；回归 A-16 冒烟 **55/0**、A-16 UI **29/0**；
+  fulfilment / merchant-web 镜像重建，17 容器 healthy。
+- **踩坑**：内部接口不经网关，冒烟必须直连履约域 `8084` 并带 HMAC 凭据；
+  走网关 `8080` 会先被 JWT 过滤器拦成 401。
+
 **2026-10-26（八十八）· 商品复制 / CSV 导入导出 / 曝光-点击诊断（A-17）**
 
 - **复制**：`POST /api/seller/products/{id}/copy`，复制内容与全部规格，标题追加「（副本）」，

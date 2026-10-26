@@ -12,6 +12,7 @@
 --   * 评分存 INTEGER（1-5），聚合靠 SQL（AVG / GROUP BY），不落冗余汇总列：
 --     汇总列一旦写错就会长期错，而评价读取是低频页面，SQL 聚合成本可接受
 
+DROP TABLE IF EXISTS t_waybill;
 DROP TABLE IF EXISTS t_logistics_track;
 DROP TABLE IF EXISTS t_after_sale;
 DROP TABLE IF EXISTS t_review;
@@ -158,6 +159,27 @@ CREATE TABLE t_logistics_track (
 );
 -- 查询固定是「按订单号取全部节点并按时间正序」，这个联合索引直接覆盖排序
 CREATE INDEX idx_track_order_time ON t_logistics_track (order_no, occurred_at);
+
+-- ---------- 电子面单（B-05） ----------
+-- 一个订单最多一张有效面单：uk_waybill_order 是重复申请与并发申请的幂等键。
+-- mode=SIMULATED 时轨迹由本地任务推进；接真实渠道后只替换 Provider，不改表结构与接口。
+CREATE TABLE t_waybill (
+    id           BIGINT      NOT NULL,
+    order_id     BIGINT      NOT NULL,
+    order_no     VARCHAR(32) NOT NULL,
+    seller_id    BIGINT      NOT NULL DEFAULT 0,
+    courier_code VARCHAR(20) NOT NULL,
+    courier_name VARCHAR(50) NOT NULL,
+    waybill_no   VARCHAR(64) NOT NULL,
+    mode         VARCHAR(16) NOT NULL DEFAULT 'SIMULATED',
+    status       VARCHAR(20) NOT NULL DEFAULT 'CREATED',
+    created_at   TIMESTAMP   NOT NULL,
+    updated_at   TIMESTAMP   NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_waybill_order UNIQUE (order_no),
+    CONSTRAINT uk_waybill_no UNIQUE (waybill_no)
+);
+CREATE INDEX idx_waybill_status ON t_waybill (mode, status);
 
 -- ---------- 商品分享（分享圈，第四十三轮；第四十六轮加转发层） ----------
 -- 一条记录 = 「某用户带着自己写的评价分享了一个商品」。

@@ -2,6 +2,37 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 电子面单冒烟（`scripts/waybill-b05-smoke.mjs`，36 项，第一百零八轮）
+
+```bash
+NO_PROXY="*" node scripts/waybill-b05-smoke.mjs
+```
+
+前置：容器在跑；fulfilment 已部署 B-05；`incremental/57-waybill.sql` 已执行；
+卖家 13600003333、另一店主 13959064118、运营 13684295254 可用；模拟推进默认开启（步长 30s）。
+覆盖：未支付订单申请面单 422；已支付订单卖家申请（默认顺丰 / 指定圆通）、运单号 `YTO+12位`、
+`simulated=true`、初始 CREATED 且无轨迹；重复申请返回同一张、回库仅一张；
+买家 / 别的卖家 403、运营代申请返回同一张、非法编码 400、快递公司列表 7 家；
+用面单号发货后交易域补推「已揽收」、买家可查面单与轨迹；
+定时任务在 30s 步长后自动推进到「运输中」；内部入口继续推进到派送 / 签收；
+签收后重复推进不再新增；买家看到完整四节点与中文文案；未知订单 404、未登录 401；
+面单 / 轨迹 / 订单链路 / 商品 / 临时买家零残留。2026-10-26 实测 **36/0**。
+**注意**：内部接口不经网关，脚本直连 `http://localhost:8084` 并带 HMAC 凭据。
+
+## 电子面单 UI e2e（`scripts/e2e/waybill-b05-ui-check.mjs`，20 项，第一百零八轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/waybill-b05-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（先 `npm run build:merchant` 再重建 `duoduo-merchant-web-app`）；
+fulfilment 已部署 B-05；卖家 13600003333、运营 13684295254 可用。
+覆盖：待发货列表出现订单 → 发货弹窗有快递下拉与「获取电子面单」；
+选择圆通 → 生成后明示「模拟面单」、自动回填「圆通速递 / YTO+12位」；
+确认发货后回库 `SHIPPED|圆通速递|面单号`、`t_waybill=YTO|SIMULATED`；
+内部推进三次到签收，订单详情时间线展示已揽收 / 运输中 / 派送中 / 已签收与运单号；
+全程 0 原生弹窗、0 pageerror；面单 / 轨迹 / 订单 / 商品 / 买家零残留。2026-10-26 实测 **20/0**。
+
 ## 商品复制 / CSV / 诊断冒烟（`scripts/product-csv-diagnostics-a17-smoke.mjs`，53 项，第一百零七轮）
 
 ```bash

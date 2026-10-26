@@ -2,12 +2,18 @@ package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.fulfilment.dto.LogisticsDtos.CourierView;
 import com.duoduo.fulfilment.dto.LogisticsDtos.TrackListView;
+import com.duoduo.fulfilment.dto.LogisticsDtos.WaybillView;
 import com.duoduo.fulfilment.service.LogisticsService;
+import com.duoduo.fulfilment.service.WaybillService;
+import com.duoduo.fulfilment.support.Couriers;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 物流轨迹查询（买家 / 卖家 / 运营）。
@@ -30,9 +36,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class LogisticsController {
 
     private final LogisticsService logisticsService;
+    private final WaybillService waybillService;
 
-    public LogisticsController(LogisticsService logisticsService) {
+    public LogisticsController(LogisticsService logisticsService, WaybillService waybillService) {
         this.logisticsService = logisticsService;
+        this.waybillService = waybillService;
+    }
+
+    /**
+     * 支持的快递公司（B-05）：前端下拉直接消费，中文名由服务端给出，不在端上维护第二份映射。
+     */
+    @GetMapping("/couriers")
+    public ApiResponse<List<CourierView>> couriers() {
+        UserContext.requireUserId();
+        return ApiResponse.ok(Couriers.all().stream()
+                .map(c -> new CourierView(c.code(), c.name()))
+                .toList());
     }
 
     /**
@@ -45,5 +64,14 @@ public class LogisticsController {
     @GetMapping("/orders/{orderNo}/tracks")
     public ApiResponse<TrackListView> tracks(@PathVariable String orderNo) {
         return ApiResponse.ok(logisticsService.listForParty(UserContext.requireUserId(), orderNo));
+    }
+
+    /**
+     * 订单当前电子面单（B-05）：买家本人 / 该单卖家 / 运营可见；没有面单返回 404。
+     * 前端在订单详情页据此展示「电子面单」区块。
+     */
+    @GetMapping("/orders/{orderNo}/waybill")
+    public ApiResponse<WaybillView> waybill(@PathVariable String orderNo) {
+        return ApiResponse.ok(waybillService.forParty(orderNo));
     }
 }
