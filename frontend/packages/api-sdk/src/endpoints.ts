@@ -85,7 +85,10 @@ import type {
   RoleChangeResult,
   SellerProductCreateRequest,
   SellerProductBatchResultView,
+  SellerProductCsvView,
   SellerProductDetailView,
+  SellerProductDiagnosticsView,
+  SellerProductImportResultView,
   SellerProductUpdateRequest,
   SellerProductView,
   SellerSkuStructureRequest,
@@ -632,6 +635,25 @@ export const sellerApi = {
   /** 规格订单占用（A-14，只读）：列表里没有的规格才允许删除 */
   productSkuUsage: (spuId: string) =>
     api.get<SellerSkuUsageView[]>(`/api/seller/products/${spuId}/skus/usage`),
+
+  // ---------------- A-17 · 商品复制 / CSV 导入导出 / 诊断 ----------------
+
+  /** 复制商品：生成同款新商品，默认下架 */
+  copyProduct: (spuId: string) => api.post<SellerProductView>(`/api/seller/products/${spuId}/copy`),
+
+  /** 导出商品为 CSV：返回 JSON 信封里的 UTF-8 BOM 文本，自行转 Blob 下载 */
+  exportProductsCsv: () => api.get<SellerProductCsvView>('/api/seller/products/export'),
+
+  /** 下载商品 CSV 导入模板（表头 + 一行示例） */
+  importProductTemplate: () => api.get<SellerProductCsvView>('/api/seller/products/import-template'),
+
+  /** 上传商品 CSV 文本导入：逐分组键创建，部分成功返回逐行详情 */
+  importProductsCsv: (body: { content: string }) =>
+    api.post<SellerProductImportResultView>('/api/seller/products/import', body),
+
+  /** 商品诊断：近 days 天曝光 / 点击 / 点击率 + 建议；days 缺省 30，上限 90 */
+  productDiagnostics: (query?: { days?: number }) =>
+    api.get<SellerProductDiagnosticsView>('/api/seller/products/diagnostics', { query }),
 };
 
 // ---------- 平台管理后台（/api/admin，需运营 / 管理员） ----------

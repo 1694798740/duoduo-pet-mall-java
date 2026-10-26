@@ -971,7 +971,7 @@ curl -s --noproxy '*' http://localhost:8088/ | head
 | **A-14** | **SKU 增删改（结构）** | 只能发布时创建；新增/删除规格无入口 | P1 | ⬜ | 有订单的 SKU 禁止删除；改规格触发重审 |
 | **A-15** | **评价审核流** | `t_review.audit_status` 恒 APPROVED | P2 | ⬜ | 机审+人审；违规评价下架 |
 | **A-16** | **商家回复评价** | 已落地（第一百零六轮）：`t_review` 补 `reply_content / reply_at / replied_by`；`GET /api/reviews/seller`（只含 APPROVED，replied / rating / keyword 筛选）+ `POST /api/reviews/{id}/reply`；一条评价一次回复（重复 409），仅 APPROVED 可回；跨店 404、买家 403、未登录 401，平台自营允许运营代回复；回复复用 `ReviewRiskJudge`；商家端 DTO 无买家身份字段，匿名昵称脱敏；商家端「评价管理」三页签 + 回复弹窗，买家详情与「我的评价」展示回复 | P2 | ✅ | 单测 13 条（模块 64/0）、冒烟 55/0、UI e2e 29/0、审计 `REVIEW_REPLY` |
-| **A-17** | 商品导入导出 / 复制 / 诊断 | 全部缺失 | P3 | ⬜ | 模板导入导出；曝光-点击-转化 |
+| **A-17** | **商品导入导出 / 复制 / 诊断** | 已落地（第一百零七轮）：`POST /{id}/copy`（复用 create，标题「（副本）」、默认下架、销量评分归零）；`GET /export` + `POST /import` + `GET /import-template`（16 列分组模板、BOM、公式注入防护、逐组独立事务、部分成功）；`t_product_daily_stat` 记公开曝光/点击，`GET /diagnostics?days=30` 返回点击率与建议；交易域 `product-stats` 补 `orderCount`，前端合并算点击成交率 | P3 | ✅ | 单测 20 条（模块 259/0）、trade 119/0、三端 tsc 全绿；A-17 冒烟 **53/0**、A-17 UI e2e **25/0**；回归 A-13 **53/0**、A-16 冒烟 **55/0**、A-16 UI **29/0** |
 
 ### B. 交易 / 支付 / 资金（7 项）
 

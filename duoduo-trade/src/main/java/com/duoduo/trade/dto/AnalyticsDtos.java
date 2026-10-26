@@ -80,8 +80,10 @@ public final class AnalyticsDtos {
      * @param quantity  成交件数
      * @param amount    成交金额（分）
      * @param refundQty 其中退款件数（REFUNDING / REFUNDED）
+     * @param orderCount 成交订单数（A-17：与商品域点击量合并算转化率；一件多件的订单只计 1）
      */
-    public record ProductStat(Long spuId, String name, long quantity, long amount, long refundQty) {
+    public record ProductStat(Long spuId, String name, long quantity, long amount, long refundQty,
+                              long orderCount) {
     }
 
     /**

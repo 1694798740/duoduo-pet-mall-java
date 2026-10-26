@@ -474,7 +474,8 @@ public class SellerService {
                         str(row, "name"),
                         lng(row, "qty"),
                         lng(row, "amount"),
-                        lng(row, "refundQty")))
+                        lng(row, "refundQty"),
+                        lng(row, "orderCnt")))
                 .toList();
     }
 

@@ -4,13 +4,18 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
+import com.duoduo.product.dto.ProductDtos.SellerProductCsvView;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
+import com.duoduo.product.dto.ProductDtos.SellerProductDiagnosticsView;
+import com.duoduo.product.dto.ProductDtos.SellerProductImportRequest;
+import com.duoduo.product.dto.ProductDtos.SellerProductImportResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
 import com.duoduo.product.dto.ProductDtos.SellerSkuUsageView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuStructureRequest;
 import com.duoduo.product.dto.ProductDtos.SellerSkuStructureResultView;
+import com.duoduo.product.service.SellerProductCsvService;
 import com.duoduo.product.service.SellerProductService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -43,9 +48,12 @@ import java.util.List;
 public class SellerProductController {
 
     private final SellerProductService sellerProductService;
+    private final SellerProductCsvService sellerProductCsvService;
 
-    public SellerProductController(SellerProductService sellerProductService) {
+    public SellerProductController(SellerProductService sellerProductService,
+                                   SellerProductCsvService sellerProductCsvService) {
         this.sellerProductService = sellerProductService;
+        this.sellerProductCsvService = sellerProductCsvService;
     }
 
     /**
@@ -202,5 +210,61 @@ public class SellerProductController {
     @GetMapping("/{spuId}/skus/usage")
     public ApiResponse<List<SellerSkuUsageView>> skuUsage(@PathVariable Long spuId) {
         return ApiResponse.ok(sellerProductService.skuUsage(spuId));
+    }
+
+    // ---------------- A-17 · 商品复制 / CSV 导入导出 / 诊断 ----------------
+
+    /**
+     * 复制商品（A-17）：以现有商品的内容与规格新建一件，<b>默认下架</b>。
+     *
+     * <p>没有请求体：归属、供货类型、审核态全部由服务端按复制者身份判定
+     * （与新建接口同一套规则）。复制后标题会追加「（副本）」（长度允许时），
+     * 卖家改完内容自行上架。
+     */
+    @PostMapping("/{spuId:\\d+}/copy")
+    public ApiResponse<SellerProductView> copy(@PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.copy(spuId));
+    }
+
+    /**
+     * 导出商品 CSV（A-17）：一个规格一行，UTF-8 BOM，Excel 可直接打开。
+     *
+     * <p>返回 JSON 信封里的文本而不是 {@code text/csv} 附件 —— 前端 API 客户端
+     * 统一处理 401 续期与错误文案，绕过它会让导出成为唯一的例外链路。
+     * 前端拿到内容后用 Blob 触发下载。
+     */
+    @GetMapping("/export")
+    public ApiResponse<SellerProductCsvView> export() {
+        return ApiResponse.ok(sellerProductCsvService.exportCsv());
+    }
+
+    /** 下载导入模板（A-17）：表头 + 一行示例；示例类目 ID 需用户替换 */
+    @GetMapping("/import-template")
+    public ApiResponse<SellerProductCsvView> importTemplate() {
+        return ApiResponse.ok(sellerProductCsvService.importTemplate());
+    }
+
+    /**
+     * 导入商品 CSV（A-17）。
+     *
+     * <p>逐「分组键」创建商品：一组失败不影响其它组，HTTP 200 只代表处理完成，
+     * 成败看返回的 {@code items[].success}。文件本身不可解析 / 表头不匹配 / 超限才走 4xx。
+     */
+    @PostMapping("/import")
+    public ApiResponse<SellerProductImportResultView> importCsv(
+            @RequestBody(required = false) SellerProductImportRequest request) {
+        return ApiResponse.ok(sellerProductCsvService.importCsv(request));
+    }
+
+    /**
+     * 商品诊断（A-17）：近 N 天曝光 / 点击 / 点击率 + 建议；days 缺省 30，上限 90。
+     *
+     * <p>转化率由前端把本接口与交易域 {@code /api/seller/product-stats} 按 spuId 合并得到，
+     * 跨库 JOIN 在本域不存在。
+     */
+    @GetMapping("/diagnostics")
+    public ApiResponse<SellerProductDiagnosticsView> diagnostics(
+            @RequestParam(defaultValue = "30") int days) {
+        return ApiResponse.ok(sellerProductService.diagnostics(days));
     }
 }

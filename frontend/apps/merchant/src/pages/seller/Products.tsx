@@ -25,6 +25,7 @@ import type {
   PageResult,
   SellerProductBatchResultView,
   SellerProductDetailView,
+  SellerProductImportResultView,
   SellerProductUpdateRequest,
   SellerProductView,
 } from '@duoduo/api-sdk/types';
@@ -102,6 +103,25 @@ function fmtTime(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false });
 }
 
+/**
+ * 触发浏览器下载（A-17）。
+ *
+ * <p>后端把 CSV 文本装在 JSON 信封里返回（统一 401 续期与错误文案），
+ * 下载这一步只能在前端做：Blob 的 MIME 必须带 charset=utf-8，
+ * 否则 Windows 上双击打开会用 GBK 解码，中文标题全是乱码。
+ */
+function downloadCsv(filename: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const SellerProductsPage: React.FC = () => {
   const { user } = useAuth();
   const { push } = useToast();
@@ -155,6 +175,13 @@ export const SellerProductsPage: React.FC = () => {
   const [specUsage, setSpecUsage] = useState<Record<string, number>>({});
   /** 占用查询失败时不能假装「都可以删」 */
   const [specUsageUnknown, setSpecUsageUnknown] = useState(false);
+  /** A-17 · CSV 导入 / 导出 */
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFileName, setImportFileName] = useState('');
+  const [importContent, setImportContent] = useState('');
+  const [importResult, setImportResult] = useState<SellerProductImportResultView | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
   const fetcher = useCallback(
     () =>
@@ -317,6 +344,105 @@ export const SellerProductsPage: React.FC = () => {
       push(err instanceof Error ? err.message : '恢复失败，请重试', 'error');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // ---------------- A-17 · 复制 / CSV 导入导出 ----------------
+
+  /** 复制商品：副本默认下架，卖家核对后自行上架（服务端不会替卖家决定上架） */
+  const copyProduct = async (item: SellerProductView) => {
+    const ok = await confirm({
+      title: '复制商品',
+      message: (
+        <>
+          将以「{item.title}」的内容与规格新建一件商品。
+          <br />
+          副本<b>默认下架</b>，标题会追加「（副本）」；请核对库存与价格后再上架。
+        </>
+      ),
+      confirmText: '复制',
+    });
+    if (!ok) return;
+    setBusyId(item.id);
+    try {
+      const copied = await sellerApi.copyProduct(item.id);
+      push(`已复制为「${copied.title}」，当前为下架状态，请核对后上架`, 'success');
+      reload();
+    } catch (err) {
+      push(err instanceof Error ? err.message : '复制失败，请重试', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const exportCsv = async () => {
+    if (csvBusy) return;
+    setCsvBusy(true);
+    try {
+      const file = await sellerApi.exportProductsCsv();
+      downloadCsv(file.filename, file.content);
+      push(`已导出 ${file.productCount} 件商品（${file.rowCount} 行规格）`, 'success');
+    } catch (err) {
+      push(err instanceof Error ? err.message : '导出失败，请重试', 'error');
+    } finally {
+      setCsvBusy(false);
+    }
+  };
+
+  const openImport = () => {
+    setImportFileName('');
+    setImportContent('');
+    setImportResult(null);
+    setImportOpen(true);
+  };
+
+  const downloadTemplate = async () => {
+    try {
+      const file = await sellerApi.importProductTemplate();
+      downloadCsv(file.filename, file.content);
+    } catch (err) {
+      push(err instanceof Error ? err.message : '模板下载失败，请重试', 'error');
+    }
+  };
+
+  const pickImportFile = async (file: File | null) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      push('文件过大（上限 2MB），请拆分后导入', 'error');
+      return;
+    }
+    try {
+      const text = await file.text();
+      setImportFileName(file.name);
+      setImportContent(text);
+      setImportResult(null);
+    } catch {
+      push('读取文件失败，请确认文件未损坏', 'error');
+    }
+  };
+
+  const submitImport = async () => {
+    if (!importContent) {
+      push('请先选择 CSV 文件', 'error');
+      return;
+    }
+    setImportBusy(true);
+    try {
+      const result = await sellerApi.importProductsCsv({ content: importContent });
+      setImportResult(result);
+      if (result.successCount > 0) {
+        push(
+          `导入完成：成功 ${result.successCount} 个商品${result.failedCount ? `，失败 ${result.failedCount} 个` : ''}`,
+          result.failedCount ? 'error' : 'success',
+        );
+        reload();
+      } else {
+        push('导入未成功，请按下方原因修正后重试', 'error');
+      }
+    } catch (err) {
+      push(err instanceof Error ? err.message : '导入失败，请重试', 'error');
+    } finally {
+      setImportBusy(false);
     }
   };
 
@@ -751,9 +877,17 @@ export const SellerProductsPage: React.FC = () => {
             {data ? `共 ${total} 件${inRecycle ? '已删除商品' : '商品'}` : ''}
           </span>
           {!inRecycle ? (
-            <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>
-              + 发布商品
-            </button>
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={openImport}>
+                导入 CSV
+              </button>
+              <button className="btn btn-ghost btn-sm" disabled={csvBusy} onClick={exportCsv}>
+                {csvBusy ? '导出中…' : '导出 CSV'}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>
+                + 发布商品
+              </button>
+            </>
           ) : null}
         </div>
       </div>
@@ -998,6 +1132,13 @@ export const SellerProductsPage: React.FC = () => {
                               onClick={() => openSpecs(item)}
                             >
                               规格
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={busyId === item.id}
+                              onClick={() => copyProduct(item)}
+                            >
+                              复制
                             </button>
                             {item.auditStatus === 'REJECTED' ? (
                               <button
@@ -1421,6 +1562,81 @@ export const SellerProductsPage: React.FC = () => {
                         <span className="small" style={{ color: '#c0392b' }}>
                           {entry.message ?? '操作失败'}
                         </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* A-17 · CSV 批量导入：一个分组键 = 一个商品，多行规格填同一个分组键 */}
+      <Modal
+        open={importOpen}
+        title="批量导入商品（CSV）"
+        onClose={() => setImportOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setImportOpen(false)}>
+              关闭
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={importBusy || !importContent}
+              onClick={submitImport}
+            >
+              {importBusy ? '导入中…' : '开始导入'}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="info">
+          一个「分组键」= 一个商品；同一商品的多个规格填相同分组键（每个规格一行）。
+          同一分组键下的标题 / 类目 / 图片等商品字段必须一致。导入的商品会按新建规则进入审核，
+          第三方商品审核通过前前台不可见。
+        </Alert>
+        <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            aria-label="选择商品 CSV 文件"
+            onChange={(e) => {
+              void pickImportFile(e.target.files?.[0] ?? null);
+              e.target.value = '';
+            }}
+          />
+          <button className="btn btn-ghost btn-sm" onClick={downloadTemplate}>
+            下载导入模板
+          </button>
+          <span className="small muted">{importFileName ? `已选择：${importFileName}` : '支持 UTF-8 CSV，最大 2MB'}</span>
+        </div>
+
+        {importResult ? (
+          <div style={{ marginTop: 14 }}>
+            <Alert kind={importResult.failedCount === 0 ? 'success' : importResult.successCount === 0 ? 'error' : 'warn'}>
+              共 {importResult.totalGroups} 个商品：成功 {importResult.successCount} 个，失败{' '}
+              {importResult.failedCount} 个。失败的商品未创建，已成功的商品保留。
+            </Alert>
+            <table className="table" style={{ marginTop: 10 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 70 }}>行号</th>
+                  <th>商品</th>
+                  <th style={{ width: 220 }}>结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importResult.items.map((entry) => (
+                  <tr key={`${entry.lineNo}-${entry.groupKey}`}>
+                    <td>{entry.lineNo}</td>
+                    <td style={{ wordBreak: 'break-all' }}>{entry.title || entry.groupKey || '—'}</td>
+                    <td>
+                      {entry.success ? (
+                        <span className="tag">已创建</span>
+                      ) : (
+                        <span className="small" style={{ color: '#c0392b' }}>{entry.message ?? '导入失败'}</span>
                       )}
                     </td>
                   </tr>

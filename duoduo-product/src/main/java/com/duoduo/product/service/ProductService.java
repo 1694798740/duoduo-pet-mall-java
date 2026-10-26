@@ -81,6 +81,8 @@ public class ProductService {
     /** A10 · ES 检索引擎（可选：开关关闭时 bean 不存在，检索一律走 MySQL） */
     private final org.springframework.beans.factory.ObjectProvider<
             com.duoduo.product.support.search.EsSearchEngine> esSearchProvider;
+    /** A-17 · 曝光 / 点击统计（旁路数据，写失败不影响读路径） */
+    private final ProductStatService productStatService;
 
     public ProductService(SpuMapper spuMapper,
                           SkuMapper skuMapper,
@@ -90,7 +92,8 @@ public class ProductService {
                           ObjectMapper objectMapper,
                           com.duoduo.product.client.StoreNameClient storeNameClient,
                           org.springframework.beans.factory.ObjectProvider<
-                                  com.duoduo.product.support.search.EsSearchEngine> esSearchProvider) {
+                                  com.duoduo.product.support.search.EsSearchEngine> esSearchProvider,
+                          ProductStatService productStatService) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.categoryService = categoryService;
@@ -99,6 +102,7 @@ public class ProductService {
         this.objectMapper = objectMapper;
         this.storeNameClient = storeNameClient;
         this.esSearchProvider = esSearchProvider;
+        this.productStatService = productStatService;
     }
 
     // ---------------- 检索 ----------------
@@ -316,7 +320,10 @@ public class ProductService {
                 log.info("商品检索 keyword={} 引擎=es 命中={} 兜底={} 页={}/{} 返回={} 耗时={}ms",
                         query.keyword(), hits.total(), hits.looseFallback(), pageNo, pageSize,
                         records.size(), (System.nanoTime() - startedAt) / 1_000_000);
-                return PageResult.of(toCards(records), hits.total(), pageNo, pageSize);
+                PageResult<ProductCard> result = PageResult.of(toCards(records), hits.total(), pageNo, pageSize);
+                // A-17：曝光在返回前记一次；统计失败只记 WARN，不影响检索
+                productStatService.recordExposure(result.items());
+                return result;
             } catch (Exception ex) {
                 log.warn("ES 检索失败，降级 MySQL（设计内行为）: {}", ex.getMessage());
             }
@@ -328,6 +335,8 @@ public class ProductService {
                     query.keyword(), fallback.total(), pageNo, pageSize,
                     (System.nanoTime() - startedAt) / 1_000_000);
         }
+        // A-17：MySQL 路径同样记曝光（ES 降级时不能少记一半数据）
+        productStatService.recordExposure(fallback.items());
         return fallback;
     }
 
@@ -412,7 +421,10 @@ public class ProductService {
         wrapper.orderByDesc(SpuEntity::getId);
 
         Page<SpuEntity> result = spuMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        return PageResult.of(toCards(result.getRecords()), result.getTotal(), pageNo, size);
+        PageResult<ProductCard> pageResult = PageResult.of(toCards(result.getRecords()), result.getTotal(), pageNo, size);
+        // A-17：店铺货架也是公开曝光面
+        productStatService.recordExposure(pageResult.items());
+        return pageResult;
     }
 
     // ---------------- 详情 ----------------
@@ -435,6 +447,9 @@ public class ProductService {
                 || !AUDIT_APPROVED.equals(spu.getAuditStatus())) {
             throw BizException.notFound("商品");
         }
+
+        // A-17：只有真正打开成功的详情才算点击（上面的可见性闸已经拦住 404）
+        productStatService.recordClick(spuId);
 
         List<SkuEntity> skus = skuMapper.selectList(new LambdaQueryWrapper<SkuEntity>()
                 .eq(SkuEntity::getSpuId, spuId)

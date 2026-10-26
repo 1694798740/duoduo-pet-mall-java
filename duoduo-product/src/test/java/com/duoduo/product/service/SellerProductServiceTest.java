@@ -102,11 +102,12 @@ class SellerProductServiceTest {
     private final CategoryAttrService categoryAttrService = mock(CategoryAttrService.class);
     private final SpuImageService spuImageService = mock(SpuImageService.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    private final ProductStatService productStatService = mock(ProductStatService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SellerProductService service = new SellerProductService(
             spuMapper, skuMapper, membershipClient, merchantLicenseClient, merchantRiskClient,
             skuUsageClient, new SnowflakeIdGenerator(1, 1), bannedWordGuard, catalogLookup, objectMapper,
-            auditHistoryService, categoryAttrService, spuImageService, eventPublisher);
+            auditHistoryService, categoryAttrService, spuImageService, eventPublisher, productStatService);
 
     /**
      * 默认让「店铺资质」查得到且可售（E15），并让「商家风险画像」查得到且**无标记**（E28）。
@@ -970,6 +971,89 @@ class SellerProductServiceTest {
         assertThatThrownBy(() -> service.updateSkuPriceStock(9001L,
                 new SellerSkuPriceStockRequest(List.of(new SkuPriceStockInput(11L, null, -1)))))
                 .isInstanceOf(com.duoduo.common.exception.BizException.class);
+    }
+
+    // ---------------- A-17 · 复制商品 ----------------
+
+    @Test
+    void 复制商品_新建副本并默认下架() {
+        UserContext.set(seller(101L));
+        stubCreateDeps();
+        SpuEntity source = spu(7001L, 101L, "原始猫粮", "https://img/main.png");
+        source.setSubtitle("原副标题");
+        source.setImages("https://img/1.png,https://img/2.png");
+        source.setIntro("原商品介绍");
+        source.setDetail("原商品详情");
+        source.setSpecParams("[{\"name\":\"净含量\",\"value\":\"2kg\"}]");
+        when(spuMapper.selectById(7001L)).thenReturn(source);
+        SkuEntity first = sku(8001L, 7001L, 1990L, 10);
+        first.setSpecJson("{\"规格\":\"2kg\"}");
+        SkuEntity second = sku(8002L, 7001L, 3990L, 5);
+        second.setSpecJson("{\"规格\":\"5kg\"}");
+        when(skuMapper.selectList(any())).thenReturn(List.of(first, second));
+
+        SellerProductView copied = service.copy(7001L);
+
+        assertThat(copied.title()).isEqualTo("原始猫粮（副本）");
+        // 复制不等于替卖家上架：副本一律下架，等卖家核对后再上
+        assertThat(copied.status()).isEqualTo("OFF_SHELF");
+        assertThat(copied.statusLabel()).isEqualTo("已下架");
+
+        ArgumentCaptor<SpuEntity> captor = ArgumentCaptor.forClass(SpuEntity.class);
+        verify(spuMapper).insert(captor.capture());
+        SpuEntity saved = captor.getValue();
+        assertThat(saved.getId()).isNotEqualTo(7001L);
+        assertThat(saved.getSellerId()).isEqualTo(101L);
+        assertThat(saved.getTitle()).isEqualTo("原始猫粮（副本）");
+        assertThat(saved.getSubtitle()).isEqualTo("原副标题");
+        assertThat(saved.getImages()).isEqualTo("https://img/1.png,https://img/2.png");
+        // 销量与评分不复制：新商品从 0 起步，否则会凭空继承原商品的成交与口碑
+        assertThat(saved.getSalesCount()).isZero();
+        assertThat(saved.getRating()).isEqualByComparingTo("0.00");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<SpuEntity>> updateCaptor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(spuMapper).update(isNull(), updateCaptor.capture());
+        assertThat(updateCaptor.getValue().getSqlSet()).contains("status");
+        assertThat(updateCaptor.getValue().getParamNameValuePairs().values()).contains("OFF_SHELF");
+        verify(skuMapper, times(2)).insert(any(SkuEntity.class));
+        // 复制是对「新商品」的提交，审核历史必须照常记录（不能借复制绕过审核链）
+        verify(auditHistoryService).recordSubmit(any(SpuEntity.class), anyBoolean());
+    }
+
+    @Test
+    void 复制别人的商品_403() {
+        UserContext.set(seller(101L));
+        when(spuMapper.selectById(7002L)).thenReturn(spu(7002L, 202L, "别人的商品", "https://img/main.png"));
+
+        assertThatThrownBy(() -> service.copy(7002L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不属于当前账号");
+    }
+
+    @Test
+    void 平台运营复制第三方商品_同样被代运营门禁拦住() {
+        UserContext.set(operator());
+        when(spuMapper.selectById(7003L)).thenReturn(spu(7003L, 202L, "第三方商品", "https://img/main.png"));
+
+        assertThatThrownBy(() -> service.copy(7003L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("平台不能直接复制");
+        verify(spuMapper, never()).insert(any(SpuEntity.class));
+    }
+
+    @Test
+    void 复制回收站商品_404() {
+        UserContext.set(seller(101L));
+        SpuEntity deleted = spu(7004L, 101L, "已删除商品", "https://img/main.png");
+        deleted.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
+        when(spuMapper.selectById(7004L)).thenReturn(deleted);
+
+        assertThatThrownBy(() -> service.copy(7004L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("商品");
+        verify(spuMapper, never()).insert(any(SpuEntity.class));
     }
 
     private static SkuEntity sku(long id, long spuId, long price, int stock) {

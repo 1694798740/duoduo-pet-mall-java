@@ -93,6 +93,9 @@ public class LongToStringJacksonModule extends SimpleModule {
             "claimedCount", "totalCount", "remainingCount", "usedCount",
             "salesCount", "viewCount", "ratingCount", "imageCount", "appendCount",
             "itemCount", "totalQuantity", "selectedCount", "orderCount",
+            // A-17：商品曝光 / 点击是**被运算的量**（点击率 = 点击/曝光，端侧还要累加），
+            // 漏列会让它们以字符串下发，`+` 退化成拼接、`===` 与 `>` 全部失真。
+            "exposure", "clicks", "totalExposure", "totalClicks",
             "pendingPaymentCount", "pendingShipCount", "shippedCount",
             "completedCount", "refundedCount", "closedCount", "totalOrderCount",
             // 第四十四轮补齐：分享圈互动计数（信息流展示 + 前端 toggle 后直接回填比较）

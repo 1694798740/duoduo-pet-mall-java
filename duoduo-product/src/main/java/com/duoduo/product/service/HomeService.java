@@ -8,6 +8,7 @@ import com.duoduo.product.dto.ProductDtos.ProductCard;
 import com.duoduo.product.dto.ProductDtos.SpeciesPicks;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -30,13 +31,17 @@ public class HomeService {
     private final CategoryService categoryService;
     private final ProductService productService;
     private final ListingService listingService;
+    /** A-17 · 首页商品卡曝光统计 */
+    private final ProductStatService productStatService;
 
     public HomeService(CategoryService categoryService,
                        ProductService productService,
-                       ListingService listingService) {
+                       ListingService listingService,
+                       ProductStatService productStatService) {
         this.categoryService = categoryService;
         this.productService = productService;
         this.listingService = listingService;
+        this.productStatService = productStatService;
     }
 
     public HomeView home() {
@@ -48,6 +53,15 @@ public class HomeService {
         List<SpeciesPicks> speciesPicks = List.of(
                 new SpeciesPicks("cat", "猫咪精选", productService.bySpecies("cat", PICKS_LIMIT)),
                 new SpeciesPicks("dog", "狗狗精选", productService.bySpecies("dog", PICKS_LIMIT)));
+
+        // A-17：首页是最大的曝光面，按「出现在首屏卡片里」计一次曝光（同一请求去重）
+        List<ProductCard> exposed = new ArrayList<>(recommended.size() + freshArrivals.size() + 8);
+        exposed.addAll(recommended);
+        exposed.addAll(freshArrivals);
+        for (SpeciesPicks picks : speciesPicks) {
+            exposed.addAll(picks.items());
+        }
+        productStatService.recordExposure(exposed);
 
         return new HomeView(categories, recommended, freshArrivals, brands, secondhand, speciesPicks);
     }

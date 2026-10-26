@@ -149,6 +149,19 @@ CREATE TABLE t_spu_image (
     CONSTRAINT uk_spu_image_slot UNIQUE (spu_id, image_type, sort_no)
 );
 
+-- ---------- 商品每日曝光 / 点击统计（A-17，增量脚本 56-product-csv-diagnostics.sql） ----------
+-- 独立成表而不是在 t_spu 上加两列：诊断需要「近 N 天」窗口，加列只能记累计值或最近一天。
+-- (spu_id, stat_date) 主键即 UPSERT 的幂等键；曝光/点击都是「展示次数」口径，不是 UV。
+CREATE TABLE t_product_daily_stat (
+    spu_id     BIGINT NOT NULL COMMENT 't_spu.id',
+    stat_date  DATE   NOT NULL COMMENT '统计日期（UTC）',
+    exposure   BIGINT NOT NULL DEFAULT 0 COMMENT '当日曝光次数',
+    clicks     BIGINT NOT NULL DEFAULT 0 COMMENT '当日点击次数',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近写入时间（UTC）',
+    PRIMARY KEY (spu_id, stat_date),
+    KEY idx_stat_date (stat_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品每日曝光/点击统计（A-17）';
+
 -- ---------- E28 · 审核 SLA 事后抽查（增量脚本 29-e28-audit-sla.sql） ----------
 -- 为什么抽查任务是独立表而不是 t_spu 上再加几列：
 --   抽查按天批量产生（同一商品可被不同日期各抽中一次），加列只能记「最近一次」；

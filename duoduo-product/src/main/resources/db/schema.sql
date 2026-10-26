@@ -9,6 +9,7 @@
 
 DROP TABLE IF EXISTS t_listing;
 DROP TABLE IF EXISTS t_sku;
+DROP TABLE IF EXISTS t_product_daily_stat;
 DROP TABLE IF EXISTS t_spu_image;
 DROP TABLE IF EXISTS t_spu;
 DROP TABLE IF EXISTS t_brand;
@@ -109,6 +110,18 @@ CREATE TABLE t_spu_image (
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX uk_spu_image_slot ON t_spu_image (spu_id, image_type, sort_no);
+
+-- ---------- 商品每日曝光 / 点击统计（A-17） ----------
+-- 独立成表：诊断按「近 N 天」窗口汇总，(spu_id, stat_date) 既是主键也是 UPSERT 幂等键。
+CREATE TABLE t_product_daily_stat (
+    spu_id     BIGINT    NOT NULL,
+    stat_date  DATE      NOT NULL,
+    exposure   BIGINT    NOT NULL DEFAULT 0,
+    clicks     BIGINT    NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (spu_id, stat_date)
+);
+CREATE INDEX idx_product_stat_date ON t_product_daily_stat (stat_date);
 
 -- ---------- SKU：可售最小单元（库存与价格落在这一层） ----------
 CREATE TABLE t_sku (

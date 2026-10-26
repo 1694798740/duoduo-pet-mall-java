@@ -2,6 +2,42 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 商品复制 / CSV / 诊断冒烟（`scripts/product-csv-diagnostics-a17-smoke.mjs`，53 项，第一百零七轮）
+
+```bash
+NO_PROXY="*" node scripts/product-csv-diagnostics-a17-smoke.mjs
+```
+
+前置：容器在跑；product / trade 已部署 A-17；`incremental/56-product-csv-diagnostics.sql` 已执行；
+卖家 13600003333、另一店主 13959064118、运营 13684295254、买家 13600001111 可用；ES 可达。
+覆盖：**复制**（新 SPU、标题「（副本）」、规格全量复制、默认下架、销量/评分归零、源商品零改动）；
+跨店复制 **404（租户隔离）**、平台运营复制第三方商品 **403（代运营门禁）**、回收站 / 不存在 404；
+**导出**（UTF-8 BOM、16 列表头、一规格一行、文件名带日期、公式注入标题以单引号前缀导出）；
+**模板**（表头 + 1 行示例）；**导入**（一个分组键 = 一个商品、多规格聚合、3 组 1 组失败 → 部分成功、
+lineNo 为 CSV 物理行号、公式标题原样落库、表头错 / 空内容 400、库存非整数逐组失败、买家 403、
+另一店主导入商品归属自己店铺）；**曝光 / 点击 / 诊断**（公开搜索命中并记曝光、详情记点击、
+诊断曝光/点击与 `t_product_daily_stat` 台账一致、点击率、建议非空、days 缺省 30 / 上限夹紧 90、
+别的店主看不到本店商品、买家 403、未登录 401）；收尾统计行 / SPU / SKU / 图片 / 审核历史零残留。
+2026-10-26 实测 **53/0**。
+
+## 商品复制 / CSV / 诊断 UI e2e（`scripts/e2e/product-csv-diagnostics-a17-ui-check.mjs`，25 项，第一百零七轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/product-csv-diagnostics-a17-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（先在 `frontend` 执行 `npm run build:merchant` 再重建 `duoduo-merchant-web-app`）；
+product / trade 已部署 A-17；卖家 13600003333、运营 13684295254 可用；ES 可达。
+覆盖：商品管理页出现「导入 CSV / 导出 CSV」，源商品行出现「复制」；
+**导出真实下载**（文件名 `products-YYYYMMDD.csv`、BOM、16 列表头、源商品 2 行规格）；
+**复制**走站内确认弹窗（说明默认下架与「（副本）」）→ 列表出现下架副本、回库 `OFF_SHELF + 2 SKU`；
+**导入**弹窗下载模板（表头 + 示例）→ 选择 CSV → 逐组结果「成功 1 / 失败 0」→ 回库 2 规格；
+**商品分析**页出现近 30 天曝光 / 点击 / 点击率 / 点击成交率 KPI 与诊断建议列，
+导入商品行显示 100.00% 点击率（1 曝光 / 1 点击）；全程 0 原生弹窗、0 pageerror；三类夹具商品零残留。
+2026-10-26 实测 **25/0**。
+**踩坑**：`exposure / clicks` 等 Long 计数字段必须进 `LongToStringJacksonModule` 白名单，
+否则以字符串下发，前端 `+` 退化成拼接、`===` 与 `>` 失真；A-17 已补四个字段。
+
 ## 商家回复评价冒烟（`scripts/review-seller-reply-a16-smoke.mjs`，55 项，第一百零六轮）
 
 ```bash

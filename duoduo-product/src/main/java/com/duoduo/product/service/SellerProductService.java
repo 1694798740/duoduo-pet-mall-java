@@ -21,10 +21,13 @@ import com.duoduo.product.client.dto.SkuUsageInfo;
 import com.duoduo.product.client.dto.SkuUsageQuery;
 import com.duoduo.product.dto.ProductDtos;
 import com.duoduo.product.dto.ProductDtos.AdminProductAuditView;
+import com.duoduo.product.dto.ProductDtos.ProductDiagnosticItemView;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchItemView;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
+import com.duoduo.product.dto.ProductDtos.SellerProductCsvView;
 import com.duoduo.product.dto.ProductDtos.SellerProductDetailView;
+import com.duoduo.product.dto.ProductDtos.SellerProductDiagnosticsView;
 import com.duoduo.product.dto.ProductDtos.SellerProductUpdateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
@@ -41,6 +44,7 @@ import com.duoduo.product.support.BannedWordGuard;
 import com.duoduo.product.support.CatalogLookup;
 import com.duoduo.product.support.Csv;
 import com.duoduo.product.support.ProductContent;
+import com.duoduo.product.support.ProductCsv;
 import com.duoduo.product.support.SpuRiskJudge;
 import com.duoduo.product.support.search.SearchEvents;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,10 +55,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -161,6 +168,16 @@ public class SellerProductService {
     /** 单轮清理上限：正常一天删不了这么多；有上限才能保证任务跑完而不是拖成慢查询 */
     private static final int RECYCLE_PURGE_BATCH = 500;
 
+    // ---------------- A-17 · 复制 / CSV / 诊断 ----------------
+
+    /** 单次导出的商品上限：CSV 是「下载下来看」的，再大应走数据导出任务而不是同步接口 */
+    private static final int MAX_EXPORT_PRODUCTS = 1000;
+    /** 诊断页最多覆盖的商品数（与交易域 productStats 的 200 条对齐，端侧可直接按 spuId 合并） */
+    private static final int MAX_DIAGNOSTIC_PRODUCTS = 200;
+    private static final int DEFAULT_DIAGNOSTIC_DAYS = 30;
+    private static final int MAX_DIAGNOSTIC_DAYS = 90;
+    private static final String COPY_TITLE_SUFFIX = "（副本）";
+
     private final SpuMapper spuMapper;
     private final SkuMapper skuMapper;
     private final MembershipClient membershipClient;
@@ -175,6 +192,7 @@ public class SellerProductService {
     private final CategoryAttrService categoryAttrService;
     private final SpuImageService spuImageService;
     private final ApplicationEventPublisher eventPublisher;
+    private final ProductStatService productStatService;
 
     public SellerProductService(SpuMapper spuMapper,
                                 SkuMapper skuMapper,
@@ -189,7 +207,8 @@ public class SellerProductService {
                                 SpuAuditHistoryService auditHistoryService,
                                 CategoryAttrService categoryAttrService,
                                 SpuImageService spuImageService,
-                                ApplicationEventPublisher eventPublisher) {
+                                ApplicationEventPublisher eventPublisher,
+                                ProductStatService productStatService) {
         this.spuMapper = spuMapper;
         this.skuMapper = skuMapper;
         this.membershipClient = membershipClient;
@@ -204,6 +223,7 @@ public class SellerProductService {
         this.categoryAttrService = categoryAttrService;
         this.spuImageService = spuImageService;
         this.eventPublisher = eventPublisher;
+        this.productStatService = productStatService;
     }
 
     // ---------------- 准入与归属 ----------------
@@ -216,6 +236,14 @@ public class SellerProductService {
      * @param staffMember   是否店员（E13）：权限来自「以店铺主体行动」，不来自角色
      */
     private record SellerScope(Long ownerUserId, boolean platformScope, boolean staffMember) {
+    }
+
+    /**
+     * 供同域其它服务（CSV 导入）先做一次准入校验：非卖家在解析文件之前就应得到 403，
+     * 而不是把一个格式正确的文件解析完、逐组失败后才知道自己没权限。
+     */
+    public void requireSellerAccess() {
+        requireSellerScope();
     }
 
     /**
@@ -536,6 +564,251 @@ public class SellerProductService {
                 spuId, title, spu.getSupplyType(), ownerUserId, spu.getAuditStatus(),
                 spu.getAuditSource() == null ? "转人工" : spu.getAuditSource(), skus.size());
         return toView(spu, new int[]{skus.size(), skus.stream().mapToInt(NormalizedSku::stock).sum()});
+    }
+
+    // ---------------- A-17 · 复制 / CSV 导出导入 / 诊断 ----------------
+
+    /**
+     * 复制商品（A-17）：以源商品的内容与规格新建一件商品。
+     *
+     * <h2>为什么复制品默认下架</h2>
+     * 复制只是「省去重新填写」，不是「替卖家决定上架」。尤其是第三方商品，
+     * 复制件的审核结论要按<b>新商品</b>重新作出（标题多了「副本」、库存是新的）；
+     * 若直接以 ON_SALE 落库，自营商品会在卖家还没核对前就出现在前台。
+     * 因此复制后统一置为 OFF_SHELF，由卖家核对内容后自行上架。
+     *
+     * <h2>复用 {@link #create} 而不是手写克隆</h2>
+     * 新建链路上的类目属性模板校验、违禁词、审核判定、图片表双写、审核历史
+     * 都是「新商品」必须经过的关口。绕过 create 手写 INSERT，等于复制出一件
+     * 绕过内容审核的商品 —— 这正是审核链最容易被打开的口子。
+     *
+     * <p>校验、归属、供货类型全部沿用 create 的服务端判定；复制者无法通过
+     * 请求体改变商品归属或审核态（复制接口本身也不接受任何请求体）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public SellerProductView copy(Long spuId) {
+        SellerScope scope = requireSellerScope();
+        SpuEntity source = requireOwned(spuId, scope);
+        requireProxyForThirdParty(source, scope, "复制");
+        List<SkuEntity> skus = skusOf(spuId);
+        if (skus.isEmpty()) {
+            throw BizException.businessRule("源商品没有规格，无法复制");
+        }
+
+        SellerProductCreateRequest request = new SellerProductCreateRequest(
+                copyTitle(source.getTitle()),
+                source.getSubtitle(),
+                source.getCategoryId(),
+                source.getBrandId(),
+                source.getMainImage(),
+                Csv.split(source.getImages()),
+                source.getDetail(),
+                source.getIntro(),
+                source.getDetailHtml(),
+                ProductContent.parseKv(source.getSpecParams()),
+                ProductContent.parseKv(source.getPackaging()),
+                skus.stream()
+                        .map(sku -> new SellerSkuInput(
+                                specNameOf(sku.getSpecJson()), sku.getPrice(), sku.getStock(), sku.getImage()))
+                        .toList());
+
+        SellerProductView created = create(request);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        spuMapper.update(null, new LambdaUpdateWrapper<SpuEntity>()
+                .eq(SpuEntity::getId, created.id())
+                .isNull(SpuEntity::getDeletedAt)
+                .set(SpuEntity::getStatus, STATUS_OFF_SHELF)
+                .set(SpuEntity::getUpdatedAt, now));
+        log.info("商品 {} 被 {} 复制为 {}（默认下架，规格数={}）",
+                spuId, UserContext.require().userId(), created.id(), skus.size());
+        return withStatus(created, STATUS_OFF_SHELF);
+    }
+
+    /**
+     * 导出当前可见商品为 CSV（A-17）。
+     *
+     * <p>一个规格一行：CSV 是二维表，而「一个商品多个规格」是天然的一对多，
+     * 用「分组键」把同一商品的规格行归组，导入时再按分组聚合。
+     * 这样卖家可以直接在 Excel 里改价格/库存，而不用为每个规格建一张表。
+     *
+     * <p>普通卖家只导出自己店铺的商品；平台视角导出全部（上限 1000 件）。
+     * 回收站商品不导出 —— 它们是待清理的删除项，不该进入经营数据。
+     */
+    public SellerProductCsvView exportCsv() {
+        SellerScope scope = requireSellerScope();
+        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.isNull(SpuEntity::getDeletedAt);
+        if (!scope.platformScope()) {
+            wrapper.eq(SpuEntity::getSellerId, scope.ownerUserId());
+        }
+        wrapper.orderByDesc(SpuEntity::getId).last("LIMIT " + MAX_EXPORT_PRODUCTS);
+        List<SpuEntity> spus = spuMapper.selectList(wrapper);
+        Map<Long, List<SkuEntity>> skuMap = skusBySpuIds(spus.stream().map(SpuEntity::getId).toList());
+
+        StringBuilder out = new StringBuilder("\uFEFF").append(ProductCsv.HEADER).append("\r\n");
+        int rowCount = 0;
+        for (SpuEntity spu : spus) {
+            for (SkuEntity sku : skuMap.getOrDefault(spu.getId(), List.of())) {
+                out.append(ProductCsv.row(List.of(
+                        safe(spu.getId()),
+                        safe(spu.getTitle()),
+                        safe(spu.getSubtitle()),
+                        safe(spu.getCategoryId()),
+                        safe(spu.getBrandId()),
+                        safe(spu.getMainImage()),
+                        ProductCsv.formatImages(Csv.split(spu.getImages())),
+                        safe(spu.getIntro()),
+                        safe(spu.getDetail()),
+                        safe(spu.getDetailHtml()),
+                        ProductCsv.formatKv(ProductContent.parseKv(spu.getSpecParams())),
+                        ProductCsv.formatKv(ProductContent.parseKv(spu.getPackaging())),
+                        safe(specNameOf(sku.getSpecJson())),
+                        ProductCsv.formatCents(nz(sku.getPrice())),
+                        String.valueOf(sku.getStock() == null ? 0 : sku.getStock()),
+                        safe(sku.getImage())))).append("\r\n");
+                rowCount++;
+            }
+        }
+        String filename = "products-"
+                + LocalDate.now(ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE) + ".csv";
+        log.info("导出商品 CSV：{} 件商品 / {} 行（范围={}）",
+                spus.size(), rowCount, scope.platformScope() ? "平台全部" : "店铺 " + scope.ownerUserId());
+        return new SellerProductCsvView(filename, out.toString(), spus.size(), rowCount);
+    }
+
+    /**
+     * CSV 导入模板（A-17）：表头 + 一行示例。
+     *
+     * <p>示例行的类目 ID 写的是 1，用户必须替换成自己类目树里的真实 ID ——
+     * 模板不能替用户猜类目，否则「导入失败：类目不存在」会被当成模板有问题。
+     */
+    public SellerProductCsvView importTemplate() {
+        requireSellerAccess();
+        StringBuilder out = new StringBuilder("\uFEFF").append(ProductCsv.HEADER).append("\r\n");
+        out.append(ProductCsv.row(List.of(
+                "示例1", "示例商品（导入前请删除本行）", "示例副标题", "1", "",
+                "/img/products/sample.svg", "", "示例商品介绍", "示例商品详情", "",
+                "适用阶段:全年龄", "包装形式:袋装", "2kg", "99.00", "100", ""))).append("\r\n");
+        return new SellerProductCsvView("products-import-template.csv", out.toString(), 0, 1);
+    }
+
+    /**
+     * 商品诊断（A-17）：近 N 天的曝光 / 点击 / 点击率 + 可执行建议。
+     *
+     * <p>转化率不在这里算：订单明细在交易域，跨库 JOIN 不存在。
+     * 商品分析页把本接口与交易域 {@code /api/seller/product-stats} 按 spuId 合并，
+     * 成交单数 / 点击 = 转化率 —— 与页面既有的「端侧合并」口径一致。
+     *
+     * <p>建议按「先拦路、后优化」排序：未过审 / 已下架 / 无库存是<b>硬阻断</b>，
+     * 先修这些；点击率、评分偏低才是内容优化项。把两者混在一起会让卖家
+     * 先去改主图，而商品其实根本没上架。
+     */
+    public SellerProductDiagnosticsView diagnostics(int days) {
+        SellerScope scope = requireSellerScope();
+        int window = days <= 0 ? DEFAULT_DIAGNOSTIC_DAYS : Math.min(days, MAX_DIAGNOSTIC_DAYS);
+        LocalDate to = LocalDate.now(ZoneOffset.UTC);
+        LocalDate from = to.minusDays(window - 1L);
+
+        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.isNull(SpuEntity::getDeletedAt);
+        if (!scope.platformScope()) {
+            wrapper.eq(SpuEntity::getSellerId, scope.ownerUserId());
+        }
+        wrapper.orderByDesc(SpuEntity::getId).last("LIMIT " + MAX_DIAGNOSTIC_PRODUCTS);
+        List<SpuEntity> spus = spuMapper.selectList(wrapper);
+        Map<Long, List<SkuEntity>> skuMap = skusBySpuIds(spus.stream().map(SpuEntity::getId).toList());
+        Map<Long, long[]> stats = productStatService.sumRange(
+                spus.stream().map(SpuEntity::getId).toList(), from, to);
+
+        List<ProductDiagnosticItemView> items = new ArrayList<>(spus.size());
+        for (SpuEntity spu : spus) {
+            long[] stat = stats.getOrDefault(spu.getId(), new long[]{0L, 0L});
+            List<SkuEntity> skus = skuMap.getOrDefault(spu.getId(), List.of());
+            int stock = skus.stream().mapToInt(sku -> sku.getStock() == null ? 0 : sku.getStock()).sum();
+            double ctr = stat[0] <= 0 ? 0d : round2(stat[1] * 100d / stat[0]);
+            items.add(new ProductDiagnosticItemView(
+                    spu.getId(),
+                    spu.getTitle(),
+                    spu.getMainImage(),
+                    spu.getStatus(),
+                    statusLabelOf(spu.getStatus()),
+                    spu.getAuditStatus(),
+                    auditLabelOf(spu.getAuditStatus()),
+                    stat[0],
+                    stat[1],
+                    ctr,
+                    skus.size(),
+                    stock,
+                    spu.getRating() == null ? 0d : spu.getRating().doubleValue(),
+                    spu.getRatingCount() == null ? 0 : spu.getRatingCount(),
+                    diagnosticSuggestions(spu, stat[0], stat[1], stock, window)));
+        }
+        items.sort(Comparator.comparingLong(ProductDiagnosticItemView::exposure).reversed()
+                .thenComparing(Comparator.comparingLong(ProductDiagnosticItemView::clicks).reversed()));
+
+        long totalExposure = items.stream().mapToLong(ProductDiagnosticItemView::exposure).sum();
+        long totalClicks = items.stream().mapToLong(ProductDiagnosticItemView::clicks).sum();
+        double overallCtr = totalExposure <= 0 ? 0d : round2(totalClicks * 100d / totalExposure);
+        return new SellerProductDiagnosticsView(window, from.toString(), to.toString(),
+                items.size(), totalExposure, totalClicks, overallCtr, items);
+    }
+
+    /** 复制后的标题：能放下就加「（副本）」，放不下保持原样（不截断卖家的标题） */
+    private static String copyTitle(String title) {
+        String base = title == null ? "" : title;
+        return base.length() + COPY_TITLE_SUFFIX.length() <= TITLE_MAX
+                ? base + COPY_TITLE_SUFFIX
+                : base;
+    }
+
+    /** 在不重新查库的前提下把视图状态换成「目标状态」（复制后统一下架） */
+    private SellerProductView withStatus(SellerProductView view, String status) {
+        return new SellerProductView(
+                view.id(), view.title(), view.mainImage(), status, statusLabelOf(status),
+                view.auditStatus(), view.auditLabel(), view.auditReason(), view.sellerId(),
+                view.minPrice(), view.maxPrice(), view.salesCount(), view.rating(), view.ratingCount(),
+                view.skuCount(), view.totalStock(), view.deletedAt(), view.purgeAt());
+    }
+
+    private List<String> diagnosticSuggestions(SpuEntity spu, long exposure, long clicks,
+                                               int totalStock, int days) {
+        List<String> suggestions = new ArrayList<>();
+        if (!AUDIT_APPROVED.equals(spu.getAuditStatus())) {
+            suggestions.add("审核状态为「" + auditLabelOf(spu.getAuditStatus())
+                    + "」，未过审期间不会获得任何曝光");
+            return List.copyOf(suggestions);
+        }
+        if (!STATUS_ON_SALE.equals(spu.getStatus())) {
+            suggestions.add("商品已下架，上架后才会获得曝光");
+        } else if (exposure == 0) {
+            suggestions.add("近 " + days + " 天没有曝光：检查类目与标题能否被搜到，或商品是否刚上架");
+        }
+        double ctr = exposure <= 0 ? 0d : clicks * 100d / exposure;
+        if (exposure >= 50 && ctr < 1d) {
+            suggestions.add("点击率偏低（" + round2(ctr) + "%）：优先优化主图与标题卖点");
+        }
+        if (totalStock <= 0) {
+            suggestions.add("可售库存为 0，买家无法下单");
+        } else if (totalStock < 10 && clicks > 0) {
+            suggestions.add("库存偏低（" + totalStock + " 件），热销时可能断货");
+        }
+        double rating = spu.getRating() == null ? 0d : spu.getRating().doubleValue();
+        int ratingCount = spu.getRatingCount() == null ? 0 : spu.getRatingCount();
+        if (ratingCount >= 3 && rating < 4d) {
+            suggestions.add("评分偏低（" + rating + "）：核对描述与实物一致性，及时回复评价");
+        }
+        if (suggestions.isEmpty()) {
+            suggestions.add("数据正常：保持上新与库存周转");
+        }
+        return List.copyOf(suggestions);
+    }
+
+    private static double round2(double value) {
+        return Math.round(value * 100d) / 100d;
+    }
+
+    private static String safe(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     /**

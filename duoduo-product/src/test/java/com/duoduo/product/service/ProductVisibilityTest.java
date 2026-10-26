@@ -65,7 +65,8 @@ class ProductVisibilityTest {
 
     private final ProductService service = new ProductService(spuMapper, skuMapper, categoryService,
             catalogLookup, bannedWordGuard, objectMapper,
-            org.mockito.Mockito.mock(com.duoduo.product.client.StoreNameClient.class), esProvider);
+            org.mockito.Mockito.mock(com.duoduo.product.client.StoreNameClient.class), esProvider,
+            mock(ProductStatService.class));
 
     /**
      * 初始化 MyBatis-Plus 的实体元数据缓存。

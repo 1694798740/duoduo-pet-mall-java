@@ -4,6 +4,29 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（八十八）· 商品复制 / CSV 导入导出 / 曝光-点击诊断（A-17）**
+
+- **复制**：`POST /api/seller/products/{id}/copy`，复制内容与全部规格，标题追加「（副本）」，
+  **副本默认下架**、销量/评分归零；复用 `create` 保证类目模板、违禁词、审核判定、图片表与审核历史不被绕过。
+  跨店复制租户层 404、平台运营复制第三方商品 403、回收站商品 404。
+- **导出**：`GET /api/seller/products/export`，一个规格一行，16 列分组模板；UTF-8 BOM、RFC4180 转义、
+  公式注入防护；普通卖家只导出本店商品，平台视角上限 1000 件。
+- **导入**：`POST /api/seller/products/import`，按「分组键」聚合多规格；逐组独立事务、部分成功，
+  HTTP 200 只代表处理完成；上限 2MB / 500 行 / 100 个商品；`GET /import-template` 提供模板。
+  商家端商品管理新增「导入 CSV / 导出 CSV」与行内「复制」，导入弹窗展示逐组行号与原因。
+- **统计**：新增 `t_product_daily_stat`，公开列表 / 搜索 / 店铺 / 首页记曝光（请求内去重），
+  详情成功打开记点击；统计写失败只 WARN，不影响读路径。
+- **诊断**：`GET /api/seller/products/diagnostics?days=30`（上限 90），返回曝光 / 点击 / 点击率与
+  「先拦路后优化」建议；交易域 `product-stats` 新增 `orderCount`，商品分析页合并计算点击成交率
+  （无点击显示「—」）。
+- **数据**：`incremental/56-product-csv-diagnostics.sql`；`schema.sql` 与 `docs/sql/02` 同步。
+- **验证**：product 单测 **259/0**（新增 20）、trade **119/0**、common **149/0**、common-web **64/0（5 skipped）**；
+  三端 `tsc --noEmit` 全绿；A-17 冒烟 **53/0**、A-17 UI e2e **25/0**；
+  回归 A-13 冒烟 **53/0**、A-16 冒烟 **55/0**、A-16 UI **29/0**；
+  product / trade / merchant-web 镜像重建，17 容器 healthy。
+- **踩坑**：`exposure / clicks` 未进 `LongToStringJacksonModule` 白名单 → 以字符串下发，
+  前端 `+` 变拼接；已与 `orderCount` 一并加入计数白名单。
+
 **2026-10-26（八十七）· 商家回复评价（A-16）：一条评价一次回复，匿名评价不泄身份**
 
 - **问题**：评价区一直单向 —— 商家没有公开回应入口，误会、差评、售后承诺只能私下处理，

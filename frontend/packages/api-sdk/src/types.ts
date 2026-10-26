@@ -822,6 +822,65 @@ export interface SellerSkuUsageView {
   orderCount: number;
 }
 
+/** CSV 文件内容（A-17 导出 / 模板）：content 已带 UTF-8 BOM，前端转 Blob 下载 */
+export interface SellerProductCsvView {
+  filename: string;
+  content: string;
+  /** 导出时的商品数；模板为 0 */
+  productCount: number;
+  /** 数据行数（一个规格一行）；模板为 1 行示例 */
+  rowCount: number;
+}
+
+/** CSV 导入的单组结果（A-17）：一个分组键 = 一个商品，lineNo 是 CSV 物理行号 */
+export interface SellerProductImportItemView {
+  lineNo: number;
+  groupKey: string;
+  success: boolean;
+  spuId: string | null;
+  title: string;
+  message: string | null;
+}
+
+/** CSV 导入汇总：部分成功是正常结果，HTTP 200 不代表全成功 */
+export interface SellerProductImportResultView {
+  totalGroups: number;
+  successCount: number;
+  failedCount: number;
+  items: SellerProductImportItemView[];
+}
+
+/** 单商品诊断行（A-17）：ctr 是百分比数值（12.34 = 12.34%） */
+export interface ProductDiagnosticItemView {
+  spuId: string;
+  title: string;
+  mainImage: string | null;
+  status: string;
+  statusLabel: string;
+  auditStatus: string;
+  auditLabel: string;
+  exposure: number;
+  clicks: number;
+  ctr: number;
+  skuCount: number;
+  totalStock: number;
+  rating: number;
+  ratingCount: number;
+  suggestions: string[];
+}
+
+/** 商品诊断汇总：按曝光倒序；转化率由前端与交易域 productStats 合并计算 */
+export interface SellerProductDiagnosticsView {
+  days: number;
+  fromDate: string;
+  toDate: string;
+  productCount: number;
+  totalExposure: number;
+  totalClicks: number;
+  overallCtr: number;
+  items: ProductDiagnosticItemView[];
+}
+
 /** 规格视图（商家侧编辑回填 / 审核台核对） */
 export interface SellerSkuView {
   id: string;
@@ -1688,6 +1747,8 @@ export interface SellerProductStat {
   quantity: number;
   amount: number;
   refundQty: number;
+  /** 成交订单数（A-17）：与商品域点击合并算转化率；一件多件的订单只计 1 */
+  orderCount: number;
 }
 
 export interface SellerAnalytics {

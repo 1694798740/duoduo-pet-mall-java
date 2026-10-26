@@ -844,4 +844,102 @@ public final class ProductDtos {
             Integer ratingCount
     ) {
     }
+
+    // ---------------- A-17 · 商品复制 / CSV 导入导出 / 诊断 ----------------
+
+    /**
+     * CSV 文件内容（导出 / 模板共用）。
+     *
+     * <p>为什么不直接返回 {@code text/csv} 附件：前端 API 客户端的统一解包、
+     * 401 续期、错误文案映射都建立在 JSON 信封上；绕过去单独 fetch 会让导出成为
+     * 「令牌过期不续期、后端报错只显示一句 HTML」的例外。这里把文本装进 JSON，
+     * 由前端自己触发下载 —— 代价是响应体大一倍，换来一条统一的请求链路。
+     *
+     * <p>{@code content} 已带 UTF-8 BOM（Excel 直接打开不乱码）。
+     */
+    public record SellerProductCsvView(
+            String filename,
+            String content,
+            /** 导出时的商品数；模板为 0 */
+            int productCount,
+            /** 导出时的数据行数（一个规格一行）；模板为 1 行示例 */
+            int rowCount
+    ) {
+    }
+
+    /** CSV 导入请求体：整个文件内容（前端读成文本后上传；上限 2MB） */
+    public record SellerProductImportRequest(String content) {
+    }
+
+    /**
+     * 导入结果的一条（按「分组键」聚合，一个分组 = 一个商品）。
+     *
+     * <p>{@code lineNo} 是分组首行在 CSV 里的物理行号：用户能直接在 Excel 里定位，
+     * 比「第 3 个商品失败」更好排查。{@code success=false} 时 {@code message} 是可直接展示的原因。
+     */
+    public record SellerProductImportItemView(
+            int lineNo,
+            String groupKey,
+            boolean success,
+            Long spuId,
+            String title,
+            String message
+    ) {
+    }
+
+    /**
+     * 导入汇总：逐组结果 + 成功/失败计数。
+     *
+     * <p>部分成功是正常结果（一组失败不阻塞其它组），HTTP 200 不代表全成功，
+     * 成败只看 {@code success}。
+     */
+    public record SellerProductImportResultView(
+            int totalGroups,
+            int successCount,
+            int failedCount,
+            List<SellerProductImportItemView> items
+    ) {
+    }
+
+    /**
+     * 商品诊断行（A-17）：曝光 → 点击 → 建议。
+     *
+     * <p>{@code ctr} 是百分比数值（12.34 表示 12.34%），不是小数比例 ——
+     * 前端表格直接补 {@code %} 即可，避免两端各乘一次 100。
+     *
+     * <p>转化（成交/点击）刻意不在这里：订单在交易域，跨库 JOIN 不存在。
+     * 端侧已有交易域的按商品统计（{@code /api/seller/product-stats}），
+     * 两边的 {@code spuId} 在页面合并 —— 与商品分析页既有的合并口径一致。
+     */
+    public record ProductDiagnosticItemView(
+            Long spuId,
+            String title,
+            String mainImage,
+            String status,
+            String statusLabel,
+            String auditStatus,
+            String auditLabel,
+            long exposure,
+            long clicks,
+            double ctr,
+            int skuCount,
+            int totalStock,
+            double rating,
+            int ratingCount,
+            List<String> suggestions
+    ) {
+    }
+
+    /** 诊断汇总：窗口 + 全体曝光/点击/点击率 + 逐商品明细（按曝光倒序）。 */
+    public record SellerProductDiagnosticsView(
+            int days,
+            String fromDate,
+            String toDate,
+            int productCount,
+            long totalExposure,
+            long totalClicks,
+            double overallCtr,
+            List<ProductDiagnosticItemView> items
+    ) {
+    }
 }
