@@ -4,6 +4,13 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（一百零四）· 生产上线检查清单（I-01 准备）**
+
+- 新增 [production-launch-checklist.md](docs/manuals/production-launch-checklist.md)：主机初始化、必改默认值、
+  ES 启用、三域名与 HTTPS、Nginx 反代、上线验收、回滚与前 72 小时巡检。
+- 阻塞项已列清：主机 / 域名 / 备份目标 / 微信支付凭据 / 小程序 AppID 与模板 / 令牌与密钥轮换 / 夹具店铺清理授权。
+- 真实密钥只进 `.env`；生产禁用 mock 登录与支付、禁用默认口令；后台建议叠加 IP 白名单。
+
 **2026-10-26（一百零三）· 历史特权夹具账号降权（I-04）**
 
 - **问题**：历轮自测沉淀 99 个 OPERATOR + 48 个 SELLER 特权账号，均为后台 / 店铺暴露面。
