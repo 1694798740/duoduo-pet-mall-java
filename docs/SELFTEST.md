@@ -2,6 +2,17 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 后台待办角标 UI e2e（`scripts/e2e/admin-badges-h04-ui-check.mjs`，14 项，第一百一十九轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/admin-badges-h04-ui-check.mjs
+```
+
+前置：容器在跑；product / admin-web 已部署 H-04；卖家 13600003333、运营 13684295254 可用。
+覆盖：夹具造一件待审商品 → 「商品审核」导航角标 = 服务端 PENDING 总数 N →
+通过后刷新角标变为 N-1（N=1 时消失）→ 切到租户健康度后角标仍在 → 0 pageerror / 0 5xx；
+商品 / SKU / 图片 / 审核历史零残留。2026-10-26 实测 **14/0**。
+
 ## 商家端两步验证 UI e2e（`scripts/e2e/merchant-2fa-f05-ui-check.mjs`，17 项，第一百一十六轮）
 
 ```bash

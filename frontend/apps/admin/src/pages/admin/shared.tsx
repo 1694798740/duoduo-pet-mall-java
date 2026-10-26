@@ -6,9 +6,10 @@
  * 「概览页让进、审核页不让进」这种不一致。
  */
 
-import React from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Alert } from '@duoduo/shared/components/ui';
+import { adminApi } from '@duoduo/api-sdk/endpoints';
 
 /**
  * 角色判定已抽到中立模块 `src/lib/roles.ts`（见该文件注释：商城引一个判定函数
@@ -54,20 +55,83 @@ const TABS = [
   { to: '/admin/account-security', label: '账号安全', end: false },
 ];
 
-export const AdminTabs: React.FC = () => (
-  <div className="row row-wrap" style={{ gap: 8, marginBottom: 16 }}>
-    {TABS.map((tab) => (
-      <NavLink
-        key={tab.to}
-        to={tab.to}
-        end={tab.end}
-        className={({ isActive }) => `btn btn-sm ${isActive ? 'btn-primary' : 'btn-ghost'}`}
-      >
-        {tab.label}
-      </NavLink>
-    ))}
-  </div>
-);
+/**
+ * H-04 · 后台待办角标：把「等我处理」的五类队列聚合成导航角标。
+ *
+ * <p>口径与商家端 Q8 同款：只显示服务端 pending 总数，不在前端拆页累加；
+ * 挂载即取 + 30 秒轮询 + 路由切换重取。请求失败按 0 处理 —— 角标是提醒，
+ * 不能因为它报错挡住导航（失败时宁可不提示，也不要显示一个错的数字）。
+ */
+const useAdminBadges = (): Record<string, number> => {
+  const location = useLocation();
+  const [badges, setBadges] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const [listings, products, reviews, reports, aftersales] = await Promise.allSettled([
+        adminApi.listingsForAudit({ auditStatus: 'PENDING', page: 1, pageSize: 1 }),
+        adminApi.productsForAudit({ auditStatus: 'PENDING', page: 1, pageSize: 1 }),
+        adminApi.reviews({ status: 'PENDING', page: 1, pageSize: 1 }),
+        adminApi.shareReports({ status: 'PENDING', page: 1, pageSize: 1 }),
+        adminApi.afterSales({ status: 'PENDING', page: 1, pageSize: 1 }),
+      ]);
+      const total = (r: PromiseSettledResult<{ total?: number }>) =>
+        r.status === 'fulfilled' ? Number(r.value?.total) || 0 : 0;
+      if (alive) {
+        setBadges({
+          '/admin/audits': total(listings),
+          '/admin/product-audits': total(products),
+          '/admin/reviews': total(reviews),
+          '/admin/share-reports': total(reports),
+          '/admin/after-sales': total(aftersales),
+        });
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [location.pathname]);
+
+  return badges;
+};
+
+/** 角标胶囊：>99 显示 99+。aria-hidden：不改变链接的可访问名称（e2e 按 label 精确匹配） */
+const NavBadge: React.FC<{ count: number }> = ({ count }) =>
+  count > 0 ? (
+    <span
+      aria-hidden
+      style={{
+        marginLeft: 6, padding: '0 6px', borderRadius: 9, minWidth: 18,
+        background: 'var(--danger, #e5484d)', color: '#fff', fontSize: 11,
+        lineHeight: '18px', textAlign: 'center', display: 'inline-block',
+      }}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  ) : null;
+
+export const AdminTabs: React.FC = () => {
+  const badges = useAdminBadges();
+  return (
+    <div className="row row-wrap" style={{ gap: 8, marginBottom: 16 }}>
+      {TABS.map((tab) => (
+        <NavLink
+          key={tab.to}
+          to={tab.to}
+          end={tab.end}
+          className={({ isActive }) => `btn btn-sm ${isActive ? 'btn-primary' : 'btn-ghost'}`}
+        >
+          {tab.label}
+          <NavBadge count={badges[tab.to] ?? 0} />
+        </NavLink>
+      ))}
+    </div>
+  );
+};
 
 /** 非运营 / 管理员访问后台时的拦截页（后端 403 是边界，这里给的是可读提示） */
 export const AdminDenied: React.FC = () => (
