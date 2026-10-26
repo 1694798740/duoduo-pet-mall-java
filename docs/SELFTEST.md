@@ -2,6 +2,36 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 评价管理冒烟（`scripts/review-manage-h02-smoke.mjs`，47 项，第一百零四轮）
+
+```bash
+NO_PROXY="*" node scripts/review-manage-h02-smoke.mjs
+```
+
+前置：容器在跑；fulfilment 已部署 H-02；`incremental/53-review-audit.sql` 已执行；
+卖家 13600003333、运营 13684295254 可用。
+覆盖：真实订单（下单 → 支付 → 发货 → 确认收货）→ 提交评价 → 公开评价区 / 评分汇总可见、
+商品评分回写 5.0 / 1 条；后台**关键词 / 审核态 / 星级**筛选，卖家调用 403、未登录 401；
+**下架**缺原因 422 且零写库，带原因成功并回库核对 `audit_status / audit_reason / audited_by / audited_at`；
+下架后公开评价区与评分汇总立即不含该条，**商品评分反向重算为 0 / 0 条**；
+重复下架幂等且审核时间不变；**恢复**写回 APPROVED、原因清空、评分恢复 5.0 / 1 条；
+审计留痕 `REVIEW_AUDIT / target=REVIEW / SUCCESS / 操作人手机号`；未知评价 404、非法动作 400、
+非法状态 / 星级 / 超长关键词 400，且失败请求零改动；收尾物理清理评价 / 订单链路 / 商品 / 临时买家。
+2026-10-26 实测 **47/0**。
+
+## 评价管理后台 UI e2e（`scripts/e2e/admin-review-h02-ui-check.mjs`，18 项，第一百零四轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/admin-review-h02-ui-check.mjs
+```
+
+前置：后台为最新容器产物（先 `npm run build:admin` 再重建 `duoduo-admin-web-app`）；容器在跑；
+运营 13684295254 可用。夹具直接插入一条 APPROVED 评价（真实链路由上面的接口冒烟覆盖）。
+覆盖：标签栏「评价管理」→ 关键词命中 → 状态 / 星级 / 用户列展示；下架弹窗未填原因**就地报错**（非原生弹窗），
+填原因后状态变「已下架」并回库核对；「已下架」筛选命中 → 恢复确认说明「重新参与评分」→ 行从筛选结果消失、
+回库 APPROVED + 原因 NULL → 「已通过」筛选重新命中；全程 0 原生弹窗、0 pageerror；结束删除夹具并复原商品评分。
+2026-10-26 实测 **18/0**。
+
 ## SKU 结构冒烟（`scripts/product-sku-structure-a14-smoke.mjs`，56 项，第一百零三轮）
 
 ```bash

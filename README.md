@@ -4,6 +4,23 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（八十五）· 评价管理（H-02）：违规评价可下架 / 恢复，公开口径与商品评分同步重算**
+
+- **问题**：`t_review.audit_status` 恒为 APPROVED，后台没有评价入口 —— 广告导流 / 人身攻击 / 泄露隐私的评价只能改库；
+  公开评价区、评分汇总、卖家信用分虽已按 APPROVED 过滤，却没有路径把已公开评价变成 REJECTED。
+- **接口**：`GET /api/admin/reviews`（审核态 / 星级 / 关键词 / 分页）与 `POST /api/admin/reviews/{id}/audit`
+  （`REJECT` 下架、原因必填；`APPROVE` 恢复）。条件 UPDATE 保证并发只有一次生效；已处于目标态幂等成功且零写库，
+  并发状态变化 0 行后重读仍非目标态则 409。动作登记 `REVIEW_AUDIT` 并写审计台账。
+- **口径与补偿**：公开读路径本来只统计 APPROVED，本轮不改口径；新增 `ReviewVisibilityChanged` 事件，
+  下架 / 恢复后按 SPU 重算评分，**聚合为空时显式推 0 分 / 0 条**（下架最后一条评价后商品页不能停在旧评分）。
+- **数据**：`incremental/53-review-audit.sql` 补 `audit_reason / audited_by / audited_at`；恢复时显式清空原因。
+- **后台**：新增「评价管理」标签页：审核态 / 星级 / 关键词筛选，详情含正文、晒图、追评与审核台账；
+  下架走站内弹窗且原因必填，恢复走 `useConfirm`；操作审计页补 `REVIEW_AUDIT` 中文映射。
+- **验证**：fulfilment 单测 **34/0**（新增 11）、common **149/0**、common-web **64/0（5 skipped）**；
+  H-02 冒烟 **47/0**、后台 UI e2e **18/0**；回归评价接口 **62/0**、买家评价 UI **24/0**、网关路由 **313/313**；
+  fulfilment / gateway / user / admin-web 镜像重建，17 个容器 healthy，夹具零残留。
+- **踩坑**：新增 `AuditAction` 必须同步重建审计表所在域（`duoduo-user`），否则收件方用旧枚举解析会静默落成 `UNKNOWN`。
+
 **2026-10-26（八十四）· SKU 增删改（A-14）：全量集合保存 + 订单占用禁删 + 结构变更重审**
 
 - **问题**：SKU 只能在发布时创建，卖家加 / 删规格只能删商品重发，销量、评价、审核历史一起丢；

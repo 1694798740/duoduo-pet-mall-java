@@ -1149,6 +1149,49 @@ export interface ReviewedOrders {
   orderNos: string[];
 }
 
+// ---------- 评价管理台（/api/admin/reviews，履约域 H-02） ----------
+
+/** 评价审核态：PENDING 待审 / APPROVED 公开 / REJECTED 已下架 */
+export type ReviewAuditStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/** 后台评价审核动作：REJECT = 下架（原因必填），APPROVE = 恢复 */
+export type ReviewAuditAction = 'APPROVE' | 'REJECT';
+
+/**
+ * 运营后台的评价条目。
+ *
+ * 与公开 `ReviewView` 的区别：带审核态 / 审核说明 / 操作人与时间，以及真实 userId。
+ * 匿名评价的昵称仍脱敏为「匿名用户」—— 运营追责用 userId 定位，不在列表暴露真实昵称。
+ */
+export interface AdminReviewView {
+  id: string;
+  orderNo: string;
+  userId: string;
+  sellerId: string;
+  spuId: string;
+  skuId: string | null;
+  productTitle: string;
+  productImage: string | null;
+  rating: number;
+  content: string | null;
+  images: string[];
+  anonymous: boolean;
+  nickname: string;
+  appendContent: string | null;
+  appendAt: string | null;
+  createdAt: string;
+  auditStatus: ReviewAuditStatus | string;
+  auditReason: string | null;
+  auditedBy: string | null;
+  auditedAt: string | null;
+}
+
+export interface ReviewAuditRequest {
+  action: ReviewAuditAction;
+  /** 下架必填；恢复时后端会清空 */
+  reason?: string;
+}
+
 // ---------- 售后仲裁（/api/aftersales，履约域 A3） ----------
 
 export type AfterSaleStatus =

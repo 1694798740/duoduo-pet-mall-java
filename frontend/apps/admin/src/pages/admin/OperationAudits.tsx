@@ -72,6 +72,7 @@ const ACTION_LABELS: Record<string, string> = {
   AUDIT_SLA_REVIEW: '抽查复核',
   AUDIT_SLA_SWEEP: '抽查抽样',
   SHARE_REPORT_HANDLE: '处置分享举报',
+  REVIEW_AUDIT: '评价审核',
   ORDER_FORCE_CLOSE: '强制关闭订单',
   SECKILL_CREATE: '新建秒杀',
   SECKILL_UPDATE: '编辑秒杀',

@@ -159,7 +159,7 @@ class AuditActionTest {
     }
 
     @Test
-    @DisplayName("清单规模：44 个真实动作 + 1 个兜底")
+    @DisplayName("清单规模：50 个真实动作 + 1 个兜底")
     void 清单规模() {
         // 钉住数量是刻意的：动作清单是**审计覆盖面的分母**。
         // 少了会红（有人删了动作），多了也会红（有人加了动作但没读本文件的说明）。
@@ -167,7 +167,9 @@ class AuditActionTest {
         // E21：新增 3 个两步验证动作（USER_TOTP_ENABLE / USER_TOTP_DISABLE / USER_TOTP_RESET），39 → 42。
         // E23：新增 3 个代运营动作（ORDER_PROXY_SHIP / AFTERSALE_PROXY_PROCESS / PRODUCT_PROXY_OFF_SHELF），42 → 45。
         // S3：新增 1 个对账动作（RECON_RUN_MANUAL），45 → 46。
-        assertThat(AuditAction.values()).hasSize(46);
+        // A-10：新增 4 个类目属性动作（CATEGORY_ATTR_CREATE / UPDATE / STATUS / DELETE），46 → 50。
+        // H-02：新增 1 个评价审核动作（REVIEW_AUDIT），50 → 51。
+        assertThat(AuditAction.values()).hasSize(51);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

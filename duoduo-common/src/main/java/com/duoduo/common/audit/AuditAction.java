@@ -164,6 +164,14 @@ public enum AuditAction {
     /** 处置分享举报（通过 / 驳回 / 下架）。 */
     SHARE_REPORT_HANDLE(AuditCategory.CONTENT, "SHARE_REPORT"),
 
+    /**
+     * H-02 · 人工审核评价（下架 / 恢复）。
+     *
+     * <p>归入 CONTENT：它改变的是公开可见内容，不动资金；但下架会让商品评分与好评率
+     * 立即重算，因此审计要同时回答「谁把哪条评价下架了、理由是什么」。
+     */
+    REVIEW_AUDIT(AuditCategory.CONTENT, "REVIEW"),
+
     // ---------------- 交易、营销、履约 ----------------
 
     /**

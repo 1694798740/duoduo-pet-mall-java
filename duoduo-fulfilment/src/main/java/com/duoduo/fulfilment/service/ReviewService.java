@@ -1,14 +1,20 @@
 package com.duoduo.fulfilment.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditTrail;
+import com.duoduo.common.context.LoginUser;
+import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.client.dto.UserBrief;
+import com.duoduo.fulfilment.dto.ReviewDtos.AdminReviewView;
 import com.duoduo.fulfilment.dto.ReviewDtos.ItemReview;
+import com.duoduo.fulfilment.dto.ReviewDtos.ReviewAuditRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateResult;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewSummary;
@@ -61,8 +67,14 @@ public class ReviewService {
 
     /** 只有已完成的订单可评价：货没到手就评价，等于把刷单的口子开在明面上 */
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String AUDIT_PENDING = "PENDING";
     private static final String AUDIT_APPROVED = "APPROVED";
+    private static final String AUDIT_REJECTED = "REJECTED";
     private static final String ANONYMOUS_NICKNAME = "匿名用户";
+    private static final String ACTION_APPROVE = "APPROVE";
+    private static final String ACTION_REJECT = "REJECT";
+    /** 后台搜索关键词上限：这是「一屏评价」的检索，不是全表导出 */
+    private static final int MAX_KEYWORD_LENGTH = 100;
 
     private static final int MIN_RATING = 1;
     private static final int MAX_RATING = 5;
@@ -353,6 +365,159 @@ public class ReviewService {
         return reviewMapper.reviewedOrderNos(userId, distinct);
     }
 
+    // ---------------- 运营后台：评价管理（H-02） ----------------
+
+    /**
+     * 全平台评价列表（运营）。
+     *
+     * <p>与公开列表的关键区别：这里<b>不</b>过滤 {@code audit_status=APPROVED} ——
+     * 待审 / 已下架的评价恰恰是运营要处理的队列；筛选由调用方显式指定。
+     *
+     * @param auditStatus PENDING / APPROVED / REJECTED；空 = 全部
+     * @param rating      1-5；不传 = 全部星级
+     * @param keyword     评价正文 / 追评 / 商品标题 / 订单号（包含匹配）
+     */
+    public PageResult<AdminReviewView> listAllForAdmin(String auditStatus, Integer rating, String keyword,
+                                                       int page, int pageSize) {
+        OperatorGuard.requireOperator();
+        String status = normalizeAuditStatus(auditStatus);
+        if (rating != null) {
+            validateRating(rating);
+        }
+        String kw = trimToNull(keyword);
+        if (kw != null && kw.length() > MAX_KEYWORD_LENGTH) {
+            throw BizException.validation("搜索关键词不能超过 " + MAX_KEYWORD_LENGTH + " 字");
+        }
+
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        LambdaQueryWrapper<ReviewEntity> wrapper = new LambdaQueryWrapper<>();
+        if (status != null) {
+            wrapper.eq(ReviewEntity::getAuditStatus, status);
+        }
+        if (rating != null) {
+            wrapper.eq(ReviewEntity::getRating, rating);
+        }
+        if (kw != null) {
+            wrapper.and(w -> w.like(ReviewEntity::getContent, kw)
+                    .or().like(ReviewEntity::getAppendContent, kw)
+                    .or().like(ReviewEntity::getProductTitle, kw)
+                    .or().like(ReviewEntity::getOrderNo, kw));
+        }
+        wrapper.orderByDesc(ReviewEntity::getCreatedAt).orderByDesc(ReviewEntity::getId);
+
+        Page<ReviewEntity> result = reviewMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
+                .map(ReviewEntity::getUserId).distinct().toList());
+        List<AdminReviewView> views = result.getRecords().stream()
+                .map(e -> toAdminView(e, briefs))
+                .toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 人工审核评价：REJECT = 下架（必须填原因），APPROVE = 恢复 / 通过。
+     *
+     * <p>三条硬规则：
+     * <ol>
+     *   <li>下架必须写原因：事后复盘与客诉处理只能靠它，和售后裁定说明同口径；</li>
+     *   <li>已处于目标态时幂等成功且<b>零写库</b>（重复点击不刷新审核时间）；</li>
+     *   <li>状态迁移用条件 UPDATE（{@code WHERE audit_status <> target}），
+     *       并发下只有一次生效；0 行时重读，已是目标态按幂等成功，否则 409。</li>
+     * </ol>
+     *
+     * <p>可见性变化在事务提交后触发商品评分重算：下架一条评价后，
+     * 商品页的 {@code rating/rating_count} 必须同步下降（甚至归零），
+     * 否则前台会出现「评价区少了一条、评分没变」的矛盾数据。
+     */
+    @Transactional
+    public AdminReviewView audit(Long id, ReviewAuditRequest request) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        if (id == null) {
+            throw BizException.validation("评价 id 不能为空");
+        }
+        if (request == null) {
+            throw BizException.validation("请求体不能为空");
+        }
+        String action = request.action() == null ? "" : request.action().trim().toUpperCase(java.util.Locale.ROOT);
+        if (!ACTION_APPROVE.equals(action) && !ACTION_REJECT.equals(action)) {
+            throw BizException.validation("审核动作只能是 APPROVE（恢复）或 REJECT（下架）");
+        }
+        String reason = trimToNull(request.reason());
+        if (ACTION_REJECT.equals(action) && reason == null) {
+            throw BizException.businessRule("下架评价必须填写原因");
+        }
+
+        ReviewEntity entity = reviewMapper.selectById(id);
+        if (entity == null) {
+            throw BizException.notFound("评价");
+        }
+        String current = entity.getAuditStatus();
+        String target = ACTION_REJECT.equals(action) ? AUDIT_REJECTED : AUDIT_APPROVED;
+        Map<Long, UserBrief> briefs = loadBriefs(List.of(entity.getUserId()));
+        if (target.equals(current)) {
+            // 幂等：已经是目标态，不刷新审核时间，也不产生第二条事实
+            return toAdminView(entity, briefs);
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        int rows = reviewMapper.update(null, new LambdaUpdateWrapper<ReviewEntity>()
+                .eq(ReviewEntity::getId, id)
+                .ne(ReviewEntity::getAuditStatus, target)
+                .set(ReviewEntity::getAuditStatus, target)
+                // 恢复时显式清空原因：MP 默认 NOT_NULL，不写 null 会把旧原因留在库里
+                .set(ReviewEntity::getAuditReason, ACTION_REJECT.equals(action) ? reason : null)
+                .set(ReviewEntity::getAuditedBy, operator.userId())
+                .set(ReviewEntity::getAuditedAt, now)
+                .set(ReviewEntity::getUpdatedAt, now));
+        if (rows == 0) {
+            ReviewEntity latest = reviewMapper.selectById(id);
+            if (latest == null) {
+                throw BizException.notFound("评价");
+            }
+            if (target.equals(latest.getAuditStatus())) {
+                return toAdminView(latest, loadBriefs(List.of(latest.getUserId())));
+            }
+            throw BizException.conflict("评价状态已被其他人修改，请刷新后重试");
+        }
+
+        entity.setAuditStatus(target);
+        entity.setAuditReason(ACTION_REJECT.equals(action) ? reason : null);
+        entity.setAuditedBy(operator.userId());
+        entity.setAuditedAt(now);
+        entity.setUpdatedAt(now);
+
+        // 审计补充：目标评价 + 状态变化（拦截器负责「谁 / 何时 / IP / 结果」）
+        AuditTrail.target(id, "REVIEW");
+        AuditTrail.change(current == null ? "-" : current, target);
+
+        // 事务提交后重算商品评分（下架后可能归零，见 ProductRatingSyncer）
+        eventPublisher.publishEvent(new ProductRatingSyncer.ReviewVisibilityChanged(List.of(entity.getSpuId())));
+        log.info("运营 {} {} 评价 {}（商品 {}），原因={}",
+                operator.userId(), action, id, entity.getSpuId(), reason);
+        return toAdminView(entity, briefs);
+    }
+
+    private String normalizeAuditStatus(String status) {
+        String value = trimToNull(status);
+        if (value == null) {
+            return null;
+        }
+        String upper = value.toUpperCase(java.util.Locale.ROOT);
+        if (!AUDIT_PENDING.equals(upper) && !AUDIT_APPROVED.equals(upper) && !AUDIT_REJECTED.equals(upper)) {
+            throw BizException.validation("审核状态只能是 PENDING / APPROVED / REJECTED");
+        }
+        return upper;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
     // ---------------- 内部：校验与装配 ----------------
 
     private void requireOwnOrder(OrderFact fact, Long userId) {
@@ -455,6 +620,34 @@ public class ReviewService {
                 iso(entity.getAppendAt()),
                 iso(entity.getCreatedAt()),
                 isAppendable(entity, now));
+    }
+
+    private AdminReviewView toAdminView(ReviewEntity entity, Map<Long, UserBrief> briefs) {
+        boolean anonymous = isAnonymous(entity);
+        UserBrief brief = briefs.get(entity.getUserId());
+        String nickname = anonymous ? ANONYMOUS_NICKNAME
+                : (brief != null && brief.nickname() != null ? brief.nickname() : "用户" + entity.getUserId());
+        return new AdminReviewView(
+                entity.getId(),
+                entity.getOrderNo(),
+                entity.getUserId(),
+                entity.getSellerId(),
+                entity.getSpuId(),
+                entity.getSkuId(),
+                entity.getProductTitle(),
+                entity.getProductImage(),
+                entity.getRating() == null ? 0 : entity.getRating(),
+                entity.getContent(),
+                ImageUrls.fromJson(objectMapper, entity.getImages()),
+                anonymous,
+                nickname,
+                entity.getAppendContent(),
+                iso(entity.getAppendAt()),
+                iso(entity.getCreatedAt()),
+                entity.getAuditStatus(),
+                entity.getAuditReason(),
+                entity.getAuditedBy(),
+                iso(entity.getAuditedAt()));
     }
 
     private boolean isAppendable(ReviewEntity entity, LocalDateTime now) {

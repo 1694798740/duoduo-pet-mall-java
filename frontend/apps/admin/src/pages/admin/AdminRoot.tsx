@@ -33,6 +33,7 @@ import { AdminSeckillPage } from './Seckill';
 import { AdminAccountSecurityPage } from './AccountSecurity';
 import { AdminOrdersPage } from './Orders';
 import { AdminAfterSalesPage } from './AfterSales';
+import { AdminReviewsPage } from './Reviews';
 import { AdminShareReportsPage } from './ShareReports';
 
 /** 后台外壳：登录/权限校验 + 顶部条 + 工单标签栏 */
@@ -114,6 +115,7 @@ export const AdminRoot: React.FC = () => (
       <Route path="/admin/brands" element={<AdminBrandsPage />} />
       <Route path="/admin/orders" element={<AdminOrdersPage />} />
       <Route path="/admin/after-sales" element={<AdminAfterSalesPage />} />
+      <Route path="/admin/reviews" element={<AdminReviewsPage />} />
       <Route path="/admin/share-reports" element={<AdminShareReportsPage />} />
       <Route path="/admin/operators" element={<AdminOperatorsPage />} />
       <Route path="/admin/seckill" element={<AdminSeckillPage />} />

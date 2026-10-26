@@ -138,4 +138,53 @@ public final class ReviewDtos {
             List<ReviewView> reviews
     ) {
     }
+
+    // ---------------- 运营后台：评价管理（H-02） ----------------
+
+    /**
+     * 评价审核请求。
+     *
+     * <p>只允许两个动作：{@code REJECT}（下架）与 {@code APPROVE}（恢复 / 通过）。
+     * 下架必须填原因 —— 它是事后复盘与客诉处理的唯一凭据；恢复时原因清空。
+     * 动作取值不放进注解枚举：未知值由服务层返回 400 并给出可选值，比 Jackson 反序列化报错更好读。
+     */
+    public record ReviewAuditRequest(
+            @NotBlank(message = "审核动作不能为空")
+            String action,
+
+            @Size(max = 255, message = "审核说明不能超过 255 字")
+            String reason
+    ) {
+    }
+
+    /**
+     * 运营后台的评价条目：比公开视图多带审核态、审核说明、操作人与时间，
+     * 以及真实 userId（匿名只对买家/卖家展示脱敏；运营追责需要真实主体）。
+     *
+     * <p>昵称仍按匿名规则脱敏为「匿名用户」—— 运营看的是内容与处置，不需要把匿名用户
+     * 的真实昵称展示在列表里；需要追责时用 userId 定位，在用户域按授权流程查询。
+     */
+    public record AdminReviewView(
+            Long id,
+            String orderNo,
+            Long userId,
+            Long sellerId,
+            Long spuId,
+            Long skuId,
+            String productTitle,
+            String productImage,
+            int rating,
+            String content,
+            List<String> images,
+            boolean anonymous,
+            String nickname,
+            String appendContent,
+            String appendAt,
+            String createdAt,
+            String auditStatus,
+            String auditReason,
+            Long auditedBy,
+            String auditedAt
+    ) {
+    }
 }

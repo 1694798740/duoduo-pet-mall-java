@@ -40,9 +40,12 @@ CREATE TABLE t_review (
     -- 追评：一次机会，追加内容与时间
     append_content   VARCHAR(1000),
     append_at        TIMESTAMP    NULL,
-    -- 运营审核：评价也可能含违禁内容，保留审核状态位（当前默认 APPROVED，
-    -- 审核工作台接入后改为 PENDING 起）
+    -- 运营审核：评价也可能含违禁内容；H-02 起后台可人工下架 / 恢复
     audit_status     VARCHAR(20)  NOT NULL DEFAULT 'APPROVED',
+    -- 审核结论说明（下架必填、恢复清空）、操作人快照与时间（UTC），供追责与列表展示
+    audit_reason     VARCHAR(255),
+    audited_by       BIGINT,
+    audited_at       TIMESTAMP    NULL,
     created_at       TIMESTAMP    NOT NULL,
     updated_at       TIMESTAMP    NOT NULL,
     PRIMARY KEY (id),

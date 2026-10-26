@@ -34,6 +34,9 @@ const TABS = [
   // 因此是独立入口而不是并进审核台（混在一起运营会看错待办的紧急程度）。
   { to: '/admin/audit-sla', label: '抽查复核', end: false },
   { to: '/admin/share-reports', label: '举报处理', end: false },
+  // H-02：评价是公开内容，违规评价要能下架 —— 与举报处理同属「内容治理」，
+  // 但对象与处置口径不同（评价下架会联动商品评分重算），因此独立入口。
+  { to: '/admin/reviews', label: '评价管理', end: false },
   { to: '/admin/categories', label: '类目管理', end: false },
   { to: '/admin/brands', label: '品牌管理', end: false },
   { to: '/admin/orders', label: '订单干预', end: false },

@@ -1,6 +1,32 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-26 · 第一百零三轮）**：**SKU 增删改（A-14）—— 全量集合保存 + 订单占用禁删 + 结构变更重审**
+> **最新一轮（2026-10-26 · 第一百零四轮）**：**评价管理（H-02）—— 违规评价可下架 / 恢复，公开口径与商品评分同步重算**
+> 问题：`t_review.audit_status` 自建表起恒为 `APPROVED`，后台没有评价入口 —— 广告导流、人身攻击、泄露隐私的评价
+> 只能改库处理；公开评价区 / 评分汇总 / 卖家信用分虽已按 APPROVED 过滤，但没有任何路径能把一条已公开的评价变成 REJECTED。
+> ① **接口**：`GET /api/admin/reviews`（status / rating / keyword / page / pageSize）与
+> `POST /api/admin/reviews/{id}/audit`（`REJECT` 下架，原因必填；`APPROVE` 恢复）。准入走 `OperatorGuard`，
+> 动作登记 `REVIEW_AUDIT` 并写审计台账。下架 / 恢复都用条件 UPDATE（`WHERE audit_status <> target`）：
+> 已处于目标态幂等成功且零写库；并发状态变化 0 行后重读，仍非目标态则 409。
+> ② **公开口径**：评价区 / 评分汇总 / 卖家信用分 / 评分回写本来就只统计 APPROVED，本轮不改口径；
+> 补的是反向补偿 —— `ProductRatingSyncer` 新增 `ReviewVisibilityChanged` 事件，**对每个受影响 SPU 都生成补丁**，
+> 聚合为空时显式推 0 分 / 0 条（下架最后一条评价后商品页不能停在旧评分）。
+> ③ **数据**：`incremental/53-review-audit.sql` 给 `t_review` 补 `audit_reason / audited_by / audited_at`；
+> 恢复时显式 `set(audit_reason, null)`（MP 默认不写 null）。`schema.sql` 与 `docs/sql/04` 同步。
+> ④ **运营后台**：新增「评价管理」标签页与 `/admin/reviews` 路由：审核态 / 星级 / 关键词筛选；
+> 详情弹窗展示正文、晒图、追评与审核台账；下架走站内 `Modal` 且原因必填，恢复走 `useConfirm`；
+> 操作审计页新增 `REVIEW_AUDIT = 评价审核` 中文映射。
+> ⑤ **验证**：fulfilment 单测 **34/0**（新增 `ReviewAuditTest` 8 条 + `ProductRatingSyncerTest` 3 条：缺原因 422、
+> 幂等零写、恢复清空原因、并发 409、非运营 403、聚合为空推 0）；common **149/0**、common-web **64/0（5 skipped）**；
+> 新增 `review-manage-h02-smoke` **47/0**（真实订单 → 评价 → 评分回写 → 后台筛选 / 下架 / 恢复 → 回库断言 →
+> 公开区与评分同步 → 审计留痕 → 零残留）；新增后台 UI e2e **18/0**（下架原因必填、状态切换、恢复确认、
+> 0 原生弹窗 / 0 pageerror）；回归 `review-smoke.ps1` **62/0**、买家评价 UI **24/0**、网关路由覆盖 **313/313**；
+> fulfilment / gateway / user / admin-web 镜像重建，17 个容器 healthy。
+> ⑥ **踩坑**：新增 `AuditAction` 常量必须**同步重建审计表所在域（duoduo-user）** —— 收件方用旧枚举解析新动作会
+> 静默落成 `UNKNOWN`；`mvn -pl <svc> -am package` 可能复用旧 common jar，需先 clean install 公共模块再 clean package。
+> 风险：评价新建仍是 APPROVED（机审未做，A-15 仅完成人工下架 / 恢复）；买家「我的评价」不展示审核态，
+> 被下架的评价仍能看到但无提示（后续可在 `ReviewView` 增字段）；审计台账 append-only，测试夹具的审核记录保留。
+
+> **上轮（2026-10-26 · 第一百零三轮）**：**SKU 增删改（A-14）—— 全量集合保存 + 订单占用禁删 + 结构变更重审**
 > 问题：SKU 只能在发布时创建，卖家要加 / 删规格只能把商品删掉重发（丢销量、评价、审核历史）；
 > 而直接放开删除又会让「已卖过的规格」从订单里失去追溯对象，售后与对账都无法回看。
 > ① **接口**：`PUT /api/seller/products/{spuId}/skus` 全量集合语义 —— `id` 为空 = 新增，

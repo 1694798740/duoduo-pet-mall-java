@@ -28,8 +28,13 @@ import java.util.Map;
  *       不把「评价提交成功」的响应拖成 5xx；下次任一评价再落到该 SPU 时会自然重算补上。</li>
  * </ul>
  *
- * <p>没有删评价功能、追评不改评分，所以本链路只有「新增评价」一个触发点，
- * 不存在需要反向补偿的路径。
+ * <p>触发点有两个：评价创建（新增可见评价）与评价可见性变更（H-02 后台下架 / 恢复）。
+ * 追评不改评分，不触发回写。
+ *
+ * <p><b>为什么要处理「聚合不存在」</b>：下架某商品的最后一条通过评价后，
+ * {@code ratingAggregatesBySpu} 对该 SPU 返回空行 —— 若只按结果集推补丁，
+ * 商品页会停在旧评分与旧条数，出现「评价区空了、评分还在」的矛盾。
+ * 因此对**每个受影响的 SPU** 都生成补丁，无聚合时显式推 {@code 0 分 / 0 条}。
  */
 @Component
 public class ProductRatingSyncer {
@@ -48,29 +53,48 @@ public class ProductRatingSyncer {
     public record ReviewCreated(List<Long> spuIds) {
     }
 
+    /** 评价可见性变更（H-02 下架 / 恢复）：payload 同样是受影响的 spuId */
+    public record ReviewVisibilityChanged(List<Long> spuIds) {
+    }
+
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onReviewCreated(ReviewCreated event) {
-        List<Long> spuIds = event.spuIds() == null ? List.of()
-                : event.spuIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
+        syncRatings(event.spuIds(), "评价创建");
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onReviewVisibilityChanged(ReviewVisibilityChanged event) {
+        syncRatings(event.spuIds(), "评价可见性变更");
+    }
+
+    /**
+     * 按 SPU 现算真实聚合并回写。
+     *
+     * <p>对每个输入 spuId 都生成补丁：查不到聚合（该商品已无通过评价）时推 0，
+     * 这是下架最后一条评价后必须的反向补偿；否则商品页会停在旧分数。
+     */
+    private void syncRatings(List<Long> rawSpuIds, String trigger) {
+        List<Long> spuIds = rawSpuIds == null ? List.of()
+                : rawSpuIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
         if (spuIds.isEmpty()) {
             return;
         }
         try {
-            List<ProductClient.RatingPatch> patches = reviewMapper.ratingAggregatesBySpu(spuIds).stream()
-                    .map(row -> new ProductClient.RatingPatch(
-                            asLong(row.get("spuId")),
-                            asDouble(row.get("avgRating")),
-                            (int) asLong(row.get("cnt"))))
-                    .toList();
-            if (patches.isEmpty()) {
-                return;
+            Map<Long, ProductClient.RatingPatch> patches = new java.util.LinkedHashMap<>();
+            for (Map<String, Object> row : reviewMapper.ratingAggregatesBySpu(spuIds)) {
+                long spuId = asLong(row.get("spuId"));
+                patches.put(spuId, new ProductClient.RatingPatch(
+                        spuId, asDouble(row.get("avgRating")), (int) asLong(row.get("cnt"))));
             }
-            ApiResponse<Integer> response = productClient.recomputeRatings(patches);
-            log.info("评分回写完成：SPU {} → 商品域生效 {} 列", spuIds,
+            for (Long spuId : spuIds) {
+                patches.putIfAbsent(spuId, new ProductClient.RatingPatch(spuId, 0.0, 0));
+            }
+            ApiResponse<Integer> response = productClient.recomputeRatings(new ArrayList<>(patches.values()));
+            log.info("评分回写完成（{}）：SPU {} → 商品域生效 {} 列", trigger, spuIds,
                     response == null || response.data() == null ? 0 : response.data());
         } catch (Exception e) {
-            // best-effort：评分是冗余展示列，同步失败不影响评价主流程；下次评价会重新触发全量聚合
-            log.warn("评分回写失败（SPU {}），等待下次评价触发重算", spuIds, e);
+            // best-effort：评分是冗余展示列，同步失败不影响评价主流程；对账任务会兜底修正
+            log.warn("评分回写失败（{}，SPU {}），等待下次评价或对账触发重算", trigger, spuIds, e);
         }
     }
 

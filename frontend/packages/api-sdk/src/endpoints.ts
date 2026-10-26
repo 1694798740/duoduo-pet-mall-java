@@ -27,6 +27,7 @@ import type {
   AdminCharts,
   AdminProductAuditRequest,
   AdminProductAuditView,
+  AdminReviewView,
   SpuAuditLogView,
   AuditLogQuery,
   AuditLogView,
@@ -67,6 +68,7 @@ import type {
   PageResult,
   PayResult,
   PetUpsertRequest,
+  ReviewAuditRequest,
   ReviewCreateRequest,
   ReviewCreateResult,
   ReviewSummary,
@@ -832,6 +834,25 @@ export const adminApi = {
    */
   arbitrateAfterSale: (id: string, body: AfterSaleArbitrateRequest) =>
     api.post<AfterSaleView>(`/api/admin/aftersales/${id}/arbitrate`, body),
+
+  // ---- 评价管理台（H-02，落在 duoduo-fulfilment） ----
+
+  /**
+   * 全平台评价列表（含待审 / 已下架）。
+   *
+   * `status` 为空 = 全部；`rating` 1-5；`keyword` 匹配评价正文 / 追评 / 商品标题 / 订单号。
+   */
+  reviews: (query?: { status?: string; rating?: number; keyword?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<AdminReviewView>>('/api/admin/reviews', { query }),
+
+  /**
+   * 人工审核评价：`REJECT` 下架（原因必填）、`APPROVE` 恢复。
+   *
+   * 下架会立即把评价从公开评价区 / 评分汇总中移除，并在事务提交后触发商品评分重算；
+   * 已处于目标态时幂等成功且不写库。
+   */
+  auditReview: (id: string, body: ReviewAuditRequest) =>
+    api.post<AdminReviewView>(`/api/admin/reviews/${id}/audit`, body),
 
   // ---- 分享 / 评论举报处理台（第五十六轮，落在 duoduo-fulfilment） ----
 
