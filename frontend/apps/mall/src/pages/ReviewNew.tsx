@@ -146,7 +146,14 @@ export const ReviewNewPage: React.FC = () => {
         images: d.images,
       }));
       const result = await reviewApi.create({ orderNo, anonymous, items });
-      push(`已提交 ${result.created} 条评价`, 'success');
+      // A-15：命中机审的条目不会立即公开，必须如实告诉买家「几条在审核」，
+      // 否则跳转到「我的评价」后看到评价不公开，会以为提交失败
+      const pending = result.reviews.filter((rv) => rv.auditStatus === 'PENDING').length;
+      if (pending > 0) {
+        push(`已提交 ${result.created} 条评价，其中 ${pending} 条审核中`, 'info');
+      } else {
+        push(`已提交 ${result.created} 条评价`, 'success');
+      }
       navigate('/reviews/mine');
     } catch (err) {
       setError(toFriendlyMessage(err));

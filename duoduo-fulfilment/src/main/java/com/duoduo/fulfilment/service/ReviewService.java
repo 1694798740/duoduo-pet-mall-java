@@ -25,6 +25,7 @@ import com.duoduo.fulfilment.support.ImageUrls;
 import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.OrderRefs;
 import com.duoduo.fulfilment.support.ProductRatingSyncer;
+import com.duoduo.fulfilment.support.ReviewRiskJudge;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,9 @@ public class ReviewService {
     private static final String AUDIT_PENDING = "PENDING";
     private static final String AUDIT_APPROVED = "APPROVED";
     private static final String AUDIT_REJECTED = "REJECTED";
+    /** 审核来源：机审自动 / 人工。与 t_review.audit_source 对齐 */
+    private static final String AUDIT_SOURCE_AUTO = ReviewRiskJudge.SOURCE_AUTO;
+    private static final String AUDIT_SOURCE_MANUAL = "MANUAL";
     private static final String ANONYMOUS_NICKNAME = "匿名用户";
     private static final String ACTION_APPROVE = "APPROVE";
     private static final String ACTION_REJECT = "REJECT";
@@ -90,6 +94,7 @@ public class ReviewService {
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final ReviewRiskJudge riskJudge;
     private final int maxContentLength;
     private final int maxImages;
     private final int appendWindowDays;
@@ -100,6 +105,7 @@ public class ReviewService {
                          SnowflakeIdGenerator idGenerator,
                          ObjectMapper objectMapper,
                          ApplicationEventPublisher eventPublisher,
+                         ReviewRiskJudge riskJudge,
                          @Value("${duoduo.review.max-content-length:1000}") int maxContentLength,
                          @Value("${duoduo.review.max-images:9}") int maxImages,
                          @Value("${duoduo.review.append-window-days:30}") int appendWindowDays) {
@@ -109,6 +115,7 @@ public class ReviewService {
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.riskJudge = riskJudge;
         this.maxContentLength = maxContentLength;
         this.maxImages = maxImages;
         this.appendWindowDays = appendWindowDays;
@@ -139,6 +146,7 @@ public class ReviewService {
 
         List<ReviewEntity> toInsert = new ArrayList<>();
         int skipped = 0;
+        int held = 0;
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         boolean anonymous = Boolean.TRUE.equals(request.anonymous());
 
@@ -177,7 +185,16 @@ public class ReviewService {
             entity.setContent(content);
             entity.setImages(ImageUrls.toJson(objectMapper, images));
             entity.setAnonymous(anonymous ? 1 : 0);
-            entity.setAuditStatus(AUDIT_APPROVED);
+            // A-15 机审（提交时）：干净内容自动放行，命中风险转人工。
+            // 机器不做自动下架 —— 误删买家内容的申诉成本高于让运营多看一眼。
+            ReviewRiskJudge.Verdict verdict = riskJudge.judge(content);
+            if (verdict.risky()) {
+                held++;
+            }
+            entity.setAuditStatus(verdict.risky() ? AUDIT_PENDING : AUDIT_APPROVED);
+            entity.setAuditReason(verdict.reason());
+            entity.setAuditedAt(now);
+            entity.setAuditSource(AUDIT_SOURCE_AUTO);
             entity.setCreatedAt(now);
             entity.setUpdatedAt(now);
             toInsert.add(entity);
@@ -204,7 +221,8 @@ public class ReviewService {
         List<ReviewView> enriched = toInsert.stream()
                 .map(e -> toView(e, briefs, now))
                 .toList();
-        log.info("用户 {} 对订单 {} 提交了 {} 条评价，跳过 {} 件", userId, fact.orderNo(), enriched.size(), skipped);
+        log.info("用户 {} 对订单 {} 提交了 {} 条评价，跳过 {} 件，机审转人工 {} 条",
+                userId, fact.orderNo(), enriched.size(), skipped, held);
         return new ReviewCreateResult(enriched.size(), enriched);
     }
 
@@ -228,6 +246,10 @@ public class ReviewService {
             // 越权与不存在刻意区分：评价 id 是雪花值不可枚举，这里明说「不是你的」更有助于排查
             throw BizException.forbidden("只能追评自己的评价");
         }
+        if (AUDIT_REJECTED.equals(entity.getAuditStatus())) {
+            // 已下架内容不再接受追加：否则买家可以通过追评把违规内容重新挂回商品页
+            throw BizException.businessRule("该评价已下架，不能追评");
+        }
         String text = normalizeContent(content);
         if (text == null) {
             throw BizException.validation("追评内容不能为空");
@@ -240,10 +262,42 @@ public class ReviewService {
                 && entity.getCreatedAt().plusDays(appendWindowDays).isBefore(now)) {
             throw BizException.businessRule("已超过追评期限（" + appendWindowDays + " 天）");
         }
-        entity.setAppendContent(text);
-        entity.setAppendAt(now);
-        entity.setUpdatedAt(now);
-        reviewMapper.updateById(entity);
+        // A-15：追评也是公开内容，同样过机审。命中后整条评价回 PENDING（公开口径立即移除），
+        // 而不是只拦追评 —— 否则主评价仍公开，违规内容却「挂在半空」。
+        ReviewRiskJudge.Verdict verdict = riskJudge.judge(text);
+        boolean visibilityChanged = false;
+        if (verdict.risky()) {
+            visibilityChanged = !AUDIT_PENDING.equals(entity.getAuditStatus());
+            entity.setAppendContent(text);
+            entity.setAppendAt(now);
+            entity.setAuditStatus(AUDIT_PENDING);
+            entity.setAuditReason(verdict.reason());
+            entity.setAuditSource(AUDIT_SOURCE_AUTO);
+            entity.setAuditedBy(null);
+            entity.setAuditedAt(now);
+            entity.setUpdatedAt(now);
+            // 必须用显式 set：MP 的 updateById 默认 NOT_NULL，写不进 null，
+            // 会把上一次人工审核人留在「机审转人工」的台账上，追责时指错人
+            reviewMapper.update(null, new LambdaUpdateWrapper<ReviewEntity>()
+                    .eq(ReviewEntity::getId, entity.getId())
+                    .set(ReviewEntity::getAppendContent, text)
+                    .set(ReviewEntity::getAppendAt, now)
+                    .set(ReviewEntity::getAuditStatus, AUDIT_PENDING)
+                    .set(ReviewEntity::getAuditReason, verdict.reason())
+                    .set(ReviewEntity::getAuditSource, AUDIT_SOURCE_AUTO)
+                    .set(ReviewEntity::getAuditedBy, null)
+                    .set(ReviewEntity::getAuditedAt, now)
+                    .set(ReviewEntity::getUpdatedAt, now));
+        } else {
+            entity.setAppendContent(text);
+            entity.setAppendAt(now);
+            entity.setUpdatedAt(now);
+            reviewMapper.updateById(entity);
+        }
+        if (visibilityChanged) {
+            // 从 APPROVED 变 PENDING 会改变商品评分口径，提交后必须重算
+            eventPublisher.publishEvent(new ProductRatingSyncer.ReviewVisibilityChanged(List.of(entity.getSpuId())));
+        }
         Map<Long, UserBrief> briefs = loadBriefs(List.of(entity.getUserId()));
         return toView(entity, briefs, now);
     }
@@ -469,6 +523,7 @@ public class ReviewService {
                 .set(ReviewEntity::getAuditReason, ACTION_REJECT.equals(action) ? reason : null)
                 .set(ReviewEntity::getAuditedBy, operator.userId())
                 .set(ReviewEntity::getAuditedAt, now)
+                .set(ReviewEntity::getAuditSource, AUDIT_SOURCE_MANUAL)
                 .set(ReviewEntity::getUpdatedAt, now));
         if (rows == 0) {
             ReviewEntity latest = reviewMapper.selectById(id);
@@ -485,6 +540,7 @@ public class ReviewService {
         entity.setAuditReason(ACTION_REJECT.equals(action) ? reason : null);
         entity.setAuditedBy(operator.userId());
         entity.setAuditedAt(now);
+        entity.setAuditSource(AUDIT_SOURCE_MANUAL);
         entity.setUpdatedAt(now);
 
         // 审计补充：目标评价 + 状态变化（拦截器负责「谁 / 何时 / IP / 结果」）
@@ -619,7 +675,8 @@ public class ReviewService {
                 entity.getAppendContent(),
                 iso(entity.getAppendAt()),
                 iso(entity.getCreatedAt()),
-                isAppendable(entity, now));
+                isAppendable(entity, now),
+                entity.getAuditStatus());
     }
 
     private AdminReviewView toAdminView(ReviewEntity entity, Map<Long, UserBrief> briefs) {
@@ -647,10 +704,15 @@ public class ReviewService {
                 entity.getAuditStatus(),
                 entity.getAuditReason(),
                 entity.getAuditedBy(),
-                iso(entity.getAuditedAt()));
+                iso(entity.getAuditedAt()),
+                entity.getAuditSource());
     }
 
     private boolean isAppendable(ReviewEntity entity, LocalDateTime now) {
+        if (AUDIT_REJECTED.equals(entity.getAuditStatus())) {
+            // 已下架的评论不能再追评：UI 不显示入口，服务端也早有拦截（双保险）
+            return false;
+        }
         boolean alreadyAppended = entity.getAppendContent() != null && !entity.getAppendContent().isBlank();
         if (alreadyAppended || entity.getCreatedAt() == null) {
             return false;

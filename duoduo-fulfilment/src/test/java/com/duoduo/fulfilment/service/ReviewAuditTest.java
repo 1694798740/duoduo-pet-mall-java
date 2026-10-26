@@ -14,6 +14,7 @@ import com.duoduo.fulfilment.entity.ReviewEntity;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.ProductRatingSyncer;
+import com.duoduo.fulfilment.support.ReviewRiskJudge;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -52,7 +53,7 @@ class ReviewAuditTest {
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final ReviewService service = new ReviewService(mapper, orderFacts, userClient, idGenerator,
-            new ObjectMapper(), eventPublisher, 1000, 9, 30);
+            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), 1000, 9, 30);
 
     @BeforeAll
     static void initMybatisMetadata() {
@@ -102,8 +103,10 @@ class ReviewAuditTest {
         assertThat(view.auditReason()).isEqualTo("含微信号导流");
         assertThat(view.auditedBy()).isEqualTo(901L);
         assertThat(view.auditedAt()).isNotBlank();
+        assertThat(view.auditSource()).isEqualTo("MANUAL");
         assertThat(entity.getAuditStatus()).isEqualTo("REJECTED");
         assertThat(entity.getAuditReason()).isEqualTo("含微信号导流");
+        assertThat(entity.getAuditSource()).isEqualTo("MANUAL");
         verify(mapper).update(any(), any());
         verify(eventPublisher).publishEvent(any(ProductRatingSyncer.ReviewVisibilityChanged.class));
     }
@@ -152,6 +155,7 @@ class ReviewAuditTest {
         assertThat(view.auditStatus()).isEqualTo("APPROVED");
         assertThat(view.auditReason()).isNull();
         assertThat(view.auditedBy()).isEqualTo(901L);
+        assertThat(view.auditSource()).isEqualTo("MANUAL");
         assertThat(entity.getAuditReason()).isNull();
         verify(mapper).update(any(), any());
         verify(eventPublisher).publishEvent(any(ProductRatingSyncer.ReviewVisibilityChanged.class));

@@ -1112,6 +1112,11 @@ export interface ReviewView {
   createdAt: string;
   /** 是否还在可追评窗口内（前端据此决定显示追评入口） */
   appendable: boolean;
+  /**
+   * 审核态（A-15）：公开评价区只会出现 APPROVED；
+   * 「我的评价」用它提示「审核中 / 已下架」，避免买家以为评价丢了。
+   */
+  auditStatus: ReviewAuditStatus | string;
 }
 
 export interface ReviewSummary {
@@ -1184,6 +1189,8 @@ export interface AdminReviewView {
   auditReason: string | null;
   auditedBy: string | null;
   auditedAt: string | null;
+  /** AUTO 机审自动 / MANUAL 人工 / null 历史数据（A-15） */
+  auditSource: 'AUTO' | 'MANUAL' | null;
 }
 
 export interface ReviewAuditRequest {

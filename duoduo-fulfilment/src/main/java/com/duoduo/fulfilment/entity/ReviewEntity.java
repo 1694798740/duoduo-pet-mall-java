@@ -46,14 +46,16 @@ public class ReviewEntity {
     private Integer anonymous;
     private String appendContent;
     private LocalDateTime appendAt;
-    /** PENDING / APPROVED / REJECTED（H-02 起后台可人工下架 / 恢复；新建仍默认 APPROVED） */
+    /** PENDING / APPROVED / REJECTED（H-02 起后台可人工下架 / 恢复；A-15 起提交先过机审） */
     private String auditStatus;
-    /** 审核结论说明：下架必填，恢复时清空 */
+    /** 审核结论说明：下架必填，恢复时清空；机审转人工时写命中原因 */
     private String auditReason;
-    /** 最近一次审核操作的运营 userId 快照（用户改名不影响历史可读） */
+    /** 最近一次审核操作的运营 userId 快照（用户改名不影响历史可读；机审为 null） */
     private Long auditedBy;
     /** 最近一次审核时间（UTC） */
     private LocalDateTime auditedAt;
+    /** AUTO 机审自动 / MANUAL 人工 / null 为 A-15 之前的历史数据 */
+    private String auditSource;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -207,6 +209,14 @@ public class ReviewEntity {
 
     public void setAuditedAt(LocalDateTime auditedAt) {
         this.auditedAt = auditedAt;
+    }
+
+    public String getAuditSource() {
+        return auditSource;
+    }
+
+    public void setAuditSource(String auditSource) {
+        this.auditSource = auditSource;
     }
 
     public LocalDateTime getCreatedAt() {

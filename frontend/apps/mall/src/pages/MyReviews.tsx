@@ -20,6 +20,16 @@ import {
 } from '@duoduo/shared/components/ui';
 import { useAsync } from '@duoduo/shared/components/hooks';
 
+const AUDIT_BADGE: Record<string, { text: string; cls: string }> = {
+  PENDING: { text: '审核中', cls: 'tag tag-warn' },
+  REJECTED: { text: '已下架', cls: 'tag tag-danger' },
+};
+
+const AuditBadge: React.FC<{ status: string }> = ({ status }) => {
+  const badge = AUDIT_BADGE[status];
+  return badge ? <span className={badge.cls}>{badge.text}</span> : null;
+};
+
 export const MyReviewsPage: React.FC = () => {
   const { push } = useToast();
   const [page, setPage] = useState(1);
@@ -79,6 +89,9 @@ export const MyReviewsPage: React.FC = () => {
                 <span className="small muted">{formatDate(rv.createdAt)}</span>
                 <span className="small muted">订单 {rv.orderNo}</span>
                 {rv.anonymous ? <span className="small muted">· 匿名</span> : null}
+                {rv.auditStatus === 'PENDING' || rv.auditStatus === 'REJECTED' ? (
+                  <AuditBadge status={rv.auditStatus} />
+                ) : null}
               </div>
 
               <div className="row" style={{ gap: 10, marginTop: 8, alignItems: 'center' }}>
@@ -122,6 +135,17 @@ export const MyReviewsPage: React.FC = () => {
                 >
                   <div className="small muted">追评 · {formatDate(rv.appendAt)}</div>
                   <div className="small" style={{ marginTop: 4 }}>{rv.appendContent}</div>
+                </div>
+              ) : null}
+
+              {rv.auditStatus === 'PENDING' ? (
+                <div className="small muted" style={{ marginTop: 8 }}>
+                  评价正在审核，通过后会展示在商品评价区。
+                </div>
+              ) : null}
+              {rv.auditStatus === 'REJECTED' ? (
+                <div className="small muted" style={{ marginTop: 8 }}>
+                  该评价未通过审核，仅自己可见。
                 </div>
               ) : null}
 

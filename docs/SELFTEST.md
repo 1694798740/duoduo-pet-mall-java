@@ -2,6 +2,40 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 评价机审冒烟（`scripts/review-auto-audit-a15-smoke.mjs`，45 项，第一百零五轮）
+
+```bash
+NO_PROXY="*" node scripts/review-auto-audit-a15-smoke.mjs
+```
+
+前置：容器在跑；fulfilment 已部署 A-15；`incremental/54-review-audit-source.sql` 已执行；
+卖家 13600003333、运营 13684295254 可用。
+覆盖：临时买家三张真实订单（下单 → 支付 → 发货 → 确认收货）；
+**干净评价**提交即 APPROVED、`audit_source=AUTO`、审核时间落库、公开区与评分可见；
+**命中手机号**的评价转 PENDING（不自动下架），审核原因脱敏为 `138****8000`，
+公开评价区 / 评分汇总 / 商品评分都不含它；后台「待审核」筛选命中且来源 AUTO；
+**人工通过**后写 APPROVED + MANUAL、原因清空，公开汇总 2 条 / 4.5 分、商品评分 4.5 / 2 条；
+**干净追评**不重审，**命中导流的追评**把整条评价拉回 PENDING 并反向重算评分（2 条 / 5.0）；
+**人工下架**后 REJECTED + 原因，买家「我的评价」带审核态且不可追评，已下架评价再追评 422；
+审计留痕 REVIEW_AUDIT 两次；非法筛选 400、未知评价 404 且零改动；收尾物理清理评价 / 三道订单链路 / 商品 / 临时买家。
+2026-10-26 实测 **45/0**。
+
+## 评价机审 UI e2e（`scripts/e2e/admin-review-auto-a15-ui-check.mjs`，24 项，第一百零五轮）
+
+```bash
+NO_PROXY="*" UI_BASE="http://localhost:8088" A15_UI_SHOT=/tmp/a15-reviews.png \
+  node scripts/e2e/admin-review-auto-a15-ui-check.mjs
+```
+
+前置：商城与后台为最新容器产物（先构建 dist 再重建 `duoduo-web-app` / `duoduo-admin-web-app`）；
+fulfilment 已部署 A-15；运营 13684295254 可用。夹具现场注册买家并直接插入一条 PENDING + AUTO 评价
+（真实提交链路由上面的接口冒烟覆盖），商品评分原值先记录、收尾复位。
+覆盖：买家登录「我的评价」看到「审核中」标签与「通过后会展示在商品评价区」说明，且该评价不在公开评价区；
+后台「待审核」Tab 命中、状态列显示来源「机审自动」、详情展示机审命中原因与来源；
+点「通过」走站内确认弹窗 → 状态变「已通过」、来源变「人工审核」、回库 `APPROVED|MANUAL|NULL|操作人|SET`；
+随后下架仍走原因必填弹窗 → 回库 `REJECTED|MANUAL|原因`；全程 0 原生弹窗、0 pageerror；夹具与临时买家零残留。
+2026-10-26 实测 **24/0**。
+
 ## 评价管理冒烟（`scripts/review-manage-h02-smoke.mjs`，47 项，第一百零四轮）
 
 ```bash
@@ -17,6 +51,7 @@ NO_PROXY="*" node scripts/review-manage-h02-smoke.mjs
 重复下架幂等且审核时间不变；**恢复**写回 APPROVED、原因清空、评分恢复 5.0 / 1 条；
 审计留痕 `REVIEW_AUDIT / target=REVIEW / SUCCESS / 操作人手机号`；未知评价 404、非法动作 400、
 非法状态 / 星级 / 超长关键词 400，且失败请求零改动；收尾物理清理评价 / 订单链路 / 商品 / 临时买家。
+A-15 起新建干净评价为 `APPROVED + AUTO`，本套断言已同步为 `APPROVED|-|-|SET|AUTO`。
 2026-10-26 实测 **47/0**。
 
 ## 评价管理后台 UI e2e（`scripts/e2e/admin-review-h02-ui-check.mjs`，18 项，第一百零四轮）

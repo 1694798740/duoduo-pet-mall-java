@@ -27,6 +27,7 @@ import { AdminDenied, AdminTabs, isOperator } from './shared';
 
 const STATUS_TABS: Array<{ value: string; label: string }> = [
   { value: '', label: '全部' },
+  { value: 'PENDING', label: '待审核' },
   { value: 'APPROVED', label: '已通过' },
   { value: 'REJECTED', label: '已下架' },
 ];
@@ -35,6 +36,11 @@ const AUDIT_LABEL: Record<string, string> = {
   PENDING: '待审核',
   APPROVED: '已通过',
   REJECTED: '已下架',
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  AUTO: '机审自动',
+  MANUAL: '人工审核',
 };
 
 const RATING_OPTIONS: Array<{ value: number | null; label: string }> = [
@@ -116,16 +122,19 @@ export const AdminReviewsPage: React.FC = () => {
     }
   };
 
-  const restore = async (item: AdminReviewView) => {
+  const approve = async (item: AdminReviewView) => {
+    const pending = item.auditStatus === 'PENDING';
     const ok = await confirm({
-      title: '恢复评价',
-      message: '恢复后该评价会重新出现在商品评价区，并重新参与评分计算。',
-      confirmText: '恢复',
+      title: pending ? '通过评价' : '恢复评价',
+      message: pending
+        ? '通过后该评价会展示在商品评价区，并参与评分计算。'
+        : '恢复后该评价会重新出现在商品评价区，并重新参与评分计算。',
+      confirmText: pending ? '通过' : '恢复',
     });
     if (!ok) return;
     try {
       await adminApi.auditReview(item.id, { action: 'APPROVE' });
-      push('评价已恢复', 'success');
+      push(pending ? '评价已通过，公开评价区与评分已同步' : '评价已恢复', 'success');
       setDetail(null);
       reload();
     } catch (err) {
@@ -139,13 +148,20 @@ export const AdminReviewsPage: React.FC = () => {
         查看
       </button>
       {item.auditStatus === 'REJECTED' ? (
-        <button className="btn btn-sm btn-primary" onClick={() => void restore(item)}>
+        <button className="btn btn-sm btn-primary" onClick={() => void approve(item)}>
           恢复
         </button>
       ) : (
-        <button className="btn btn-sm btn-danger" onClick={() => openTakedown(item)}>
-          下架
-        </button>
+        <>
+          {item.auditStatus === 'PENDING' ? (
+            <button className="btn btn-sm btn-primary" onClick={() => void approve(item)}>
+              通过
+            </button>
+          ) : null}
+          <button className="btn btn-sm btn-danger" onClick={() => openTakedown(item)}>
+            下架
+          </button>
+        </>
       )}
     </div>
   );
@@ -157,6 +173,8 @@ export const AdminReviewsPage: React.FC = () => {
 
       <Alert kind="info">
         只有<b>已通过</b>的评价会出现在商品评价区、评分汇总与卖家信用分里。
+        提交时先过机审：干净内容自动通过，命中联系方式 / 站外链接 / 导流话术 / 敏感词的转
+        <b>待审核</b>，机器不会自动下架；运营通过后才会公开。
         下架会立即把这些口径中的该条评价移除，并在事务提交后重算商品评分；
         下架原因必填 —— 它是事后复盘与客诉处理的唯一凭据。
       </Alert>
@@ -267,7 +285,12 @@ export const AdminReviewsPage: React.FC = () => {
                     <div className="small muted mono">{item.userId}</div>
                   </td>
                   <td>{formatDate(item.createdAt)}</td>
-                  <td><ReviewStatusTag status={item.auditStatus} /></td>
+                  <td>
+                    <ReviewStatusTag status={item.auditStatus} />
+                    <div className="small muted">
+                      {SOURCE_LABEL[item.auditSource ?? ''] ?? '历史数据'}
+                    </div>
+                  </td>
                   <td>{renderActions(item)}</td>
                 </tr>
               ))}
@@ -294,9 +317,14 @@ export const AdminReviewsPage: React.FC = () => {
           <>
             <button className="btn btn-ghost" onClick={() => setDetail(null)}>关闭</button>
             {detail.auditStatus === 'REJECTED' ? (
-              <button className="btn btn-primary" onClick={() => void restore(detail)}>恢复评价</button>
+              <button className="btn btn-primary" onClick={() => void approve(detail)}>恢复评价</button>
             ) : (
-              <button className="btn btn-danger" onClick={() => openTakedown(detail)}>下架评价</button>
+              <>
+                {detail.auditStatus === 'PENDING' ? (
+                  <button className="btn btn-primary" onClick={() => void approve(detail)}>通过评价</button>
+                ) : null}
+                <button className="btn btn-danger" onClick={() => openTakedown(detail)}>下架评价</button>
+              </>
             )}
           </>
         ) : null}
@@ -308,6 +336,9 @@ export const AdminReviewsPage: React.FC = () => {
               <span className="small muted mono">订单 {detail.orderNo}</span>
               <span className="small muted mono">商品 {detail.spuId}</span>
               <span>{detail.rating} 星</span>
+              <span className="small muted">
+                审核来源：{SOURCE_LABEL[detail.auditSource ?? ''] ?? '未记录（A-15 前历史数据）'}
+              </span>
             </div>
             <div className="card card-pad" style={{ marginBottom: 12 }}>
               <div className="small muted">评价正文</div>
@@ -340,6 +371,14 @@ export const AdminReviewsPage: React.FC = () => {
               <br />
               发布时间：{formatDate(detail.createdAt)}
             </div>
+            {detail.auditStatus === 'PENDING' ? (
+              <Alert kind="warn">
+                机审转人工：{detail.auditReason || '命中风险规则'}
+                {detail.auditedAt ? ` · ${formatDate(detail.auditedAt)}` : ''}
+                <br />
+                通过后才会进入公开评价区与评分口径；若确认违规，请填写原因下架。
+              </Alert>
+            ) : null}
             {detail.auditStatus === 'REJECTED' ? (
               <Alert kind="warn">
                 已下架：{detail.auditReason || '（未记录原因）'}

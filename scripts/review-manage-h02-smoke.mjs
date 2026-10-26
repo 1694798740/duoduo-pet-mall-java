@@ -281,8 +281,10 @@ async function main() {
     check('评价提交成功', createdReview.status === 200 && Boolean(reviewId), createdReview.body);
     if (!reviewId) return 1;
     const reviewRow = () => one(FULFIL_DB,
-      `SELECT CONCAT(audit_status,'|',IFNULL(audit_reason,'-'),'|',IFNULL(audited_by,'-'),'|',IFNULL(audited_at,'-')) FROM t_review WHERE id=${reviewId}`);
-    check('回库：新建评价为 APPROVED 且无审核原因', reviewRow() === 'APPROVED|-|-|-', reviewRow());
+      `SELECT CONCAT(audit_status,'|',IFNULL(audit_reason,'-'),'|',IFNULL(audited_by,'-'),'|',IF(audited_at IS NULL,'-','SET'),'|',IFNULL(audit_source,'NULL')) FROM t_review WHERE id=${reviewId}`);
+    // A-15 起新建评价先过机审：干净内容自动 APPROVED、来源 AUTO、审核时间落库
+    check('回库：新建评价为 APPROVED + 来源 AUTO + 无审核原因',
+      reviewRow() === 'APPROVED|-|-|SET|AUTO', reviewRow());
 
     const summaryBefore = await publicSummary(spuId);
     const listBefore = await publicList(spuId);
@@ -311,7 +313,7 @@ async function main() {
     const noReason = await call('POST', `/api/admin/reviews/${reviewId}/audit`,
       { action: 'REJECT', reason: '   ' }, opToken, 'admin');
     check('下架缺原因 → 422', noReason.status === 422, noReason.body);
-    check('缺原因被拒后零写库', reviewRow() === 'APPROVED|-|-|-', reviewRow());
+    check('缺原因被拒后零写库', reviewRow() === 'APPROVED|-|-|SET|AUTO', reviewRow());
 
     const rejected = await call('POST', `/api/admin/reviews/${reviewId}/audit`,
       { action: 'REJECT', reason: '评价正文含联系方式，属站外导流' }, opToken, 'admin');

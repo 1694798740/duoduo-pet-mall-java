@@ -108,6 +108,11 @@ duoduo:
     max-images: ${REVIEW_MAX_IMAGES:9}
     # 追评窗口：确认收货后多少天内可追评（0 表示不限期）
     append-window-days: ${REVIEW_APPEND_DAYS:30}
+    # A-15 机审敏感词（逗号 / 顿号分隔，可留空）。
+    # 除词表外，服务内置联系方式、站外链接、导流话术、违禁品四类规则；
+    # 命中只转人工 PENDING，不自动下架。词表放配置而不是库表：
+    # 它变更频率低、需要随版本回滚，运营也不该为了改几个词开一次库。
+    sensitive-words: ${REVIEW_SENSITIVE_WORDS:}
   aftersale:
     # 售后举证图最多几张。刻意少于评价的 9 张：举证要的是「看得清问题」的关键几张，
     # 不是图集。放开到 9 张只会让运营的裁定工作台变成图片墙。

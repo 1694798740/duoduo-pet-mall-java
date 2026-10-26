@@ -103,7 +103,14 @@ public final class ReviewDtos {
             String appendAt,
             String createdAt,
             /** 追加评价是否还在允许窗口内（前端据此决定是否显示「追评」入口） */
-            boolean appendable
+            boolean appendable,
+            /**
+             * 审核态：PENDING / APPROVED / REJECTED。
+             *
+             * <p>公开评价区只会出现 APPROVED；「我的评价」需要它来告诉买家
+             * 「这条还在审核」或「这条已下架」，否则买家会以为评价丢了。
+             */
+            String auditStatus
     ) {
     }
 
@@ -184,7 +191,9 @@ public final class ReviewDtos {
             String auditStatus,
             String auditReason,
             Long auditedBy,
-            String auditedAt
+            String auditedAt,
+            /** AUTO 机审自动 / MANUAL 人工 / null 历史数据；运营据此区分「谁放行的」 */
+            String auditSource
     ) {
     }
 }
