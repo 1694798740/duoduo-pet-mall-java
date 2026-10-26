@@ -4,6 +4,15 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（一百零三）· 历史特权夹具账号降权（I-04）**
+
+- **问题**：历轮自测沉淀 99 个 OPERATOR + 48 个 SELLER 特权账号，均为后台 / 店铺暴露面。
+- **策略**：只降权不删号；写库前落回滚脚本；固定测试号与唯一真运营账号列入保护名单。
+- **执行**：142 个夹具账号 `role → USER`；全库 OPERATOR 99 → 2、SELLER 48 → 3、ADMIN 0。
+- **回滚**：`D:\duoduo-backup\fixture-sweep\rollback-20261026-223256.sql`。
+- **回归**：降权后 F-04 冒烟 **37/0**，固定店铺 / 运营链路正常。
+- **遗留**：147 家夹具店铺清理（I-03）需你点头后执行。
+
 **2026-10-26（一百零二）· 测试债收口（J-03 / J-05）**
 
 - **J-03**：新增 [下单支付 UI e2e](scripts/e2e/checkout-payment-j03-ui-check.mjs) ——
