@@ -2,6 +2,18 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 分享圈 UI e2e（`scripts/e2e/share-circle-ui-check.mjs`，21 项，第一百一十五轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/share-circle-ui-check.mjs
+```
+
+前置：陪跑容器在跑；默认打已部署商城站点 `http://localhost:8088`；
+需要跑 Vite 开发态时显式 `UI_BASE=http://localhost:5173`。
+覆盖：信息流公开可逛、发布（搜索选品 + 话题）、详情 / 评论 / 点赞 toggle、
+「我的分享」编辑后可见、删除后列表消失（软删）、话题聚合、未登录入口可发现性；
+全程 0 console 报错。2026-10-26 实测 **21/0**（历史失败根因是脚本默认打错站点，非功能缺陷）。
+
 ## 商品变更历史冒烟（`scripts/product-change-history-h03-smoke.mjs`，19 项，第一百一十四轮）
 
 ```bash

@@ -20,7 +20,11 @@ import { mysql } from '../lib/docker-exec.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GW = process.env.GATEWAY ?? 'http://127.0.0.1:8080';
-const UI = process.env.UI_BASE ?? 'http://localhost:5173';
+// 默认打**已部署**的商城容器（localhost:8088），不是 Vite 开发服务器（5173）。
+// J-02 的「历史失败」根因之一就是默认值指向未启动的 dev server：
+// 脚本一跑就 ERR_CONNECTION_REFUSED，看起来像功能坏了，其实是环境没起。
+// 需要跑开发态时显式传 UI_BASE=http://localhost:5173。
+const UI = process.env.UI_BASE ?? 'http://localhost:8088';
 const SHOTS = shotsDir(); // 默认落到 gitignored 的 scripts/e2e/.shots；要归档配图用 SHOTS=<路径> 覆盖
 const PW_CORE =
   process.env.PW_CORE ??
