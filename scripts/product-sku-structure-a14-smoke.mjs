@@ -122,6 +122,9 @@ const detailOf = async (token, spuId) =>
 
 const statusOf = (spuId) =>
   one(PRODUCT_DB, `SELECT CONCAT(status,'|',audit_status,'|',version,'|',min_price,'|',max_price) FROM t_spu WHERE id=${spuId}`);
+/** 带审核来源的回库快照（E28：APPROVED 时必须能区分 AUTO 自动放行与人工通过） */
+const statusWithSourceOf = (spuId) =>
+  one(PRODUCT_DB, `SELECT CONCAT(status,'|',audit_status,'|',IFNULL(audit_source,'-'),'|',version,'|',min_price,'|',max_price) FROM t_spu WHERE id=${spuId}`);
 const auditLogCount = (spuId) => count(PRODUCT_DB, `SELECT COUNT(*) FROM t_spu_audit_log WHERE spu_id=${spuId}`);
 const skuRows = (spuId) =>
   sql(PRODUCT_DB, `SELECT CONCAT(id,'|',sku_code,'|',IFNULL(spec_json,''),'|',price,'|',stock,'|',frozen_stock) FROM t_sku WHERE spu_id=${spuId} ORDER BY sku_code`);
@@ -210,8 +213,9 @@ async function main() {
     addRes.body?.data?.added === 1 && addRes.body?.data?.updated === 0
       && addRes.body?.data?.removed === 0 && addRes.body?.data?.reaudited === true,
     addRes.body?.data);
-  check('商品回到 PENDING 且版本 +1',
-    addRes.body?.data?.product?.auditStatus === 'PENDING'
+  check('结构变更已重审（PENDING 或 AUTO 放行）且版本 +1',
+    (addRes.body?.data?.product?.auditStatus === 'PENDING'
+      || addRes.body?.data?.product?.auditStatus === 'APPROVED')
       && addRes.body?.data?.product?.version === vA + 1,
     addRes.body?.data?.product);
   check('价格区间重算为 1990~5990',
@@ -222,8 +226,11 @@ async function main() {
   const newSkuA = rowsA.find((r) => r.includes('A14-10kg'));
   check('回库：3 个规格，新增行编码不复用旧序号',
     rowsA.length === 3 && Boolean(newSkuA) && newSkuA.split('|')[1] === `SPU${spuId}-3`, rowsA);
-  check('回库：SPU 已是 PENDING + 新版本 + 新价格区间',
-    statusOf(spuId) === `ON_SALE|PENDING|${vA + 1}|1990|5990`, statusOf(spuId));
+  const statusA = statusWithSourceOf(spuId);
+  // E28：干净内容自动放行（APPROVED + AUTO），命中风险才回 PENDING（来源为空）。
+  check('回库：SPU 重审结果合法（PENDING 或 APPROVED+AUTO）+ 新版本 + 新价格区间',
+    (statusA === `ON_SALE|PENDING|-|${vA + 1}|1990|5990`
+      || statusA === `ON_SALE|APPROVED|AUTO|${vA + 1}|1990|5990`), statusA);
   const historyA = sql(PRODUCT_DB,
     `SELECT changes FROM t_spu_audit_log
      WHERE spu_id=${spuId} AND event='EDIT' ORDER BY id DESC LIMIT 1`);
