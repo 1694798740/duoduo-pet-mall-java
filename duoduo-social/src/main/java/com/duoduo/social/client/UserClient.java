@@ -42,4 +42,12 @@ public interface UserClient {
      */
     @GetMapping("/internal/merchant-membership")
     ApiResponse<com.duoduo.social.client.dto.MembershipBrief> merchantMembership(@RequestParam("userId") Long userId);
+
+    /**
+     * C-04 · 本店在职成员（店主 + 店员）：客服工单转交候选人。
+     * 店铺未入驻时返回空列表，调用方退化为「只有当前账号」。
+     */
+    @GetMapping("/internal/merchant-members")
+    ApiResponse<List<com.duoduo.social.client.dto.MerchantMemberBrief>> merchantMembers(
+            @RequestParam("ownerUserId") Long ownerUserId);
 }

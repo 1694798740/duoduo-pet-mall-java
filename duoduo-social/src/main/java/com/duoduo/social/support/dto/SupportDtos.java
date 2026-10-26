@@ -25,7 +25,11 @@ public final class SupportDtos {
             String lastMessage,
             String lastMessageAt,
             long unread,
-            String status
+            String status,
+            /** C-04：当前处理人 userId；null=未认领。买家侧恒为 null（内部协作信息不外泄） */
+            String assigneeId,
+            /** C-04：当前处理人昵称；未认领 / 买家侧为 null */
+            String assigneeName
     ) {
     }
 
@@ -111,5 +115,47 @@ public final class SupportDtos {
 
     /** 单向删除（2026-10-25）：批量隐藏本人视角的消息，对方仍可见 */
     public record DeleteRequest(java.util.List<Long> messageIds) {
+    }
+
+    // ---------------- C-04 · 客服工单 ----------------
+
+    /** 转交候选人（本店在职成员；服务端下发，前端不自己拼名单） */
+    public record TicketMemberView(String userId, String name, String avatar, String role) {
+    }
+
+    /** 一条处理记录（append-only） */
+    public record TicketLogView(
+            Long id,
+            /** CLAIM / TRANSFER / RELEASE */
+            String action,
+            String actionLabel,
+            String fromAssigneeId,
+            String fromAssigneeName,
+            String toAssigneeId,
+            String toAssigneeName,
+            String actorId,
+            String actorName,
+            String note,
+            String createdAt) {
+    }
+
+    /**
+     * 工单视图：当前处理人 + 可转交成员 + 处理记录。
+     *
+     * <p>一次返回三块，是为了让工作台点开「处理」就拿到全部信息；
+     * 拆成三个接口会让转交弹窗在弱网下先出现空名单、再补一次请求。
+     */
+    public record TicketView(
+            Long sessionId,
+            String status,
+            String assigneeId,
+            String assigneeName,
+            String assignedAt,
+            java.util.List<TicketMemberView> members,
+            java.util.List<TicketLogView> logs) {
+    }
+
+    /** 转交请求：toUserId 必须在本店在职成员名单里；note 可选（转交原因） */
+    public record TicketTransferRequest(Long toUserId, String note) {
     }
 }

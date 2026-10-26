@@ -2,6 +2,35 @@
 
 > 适用环境：本机 Docker（Windows + PowerShell 5.1），仓库 `D:\智能体项目\duoduo-pet-mall-java`
 
+## 客服工单冒烟（`scripts/support-ticket-c04-smoke.mjs`，32 项，第一百零九轮）
+
+```bash
+NO_PROXY="*" node scripts/support-ticket-c04-smoke.mjs
+```
+
+前置：容器在跑；social 已部署 C-04；`incremental/58-support-ticket.sql` 已执行；
+卖家 13600003333、另一店主 13959064118 可用。
+覆盖：店主邀请两名店员 + 临时买家建会话并发消息；店主与店员看到同一条会话、初始未认领；
+**并发认领只有一个 200，另一个 409**；重复认领幂等不重复记日志；店主认领已认领会话 409；
+非当前处理人转交 403、转给非本店成员 400、当前处理人转交店主成功且备注落库；
+店主可转回店员；释放回未认领、重复释放幂等；回库 4 条 CLAIM/TRANSFER×2/RELEASE；
+跨店看工单 403、买家 403、未登录 401；会话 / 消息 / 处理记录 / 店员成员 / 临时账号零残留。
+2026-10-26 实测 **32/0**。
+
+## 客服工单 UI e2e（`scripts/e2e/support-ticket-c04-ui-check.mjs`，17 项，第一百零九轮）
+
+```bash
+NO_PROXY="*" node scripts/e2e/support-ticket-c04-ui-check.mjs
+```
+
+前置：商家端为最新容器产物（先 `npm run build:merchant` 再重建 `duoduo-merchant-web-app`）；
+social 已部署 C-04；卖家 13600003333 可用。
+覆盖：店员登录工作台 → 会话行显示「未认领」→ 打开「工单」弹窗；
+认领后当前处理人为本人并出现「认领」记录；释放回未认领；再次认领；
+转交店主（带备注）后当前处理人变化、记录展示操作者 / 前后处理人 / 备注；
+回库 CLAIM → RELEASE → CLAIM → TRANSFER 四条；全程 0 原生弹窗、0 pageerror；夹具零残留。
+2026-10-26 实测 **17/0**。
+
 ## 电子面单冒烟（`scripts/waybill-b05-smoke.mjs`，36 项，第一百零八轮）
 
 ```bash

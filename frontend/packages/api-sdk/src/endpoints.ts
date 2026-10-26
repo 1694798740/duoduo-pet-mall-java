@@ -1370,6 +1370,42 @@ export interface SupportSessionView {
   lastMessageAt: string;
   unread: number;
   status: 'OPEN' | 'CLOSED';
+  /** C-04：当前处理人；null=未认领。买家侧恒为 null */
+  assigneeId: string | null;
+  assigneeName: string | null;
+}
+
+// ---------- 客服工单（C-04） ----------
+
+export interface SupportTicketMemberView {
+  userId: string;
+  name: string;
+  avatar: string | null;
+  role: 'OWNER' | 'STAFF' | string;
+}
+
+export interface SupportTicketLogView {
+  id: string;
+  action: 'CLAIM' | 'TRANSFER' | 'RELEASE' | string;
+  actionLabel: string;
+  fromAssigneeId: string | null;
+  fromAssigneeName: string | null;
+  toAssigneeId: string | null;
+  toAssigneeName: string | null;
+  actorId: string;
+  actorName: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface SupportTicketView {
+  sessionId: string;
+  status: 'OPEN' | 'CLOSED';
+  assigneeId: string | null;
+  assigneeName: string | null;
+  assignedAt: string | null;
+  members: SupportTicketMemberView[];
+  logs: SupportTicketLogView[];
 }
 
 export interface SupportProductCard {
@@ -1524,6 +1560,23 @@ export const sellerSupportApi = {
     api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages/${messageId}/recall`),
   // 关闭 / 重开已下线（2026-10-23）：关闭权只在买家手里，客服侧调用恒返回 403
   unreadCount: () => api.get<number>('/api/seller/support/unread-count'),
+
+  // ---- C-04 · 客服工单认领 / 转交 / 审计 ----
+
+  /** 工单详情：当前处理人 + 本店在职成员 + 处理记录 */
+  ticket: (id: string) => api.get<SupportTicketView>(`/api/seller/support/sessions/${id}/ticket`),
+
+  /** 认领：并发只有一个成功；已是本人时幂等 */
+  claimTicket: (id: string) =>
+    api.post<SupportTicketView>(`/api/seller/support/sessions/${id}/ticket/claim`),
+
+  /** 转交：目标必须是本店在职成员；备注可选 */
+  transferTicket: (id: string, body: { toUserId: string; note?: string }) =>
+    api.post<SupportTicketView>(`/api/seller/support/sessions/${id}/ticket/transfer`, body),
+
+  /** 释放：归还为未认领 */
+  releaseTicket: (id: string) =>
+    api.post<SupportTicketView>(`/api/seller/support/sessions/${id}/ticket/release`),
 };
 
 // ---------- 分享圈（第七十一轮 · Web 端功能对齐 P1） ----------

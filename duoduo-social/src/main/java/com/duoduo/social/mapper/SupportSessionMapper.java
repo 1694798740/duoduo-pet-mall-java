@@ -91,4 +91,48 @@ public interface SupportSessionMapper extends BaseMapper<SupportSessionEntity> {
             WHERE id = #{id} AND status = 'CLOSED' AND closed_at IS NOT NULL AND closed_at < #{threshold}
             """)
     int deleteExpired(@Param("id") Long id, @Param("threshold") LocalDateTime threshold);
+
+    // ---------------- C-04 · 工单认领 / 转交 / 释放 ----------------
+
+    /**
+     * 认领：只有未认领时成功（并发认领只有一个请求 affected=1）。
+     * 归属条件 seller_id 同时写在 WHERE 里，越权调用不可能改到别家会话。
+     */
+    @Update("""
+            UPDATE t_support_session
+            SET assignee_id = #{actorId}, assigned_at = #{now}, updated_at = #{now}
+            WHERE id = #{id} AND seller_id = #{ownerId} AND assignee_id IS NULL
+            """)
+    int claimTicket(@Param("id") Long id, @Param("ownerId") Long ownerId,
+                    @Param("actorId") Long actorId, @Param("now") LocalDateTime now);
+
+    /**
+     * 转交：动作前的处理人必须仍是 {@code fromAssignee}（NULL 表示未认领时可指定处理人）。
+     * 条件更新保证「两个店员同时转交」只有一个成功，另一个收到 409。
+     */
+    @Update("""
+            <script>
+            UPDATE t_support_session
+            SET assignee_id = #{toAssignee}, assigned_at = #{now}, updated_at = #{now}
+            WHERE id = #{id} AND seller_id = #{ownerId}
+            <choose>
+              <when test="fromAssignee != null">AND assignee_id = #{fromAssignee}</when>
+              <otherwise>AND assignee_id IS NULL</otherwise>
+            </choose>
+            </script>
+            """)
+    int transferTicket(@Param("id") Long id, @Param("ownerId") Long ownerId,
+                       @Param("fromAssignee") Long fromAssignee,
+                       @Param("toAssignee") Long toAssignee,
+                       @Param("now") LocalDateTime now);
+
+    /** 释放：当前处理人归还为未认领；只有仍是 {@code fromAssignee} 时成功 */
+    @Update("""
+            UPDATE t_support_session
+            SET assignee_id = NULL, assigned_at = NULL, updated_at = #{now}
+            WHERE id = #{id} AND seller_id = #{ownerId} AND assignee_id = #{fromAssignee}
+            """)
+    int releaseTicket(@Param("id") Long id, @Param("ownerId") Long ownerId,
+                      @Param("fromAssignee") Long fromAssignee,
+                      @Param("now") LocalDateTime now);
 }

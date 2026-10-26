@@ -251,6 +251,56 @@ public class MerchantStaffService {
                 String.valueOf(store.getOwnerUserId()), member.getRole(), member.getStatus());
     }
 
+    /**
+     * 本店在职成员（C-04 工单转交候选人，内部端点下发）。
+     *
+     * <p>为什么单独开一个内部读方法，而不是复用店主管理页的 {@link #listForOwner}：
+     * 后者带手机号（脱敏）与邀请信息，属于店主管理视图；工单转交只需要
+     * 「userId / 昵称 / 头像 / 角色」。跨域按调用方真正需要的字段裁剪。
+     *
+     * <p>店铺尚未入驻（自营客服账号）时返回空列表，由调用方退化为「只有当前账号」。
+     */
+    public List<com.duoduo.user.dto.MerchantDtos.TicketMemberInfo> activeMembersOf(Long ownerUserId) {
+        if (ownerUserId == null) {
+            return List.of();
+        }
+        MerchantEntity store = merchantMapper.selectOne(new LambdaQueryWrapper<MerchantEntity>()
+                .eq(MerchantEntity::getOwnerUserId, ownerUserId).last("LIMIT 1"));
+        if (store == null) {
+            return List.of();
+        }
+        List<MerchantMemberEntity> members = memberMapper.selectList(
+                new LambdaQueryWrapper<MerchantMemberEntity>()
+                        .eq(MerchantMemberEntity::getMerchantId, store.getId())
+                        .eq(MerchantMemberEntity::getStatus, "ACTIVE")
+                        .orderByAsc(MerchantMemberEntity::getRole)
+                        .orderByAsc(MerchantMemberEntity::getCreatedAt));
+        Map<Long, UserEntity> users = members.isEmpty() ? Map.of()
+                : userMapper.selectBatchIds(members.stream().map(MerchantMemberEntity::getUserId)
+                        .distinct().toList()).stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
+        // 店主可能没有 OWNER 成员行（早期入驻直接写 t_merchant.owner_user_id）——
+        // 工单候选人必须始终包含店主，否则「转交给店主」会被误判成非本店成员。
+        List<com.duoduo.user.dto.MerchantDtos.TicketMemberInfo> result = new java.util.ArrayList<>();
+        UserEntity owner = userMapper.selectById(store.getOwnerUserId());
+        result.add(new com.duoduo.user.dto.MerchantDtos.TicketMemberInfo(
+                String.valueOf(store.getOwnerUserId()),
+                owner == null || owner.getNickname() == null ? "店主" : owner.getNickname(),
+                owner == null ? null : owner.getAvatar(),
+                "OWNER"));
+        for (MerchantMemberEntity m : members) {
+            if (m.getUserId().equals(store.getOwnerUserId())) {
+                continue;
+            }
+            UserEntity user = users.get(m.getUserId());
+            result.add(new com.duoduo.user.dto.MerchantDtos.TicketMemberInfo(
+                    String.valueOf(m.getUserId()),
+                    user == null || user.getNickname() == null ? "成员" + m.getUserId() : user.getNickname(),
+                    user == null ? null : user.getAvatar(),
+                    m.getRole()));
+        }
+        return result;
+    }
+
     // ---------------- 内部 ----------------
 
     private MerchantEntity requireOwnedStore(Long ownerId) {

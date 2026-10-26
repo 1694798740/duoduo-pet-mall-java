@@ -10,7 +10,10 @@ import com.duoduo.social.support.dto.SupportDtos.MessageView;
 import com.duoduo.social.support.dto.SupportDtos.SellerSendRequest;
 import com.duoduo.social.support.dto.SupportDtos.SessionView;
 import com.duoduo.social.support.dto.SupportDtos.ThreadView;
+import com.duoduo.social.support.dto.SupportDtos.TicketTransferRequest;
+import com.duoduo.social.support.dto.SupportDtos.TicketView;
 import com.duoduo.social.support.service.SupportService;
+import com.duoduo.social.support.service.SupportTicketService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -46,11 +49,14 @@ public class SellerSupportController {
     private static final Logger log = LoggerFactory.getLogger(SellerSupportController.class);
 
     private final SupportService supportService;
+    private final SupportTicketService ticketService;
     private final com.duoduo.social.client.UserClient userClient;
 
     public SellerSupportController(SupportService supportService,
+                                   SupportTicketService ticketService,
                                    com.duoduo.social.client.UserClient userClient) {
         this.supportService = supportService;
+        this.ticketService = ticketService;
         this.userClient = userClient;
     }
 
@@ -121,6 +127,36 @@ public class SellerSupportController {
     @GetMapping("/api/seller/support/unread-count")
     public ApiResponse<Long> unreadCount() {
         return ApiResponse.ok(supportService.unreadForSeller(requireStoreOwnerId()));
+    }
+
+    // ---------------- C-04 · 客服工单认领 / 转交 / 审计 ----------------
+
+    /** 工单详情：当前处理人 + 本店在职成员 + 处理记录（店主与店员均可看） */
+    @GetMapping("/api/seller/support/sessions/{id}/ticket")
+    public ApiResponse<TicketView> ticket(@PathVariable Long id) {
+        return ApiResponse.ok(ticketService.view(requireStoreOwnerId(), id));
+    }
+
+    /**
+     * 认领：并发认领只有一个成功；重复认领（已是本人）幂等。
+     * 处理人只表达「谁在接」，不改变店主/店员本就能看全店会话的权限。
+     */
+    @PostMapping("/api/seller/support/sessions/{id}/ticket/claim")
+    public ApiResponse<TicketView> claim(@PathVariable Long id) {
+        return ApiResponse.ok(ticketService.claim(requireStoreOwnerId(), id));
+    }
+
+    /** 转交：当前处理人或店主可操作；目标必须是本店在职成员；备注可选 */
+    @PostMapping("/api/seller/support/sessions/{id}/ticket/transfer")
+    public ApiResponse<TicketView> transfer(@PathVariable Long id,
+                                              @RequestBody(required = false) TicketTransferRequest request) {
+        return ApiResponse.ok(ticketService.transfer(requireStoreOwnerId(), id, request));
+    }
+
+    /** 释放：当前处理人或店主把会话归还为未认领 */
+    @PostMapping("/api/seller/support/sessions/{id}/ticket/release")
+    public ApiResponse<TicketView> release(@PathVariable Long id) {
+        return ApiResponse.ok(ticketService.release(requireStoreOwnerId(), id));
     }
 
     /**

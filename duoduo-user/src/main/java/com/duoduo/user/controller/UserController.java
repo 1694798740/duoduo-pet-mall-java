@@ -165,6 +165,18 @@ public class UserController {
     }
 
     /**
+     * C-04 · 本店在职成员（内部端点）：客服工单转交时的候选人。
+     *
+     * <p>只回 userId / 昵称 / 头像 / 角色，不带手机号与邀请信息 ——
+     * 与 briefs 同一裁剪纪律，跨域只传调用方真正需要的字段。
+     */
+    @GetMapping("/internal/merchant-members")
+    public ApiResponse<List<com.duoduo.user.dto.MerchantDtos.TicketMemberInfo>> merchantMembers(
+            @org.springframework.web.bind.annotation.RequestParam("ownerUserId") Long ownerUserId) {
+        return ApiResponse.ok(staffService.activeMembersOf(ownerUserId));
+    }
+
+    /**
      * E15 · 店铺资质与营业状态（内部端点，商品域的上架门禁用）。
      *
      * <p>与 {@code /internal/merchant-membership} 的区别：那个查「这个人是不是店员」（按 userId），

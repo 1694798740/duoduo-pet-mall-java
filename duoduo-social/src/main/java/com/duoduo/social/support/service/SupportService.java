@@ -396,7 +396,7 @@ public class SupportService {
         }
         Page<SupportSessionEntity> result = sessionMapper.selectPage(new Page<>(p, size), wrapper);
         Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
-                .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId()))
+                .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId(), s.getAssigneeId()))
                 .toList());
         List<SessionView> views = result.getRecords().stream()
                 .map(s -> toSessionView(s, briefs,
@@ -790,6 +790,7 @@ public class SupportService {
                                       Map<Long, String> storeNames, boolean userSide) {
         UserBrief seller = briefs.get(s.getSellerId());
         UserBrief user = briefs.get(s.getUserId());
+        UserBrief assignee = s.getAssigneeId() == null ? null : briefs.get(s.getAssigneeId());
         long unread = userSide ? nz(s.getUnreadForUser()) : nz(s.getUnreadForSeller());
         return new SessionView(
                 s.getId(), s.getSellerId(),
@@ -804,7 +805,10 @@ public class SupportService {
                 // ★ 买家侧不回状态（2026-10-23）：关闭只是客服侧的收尾标记，对用户必须全程无感。
                 //   在**服务端**抹掉而不是靠前端「不显示」，这样任何客户端都拿不到这个字段，
                 //   也不会有人手滑把「已关闭」渲染出来。
-                userSide ? null : s.getStatus());
+                userSide ? null : s.getStatus(),
+                // C-04：处理人属于客服内部协作信息，买家侧同样在服务端抹掉
+                userSide || s.getAssigneeId() == null ? null : String.valueOf(s.getAssigneeId()),
+                userSide || assignee == null || assignee.nickname() == null ? null : assignee.nickname());
     }
 
     /**

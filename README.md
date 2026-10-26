@@ -4,6 +4,26 @@
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 
+**2026-10-26（九十）· 客服工单认领 / 转交 / 审计（C-04）**
+
+- **问题**：店主与店员共用客服工作台，但没有「谁在接」的概念 —— 可能重复回复，
+  交接班说不清进度，出问题也查不到谁转给了谁。
+- **数据**：`t_support_session` 增加 `assignee_id / assigned_at`；新增 append-only
+  `t_support_ticket_log`（CLAIM / TRANSFER / RELEASE + 前后处理人 + 操作者 + 备注）。
+- **认领**：条件 UPDATE（`assignee_id IS NULL`）保证并发只有一人成功；重复认领幂等；
+  其他人收到 409 与「被谁认领」；已关闭会话不可认领。
+- **转交 / 释放**：仅当前处理人或店主可操作；目标必须是本店在职成员
+  （用户域新增 `/internal/merchant-members`，店主始终在名单里）。
+- **不是访问控制**：处理人只表示「谁在接」，全店仍可见会话；买家侧在服务端抹掉该字段。
+- **前端**：会话行显示「处理人 / 未认领」，聊天头部「工单」弹窗内认领 / 释放 / 转交，
+  处理记录逐条展示操作者、前后处理人与备注。
+- **数据脚本**：`incremental/58-support-ticket.sql`。
+- **验证**：social 单测 **26/0**（新增 10）、common **149/0**、common-web **64/0（5 skipped）**、
+  商家端 tsc 全绿；C-04 冒烟 **32/0**、C-04 UI e2e **17/0**；回归客服生命周期 **32/0**；
+  social / user / merchant-web 镜像重建，17 容器 healthy。
+- **踩坑**：新 Mapper 必须放在 `@MapperScan` 覆盖的 `com.duoduo.social.mapper`；
+  老店铺可能没有 OWNER 成员行，成员名单要显式补店主。
+
 **2026-10-26（八十九）· 电子面单 / 物流适配层（B-05）**
 
 - **问题**：发货只能手填物流公司与单号，没有平台面单凭据；轨迹只能靠外部手工推送，

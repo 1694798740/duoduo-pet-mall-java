@@ -43,6 +43,15 @@ public class SupportSessionEntity {
      */
     private LocalDateTime closedAt;
 
+    /**
+     * 当前处理人（C-04）：NULL = 未认领。
+     *
+     * <p>它**不是访问控制**：店主与店员本来就能看到全店会话；这个字段只回答
+     * 「现在是谁在接这个买家」，用于工作台排序、避免撞单与交接追溯。
+     */
+    private Long assigneeId;
+    private LocalDateTime assignedAt;
+
     private LocalDateTime lastMessageAt;
     private String lastMessagePreview;
 
@@ -101,6 +110,22 @@ public class SupportSessionEntity {
 
     public void setClosedAt(LocalDateTime closedAt) {
         this.closedAt = closedAt;
+    }
+
+    public Long getAssigneeId() {
+        return assigneeId;
+    }
+
+    public void setAssigneeId(Long assigneeId) {
+        this.assigneeId = assigneeId;
+    }
+
+    public LocalDateTime getAssignedAt() {
+        return assignedAt;
+    }
+
+    public void setAssignedAt(LocalDateTime assignedAt) {
+        this.assignedAt = assignedAt;
     }
 
     public LocalDateTime getLastMessageAt() {

@@ -24,10 +24,11 @@ import {
   type SupportProductCard,
   type SupportSessionView,
   type SupportThreadView,
+  type SupportTicketView,
 } from '@duoduo/api-sdk/endpoints';
 import { productImage } from '@duoduo/api-sdk/images';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, Field, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
 import { formatBjShort } from '@duoduo/shared/lib/time';
 import { ChatMediaMenu, MediaBubble, VoiceBubble, useVoiceRecorder, QuotedStrip, RecallLine,
   isEmojiOnly, MessageActions, MultiSelectBar, type MediaPayload } from '@duoduo/shared/components/chat-media';
@@ -35,6 +36,7 @@ import { realtime, useRealtime } from '@duoduo/shared/realtime';
 import { OrderCard } from '@duoduo/shared/components/order-card';
 import { chatSeparatorLabel } from '@duoduo/shared/lib/time';
 import { useConfirm } from '@duoduo/shared/components/confirm';
+import { useAuth } from '@duoduo/shared/store/auth';
 
 const POLL_MS = 5000;
 const PAGE_SIZE = 30;
@@ -55,6 +57,7 @@ const FILTERS: { value: Filter; label: string; hint: string }[] = [
 
 export const SellerSupportPage: React.FC = () => {
   const { push } = useToast();
+  const { user } = useAuth();
   const confirm = useConfirm();
   const [filter, setFilter] = useState<Filter>('ALL');
   const [sessions, setSessions] = useState<SupportSessionView[]>([]);
@@ -73,6 +76,13 @@ export const SellerSupportPage: React.FC = () => {
   /** 买家正在输入（2026-10-23）：3 秒无新事件自动消失 */
   const [peerTyping, setPeerTyping] = useState(false);
   const typingTimer = useRef<number | null>(null);
+  /** C-04 · 工单：认领 / 转交 / 释放 / 处理记录 */
+  const [ticketOpen, setTicketOpen] = useState(false);
+  const [ticket, setTicket] = useState<SupportTicketView | null>(null);
+  const [ticketLoading, setTicketLoading] = useState(false);
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const [ticketTarget, setTicketTarget] = useState('');
+  const [ticketNote, setTicketNote] = useState('');
 
   const loadSessions = useCallback(async () => {
     try {
@@ -109,6 +119,81 @@ export const SellerSupportPage: React.FC = () => {
       return null;
     }
   }, []);
+
+  // ---------------- C-04 · 工单 ----------------
+
+  const openTicket = async () => {
+    if (!activeId) return;
+    setTicketOpen(true);
+    setTicketLoading(true);
+    setTicketNote('');
+    setTicketTarget('');
+    try {
+      const data = await sellerSupportApi.ticket(activeId);
+      setTicket(data);
+      setTicketTarget(
+        data.members.find((m) => m.userId !== data.assigneeId)?.userId ?? '',
+      );
+    } catch (e) {
+      setError(toFriendlyMessage(e));
+      setTicketOpen(false);
+    } finally {
+      setTicketLoading(false);
+    }
+  };
+
+  const applyTicket = (data: SupportTicketView, message: string) => {
+    setTicket(data);
+    setTicketTarget(data.members.find((m) => m.userId !== data.assigneeId)?.userId ?? '');
+    void loadSessions();
+    push(message, 'success');
+  };
+
+  const claimTicket = async () => {
+    if (!activeId || ticketBusy) return;
+    setTicketBusy(true);
+    try {
+      const data = await sellerSupportApi.claimTicket(activeId);
+      applyTicket(data, `已认领，当前处理人：${data.assigneeName ?? '我'}`);
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    } finally {
+      setTicketBusy(false);
+    }
+  };
+
+  const releaseTicket = async () => {
+    if (!activeId || ticketBusy) return;
+    setTicketBusy(true);
+    try {
+      const data = await sellerSupportApi.releaseTicket(activeId);
+      applyTicket(data, '已释放为未认领，其他同事可以接手');
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    } finally {
+      setTicketBusy(false);
+    }
+  };
+
+  const submitTransfer = async () => {
+    if (!activeId || ticketBusy) return;
+    if (!ticketTarget) {
+      push('请选择转交对象', 'error');
+      return;
+    }
+    setTicketBusy(true);
+    try {
+      const data = await sellerSupportApi.transferTicket(activeId, {
+        toUserId: ticketTarget,
+        note: ticketNote.trim() || undefined,
+      });
+      applyTicket(data, `已转交给 ${data.assigneeName ?? '同事'}，处理记录已留痕`);
+    } catch (e) {
+      push(toFriendlyMessage(e), 'error');
+    } finally {
+      setTicketBusy(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -342,6 +427,9 @@ export const SellerSupportPage: React.FC = () => {
     () => sessions.reduce((sum, s) => sum + Number(s.unread || 0), 0),
     [sessions],
   );
+  /** C-04：当前会话的工单状态；店主 = 会话归属店铺主体 */
+  const activeSession = sessions.find((s) => s.id === activeId) ?? null;
+  const isOwner = Boolean(user?.id && activeSession && String(user.id) === String(activeSession.sellerId));
 
   if (loading) return <LoadingBlock text="正在加载客服会话…" />;
 
@@ -424,6 +512,9 @@ export const SellerSupportPage: React.FC = () => {
                       )}
                     </span>
                     <span className="sup-item-preview">{s.lastMessage || '暂无消息'}</span>
+                    <span className="small muted" style={{ display: 'block', marginTop: 2 }}>
+                      {s.assigneeName ? `处理人：${s.assigneeName}` : '未认领'}
+                    </span>
                   </span>
                   {Number(s.unread) > 0 && (
                     <span className="sup-badge">{Number(s.unread) > 99 ? '99+' : Number(s.unread)}</span>
@@ -439,6 +530,17 @@ export const SellerSupportPage: React.FC = () => {
             <strong>{thread ? thread.userName || `用户${thread.userId}` : '选择左侧会话'}</strong>
             {thread && (
               <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <span className="tag" style={{ fontSize: 11 }}>
+                  {activeSession?.assigneeName ? `处理人：${activeSession.assigneeName}` : '未认领'}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => void openTicket()}
+                  disabled={!activeId}
+                >
+                  工单
+                </button>
                 {thread.status === 'CLOSED' ? (
                   <span className="tag tag-warn" style={{ fontSize: 11 }}>已关闭</span>
                 ) : null}
@@ -606,6 +708,143 @@ export const SellerSupportPage: React.FC = () => {
           </footer>
         </section>
       </div>
+
+      {/* C-04 · 客服工单：认领 / 转交 / 释放 + 处理记录 */}
+      <Modal
+        open={ticketOpen}
+        title="客服工单"
+        onClose={() => setTicketOpen(false)}
+        footer={
+          <button type="button" className="btn btn-ghost" onClick={() => setTicketOpen(false)}>
+            关闭
+          </button>
+        }
+      >
+        {ticketLoading || !ticket ? (
+          <LoadingBlock text="正在读取工单…" />
+        ) : (
+          <div>
+            <Alert kind="info">
+              处理人只表示「现在是谁在接这个买家」，不改变店主与在职店员都能查看全店会话的权限。
+              认领与转交都会写入处理记录，供交接与审计追溯。
+            </Alert>
+
+            <div className="row-between row-wrap" style={{ marginTop: 12 }}>
+              <span>
+                当前处理人：<strong>{ticket.assigneeName ?? '未认领'}</strong>
+                {ticket.assignedAt ? (
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {formatBjShort(ticket.assignedAt)}
+                  </span>
+                ) : null}
+              </span>
+              <div className="row" style={{ gap: 8 }}>
+                {!ticket.assigneeId && ticket.status === 'OPEN' ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={ticketBusy}
+                    onClick={() => void claimTicket()}
+                  >
+                    {ticketBusy ? '处理中…' : '认领'}
+                  </button>
+                ) : null}
+                {ticket.assigneeId && (isOwner || ticket.assigneeId === String(user?.id)) ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={ticketBusy}
+                    onClick={() => void releaseTicket()}
+                  >
+                    释放为未认领
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {(() => {
+              const candidates = ticket.members.filter((m) => m.userId !== ticket.assigneeId);
+              const canTransfer = isOwner
+                || !ticket.assigneeId
+                || ticket.assigneeId === String(user?.id);
+              if (!canTransfer) {
+                return (
+                  <p className="small muted" style={{ marginTop: 12 }}>
+                    只有当前处理人或店主可以转交。当前由 {ticket.assigneeName ?? '同事'} 处理中。
+                  </p>
+                );
+              }
+              if (candidates.length === 0) {
+                return (
+                  <p className="small muted" style={{ marginTop: 12 }}>
+                    本店暂无其他在职成员可转交（店主可在「店员管理」邀请同事）。
+                  </p>
+                );
+              }
+              return (
+                <div style={{ marginTop: 12 }}>
+                  <Field label="转交对象" hint="只能转交给本店在职成员（店主 / 店员）">
+                    <select
+                      className="input"
+                      value={ticketTarget}
+                      onChange={(e) => setTicketTarget(e.target.value)}
+                      aria-label="转交对象"
+                    >
+                      <option value="">请选择</option>
+                      {candidates.map((m) => (
+                        <option key={m.userId} value={m.userId}>
+                          {m.name}{m.role === 'OWNER' ? '（店主）' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="转交备注（可选）" hint="例如：我去处理发货问题，这笔咨询请接手">
+                    <input
+                      className="input"
+                      value={ticketNote}
+                      maxLength={200}
+                      onChange={(e) => setTicketNote(e.target.value)}
+                      placeholder="最多 200 字"
+                    />
+                  </Field>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={ticketBusy || !ticketTarget}
+                    onClick={() => void submitTransfer()}
+                  >
+                    {ticketBusy ? '转交中…' : '转交'}
+                  </button>
+                </div>
+              );
+            })()}
+
+            <h3 style={{ marginTop: 18, marginBottom: 8, fontSize: 15 }}>处理记录</h3>
+            {ticket.logs.length === 0 ? (
+              <p className="small muted">还没有认领 / 转交记录。</p>
+            ) : (
+              <div className="stack" style={{ gap: 8 }}>
+                {ticket.logs.slice().reverse().map((log) => (
+                  <div key={log.id} className="card card-pad" style={{ padding: '8px 10px' }}>
+                    <div className="small">
+                      <strong>{log.actorName ?? '成员'}</strong> {log.actionLabel}
+                      {log.action === 'TRANSFER'
+                        ? `：${log.fromAssigneeName ?? '未认领'} → ${log.toAssigneeName ?? '未认领'}`
+                        : ''}
+                      {log.action === 'CLAIM' ? `（未认领 → ${log.toAssigneeName ?? '本人'}）` : ''}
+                      {log.action === 'RELEASE' ? `（${log.fromAssigneeName ?? '本人'} → 未认领）` : ''}
+                    </div>
+                    <div className="small muted">
+                      {formatBjShort(log.createdAt)}
+                      {log.note ? ` · 备注：${log.note}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* 商品卡只读弹窗：不跳商城、不带登录态离开工作台 */}
       <Modal

@@ -162,6 +162,20 @@ public final class MerchantDtos {
     }
 
     /**
+     * 工单转交候选人（C-04，内部端点下发）。
+     *
+     * <p>只回展示与选择所需的四个字段；客服工单的候选人是**本店在职成员**
+     * （店主 + 店员），不包含平台运营与店外账号。
+     */
+    public record TicketMemberInfo(
+            String userId,
+            String nickname,
+            String avatar,
+            String role
+    ) {
+    }
+
+    /**
      * 店铺资质与营业状态（E15，内部端点下发，供商品域做上架门禁）。
      *
      * <p>与 {@link MembershipInfo} 是两个不同的问题：
