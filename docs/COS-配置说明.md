@@ -17,6 +17,7 @@
 | 客服/私信图片、视频、语音 | **公有桶** | 公网直读 | Web 聊天、小程序聊天 |
 | 用户头像（上传后） | **公有桶** | 公网直读 | 个人中心、评价昵称旁 |
 | 商家入驻资质（营业执照、法人身份证、银行账户、许可证 PDF） | **私有桶** | **只能经鉴权接口读取** | 商家入驻、运营审核、租户健康度 |
+| 数据库备份（运维，2026-10-28） | **私有桶** | 仅运维脚本 / 控制台，**不经任何应用接口** | 每日六库 dump（`scripts/db-backup-cos.sh`） |
 
 **为什么必须两个桶**：公开图要求匿名可读（`<img>` 发不出鉴权头），资质材料要求匿名绝不可读。
 这两件事在同一条权限策略里无法安全共存，因此拆成两个桶、两个 Bean、两套根目录。
@@ -101,7 +102,9 @@
 
 **关键约束**：
 1. 桶名**必须带 APPID 后缀**，且与 `COS_REGION` 匹配；写错表现为 `NoSuchBucket` 或 TLS 证书错误。
-2. 公有桶的对象键前缀固定为 `uploads/`，私有桶固定为 `materials/`；**不要手工改前缀**，内部删除与 URL 解析都按它定位。
+2. 应用的对象键前缀固定为 `uploads/`（公有桶）与 `materials/`（私有桶）；**不要手工改前缀**，内部删除与 URL 解析都按它定位。
+   **唯一例外**是运维备份前缀 `db-backup/`（私有桶，2026-10-28 起）：由 `scripts/db-backup-cos.sh`
+   写入，应用代码不读写、也没有任何对外接口暴露它 —— 它不属于 `ObjectStorage` 的对象模型。
 3. **私有桶绝不能设为公有读**；公有桶也不要开公有写。
 
 ### 3.2 子账号凭证（`COS_SECRET_ID` / `COS_SECRET_KEY`）
@@ -123,11 +126,17 @@
 
 ```
 允许：cos:PutObject、cos:GetObject、cos:HeadObject、cos:DeleteObject
-范围：两个桶的 uploads/* 与 materials/*（或整桶对象级）
+范围：公有桶 uploads/*；私有桶 materials/*；私有桶 db-backup/*（运维备份）
 禁止：cos:GetService、cos:ListBucket、桶级 cos:*、PutBucketAcl、PutBucketPolicy
 ```
 
 理由：应用只需要对象读写；授予桶级权限意味着密钥泄露后对方能把桶改成公有读——这是数据事故，不是配置便利。
+
+> **备份的权限（2026-10-28）**：`scripts/db-backup-cos.sh` 只做 PUT / HEAD / DELETE，
+> **不列桶、不读对象内容**，所以最小权限可以只授 `PutObject + HeadObject + DeleteObject`，
+> 范围限定在私有桶 `db-backup/*`。如果应用与备份共用一个子账号密钥（当前 `.env` 就是如此），
+> 策略里必须**同时包含** `db-backup/*`，否则备份会 403 `AccessDenied`；
+> 反过来，给备份单独建一把只能写 `db-backup/*` 的密钥更符合最小权限。
 
 **凭证纪律**：
 - 不用主账号密钥；
@@ -147,12 +156,32 @@
 `对象存储后端 = COS（public-bucket=... host=...）`。
 若看到 `对象存储后端 = local` 且此前以为已切 COS，说明有键缺失，WARN 里会点名。
 
+### 3.4 数据库备份到私有桶（运维，2026-10-28）
+
+与应用上传完全独立的一条链路，避免「备份把图片存储搞坏」或反过来：
+
+| 项 | 说明 |
+|---|---|
+| 脚本 | `scripts/db-backup-cos.sh`（Linux 原生：docker / curl / openssl / gzip，**零 SDK**） |
+| 桶与前缀 | 只用**私有桶**的 `db-backup/<YYYY-MM-DD_HHmmss>/`，绝不放公有桶 |
+| 签名 | 与 `CosSigner` 同一套 v5-sha1；有效期 900 秒，与 §2.2 一致 |
+| 权限 | `PutObject + HeadObject + DeleteObject`（`db-backup/*`）；**不需要** `GetObject` / `ListBucket` |
+| 完整性 | 源库表数 = 产物 `CREATE TABLE` 数；`gzip -t`；远端 HEAD 字节数 = 本地；`_manifest.txt` **最后上传**（它存在才算本次完整） |
+| 自检 | `bash scripts/db-backup-cos.sh --check`：HEAD 探测对象，**404 = 桶可达且签名有效** |
+| 定时 | `0 3 * * *`（见 `docs/manuals/production-launch-checklist.md` §4.1） |
+| 生命周期 | 在控制台给 `db-backup/` 配 30 天过期；脚本**不删远端**，避免误删 |
+| 与应用的关系 | 不经过 `ObjectStorage`、不改 `uploads/` / `materials/` 前缀；私有桶保持私有读写 |
+
+> 注意：`--check` 用 HEAD 而不是 GET，就是为了不要求 `GetObject` —— 备份密钥可以只写不读。
+> 私有桶的备份对象**没有**任何对外读取接口，恢复只能通过控制台或运维机的签名工具。
+
 ---
 
 ## 4. 公有桶 / 私有桶截图对应关系
 
-> 说明：本轮对话未收到截图附件，下表以**当前 `.env` 与运行配置的实际值**建立对应；
-> 你补发截图后，可按“控制台可见字段”逐项核对。若截图与下表不一致，以 `.env` 为准，并在变更记录登记。
+> 说明：2026-10-28 已收到控制台截图（两个桶均位于广州、私有桶为私有读写）；
+> 下表以**实际可访问性 + 当前 `.env`** 为准 —— 桶名直链返回 403/404 表示存在但无权列举，
+> `NoSuchBucket` 才表示桶名错。若截图与下表不一致，以 `.env` 为准，并在变更记录登记。
 
 | 核对项 | 截图应显示（公有桶） | 截图应显示（私有桶） | 本项目配置 |
 |---|---|---|---|
@@ -160,7 +189,7 @@
 | 地域 | 广州 `ap-guangzhou` | 广州 `ap-guangzhou` | `COS_REGION=ap-guangzhou` |
 | 访问权限 | **公有读私有写** | **私有读写** | 公有桶匿名 GET；私有桶仅鉴权接口 |
 | 所属 APPID | `1374887902` | `1374887902` | 桶名后缀与之一致 |
-| 对象前缀 | `uploads/` | `materials/` | `ObjectStorage.PREFIX_PUBLIC/PRIVATE` |
+| 对象前缀 | `uploads/` | `materials/`（另有运维备份 `db-backup/`，应用不读写） | `ObjectStorage.PREFIX_PUBLIC/PRIVATE`；备份见 §3.4 |
 | 典型对象 | `uploads/<uuid>.jpg`、`.mp4`、`.aac` | `materials/<merchantId>/<uuid>.pdf` | 上传代码 |
 | 访问入口 | `https://duoduo-mall-public-1374887902.cos.ap-guangzhou.myqcloud.com/uploads/...` | 仅 `GET /api/merchant-materials/{merchantId}/{name}`（JWT + 归属校验） | — |
 | 图片处理 | 控制台“数据处理/图片处理”可用 | 不需要 | `UPLOADS_IMAGE_SUFFIX` |
@@ -222,3 +251,23 @@
 4. 私有材料读取必须校验“当前登录人是否属于该 merchantId”，不能只靠 URL 猜不到。
 5. 上传必须校验扩展名与 MIME 一致、文件名由服务端生成（UUID），防止路径穿越与伪装文件。
 6. 不在图片 URL 上放长期签名；私有内容走鉴权代理，不做公开预签名链接。
+7. 数据库备份只能进**私有桶**的 `db-backup/`，禁止放公有桶；备份密钥不应具备 `ListBucket` 或桶级权限。
+
+---
+
+## 9. 配置核查记录（2026-10-28）
+
+用当前 `.env` 的 `COS_SECRET_ID/KEY` 做了一次只读核查 + 一次可清理的写探针：
+
+| 核查项 | 方法 | 结果 | 判定 |
+|---|---|---|---|
+| 密钥身份 | 腾讯云 STS `GetCallerIdentity` | `Type=CAMUser`，AccountId `100043864168`，UserId `100053680511` | ✅ 是子账号，不是主账号 |
+| 私有桶签名与连通 | `bash scripts/db-backup-cos.sh --check` | HEAD 探针返回 404（对象不存在，签名有效） | ✅ 桶名/地域/密钥正确 |
+| `db-backup/*` 写权限 | 上传 5 字节探针 → `--stat` 校验 → `--delete` | 上传成功、HEAD 5 字节、删除成功 | ✅ Put/Head/Delete 均具备 |
+| 是否过度授权 | `GET /?prefix=db-backup/`（ListBucket） | HTTP 403 `AccessDenied` | ✅ 未授予列举桶权限 |
+| 生命周期规则 | `GET /?lifecycle` | HTTP 403 `AccessDenied` | ⚠️ 该密钥无桶配置读权限，**无法用 API 核实**，只能控制台查看 |
+
+探针对象 `db-backup/manual/2026-10-28_143711-cos_probe.txt` 已删除并确认清理。
+
+**待办**：控制台 → 私有桶 `duoduo-mall-private-1374887902` → 基础配置 → 生命周期 →
+确认存在「前缀 `db-backup/`、过期 30 天、状态启用」的规则；若不存在则新增。验收以控制台规则列表为准。
