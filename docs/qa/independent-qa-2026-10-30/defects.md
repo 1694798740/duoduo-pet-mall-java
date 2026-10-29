@@ -129,13 +129,39 @@
 | 影响 | 用旧数字当验收基线，容易得出“全绿”的错误结论 |
 | 建议 | 以 `scripts/run-all-smoke.ps1` 与 `scripts/e2e/run-ui-checks.ps1` 的动态统计为准，文档只写入口不写固定数字 |
 
+## DEF-011 · 异步导出任务创建/下载没有审计留痕
+
+| 项 | 内容 |
+| --- | --- |
+| 级别 | **P2** |
+| 类型 | 已复现审计缺口（自动化断言 + 代码静态） |
+| 模块 | 交易域 / 运营导出任务 |
+| 需求来源 | 后台写操作/敏感数据操作应可审计；`audit-log-smoke` 的 S4 规则要求后台写端点带 `@Audited` |
+| 复现 | 运行 `scripts/audit-log-smoke.ps1`：57 PASS / 1 FAIL，失败项 `S4 后台写端点 @Audited 覆盖 69/72`，明细含 `AdminExportJobController.java(写=1 注解=0)` |
+| 实际 | `AdminExportJobController#create` 没有 `@Audited`；`ExportJobService` 也没有任何审计调用。类注释写“导出是只读动作，不写审计日志”，但**创建任务本身是写操作**，且导出内容含全量收货信息，只有下载次数记录，无法回答“谁在何时导出了哪些筛选条件的数据”。 |
+| 证据 | `evidence/smoke2b-audit-log-smoke.ps1.log`；`AdminExportJobController.java:37,50`；`ExportJobService.java`（无 audit） |
+| 影响 | 敏感数据导出缺少操作人/时间/筛选条件审计，合规与事后追责存在空洞 |
+| 修复建议 | 为创建/下载增加 `AuditAction.EXPORT_JOB_CREATE/EXPORT_JOB_DOWNLOAD` 并落审计；或在 `ExportJobService` 内显式写审计 |
+| 必补回归 | 创建任务→查审计表有记录；他人下载仍 404；审计记录不可删改 |
+
+## DEF-012 · 审计冒烟把 import dry-run 计为“写端点”（测试资产）
+
+| 级别 | P3 |
+| --- | --- |
+| 类型 | 测试资产缺陷（非产品缺陷） |
+| 模块 | `scripts/audit-log-smoke.ps1` |
+| 实际 | S4 明细还包含 `AdminCatalogController.java(写=16 注解=14)`；差额 2 是 `categories/import/dry-run` 与 `brands/import/dry-run`，两者只预演、不落库，按语义不应要求 `@Audited` |
+| 证据 | `evidence/smoke2b-audit-log-smoke.ps1.log` |
+| 影响 | 把“只读预演”误计为写操作，导致审计覆盖断言假红；真正的缺口（DEF-011）反而被噪声掩盖 |
+| 建议 | 脚本按“是否真正写库”分类，排除 dry-run；或维护一份显式豁免清单 |
+
 ## 统计
 
 | 级别 | 数量 | 条目 |
 | --- | --- | --- |
 | P0 | 0 | — |
 | P1 | 0 | — |
-| P2 | 3 | DEF-001 商品详情主图；DEF-002 AI 97s；DEF-003 AI 冒烟假红 |
-| P3 | 7 | DEF-004~DEF-010（测试资产 + 文档） |
+| P2 | 4 | DEF-001 商品详情主图；DEF-002 AI 97s；DEF-003 AI 冒烟假红；DEF-011 导出任务无审计 |
+| P3 | 8 | DEF-004~DEF-010（测试资产 + 文档）+ DEF-012（审计冒烟 dry-run 假红） |
 
-> 说明：DEF-003~006 是“测试资产缺陷”，不是产品功能缺陷；单独列出是为了避免把假红当产品问题，也避免把测试资产问题洗成产品通过。
+> 说明：DEF-003~006、DEF-012 是“测试资产缺陷”，不是产品功能缺陷；单独列出是为了避免把假红当产品问题，也避免把测试资产问题洗成产品通过。

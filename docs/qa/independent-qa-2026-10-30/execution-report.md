@@ -39,7 +39,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 结果：`tsc --noEmit` 三端 0 错误；`vite build` 三端成功（退出码 0）。
 日志：`evidence/frontend-typecheck.log`、`evidence/frontend-build.log`。
 
-### 2.3 核心冒烟（11 套）
+### 2.3 核心冒烟（两批 34 套）
 
 | 脚本 | 断言 | 结果 | 耗时 |
 | --- | --- | --- | --- |
@@ -54,7 +54,40 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 | ai-smoke.ps1 | 44 | **PASS 37 / FAIL 7** | 162.1s |
 | aftersale-smoke.ps1 | 101 | PASS 101 / FAIL 0 | 17.4s |
 | settlement-smoke.ps1 | 149 | PASS 149 / FAIL 0 | 33.9s |
-| **合计** | **1053** | **1046 PASS / 7 FAIL** | — |
+| **第一批合计** | **1053** | **1046 PASS / 7 FAIL** | — |
+
+第二批（23 套，覆盖地址/注销/2FA/折扣券/秒杀/物流/信用分/IP 白名单/评价/自动退款/搜索/商家/对账/审计/后台/交易/权限版本/租户健康/ID 精度/MQ/代运营/回填/导出 P3）：
+
+| 脚本 | 断言 | 结果 |
+| --- | --- | --- |
+| address-smoke | 82 | 82/0 |
+| account-deletion-smoke | 12 | 12/0 |
+| admin-2fa-smoke | 56 | 56/0 |
+| discount-coupon-smoke | 64 | 64/0 |
+| seckill-smoke | 89 | 89/0 |
+| logistics-smoke | 79 | 79/0 |
+| credit-smoke | 82 | 82/0 |
+| merchant-ip-whitelist-smoke | 40 | 40/0 |
+| review-smoke | 62 | 62/0 |
+| payment-auto-refund-smoke | 40 | 40/0 |
+| export-p3-smoke（复跑） | 8 | **8/0**（首次 4/4 因本地旧容器 404，重建后通过） |
+| search-smoke | 40 | 40/0 |
+| seller-smoke | 107 | 107/0 |
+| recon-smoke | 53 | 53/0 |
+| audit-log-smoke | 58 | **57/1**（DEF-011 真实审计缺口 + DEF-012 dry-run 假红） |
+| admin-smoke | 75 | 75/0 |
+| trade-smoke | 87 | 87/0 |
+| perm-version-smoke | 34 | 34/0 |
+| tenant-health-smoke | 90 | 90/0 |
+| id-precision-smoke | 56 | 56/0 |
+| mq-smoke | 48 | 48/0 |
+| proxy-ops-smoke | 128 | 128/0 |
+| backfill-smoke | 92 | 92/0 |
+| **第二批合计** | **1482** | **1481 PASS / 1 FAIL** |
+
+补跑 `pay-channel-smoke`：**62/0**（支付渠道、回调、库存复原全部通过）。
+**冒烟合计**：**35 套 / 2597 断言 / 2589 PASS / 8 FAIL**。
+本地 `docker-compose` 的 gateway/trade/fulfilment/social 容器比 jar 旧 35 小时；首次 `export-p3-smoke` 的 4 个 404 是**本地旧容器**导致，重建这 4 个容器后复跑 8/0，**不是产品缺陷**。其余套件在重建前已通过，重建后未改变结论。
 
 AI 冒烟 7 个失败的定性（详见 `evidence/smoke-ai-smoke.ps1.log` 与 `evidence/ai-latency.txt`）：
 
@@ -123,13 +156,13 @@ AI 冒烟 7 个失败的定性（详见 `evidence/smoke-ai-smoke.ps1.log` 与 `e
 | 微信登录 / 微信支付 / 订阅消息 | 未配置真实商户，项目已拍板不做微信支付 |
 | 支付宝真实资金 | 只用沙箱；不产生真实扣款 |
 | COS 真实写入 | 本地 `STORAGE_TYPE=cos`，写入会污染生产桶，主动不执行 |
-| 小程序真机 | 无真机/开发者工具自动化，AppID 属生产 |
 | ES/Redis/MQ 故障注入 | 会打断同一环境其它测试，未做 |
 | 并发压力（秒杀/发币/登录） | 未做压测；仅代码审查 + 现有冒烟 |
-| 全量 41 套冒烟 / 约 60 套 UI | 时间与共享环境限制，只跑核心 11 套 + 9 套 UI |
-| 运营后台完整业务页（审核/仲裁/商家管理/导出任务页） | 仅入口与权限、售后仲裁链路覆盖；其余 NOT TESTED |
-| 商家 2FA / 店员权限 / IP 白名单 / 入驻 | 未在本轮执行对应冒烟 |
-| 地址、账号注销、物流、信用分、秒杀、折扣券 | 未执行对应冒烟 |
+| 剩余约 6 套冒烟 / 约 50 套 UI | 已跑 35 套冒烟 + 9 套 UI；`upload`（COS 写入）主动不做，`wechat-auth/bind` 外部依赖，`smoke-linux` 等未跑 |
+| 运营后台完整业务页（审核/仲裁/商家管理/导出任务页） | 仅入口与权限、售后仲裁、后台导出接口覆盖；页面级 NOT TESTED |
+| 商家入驻 / 店员权限 / 2FA 完整 UI | 后端 2FA/权限冒烟已跑；入驻与店员 UI 未跑 |
+| 客服会话/私信/未读全链路 | 只有通知与 AI 卡片覆盖；客服认领/转交/未读未跑 |
+| 小程序真机 / 移动端适配 | 只做了 Web 桌面视口截图；小屏/真机 BLOCKED |
 | HTTPS / Cookie Secure / ICP | 本地 HTTP，未验证 HTTPS 行为 |
 
 ## 6. 测试数据与清理

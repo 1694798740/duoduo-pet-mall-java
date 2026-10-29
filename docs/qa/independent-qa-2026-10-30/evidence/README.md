@@ -5,8 +5,13 @@
 | `maven-test.log` | 全量 Maven 测试完整日志（1158 tests / 0 fail / 5 skip，BUILD SUCCESS） |
 | `frontend-typecheck.log` | 三端 `tsc --noEmit`，退出码 0 |
 | `frontend-build.log` | 三端 `vite build`，退出码 0 |
-| `smoke-summary.txt` | 11 套核心冒烟脚本逐套退出码与耗时 |
-| `smoke-*.log` | 每套冒烟的完整输出（含 PASS/FAIL 明细） |
+| `smoke-summary.txt` | 第一批 11 套核心冒烟逐套退出码与耗时 |
+| `smoke-*.log` | 第一批每套冒烟完整输出（含 PASS/FAIL 明细） |
+| `smoke-summary-2.txt` | 第二批 23 套冒烟逐套退出码与耗时 |
+| `smoke2-*.log` | 第二批每套冒烟完整输出 |
+| `smoke2b-export-p3-smoke.ps1.log` | 重建本地 4 个旧容器后，导出 P3 复跑 8/0 |
+| `smoke2b-audit-log-smoke.ps1.log` | 审计冒烟 57/1（DEF-011 真实缺口 + DEF-012 dry-run 假红） |
+| `smoke2b-pay-channel-smoke.ps1.log` | 支付渠道补跑 62/0 |
 | `ui-summary.txt` / `ui-summary-2.txt` | 浏览器 UI 检查逐套退出码与耗时 |
 | `ui-*.log` / `ui2-*.log` | 每套 UI 检查完整输出 |
 | `api-tests.py` | 独立 API 反向/边界测试脚本（账号由环境变量注入，不落盘密码） |

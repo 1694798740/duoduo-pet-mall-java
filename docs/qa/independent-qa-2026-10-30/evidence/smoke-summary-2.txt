@@ -1,0 +1,25 @@
+﻿SMOKE BATCH2 START 2026-10-30T00:46:11
+address-smoke.ps1 EXIT=0 TIME=15.3s
+account-deletion-smoke.ps1 EXIT=0 TIME=1.6s
+admin-2fa-smoke.ps1 EXIT=0 TIME=18.2s
+discount-coupon-smoke.ps1 EXIT=0 TIME=8.3s
+seckill-smoke.ps1 EXIT=0 TIME=12.1s
+logistics-smoke.ps1 EXIT=0 TIME=19.7s
+credit-smoke.ps1 EXIT=0 TIME=30.6s
+merchant-ip-whitelist-smoke.ps1 EXIT=0 TIME=5.3s
+review-smoke.ps1 EXIT=0 TIME=13.1s
+payment-auto-refund-smoke.ps1 EXIT=0 TIME=9.2s
+export-p3-smoke.ps1 EXIT=1 TIME=0.6s
+search-smoke.ps1 EXIT=0 TIME=41.2s
+seller-smoke.ps1 EXIT=0 TIME=28.1s
+recon-smoke.ps1 EXIT=0 TIME=45s
+audit-log-smoke.ps1 EXIT=1 TIME=23.7s
+admin-smoke.ps1 EXIT=0 TIME=12.2s
+trade-smoke.ps1 EXIT=0 TIME=11.3s
+perm-version-smoke.ps1 EXIT=0 TIME=14.1s
+tenant-health-smoke.ps1 EXIT=0 TIME=17.5s
+id-precision-smoke.ps1 EXIT=0 TIME=4.9s
+mq-smoke.ps1 EXIT=0 TIME=152.2s
+proxy-ops-smoke.ps1 EXIT=0 TIME=48.1s
+backfill-smoke.ps1 EXIT=0 TIME=15.8s
+SMOKE BATCH2 END 2026-10-30T00:55:19
