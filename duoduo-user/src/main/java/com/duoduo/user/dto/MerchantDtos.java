@@ -94,6 +94,19 @@ public final class MerchantDtos {
     public record RejectRequest(List<RejectReason> reasons) {
     }
 
+    /**
+     * 入驻批量操作请求（2026-10-28 · 批量操作第一批）。
+     *
+     * <p>{@code ids} 一律用字符串：商户 id 是 18 位雪花主键，经 JSON number 会被
+     * JS 静默截断，批量操作就成了「批量操作不存在的商户」。
+     */
+    public record BatchIdsRequest(List<String> ids) {
+    }
+
+    /** 批量驳回：结构化的驳回原因对全部选中商户共用 */
+    public record BatchRejectRequest(List<String> ids, List<RejectReason> reasons) {
+    }
+
     /** 审核台分页项（E15 追加资质到期三字段，供审核台标记临期/过期店铺） */
     public record ApplicationSummary(
             String merchantId,
@@ -131,6 +144,25 @@ public final class MerchantDtos {
             String invitedBy,
             String createdAt
     ) {
+    }
+
+    /**
+     * 员工批量导入的一行（2026-10-28 · 导入导出第一批）。
+     *
+     * <p>前端把 CSV 解析成行后提交，{@code rowNo} 用于把失败原因定位回用户看到的行号。
+     * 姓名刻意不在列里：邀请按手机号找到已注册账号，昵称以那个账号自己的资料为准 ——
+     * 让店主在导入表里「给别人改名」既没依据，也会让被邀请人看到与自己资料不一致的显示名。
+     * {@code permissions} 为空 = 使用默认全量权限（与单条邀请一致）。
+     */
+    public record StaffImportRow(Integer rowNo, String phone, List<String> permissions) {
+    }
+
+    /** 员工批量导入请求：单次最多 200 行（同步处理的上限，见导入导出矩阵） */
+    public record StaffImportRequest(List<StaffImportRow> rows) {
+    }
+
+    /** 员工批量启用 / 停用请求 */
+    public record StaffBatchStatusRequest(List<String> memberIds, Boolean enabled) {
     }
 
     /** 平台侧成员总览项（跨租户） */

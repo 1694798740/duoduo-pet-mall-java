@@ -95,6 +95,18 @@ public final class SeckillDtos {
     public record ToggleRequest(@NotNull(message = "enabled 不能为空") Boolean enabled) {
     }
 
+    /**
+     * 批量上下架（2026-10-28 · 批量操作第一批）。
+     *
+     * <p>逐条结果见 {@code BatchDtos.Result}：部分失败不回滚，已成功的活动保持目标状态。
+     * 上限 100 条，与订单 / 售后 / 评价的批量口径一致。
+     */
+    public record BatchToggleRequest(
+            @NotNull(message = "ids 不能为空") List<Long> ids,
+            @NotNull(message = "enabled 不能为空") Boolean enabled
+    ) {
+    }
+
     /** C 端秒杀下单 */
     /**
      * C 端秒杀下单请求。

@@ -12,6 +12,7 @@ import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReplyRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReturnShipRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleView;
 import com.duoduo.fulfilment.entity.AfterSaleEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.AfterSaleMapper;
 import com.duoduo.fulfilment.support.AfterSaleStatus;
 import com.duoduo.fulfilment.support.OrderFacts;
@@ -53,7 +54,8 @@ class AfterSaleServiceTest {
     private final OrderClient orderClient = mock(OrderClient.class);
     private final OrderFacts orderFacts = mock(OrderFacts.class);
     private final FulfilmentNotifier notifier = mock(FulfilmentNotifier.class);
-    private final AfterSaleService service = new AfterSaleService(mapper, orderClient, orderFacts,
+    private final AfterSaleService service = new AfterSaleService(mapper, mock(AdminQueueReadMapper.class),
+            orderClient, orderFacts,
             mock(com.duoduo.common.id.SnowflakeIdGenerator.class), new ObjectMapper(), notifier, 6);
 
     @BeforeEach

@@ -45,7 +45,49 @@ public final class AuthCookieWriter {
 
     private static final int REFRESH_MAX_AGE_SECONDS = (int) Duration.ofDays(7).toSeconds();
 
+    /**
+     * 生产 Cookie 加固（2026-10-28）：HTTPS 下必须带 {@code Secure}，并显式声明 SameSite。
+     *
+     * <p>为什么做成可配置而不是直接写死：
+     * <ul>
+     *   <li>本地是 {@code http://localhost}，带 {@code Secure} 的 Cookie 根本不会被浏览器保存，
+     *       开发态必须保持 false；生产用环境变量打开。</li>
+     *   <li>SameSite 默认 Lax：跨站 POST 不带 Cookie，挡住大部分 CSRF；三端同站不同子域不受影响。</li>
+     *   <li>{@code SameSite=None} 必须搭配 Secure，否则浏览器直接丢弃 —— 这种组合按 Lax 处理，
+     *       宁可少一点跨站能力，也不让登录态静默失效。</li>
+     * </ul>
+     */
+    private static volatile boolean secure;
+    private static volatile String sameSite = "Lax";
+
     private AuthCookieWriter() {
+    }
+
+    /** 启动时由 {@code AuthCookieSecurityConfig} 注入；测试可直接调用。 */
+    public static void configure(boolean secureCookies, String sameSitePolicy) {
+        String policy = sameSitePolicy == null ? "" : sameSitePolicy.trim();
+        String normalized = switch (policy.toLowerCase(java.util.Locale.ROOT)) {
+            case "strict" -> "Strict";
+            case "none" -> "None";
+            case "lax", "" -> "Lax";
+            default -> "Lax";
+        };
+        if ("None".equals(normalized) && !secureCookies) {
+            // None 无 Secure 会被浏览器丢弃；退回 Lax，避免「登录成功但下一页又未登录」
+            normalized = "Lax";
+        }
+        secure = secureCookies;
+        sameSite = normalized;
+    }
+
+    /** 当前是否开启 Secure（供健康检查 / 测试读取） */
+    public static boolean isSecure() {
+        return secure;
+    }
+
+    /** 当前 SameSite 策略 */
+    public static String sameSite() {
+        return sameSite;
     }
 
     /** 某入口的访问令牌 Cookie 名 */
@@ -86,18 +128,30 @@ public final class AuthCookieWriter {
     public static void writeAccess(HttpServletResponse response, String accessToken,
                                    long expiresInSeconds, String entry) {
         Cookie access = new Cookie(accessName(entry), accessToken);
-        access.setHttpOnly(true);
-        access.setPath("/");
         access.setMaxAge((int) Math.max(1, expiresInSeconds));
+        harden(access);
         response.addCookie(access);
     }
 
     public static void writeRefresh(HttpServletResponse response, String refreshToken, String entry) {
         Cookie refresh = new Cookie(refreshName(entry), refreshToken);
-        refresh.setHttpOnly(true);
-        refresh.setPath("/");
         refresh.setMaxAge(REFRESH_MAX_AGE_SECONDS);
+        harden(refresh);
         response.addCookie(refresh);
+    }
+
+    /**
+     * 统一的 Cookie 安全属性：HttpOnly + Secure + SameSite + Path。
+     *
+     * <p>写与清都用同一份属性：删除 Cookie 必须与写入时的 Path / Secure 匹配，
+     * 否则浏览器会留下一个同名的旧 Cookie，表现为「退出登录后刷新又登录了」。
+     */
+    private static void harden(Cookie cookie) {
+        cookie.setHttpOnly(true);
+        cookie.setPath("/");
+        cookie.setSecure(secure);
+        // Servlet 6 才有 setAttribute；Spring Boot 3.2 / Tomcat 10.1 满足
+        cookie.setAttribute("SameSite", sameSite);
     }
 
     /**
@@ -144,8 +198,8 @@ public final class AuthCookieWriter {
 
     private static void expire(HttpServletResponse response, String name) {
         Cookie cookie = new Cookie(name, "");
-        cookie.setPath("/");
         cookie.setMaxAge(0);
+        harden(cookie);
         response.addCookie(cookie);
     }
 }

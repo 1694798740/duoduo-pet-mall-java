@@ -41,10 +41,12 @@ public final class SettlementDtos {
             String orderNo,
             /** 卖家 id：**标识**，保持字符串下发（雪花值超 JS 安全整数） */
             Long sellerId,
-            /** 托管金额（= 买家实付） */
+            /** 托管金额（= 买家实付现金 + 币抵扣 = 券后商品金额） */
             @JsonSerialize(using = NumericLongSerializer.class) long amount,
             /** 平台佣金 */
             @JsonSerialize(using = NumericLongSerializer.class) long platformFee,
+            /** R-P1 · 平台多多币补贴（amount 中由平台出钱的部分，商家实收不受影响） */
+            @JsonSerialize(using = NumericLongSerializer.class) long coinSubsidyAmount,
             /** 卖家可得 = amount − platformFee */
             @JsonSerialize(using = NumericLongSerializer.class) long sellerAmount,
             String status,

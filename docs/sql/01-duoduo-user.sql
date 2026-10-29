@@ -219,6 +219,10 @@ CREATE TABLE IF NOT EXISTS `t_merchant` (
     `audit_source`        VARCHAR(10)  NULL COMMENT '入驻审核来源 AUTO(自动放行)/MANUAL(人工)；NULL=历史数据（E28）',
     `violation_count`     INT          NOT NULL DEFAULT 0
                           COMMENT '商家级违规累计次数（E28）：判违规 +1，达阈值自动停业；复业时清零。只增不减',
+    `ip_whitelist_enabled` TINYINT     NOT NULL DEFAULT 0
+                          COMMENT '是否启用商家端 IP 白名单（E-06）；0=不限制（默认）',
+    `ip_whitelist`        VARCHAR(500) NULL
+                          COMMENT '允许访问商家端的来源地址，逗号分隔；支持 1.2.3.4 / 10.0.0.0/8 / 192.168.1.*（E-06）',
     `applied_at`          DATETIME     NULL COMMENT '最近一次提交时间',
     `reviewed_at`         DATETIME     NULL COMMENT '最近一次审核时间',
     `reviewed_by`         BIGINT       NULL COMMENT '最近一次审核人（运营 user id）',
@@ -327,3 +331,74 @@ CREATE TABLE IF NOT EXISTS `t_sched_leader` (
 --   t_kb_doc / t_chat_session / t_chat_message  AI 知识库与会话
 --   t_analytics_event  埋点
 -- ============================================================================
+
+-- ============ 多多币（R-P1 · P1 账户与抵扣闭环） ============
+-- 全站唯一积分「多多币」：1 币 = 1 分；独立于优惠券，两者可叠加；
+-- 金额顺序：商品总额 → 优惠券 → 多多币 → 运费 → 现金实付；只抵商品金额，不抵运费。
+-- 账户 / 批次 / 流水 / 冻结都在用户域（唯一权威）；交易域只存订单快照。
+-- 幂等：uk_coin_ledger_biz (user_id, biz_type, biz_no, direction) —— 回调/调度重试不会重复发扣。
+-- 并发：余额条件 UPDATE（balance >= 待扣）原子扣减；批次与账户同一事务。
+CREATE TABLE IF NOT EXISTS `t_coin_account` (
+    `id`            BIGINT    NOT NULL,
+    `user_id`       BIGINT    NOT NULL,
+    `balance`       BIGINT    NOT NULL DEFAULT 0 COMMENT '当前余额（币）= Σ未过期批次剩余；允许为负（CLAWBACK 防套利）',
+    `total_earned`  BIGINT    NOT NULL DEFAULT 0 COMMENT '累计获得（含退款退回）',
+    `total_spent`   BIGINT    NOT NULL DEFAULT 0 COMMENT '累计消耗（含冻结）',
+    `version`       INT       NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
+    `created_at`    TIMESTAMP NOT NULL,
+    `updated_at`    TIMESTAMP NOT NULL,
+    PRIMARY KEY (`id`)
+);
+CREATE UNIQUE INDEX uk_coin_account_user ON t_coin_account (user_id);
+
+CREATE TABLE IF NOT EXISTS `t_coin_lot` (
+    `id`          BIGINT    NOT NULL,
+    `user_id`     BIGINT    NOT NULL,
+    `biz_type`    VARCHAR(32)  NOT NULL COMMENT '来源：ORDER_EARN / ORDER_REFUND / EXPIRE_COMPENSATE / ADJUST',
+    `biz_no`      VARCHAR(64)  NOT NULL COMMENT '来源单号',
+    `amount`      BIGINT    NOT NULL COMMENT '本批发放数量',
+    `remaining`   BIGINT    NOT NULL DEFAULT 0 COMMENT '剩余数量',
+    `expire_at`   TIMESTAMP NOT NULL COMMENT '到期时刻（12 个月，自然月对日）',
+    `created_at`  TIMESTAMP NOT NULL,
+    `updated_at`  TIMESTAMP NOT NULL,
+    PRIMARY KEY (`id`)
+);
+CREATE INDEX idx_coin_lot_spend ON t_coin_lot (user_id, expire_at, remaining);
+CREATE INDEX idx_coin_lot_expire ON t_coin_lot (expire_at, remaining);
+
+CREATE TABLE IF NOT EXISTS `t_coin_ledger` (
+    `id`            BIGINT    NOT NULL,
+    `user_id`       BIGINT    NOT NULL,
+    `direction`     VARCHAR(16) NOT NULL COMMENT 'EARN/SPEND/REFUND/EXPIRE/CLAWBACK/ADJUST',
+    `amount`        BIGINT    NOT NULL COMMENT '变动数量（ADJUST 允许负）',
+    `balance_after` BIGINT    NOT NULL COMMENT '本笔之后的账户余额',
+    `biz_type`      VARCHAR(32) NOT NULL COMMENT '业务类型（ORDER_FREEZE/ORDER_RELEASE/ORDER_REFUND/ORDER_EARN/LOT_EXPIRE/ADMIN_ADJUST）',
+    `biz_no`        VARCHAR(64) NOT NULL COMMENT '业务单号',
+    `remark`        VARCHAR(255) NULL,
+    `created_at`    TIMESTAMP NOT NULL,
+    PRIMARY KEY (`id`)
+);
+CREATE UNIQUE INDEX uk_coin_ledger_biz ON t_coin_ledger (user_id, biz_type, biz_no, direction);
+CREATE INDEX idx_coin_ledger_user ON t_coin_ledger (user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS `t_coin_freeze` (
+    `id`          BIGINT    NOT NULL,
+    `user_id`     BIGINT    NOT NULL,
+    `order_no`    VARCHAR(32) NOT NULL,
+    `coins`       BIGINT    NOT NULL,
+    `status`      VARCHAR(16) NOT NULL COMMENT 'FROZEN / DEDUCTED / RELEASED',
+    `created_at`  TIMESTAMP NOT NULL,
+    `updated_at`  TIMESTAMP NOT NULL,
+    PRIMARY KEY (`id`)
+);
+CREATE UNIQUE INDEX uk_coin_freeze_order ON t_coin_freeze (order_no);
+CREATE INDEX idx_coin_freeze_user ON t_coin_freeze (user_id, status);
+
+CREATE TABLE IF NOT EXISTS `t_coin_freeze_lot` (
+    `id`         BIGINT   NOT NULL,
+    `freeze_id`  BIGINT   NOT NULL,
+    `lot_id`     BIGINT   NOT NULL,
+    `coins`      BIGINT   NOT NULL,
+    PRIMARY KEY (`id`)
+);
+CREATE INDEX idx_coin_freeze_lot ON t_coin_freeze_lot (freeze_id);

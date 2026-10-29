@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { shareApi, shareCommentApi } from '@duoduo/api-sdk/endpoints';
+import { coinsApi, shareApi, shareCommentApi } from '@duoduo/api-sdk/endpoints';
 import type { ShareCommentView, ShareView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { Alert, Empty, LoadingBlock, Modal, useToast } from '@duoduo/shared/components/ui';
@@ -49,6 +49,15 @@ export const ShareDetailPage: React.FC = () => {
 
   const item = detail.data as ShareView | undefined;
   const topLevel = comments.data?.items ?? [];
+
+  // 多多币任务：分享详情停留满 10 秒计一次「逛分享圈」（服务端按 shareId 每日去重）
+  useEffect(() => {
+    if (!user || !id || !item) return;
+    const timer = window.setTimeout(() => {
+      void coinsApi.reportTask({ taskCode: 'BROWSE_SHARE', bizId: id, dwellSeconds: 10 }).catch(() => {});
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [user, id, item]);
 
   // 评论计数以详情返回的 commentCount 为准；发表/删除评论后刷新两个数据源
   const refresh = () => setTick((v) => v + 1);

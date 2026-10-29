@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Alert } from '@duoduo/shared/components/ui';
+import { onBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 
 /**
@@ -44,7 +45,13 @@ const TABS = [
   { to: '/admin/categories', label: '类目管理', end: false },
   { to: '/admin/brands', label: '品牌管理', end: false },
   { to: '/admin/orders', label: '订单干预', end: false },
+  // 矩阵第 9 项 · 导出任务：超过 5 万行的异步导出在这里轮询与下载。
+  // 紧挨「订单干预」是因为目前唯一的消费方就是订单导出，运营的心智是「导不出来 → 来这里看」。
+  { to: '/admin/export-jobs', label: '导出任务', end: false },
   { to: '/admin/after-sales', label: '售后仲裁', end: false },
+  // R-P1：多多币是资金类工单页（负债汇总 / 人工调整 / 全站流水），与订单、售后同属
+  // 「动钱」的一批，因此紧跟在售后仲裁后面，不与内容治理混排。
+  { to: '/admin/coins', label: '多多币', end: false },
   { to: '/admin/operators', label: '运营账号', end: false },
   // E18：操作审计与上面的「内容审核」同名易混，标签用「操作审计」并把路径写成
   // /admin/operation-audits —— 前者是追责台账（只读），后者是内容审批队列（有操作列）。
@@ -56,11 +63,20 @@ const TABS = [
 ];
 
 /**
- * H-04 · 后台待办角标：把「等我处理」的五类队列聚合成导航角标。
+ * H-04 · 后台待办角标（2026-10-27 口径调整）。
  *
- * <p>口径与商家端 Q8 同款：只显示服务端 pending 总数，不在前端拆页累加；
- * 挂载即取 + 30 秒轮询 + 路由切换重取。请求失败按 0 处理 —— 角标是提醒，
- * 不能因为它报错挡住导航（失败时宁可不提示，也不要显示一个错的数字）。
+ * <p>五类队列分两种口径，**不能混为一谈**：
+ * <ul>
+ *   <li><b>评价 / 举报 / 售后仲裁</b>：点开详情看过了就该消 —— 走
+ *       {@code .../unread-count}，服务端用已读集合排除本人查看过的条目；</li>
+ *   <li><b>内容审核 / 商品审核</b>：它们的「详情」就是整张卡片（材料在列表里全量展开），
+ *       没有二级页面可点，且审核结论会立刻让条目离开 PENDING —— 角标直接等于待审数，
+ *       由审核动作收敛。若也做「看过就消」，未审的内容会从角标里消失却仍留在队列里，
+ *       那是把「待办提醒」变成「已读回执」，反而更容易漏审。</li>
+ * </ul>
+ *
+ * <p>触发：挂载即取 + 30 秒轮询 + 路由切换重取 + {@code BADGE_CHANGED_EVENT} 即时重取。
+ * 请求失败按 0 处理 —— 角标是提醒，不能因为它报错挡住导航。
  */
 const useAdminBadges = (): Record<string, number> => {
   const location = useLocation();
@@ -72,26 +88,32 @@ const useAdminBadges = (): Record<string, number> => {
       const [listings, products, reviews, reports, aftersales] = await Promise.allSettled([
         adminApi.listingsForAudit({ auditStatus: 'PENDING', page: 1, pageSize: 1 }),
         adminApi.productsForAudit({ auditStatus: 'PENDING', page: 1, pageSize: 1 }),
-        adminApi.reviews({ status: 'PENDING', page: 1, pageSize: 1 }),
-        adminApi.shareReports({ status: 'PENDING', page: 1, pageSize: 1 }),
-        adminApi.afterSales({ status: 'PENDING', page: 1, pageSize: 1 }),
+        adminApi.reviewUnreadCount(),
+        adminApi.shareReportUnreadCount(),
+        adminApi.afterSaleUnreadCount(),
       ]);
       const total = (r: PromiseSettledResult<{ total?: number }>) =>
         r.status === 'fulfilled' ? Number(r.value?.total) || 0 : 0;
+      /** 未读分桶：服务端只返回非 0 桶，空数组即 0 */
+      const unread = (r: PromiseSettledResult<{ status: string; count: number }[]>) =>
+        r.status === 'fulfilled' ? Number((r.value ?? [])[0]?.count) || 0 : 0;
       if (alive) {
         setBadges({
           '/admin/audits': total(listings),
           '/admin/product-audits': total(products),
-          '/admin/reviews': total(reviews),
-          '/admin/share-reports': total(reports),
-          '/admin/after-sales': total(aftersales),
+          '/admin/reviews': unread(reviews),
+          '/admin/share-reports': unread(reports),
+          '/admin/after-sales': unread(aftersales),
         });
       }
     };
     void load();
     const timer = window.setInterval(() => void load(), 30_000);
+    // 页面内「点开详情」上报已读后广播，父级导航同一刻收敛
+    const off = onBadgeChanged(() => void load());
     return () => {
       alive = false;
+      off();
       window.clearInterval(timer);
     };
   }, [location.pathname]);

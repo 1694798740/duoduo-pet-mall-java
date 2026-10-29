@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.seller.StaffPermissions;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
@@ -11,6 +12,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.user.dto.MerchantDtos.MembershipInfo;
 import com.duoduo.user.dto.MerchantDtos.StaffAdminView;
+import com.duoduo.user.dto.MerchantDtos.StaffImportRow;
 import com.duoduo.user.dto.MerchantDtos.StaffView;
 import com.duoduo.user.entity.MerchantEntity;
 import com.duoduo.user.entity.MerchantMemberEntity;
@@ -57,6 +59,9 @@ import java.util.stream.Collectors;
 public class MerchantStaffService {
 
     private static final Logger log = LoggerFactory.getLogger(MerchantStaffService.class);
+
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
 
     private final MerchantMapper merchantMapper;
     private final MerchantMemberMapper memberMapper;
@@ -115,6 +120,104 @@ public class MerchantStaffService {
         AuditTrail.note(store.getName() + " 邀请 " + mask(target.getPhone()));
         log.info("店员邀请成功 merchantId={} staff={} owner={}", store.getId(), target.getId(), ownerId);
         return toView(member, target);
+    }
+
+    /**
+     * 员工批量导入（2026-10-28 · 导入导出第一批）。
+     *
+     * <p>逐行调用与单条邀请**完全同一段逻辑**（{@link #invite}），单行失败只记录原因、
+     * 不影响其它行 —— 一份导入表里通常总有几个手机号尚未注册，中止整批等于让人重新挑一遍。
+     *
+     * <p>权限列可空（= 默认全量）；非空时先规范化再邀请 ——
+     * 若先邀请再校验，非法权限会留下一个「已入店但权限没配上」的成员，
+     * 而结果里那一行还显示失败，店主会以为没加上，实际却加上了。
+     *
+     * <p>不整批包事务：逐行独立提交，与批量发货 / 批量审核同一口径。
+     */
+    public BatchDtos.Result importStaff(Long ownerId, List<StaffImportRow> rows) {
+        if (rows == null || rows.isEmpty()) {
+            throw BizException.validation("导入内容不能为空");
+        }
+        if (rows.size() > 200) {
+            throw BizException.validation("单次最多导入 200 行");
+        }
+        List<BatchDtos.Item> items = new java.util.ArrayList<>(rows.size());
+        int success = 0;
+        for (StaffImportRow row : rows) {
+            String key = row == null || row.rowNo() == null ? "?" : String.valueOf(row.rowNo());
+            try {
+                if (row == null) {
+                    throw BizException.validation("空行");
+                }
+                String phone = row.phone() == null ? "" : row.phone().trim();
+                if (phone.isEmpty()) {
+                    throw BizException.validation("手机号不能为空");
+                }
+                List<String> normalized = null;
+                if (row.permissions() != null && !row.permissions().isEmpty()) {
+                    try {
+                        normalized = StaffPermissions.normalize(row.permissions());
+                    } catch (IllegalArgumentException ex) {
+                        throw BizException.validation(ex.getMessage());
+                    }
+                }
+                StaffView invited = invite(ownerId, phone);
+                if (normalized != null) {
+                    updatePermissions(ownerId, Long.parseLong(invited.memberId()), normalized);
+                }
+                success++;
+                items.add(new BatchDtos.Item(invited.memberId(), true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(key, false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("员工导入单行失败 rowNo={} phone={}", key, row == null ? null : row.phone(), ex);
+                items.add(new BatchDtos.Item(key, false, "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(rows.size(), success, rows.size() - success, items, List.of());
+    }
+
+    /**
+     * 员工批量启用 / 停用（2026-10-28）。
+     *
+     * <p>逐条走与单条相同的归属校验与状态机：非本店成员 / 店主本人都会逐条失败并带回原因。
+     * 上限 100 条，与其它批量入口一致。
+     */
+    public BatchDtos.Result setStaffStatusBatch(Long ownerId, List<String> memberIds, boolean enable) {
+        if (memberIds == null || memberIds.isEmpty()) {
+            throw BizException.validation("memberIds 不能为空");
+        }
+        java.util.LinkedHashSet<Long> distinct = new java.util.LinkedHashSet<>();
+        for (String raw : memberIds) {
+            if (raw == null || raw.isBlank()) {
+                throw BizException.validation("memberIds 不能包含空值");
+            }
+            try {
+                distinct.add(Long.valueOf(raw.trim()));
+            } catch (NumberFormatException ex) {
+                throw BizException.validation("memberIds 含非法主键：" + raw);
+            }
+        }
+        if (distinct.size() > 100) {
+            throw BizException.validation("单次最多批量操作 100 名成员");
+        }
+        List<BatchDtos.Item> items = new java.util.ArrayList<>(distinct.size());
+        int success = 0;
+        for (Long memberId : distinct) {
+            try {
+                setStaffStatus(ownerId, memberId, enable);
+                success++;
+                items.add(new BatchDtos.Item(String.valueOf(memberId), true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(String.valueOf(memberId), false,
+                        ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("员工批量{}单条失败 memberId={}", enable ? "启用" : "停用", memberId, ex);
+                items.add(new BatchDtos.Item(String.valueOf(memberId), false,
+                        "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(distinct.size(), success, distinct.size() - success, items, List.of());
     }
 
     /** 本店成员列表（含店主本人，OWNER 标出） */
@@ -210,6 +313,19 @@ public class MerchantStaffService {
      * @param keyword 店铺名 / 手机号 / 真实姓名（包含匹配）
      */
     public PageResult<StaffAdminView> adminPage(int page, int pageSize, String keyword) {
+        Page<MerchantMemberEntity> p = memberMapper.selectPage(new Page<>(Math.max(1, page), pageSize),
+                adminWrapper(keyword));
+        return PageResult.of(toAdminViews(p.getRecords()), p.getTotal(), page, pageSize);
+    }
+
+    /** 平台成员导出（矩阵第二批）：与列表同一关键字筛选，单次上限 5 万行 */
+    public List<StaffAdminView> exportAdmin(String keyword) {
+        LambdaQueryWrapper<MerchantMemberEntity> wrapper = adminWrapper(keyword);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return toAdminViews(memberMapper.selectList(wrapper));
+    }
+
+    private LambdaQueryWrapper<MerchantMemberEntity> adminWrapper(String keyword) {
         LambdaQueryWrapper<MerchantMemberEntity> wrapper = new LambdaQueryWrapper<MerchantMemberEntity>()
                 .orderByDesc(MerchantMemberEntity::getCreatedAt);
         if (keyword != null && !keyword.isBlank()) {
@@ -218,13 +334,16 @@ public class MerchantStaffService {
                     + " OR user_id IN (SELECT id FROM t_user WHERE phone LIKE {1} OR real_name LIKE {1}))",
                     like, like);
         }
-        Page<MerchantMemberEntity> p = memberMapper.selectPage(new Page<>(Math.max(1, page), pageSize), wrapper);
+        return wrapper;
+    }
+
+    private List<StaffAdminView> toAdminViews(List<MerchantMemberEntity> records) {
         // 注意：关键字筛出 0 条时不能直接 selectBatchIds(空集合) —— 会生成 `IN ( )`，
         // MyBatis-Plus 的 JSqlParser 解析直接抛异常，接口变成 500。空集合走空 Map。
-        Set<Long> merchantIds = p.getRecords().stream()
+        Set<Long> merchantIds = records.stream()
                 .map(MerchantMemberEntity::getMerchantId).filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        Set<Long> userIds = p.getRecords().stream()
+        Set<Long> userIds = records.stream()
                 .map(MerchantMemberEntity::getUserId).filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         Map<Long, MerchantEntity> stores = merchantIds.isEmpty() ? Map.of()
@@ -233,7 +352,7 @@ public class MerchantStaffService {
         Map<Long, UserEntity> users = userIds.isEmpty() ? Map.of()
                 : userMapper.selectBatchIds(userIds).stream()
                         .collect(Collectors.toMap(UserEntity::getId, u -> u));
-        List<StaffAdminView> items = p.getRecords().stream().map(m -> {
+        return records.stream().map(m -> {
             MerchantEntity store = stores.get(m.getMerchantId());
             UserEntity u = users.get(m.getUserId());
             return new StaffAdminView(
@@ -244,7 +363,6 @@ public class MerchantStaffService {
                     m.getRole(), m.getStatus(),
                     m.getCreatedAt() == null ? null : m.getCreatedAt().toString());
         }).toList();
-        return PageResult.of(items, p.getTotal(), page, pageSize);
     }
 
     /** 兼容旧调用（无关键字） */

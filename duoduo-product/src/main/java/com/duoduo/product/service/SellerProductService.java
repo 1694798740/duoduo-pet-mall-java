@@ -153,6 +153,8 @@ public class SellerProductService {
 
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
     private static final int TITLE_MAX = 60;
     private static final int SUBTITLE_MAX = 60;
     private static final int IMAGE_MAX = 500;
@@ -248,6 +250,17 @@ public class SellerProductService {
      */
     public void requireSellerAccess() {
         requireStaffPermission(requireSellerScope(), StaffPermission.PRODUCT_EDIT);
+    }
+
+    /**
+     * 供价格 / 库存导入先做一次准入校验（{@code PRODUCT_PRICE}）。
+     *
+     * <p>与 {@link #requireSellerAccess()} 分开：只有改价权的店员不该因为「没有编辑权」
+     * 被挡在导入之外。前置校验的意义同样是「解析文件之前就 403」，
+     * 否则 500 行会逐行跑成「全部失败」，用户会以为是表格写错了。
+     */
+    public void requirePriceStockAccess() {
+        requireStaffPermission(requireSellerScope(), StaffPermission.PRODUCT_PRICE);
     }
 
     /**
@@ -383,7 +396,6 @@ public class SellerProductService {
     public PageResult<SellerProductView> list(String keyword, String auditStatus, Long sellerId,
                                               boolean deleted, int page, int pageSize) {
         SellerScope scope = requireSellerScope();
-
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
 
@@ -416,24 +428,88 @@ public class SellerProductService {
             // 回收站按「删除时间」排：卖家找的是「我刚刚删掉的那件」，不是「最近编辑过的」
             wrapper.orderByDesc(SpuEntity::getDeletedAt).orderByDesc(SpuEntity::getId);
         } else {
-            wrapper.orderByDesc(SpuEntity::getUpdatedAt).orderByDesc(SpuEntity::getId);
+            /**
+             * 未读优先（2026-10-27）：未读商品浮到**每一页**顶部，组内仍按更新时间倒序。
+             *
+             * <p>必须放在 SQL 而不是前端重排：前端只能排当前页，未读项散落在第 2/3 页时，
+             * 用户看到第一页全是已读，会以为「没有新东西了」。子查询作为排序列，
+             * 分页时每一页都各自遵守「未读在前」。
+             */
+            wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_spu_read r WHERE r.user_id = "
+                    + scope.ownerUserId() + " AND r.spu_id = t_spu.id)) ASC, updated_at DESC, id DESC");
         }
 
         Page<SpuEntity> result = spuMapper.selectPage(new Page<>(p, size), wrapper);
         List<SpuEntity> records = result.getRecords();
         Map<Long, int[]> skuStats = skuStatsBySpuIds(records.stream().map(SpuEntity::getId).toList());
+        // 逐条已读（2026-10-27）：只查当前页，橙点与审核角标同一份事实
+        Set<Long> readIds = records.isEmpty() ? Set.of()
+                : new LinkedHashSet<>(spuMapper.listReadSpuIds(
+                        scope.ownerUserId(), records.stream().map(SpuEntity::getId).toList()));
 
         List<SellerProductView> views = records.stream()
-                .map(spu -> toView(spu, skuStats.getOrDefault(spu.getId(), new int[]{0, 0})))
+                .map(spu -> toView(spu, skuStats.getOrDefault(spu.getId(), new int[]{0, 0}),
+                        readIds.contains(spu.getId())))
                 .toList();
         return PageResult.of(views, result.getTotal(), p, size);
+    }
+
+    /**
+     * 商家商品按审核态分桶（商家端「商品管理」审核页签的角标，2026-10-27）。
+     *
+     * <p>可见范围与 {@link #list} **完全同源**：走同一个 {@link #requireSellerScope()}，
+     * 卖家只看自己的、运营看全平台（可选 sellerId）。两处各推导一次身份，
+     * 迟早出现「列表能看到 3 件待审、角标显示 1」这种自相矛盾。
+     *
+     * <p>口径与列表一致的两点：{@code deleted_at IS NULL}（回收站不计）、
+     * 同一套 audit_status 取值。
+     */
+    public java.util.List<com.duoduo.common.api.StatusCount> auditCounts() {
+        SellerScope scope = requireSellerScope();
+        Long sellerId = scope.platformScope() ? null : scope.ownerUserId();
+        java.util.List<java.util.Map<String, Object>> rows =
+                spuMapper.countByAuditStatus(sellerId, scope.ownerUserId());
+        if (rows == null || rows.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<com.duoduo.common.api.StatusCount> result = new java.util.ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            Object status = row.get("status") != null ? row.get("status") : row.get("STATUS");
+            Object cnt = row.get("cnt") != null ? row.get("cnt") : row.get("CNT");
+            if (status == null || !(cnt instanceof Number n) || n.longValue() <= 0) {
+                continue;
+            }
+            result.add(new com.duoduo.common.api.StatusCount(String.valueOf(status), n.longValue()));
+        }
+        return result;
+    }
+
+    /**
+     * 「看过某商品」上报（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只有「已通过」会因此从角标里消失：它只是「平台审过了」的通知；
+     * 待审核（等平台）与已驳回（要改内容）都是还没落定的事，读过也必须继续提醒。
+     *
+     * <p>归属校验复用 {@link #requireOwned}（他人 / 不存在 404）。幂等；返回最新分桶。
+     */
+    public java.util.List<com.duoduo.common.api.StatusCount> markRead(Long spuId) {
+        SellerScope scope = requireSellerScope();
+        SpuEntity spu = requireOwned(spuId, scope);
+        spuMapper.markSpuRead(scope.ownerUserId(), spu.getId(),
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        return auditCounts();
     }
 
     /** 商家视角详情（编辑回填用；公开详情对未过审商品 404，卖家必须读得回自己的东西） */
     public SellerProductDetailView ownerDetail(Long spuId) {
         SellerScope scope = requireSellerScope();
         SpuEntity spu = requireOwned(spuId, scope);
-        return toDetailView(spu, skusOf(spuId));
+        // 预览卡片要显示类目 / 品牌名（2026-10-27）；只在详情/预览路径上做两次批量查询
+        String categoryName = spu.getCategoryId() == null ? null
+                : catalogLookup.categoryNames(List.of(spu.getCategoryId())).get(spu.getCategoryId());
+        String brandName = spu.getBrandId() == null ? null
+                : catalogLookup.brandNames(List.of(spu.getBrandId())).get(spu.getBrandId());
+        return toDetailView(spu, skusOf(spuId), categoryName, brandName);
     }
 
     /**
@@ -713,18 +789,69 @@ public class SellerProductService {
     }
 
     /**
+     * 价格 / 库存导出（2026-10-28 · 矩阵 P3）：一个规格一行，供卖家在 Excel 里批量核对改价。
+     *
+     * <p>与商品导出分开：这里只要「商品ID + 规格ID + 价格 + 库存」，列越少越适合作为
+     * 价格库存导入的「先导出、改完再导回」闭环。筛选与商品列表一致（标题关键词 / 审核态），
+     * 回收站商品不导出。
+     *
+     * <p>上限沿用 {@link #MAX_EXPORT_PRODUCTS}（1000 件商品）；规格行超过 5 万时明确 409，
+     * 不静默截断 —— 价格表少一行就可能让卖家漏改一个规格。
+     */
+    public List<List<String>> exportPriceStockRows(String keyword, String auditStatus) {
+        SellerScope scope = requireSellerScope();
+        LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.isNull(SpuEntity::getDeletedAt);
+        if (!scope.platformScope()) {
+            wrapper.eq(SpuEntity::getSellerId, scope.ownerUserId());
+        }
+        String kw = trimToNull(keyword);
+        if (kw != null) {
+            wrapper.like(SpuEntity::getTitle, kw);
+        }
+        String audit = normalizeAuditFilter(auditStatus);
+        if (audit != null) {
+            wrapper.eq(SpuEntity::getAuditStatus, audit);
+        }
+        wrapper.orderByDesc(SpuEntity::getId).last("LIMIT " + MAX_EXPORT_PRODUCTS);
+        List<SpuEntity> spus = spuMapper.selectList(wrapper);
+        Map<Long, List<SkuEntity>> skuMap = skusBySpuIds(spus.stream().map(SpuEntity::getId).toList());
+
+        List<List<String>> rows = new ArrayList<>();
+        for (SpuEntity spu : spus) {
+            for (SkuEntity sku : skuMap.getOrDefault(spu.getId(), List.of())) {
+                rows.add(List.of(
+                        safe(spu.getId()),
+                        safe(spu.getTitle()),
+                        safe(sku.getId()),
+                        safe(specNameOf(sku.getSpecJson())),
+                        ProductCsv.formatCents(nz(sku.getPrice())),
+                        String.valueOf(sku.getStock() == null ? 0 : sku.getStock()),
+                        statusLabelOf(spu.getStatus()),
+                        auditLabelOf(spu.getAuditStatus())));
+            }
+        }
+        if (rows.size() > MAX_EXPORT_ROWS) {
+            throw BizException.conflict("导出超过 " + MAX_EXPORT_ROWS + " 行，请先按关键词或审核状态缩小范围");
+        }
+        log.info("导出价格库存 CSV：{} 件商品 / {} 行（范围={}）",
+                spus.size(), rows.size(), scope.platformScope() ? "平台全部" : "店铺 " + scope.ownerUserId());
+        return rows;
+    }
+
+    /**
      * CSV 导入模板（A-17）：表头 + 一行示例。
      *
      * <p>示例行的类目 ID 写的是 1，用户必须替换成自己类目树里的真实 ID ——
      * 模板不能替用户猜类目，否则「导入失败：类目不存在」会被当成模板有问题。
+     *
+     * <p>2026-10-28：示例行抽到 {@link ProductCsv#TEMPLATE_EXAMPLE}，与 xlsx 模板共用；
+     * 两种格式的示例必须完全一致，否则用户按 CSV 模板填好、换 xlsx 下载后又要改一遍。
      */
     public SellerProductCsvView importTemplate() {
         requireSellerAccess();
         StringBuilder out = new StringBuilder("\uFEFF").append(ProductCsv.HEADER).append("\r\n");
-        out.append(ProductCsv.row(List.of(
-                "示例1", "示例商品（导入前请删除本行）", "示例副标题", "1", "",
-                "/img/products/sample.svg", "", "示例商品介绍", "示例商品详情", "",
-                "适用阶段:全年龄", "包装形式:袋装", "2kg", "99.00", "100", ""))).append("\r\n");
+        out.append(ProductCsv.row(ProductCsv.TEMPLATE_EXAMPLE)).append("\r\n");
         return new SellerProductCsvView("products-import-template.csv", out.toString(), 0, 1);
     }
 
@@ -803,7 +930,7 @@ public class SellerProductService {
                 view.id(), view.title(), view.mainImage(), status, statusLabelOf(status),
                 view.auditStatus(), view.auditLabel(), view.auditReason(), view.sellerId(),
                 view.minPrice(), view.maxPrice(), view.salesCount(), view.rating(), view.ratingCount(),
-                view.skuCount(), view.totalStock(), view.deletedAt(), view.purgeAt());
+                view.skuCount(), view.totalStock(), view.deletedAt(), view.purgeAt(), view.read());
     }
 
     private List<String> diagnosticSuggestions(SpuEntity spu, long exposure, long clicks,
@@ -1537,6 +1664,9 @@ public class SellerProductService {
             try {
                 SellerProductView view = changeStatus(spuId, target, scope);
                 success++;
+                // 批量操作即已读（2026-10-27）：成功一条就写一条已读，
+                // 与单条预览同一份已读集合；失败条目**不**记为已读（用户没处理成，角标应继续提醒）
+                spuMapper.markSpuRead(scope.ownerUserId(), spuId, LocalDateTime.now(ZoneOffset.UTC));
                 items.add(new SellerProductBatchItemView(spuId, true, view.status(),
                         view.statusLabel(), null, null));
             } catch (BizException ex) {
@@ -1551,7 +1681,7 @@ public class SellerProductService {
             }
         }
         return new SellerProductBatchResultView(
-                distinct.size(), success, distinct.size() - success, items);
+                distinct.size(), success, distinct.size() - success, items, auditCounts());
     }
 
     /** ids 去重、拒绝空值、限制单次规模；顺序保留请求顺序，结果与选择顺序一致 */
@@ -2077,6 +2207,20 @@ public class SellerProductService {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
 
+        Page<SpuEntity> result = spuMapper.selectPage(new Page<>(p, size),
+                auditWrapper(auditStatus, sellerId, keyword));
+        return PageResult.of(toAuditViews(result.getRecords()), result.getTotal(), p, size);
+    }
+
+    /** 审核台导出（矩阵第二批）：与列表共用同一筛选，单次上限 5 万行 */
+    public List<AdminProductAuditView> exportForAudit(String auditStatus, Long sellerId, String keyword) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<SpuEntity> wrapper = auditWrapper(auditStatus, sellerId, keyword);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return toAuditViews(spuMapper.selectList(wrapper));
+    }
+
+    private LambdaQueryWrapper<SpuEntity> auditWrapper(String auditStatus, Long sellerId, String keyword) {
         LambdaQueryWrapper<SpuEntity> wrapper = new LambdaQueryWrapper<SpuEntity>()
                 .eq(SpuEntity::getSupplyType, SUPPLY_MERCHANT)
                 // A-09：回收站里的商品不再进审核队列 —— 它已经不在卖，审核它没有意义
@@ -2095,22 +2239,21 @@ public class SellerProductService {
         wrapper.orderByAsc(SpuEntity::getAuditStatus)
                 .orderByDesc(SpuEntity::getUpdatedAt)
                 .orderByDesc(SpuEntity::getId);
+        return wrapper;
+    }
 
-        Page<SpuEntity> result = spuMapper.selectPage(new Page<>(p, size), wrapper);
-        List<SpuEntity> records = result.getRecords();
+    private List<AdminProductAuditView> toAuditViews(List<SpuEntity> records) {
         Map<Long, List<SkuEntity>> skusBySpu = skusBySpuIds(records.stream().map(SpuEntity::getId).toList());
         Map<Long, String> categoryNames = catalogLookup.categoryNames(
                 records.stream().map(SpuEntity::getCategoryId).toList());
         Map<Long, String> brandNames = catalogLookup.brandNames(
                 records.stream().map(SpuEntity::getBrandId).toList());
-
-        List<AdminProductAuditView> views = records.stream()
+        return records.stream()
                 .map(spu -> toAuditView(spu,
                         skusBySpu.getOrDefault(spu.getId(), List.of()),
                         categoryNames.get(spu.getCategoryId()),
                         spu.getBrandId() == null ? null : brandNames.get(spu.getBrandId())))
                 .toList();
-        return PageResult.of(views, result.getTotal(), p, size);
     }
 
     /** 审核台详情（按 id 取单条，含全部背审材料） */
@@ -2731,6 +2874,10 @@ public class SellerProductService {
     }
 
     private SellerProductView toView(SpuEntity spu, int[] stats) {
+        return toView(spu, stats, false);
+    }
+
+    private SellerProductView toView(SpuEntity spu, int[] stats, boolean read) {
         return new SellerProductView(
                 spu.getId(),
                 spu.getTitle(),
@@ -2751,16 +2898,24 @@ public class SellerProductService {
                 isoOf(spu.getDeletedAt()),
                 spu.getDeletedAt() == null ? null
                         : spu.getDeletedAt().plusDays(RECYCLE_RETENTION_DAYS)
-                                .toInstant(ZoneOffset.UTC).toString());
+                                .toInstant(ZoneOffset.UTC).toString(),
+                read);
     }
 
     private SellerProductDetailView toDetailView(SpuEntity spu, List<SkuEntity> skus) {
+        return toDetailView(spu, skus, null, null);
+    }
+
+    private SellerProductDetailView toDetailView(SpuEntity spu, List<SkuEntity> skus,
+                                                 String categoryName, String brandName) {
         return new SellerProductDetailView(
                 spu.getId(),
                 spu.getTitle(),
                 spu.getSubtitle(),
                 spu.getCategoryId(),
                 spu.getBrandId(),
+                categoryName,
+                brandName,
                 spu.getMainImage(),
                 Csv.split(spu.getImages()),
                 spu.getDetail(),

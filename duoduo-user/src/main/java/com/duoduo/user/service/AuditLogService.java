@@ -52,6 +52,8 @@ public class AuditLogService {
 
     /** 单页上限：审计页是排查工具，不是导出工具；一次拉太多只会让浏览器卡住（与项目既有口径一致）。 */
     private static final int MAX_PAGE_SIZE = 100;
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
 
     private final AuditLogMapper auditLogMapper;
     private final SnowflakeIdGenerator idGenerator;
@@ -138,6 +140,20 @@ public class AuditLogService {
     public PageResult<AuditLogView> search(AuditQuery query, int page, int pageSize) {
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE);
+        Page<AuditLogEntity> result = auditLogMapper.selectPage(new Page<>(safePage, safeSize),
+                auditLogFilter(query));
+        List<AuditLogView> items = result.getRecords().stream().map(AuditLogService::toView).toList();
+        return PageResult.of(items, result.getTotal(), safePage, safeSize);
+    }
+
+    /** 审计日志导出（矩阵第二批）：与检索同一筛选，单次上限 5 万行 */
+    public List<AuditLogView> exportSearch(AuditQuery query) {
+        LambdaQueryWrapper<AuditLogEntity> wrapper = auditLogFilter(query);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return auditLogMapper.selectList(wrapper).stream().map(AuditLogService::toView).toList();
+    }
+
+    private LambdaQueryWrapper<AuditLogEntity> auditLogFilter(AuditQuery query) {
         AuditQuery q = query == null ? new AuditQuery(null, null, null, null, null, null, null, null) : query;
 
         LocalDateTime from = parseBound(q.from(), true);
@@ -152,7 +168,7 @@ public class AuditLogService {
         String categoryFilter = normUpper(q.category());
         String outcomeFilter = normUpper(q.outcome());
 
-        LambdaQueryWrapper<AuditLogEntity> wrapper = Wrappers.<AuditLogEntity>lambdaQuery()
+        return Wrappers.<AuditLogEntity>lambdaQuery()
                 .eq(q.actorId() != null, AuditLogEntity::getActorId, q.actorId())
                 .eq(q.tenantId() != null, AuditLogEntity::getTenantId, q.tenantId())
                 .eq(q.targetId() != null, AuditLogEntity::getTargetId, q.targetId())
@@ -166,10 +182,6 @@ public class AuditLogService {
                 .ge(from != null, AuditLogEntity::getCreatedAt, from)
                 .le(to != null, AuditLogEntity::getCreatedAt, to)
                 .orderByDesc(AuditLogEntity::getCreatedAt);
-
-        Page<AuditLogEntity> result = auditLogMapper.selectPage(new Page<>(safePage, safeSize), wrapper);
-        List<AuditLogView> items = result.getRecords().stream().map(AuditLogService::toView).toList();
-        return PageResult.of(items, result.getTotal(), safePage, safeSize);
     }
 
     /**

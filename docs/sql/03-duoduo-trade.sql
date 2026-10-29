@@ -62,6 +62,14 @@ CREATE TABLE t_order (
     -- 为什么必须落库：订单详情要展示「抵了多少、用的哪张券」，取消 / 关单要凭它去营销域解锁、
     -- 支付成功要凭它核销。只记金额不记券码，「这 30 块是哪张券抵的」就永远答不上来。
     coupon_code       VARCHAR(32),
+    -- 多多币快照（R-P1）：本单使用的币数与抵扣金额（1 币 = 1 分，只抵商品金额不抵运费）。
+    -- 为什么必须落库：取消 / 关单要凭 coin_used 释放冻结，支付成功要凭它确认扣减与补贴商家，
+    -- 完成 T+7 返币要凭它算「现金实付商品金额」。只算不存，「这单到底用了多少币」
+    -- 在回调重放时就没法幂等地回答。
+    coin_used         BIGINT       NOT NULL DEFAULT 0,
+    coin_deduct_amount BIGINT      NOT NULL DEFAULT 0,
+    coin_earn_amount  BIGINT,
+    coin_earned_at    TIMESTAMP,
     pay_amount        BIGINT       NOT NULL,
     receiver_name     VARCHAR(50)  NOT NULL,
     receiver_phone    VARCHAR(20)  NOT NULL,
@@ -187,6 +195,34 @@ CREATE INDEX idx_pay_order ON t_payment (order_id);
 -- 支付单超时扫描（补偿调度）走这条索引
 CREATE INDEX idx_pay_expire ON t_payment (status, expire_at);
 
+-- ---------- 重复收款自动退款台账（B-04） ----------
+-- 同一订单被第二张支付单多收的钱：检出时（支付单置 CLOSED 且写明重复支付）在**同一事务**
+-- 里落一条退款台账，由补偿调度经渠道退款接口自动退回买家（原路退回）。
+-- 状态机：INIT → SUCCESS（唯一成功终态）；渠道不可用/处理中保持 INIT 由调度重试。
+-- 幂等：uk_refund_pay_no 一张支付单最多一笔退款（INSERT IGNORE 撞唯一索引）；
+--       渠道级幂等靠 refund_no（微信 out_refund_no / 支付宝 out_request_no）。
+CREATE TABLE t_payment_refund (
+    id                BIGINT       NOT NULL,
+    refund_no         VARCHAR(32)  NOT NULL,
+    pay_no            VARCHAR(32)  NOT NULL,
+    order_id          BIGINT       NOT NULL,
+    user_id           BIGINT       NOT NULL,
+    channel           VARCHAR(32)  NOT NULL,
+    channel_trade_no  VARCHAR(64)  NULL,
+    amount            BIGINT       NOT NULL,
+    status            VARCHAR(16)  NOT NULL,
+    fail_reason       VARCHAR(255) NULL,
+    channel_refund_no VARCHAR(64)  NULL,
+    refunded_at       TIMESTAMP    NULL,
+    created_at        TIMESTAMP    NOT NULL,
+    updated_at        TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uk_refund_no ON t_payment_refund (refund_no);
+CREATE UNIQUE INDEX uk_refund_pay_no ON t_payment_refund (pay_no);
+CREATE INDEX idx_refund_user ON t_payment_refund (user_id, created_at);
+CREATE INDEX idx_refund_status ON t_payment_refund (status, created_at);
+
 -- ---------- C2C 担保交易资金托管 ----------
 -- 买家付款后钱进平台托管（CUSTODY），确认收货后打给卖家（RELEASED），
 -- 退款则退回买家（REFUNDED）。一个订单只有一条托管记录。
@@ -198,6 +234,9 @@ CREATE TABLE t_settlement (
     seller_id     BIGINT       NOT NULL,
     amount        BIGINT       NOT NULL,
     platform_fee  BIGINT       NOT NULL DEFAULT 0,
+    -- 平台多多币补贴（R-P1）：amount 已含币抵扣部分（商家结算不因币缩水），
+    -- 这一列单记「其中多少是平台替买家出的币」，供「平台补贴 = 订单币抵扣合计」对账。
+    coin_subsidy_amount BIGINT NOT NULL DEFAULT 0,
     status        VARCHAR(20)  NOT NULL,
     release_at    TIMESTAMP,
     released_at   TIMESTAMP,
@@ -352,3 +391,31 @@ CREATE TABLE t_recon_diff (
 CREATE UNIQUE INDEX uk_recon_diff ON t_recon_diff (run_id, rule, ref_type, ref_id);
 CREATE INDEX idx_recon_diff_run ON t_recon_diff (run_id, severity);
 CREATE INDEX idx_recon_diff_ref ON t_recon_diff (ref_type, ref_id);
+
+-- ---------- 异步导出任务（71 · 矩阵第 9 项） ----------
+-- 超过 5 万行的导出不再同步返回文件，而是落一行任务、后台分页写盘、完成后推站内通知。
+-- 文件生存期 7 天，过期由调度删行 + 删文件；下载必须登录且只能下自己创建的任务。
+CREATE TABLE t_export_job (
+    id                 BIGINT       NOT NULL,
+    scope              VARCHAR(16)  NOT NULL,
+    module             VARCHAR(24)  NOT NULL,
+    params             VARCHAR(500),
+    status             VARCHAR(12)  NOT NULL,
+    total_rows         INT          NOT NULL DEFAULT 0,
+    row_count          INT          NOT NULL DEFAULT 0,
+    file_name          VARCHAR(120),
+    file_path          VARCHAR(300),
+    file_size          BIGINT       NOT NULL DEFAULT 0,
+    error_message      VARCHAR(500),
+    created_by         BIGINT       NOT NULL,
+    created_at         TIMESTAMP    NOT NULL,
+    started_at         TIMESTAMP,
+    finished_at        TIMESTAMP,
+    expires_at         TIMESTAMP,
+    download_count     INT          NOT NULL DEFAULT 0,
+    last_downloaded_at TIMESTAMP,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_export_job_owner ON t_export_job (created_by, created_at);
+CREATE INDEX idx_export_job_expiry ON t_export_job (expires_at);
+CREATE INDEX idx_export_job_status ON t_export_job (status, created_at);

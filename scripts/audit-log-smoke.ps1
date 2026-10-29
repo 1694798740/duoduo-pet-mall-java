@@ -218,7 +218,13 @@ $gaps = @()
 foreach ($c in $controllers) {
     $t = Get-Content -Raw -LiteralPath $c.FullName
     if ($t -notmatch $scopeRegex) { continue }
-    $w = ([regex]::Matches($t, '@(Post|Put|Patch|Delete)Mapping')).Count
+    # 已读回执（路径以 /read 结尾）是「看过某条」的幂等写集合，不是业务事实变更；
+    # 逐条访问都记一条审计只会把审计表变成浏览日志。它们**刻意**不加 @Audited，
+    # 因此不计入覆盖率分子/分母（2026-10-27 批量端点补齐后发现的既有口径缺口）。
+    # 匹配整个注解（含可选的路径参数），否则 `@PostMapping`（无路径，如邀请店员）
+    # 会被漏计，出现「注解数 > 写端点数」的假失败。
+    $writeMappings = @([regex]::Matches($t, '@(Post|Put|Patch|Delete)Mapping(?:\([^)]*\))?'))
+    $w = @($writeMappings | Where-Object { $_.Value -notmatch '"[^"]*/read"' }).Count
     $a = ([regex]::Matches($t, '@Audited\(')).Count
     $writeTotal += $w
     $annotated += $a

@@ -26,8 +26,15 @@ public class CouponTemplateEntity {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DISABLED = "DISABLED";
 
-    /** v1 唯一实现的券类型 */
+    /** 券类型：满减（固定抵扣额） */
     public static final String TYPE_FULL_REDUCE = "FULL_REDUCE";
+
+    /** 券类型：折扣（按折后比例减，可封顶） */
+    public static final String TYPE_DISCOUNT = "DISCOUNT";
+
+    /** 折扣券允许的折后比例区间（百分比）：1 ~ 99，即 0.1 折 ~ 9.9 折 */
+    public static final int MIN_DISCOUNT_PERCENT = 1;
+    public static final int MAX_DISCOUNT_PERCENT = 99;
 
     @TableId
     private Long id;
@@ -41,8 +48,25 @@ public class CouponTemplateEntity {
     /** 满减门槛（分）：订单商品总额 &gt;= 门槛才能用 */
     private Long thresholdAmount;
 
-    /** 抵扣金额（分） */
+    /** 抵扣金额（分）：满减券的固定抵扣额；折扣券恒为 0 */
     private Long discountAmount;
+
+    /**
+     * 折扣券「折后应付比例」（百分比）：85 表示 8.5 折（付 85%、减 15%）。
+     *
+     * <p>刻意用整数百分比而不是浮点折率：全库金额口径是整数分，浮点会引入
+     * 「0.85 × 10000 = 8499.999…」这类误差，最终表现为少减或多减 1 分。
+     * 满减券此字段恒为 100（不参与计算）。
+     */
+    private Integer discountPercent;
+
+    /**
+     * 折扣券封顶抵扣（分）：0 = 不封顶。
+     *
+     * <p>折扣券必须有封顶能力 —— 一张 8 折券落在上万元订单上会一次减掉几千元，
+     * 运营在没有任何上限参数时根本不敢发折扣券。
+     */
+    private Long maxDiscountAmount;
 
     /** 发放总量 */
     private Integer totalCount;
@@ -106,6 +130,22 @@ public class CouponTemplateEntity {
 
     public void setDiscountAmount(Long discountAmount) {
         this.discountAmount = discountAmount;
+    }
+
+    public Integer getDiscountPercent() {
+        return discountPercent;
+    }
+
+    public void setDiscountPercent(Integer discountPercent) {
+        this.discountPercent = discountPercent;
+    }
+
+    public Long getMaxDiscountAmount() {
+        return maxDiscountAmount;
+    }
+
+    public void setMaxDiscountAmount(Long maxDiscountAmount) {
+        this.maxDiscountAmount = maxDiscountAmount;
     }
 
     public Integer getTotalCount() {

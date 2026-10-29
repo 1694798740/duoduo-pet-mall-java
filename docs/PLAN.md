@@ -1,6 +1,554 @@
 # 多多宠物商店 · 项目开发计划（看板）
 
-> **最新一轮（2026-10-26 · 第一百二十三轮）**：**生产上线检查清单（I-01 准备）—— 把「上线要什么」写成可执行步骤**
+> **最新一轮（2026-10-29 · AI 导购从 Mock 重构为 RAG + Agent）**：
+>
+> - **真实模型**：移除 `DUODUO_AI_MOCK_ENABLED` 与 `MockReply`；新增 DashScope Function Calling 客户端
+>   `DashScopeToolClient`，SSE 流式回复；Key 为空时如实 unconfigured/503，不再用模板冒充 AI。
+> - **数据库**：新增 `docs/sql/incremental/72-ai-rag-agent.sql` —— `duoduo_ai` 库、
+>   `t_ai_user_memory` / `t_ai_pet_memory` / 知识库 / 会话审计；商品域 `t_spu_ai_profile`。
+> - **商品侧**：新增 AI 结构化检索 + 实时事实回源 `/api/products/internal/ai/search|facts`；
+>   `AiProfileBootstrapJob` 回填 63 条商品属性，`AiSearchIndexJob` 同步 ES `duoduo_spu_ai`（60 条）。
+> - **Agent**：Tool Registry + `search_products` / `get_product_detail` / `check_stock` /
+>   `recommend_products` / `add_to_cart` / `handoff_to_human`；最多 4 步；写操作一次性确认令牌。
+> - **记忆**：Redis 会话（消息/槽位/已推荐）、8 轮摘要、长期记忆表；槽位优先级
+>   本轮 > 会话 > 长期 > 默认。
+> - **RAG**：QueryPlan + ProductRagRetriever（BM25 + kNN + RRF + Rerank，ES 不可用自动回退结构化搜索）；
+>   宠物百科知识库 6 条种子。
+> - **实测**：本地与线上 `/api/duoduo/chat` 真实模型 200（幼猫粮只推「皇家 K36」，
+>   测试商品已被护栏过滤）；SSE 经 nginx 逐 token 下发；前端 `tsc` + `vite build` 通过。
+>   生产已注入 `DASHSCOPE_API_KEY` 并切 `qwen3.8-flash`；Embedding 当前 Key 返回 403，
+>   向量检索自动降级 BM25，不影响推荐正确性。旧 `ChatService` / `MockReply` 及其测试已删除，
+>   AI 单测 **67/0**。
+>
+> ---
+>
+> **2026-10-28 · 试用机「方案 A」部署完成（IP + 端口直访）**：
+>
+> - **主机**：阿里云 ECS `8.163.71.44`（广州，4C / 7.4G / 40G，Alibaba Cloud Linux 3.2104），
+>   安装 Docker 26.1.3 + Compose 2.27；部署目录 `/opt/duoduo`。
+> - **镜像**：服务器直连 Docker Hub 超时、公共加速站也全部超时；改为本机 `docker save`
+>   5 个基础镜像（mysql / redis / nacos / temurin / nginx，640MB）上传后 `docker load`，
+>   业务镜像在服务器用已上传的 jar 构建 —— 不依赖任何外部 registry。
+> - **数据**：把当前开发库六库快照迁移到服务器（用户 4631 / 商家 538 / 订单 2171 / SPU 80），
+>   登录账号、商品与订单开箱可用；后续正式上线可再决定是否换新库。
+> - **结果**：14 个容器全 healthy（8 业务 + 网关 + MySQL/Redis/Nacos + 3 前端）；
+>   `smoke-linux.sh` **8/0**；三端登录均 200，Cookie 分别为 `dd_at` / `dd_at_m` / `dd_at_a`；
+>   商家订单 / 运营订单 / 运营租户健康 / 买家币账户全部 200；8 个服务日志 `ERROR=0`。
+> - **资源**：新增 `docker-compose.prod.yml` 给所有容器设内存上限（Nacos 1g / MySQL 1g /
+>   业务 384–640m），实测 4.4G / 7.4G、磁盘 9.3G / 40G；COS 私有/公开桶启动日志均确认生效。
+> - **对外**：安全组已放行 `80/8088`（0.0.0.0/0）与 `8090/8091`（用户 IP/32）；商城主入口
+>   `http://8.163.71.44`（80），`8088` 保留兼容旧链接。外网实测 80/8088 均 200、`8090/8091` 302；
+>   三端外网登录均 200；浏览器实访：商城首页商品/Banner 正常、
+>   商家工作台「共 3 笔订单」、后台「GMV ¥164226 / 总订单量 2171」，控制台无报错。
+>   加 80 的原因：部分 WiFi 网络封非标准端口，手机连该 WiFi 打不开 8088、切流量正常。
+> - **备份**：`/etc/cron.d/duoduo-backup` 每日 03:00；首次备份已上传
+>   `cos://…/db-backup/2026-10-28_194738/`（六库 + manifest，HEAD 字节数校验通过）。
+> - **矩阵 P3 导出补齐（2026-10-28）**：新增 7 个只读导出 —— 商家价格库存 / 店铺评价 /
+>   商品分析 / 客服会话，运营类目 / 品牌 / 租户健康；直接 `text/csv` 附件（BOM + 公式注入防护），
+>   商家筛选与列表共用 Wrapper，客服会话不含聊天正文；`export-p3-smoke` **8/0**，
+>   线上 7 个端点均 200、页面按钮浏览器验证通过。矩阵内已无未实现导出项。
+> - **仍未做**：域名 A 记录 / ICP 备案 / HTTPS / 80-443 反代；小程序真机验收与订阅消息模板
+>   （J-04 自动化测试空白）；试用机 2026-12-28 到期。
+>
+> ---
+>
+> **同一日 · 更早（2026-10-28 · 生产前一揽子工程加固）**：
+>
+> - **Cookie 安全**：`AuthCookieWriter` 增加 `Secure` + `SameSite`（Servlet 6 `setAttribute`），
+>   写与清共用同一组属性；`COOKIE_SECURE` / `COOKIE_SAME_SITE` 可配，本地默认 false / Lax，
+>   生产 HTTPS 置 true。`SameSite=None` 缺 `Secure` 时自动退回 Lax，避免登录态被浏览器丢弃。
+> - **日志轮转**：`docker-compose.yml` 用 YAML 锚点给全部 17 个 compose 服务加
+>   `json-file` 20MB × 5 份上限（默认无上限，跑满能把数据盘写爆）；ES / RocketMQ 也已带上。
+>   **资源上限刻意未预设**：主机仍在中审，8G 上把 JVM 堆压到 128M 比不限制更糟，等规格确定后一次性配。
+> - **Linux 只读冒烟**：新增 `scripts/smoke-linux.sh` —— 容器健康 + 网关 `/actuator/health` +
+>   首页 / 类目 / 商品列表 + 三端入口，不登录、不写库，可直接接部署流水线；已用 `bash -n` 校验语法。
+> - **矩阵修正**：§2 导出列按控制器端点逐项核对（20 个导出端点）——商家订单/售后/结算/员工、
+>   运营 12 个导出全部标 ✅；当时未做的只剩 5 类 P3 导出（已于同日第四批补齐）：价格库存、商家评价、商品分析、
+>   客服会话、租户健康（外加运营类目/品牌导出）。
+> - **备份到 COS（I-02）**：新增 `scripts/db-backup-cos.sh` —— Linux 原生（docker / curl / openssl / gzip），
+>   自实现 COS v5-sha1 签名（与 `CosSigner` 同算法、已逐字节对齐），六库 dump → gzip →
+>   私有桶 `db-backup/<时间戳>/` → 远端 HEAD 字节数校验；含 `--check / --stat / --upload / --delete`。
+>   源库表数 vs 产物 `CREATE TABLE` 数必须相等，空库直接失败；本地留 7 次，远端靠桶生命周期。
+>   实测六库 23/19/19/15/3/9 张表、上传/HEAD/删除全部通过，测试对象已清理。
+> - **验证**：`AuthCookieWriterTest` **3/0**（Secure/HttpOnly/SameSite、None→Lax、清 Cookie 属性一致）；
+>   user **BUILD SUCCESS**；重建后登录响应实测 `HttpOnly; SameSite=Lax`（本地无 Secure），
+>   登出 `Max-Age=0` 且属性一致；`docker inspect` 确认 17 个 compose 容器均带日志上限。
+>
+> ---
+>
+> **同一日 · 稍早（2026-10-28 · 商品 / 价格库存 / 类目 / 品牌 xlsx 模板与导入）**：
+>
+> - **四个 xlsx 模板**：`GET /api/seller/products/import-template?format=xlsx`、
+>   `GET /api/seller/products/price-stock-template?format=xlsx`、
+>   `GET /api/admin/categories/import-template?format=xlsx`、
+>   `GET /api/admin/brands/import-template?format=xlsx`。
+> - **CSV 契约原样保留**：同一路径带 `params = "format=xlsx"` 的二进制映射与原来的 JSON 映射并存，
+>   老前端与既有冒烟不需要改；xlsx 走 `Content-Disposition` 附件下载，不读进页面内存。
+> - **模板由同一份列定义与示例行生成**：商品示例行抽到 `ProductCsv.TEMPLATE_EXAMPLE`，CSV / xlsx 共用；
+>   xlsx 额外带「说明」页（ID 保持文本、分组键、多值分隔符等）与冻结表头，改长文本不会错行。
+> - **xlsx 导入与 CSV 走同一条解析路径**：新增 `SpreadsheetRows`（前端 CSV 读文本 / xlsx 读 Base64，
+>   服务端统一转「单元格行 + 物理行号」），商品、价格库存、类目、品牌四个导入全部支持 `.xlsx`；
+>   报错文案与行号与 CSV 一致（空行跳过但保留 Excel 行号）。
+> - **所有单元格按字符串写**：19 位雪花 ID / 价格按数字写会被 Excel 转科学计数法或丢两位小数；
+>   文件级识别按 `fileName` 后缀，缺失时按 Base64 前缀兜底，坏文件 400「无法解析 Excel」而不是按文本乱切。
+> - **依赖**：`poi-ooxml 5.2.5` 放在 `duoduo-common-web`（写用 `SXSSFWorkbook` 流式，读只读第一个工作表、
+>   公式取缓存值、5MB 上限防 zip 炸弹）。
+> - **验证**：`mvn package`（common-web / product）**BUILD SUCCESS**；新增
+>   `SpreadsheetRowsTest` 4 项全绿（行号保留、无文件名时前缀识别、CSV 仍走文本、坏文件 400）；
+>   三端 `tsc` 全绿、`vite build`（merchant / admin）通过；
+>   `import-export-batch-smoke.ps1` **183/0**（新增 11 项：四个模板 200 + ZIP 头 + Content-Type、
+>   卖家调类目模板 403、模板回传「只有表头」400、坏 xlsx 400）。
+> - **踩坑**：Windows PowerShell 5.1 的 `Invoke-WebRequest -OutFile` 遇到 Spring 的分块传输会抛
+>   「无法对 Null 数组进行索引」（文件其实已写出）—— 冒烟改用 `HttpClient` 读字节数组，
+>   否则 xlsx 全被误判为失败。
+>
+> ---
+>
+> **同一日 · 稍早（2026-10-28 · 买家侧脱敏导出：我的订单 / 多多币流水）**：
+>
+> - 新增两个买家端点：`GET /api/orders/export`（按 status / orderType / keyword，与列表同筛选）、
+>   `GET /api/coins/ledger/export`（时间倒序，含记账后余额快照）。
+> - **只能导自己的数据**：查询条件里写死 `user_id = 当前登录用户`，不接受任何 `userId` 参数，
+>   未登录 401；与列表共用 `mineWrapper`，导出不会比页面多看见一行。
+> - **脱敏落在导出列上**：手机号保首 3 末 4（`138****1234`）、地址留前 6 字符 + `****`；
+>   订单行用单独的 `OrderCsv.BUYER_HEADERS`，与运营导出（完整收货信息）**不共用列定义**，
+>   避免以后改运营列时顺手把买家隐私带出去。
+> - 同步上限 5 万行：先 count，超限 400 提示按状态 / 关键词分批（买家侧不做异步任务：
+>   个人数据量级用不上，异步文件的生命周期与权限模型是给运营设计的）。
+> - 前端：买家「我的订单」工具栏「导出 CSV」（携带当前筛选）、「我的多多币 · 流水」标题行「导出流水」，
+>   均走 `location.href` 导航到 GET 地址（同源 Cookie 鉴权，不占页面内存）。
+> - 验证：`mvn package`（trade / user）**BUILD SUCCESS**、三端 `tsc` 全绿、
+>   `vite build`（mall / admin）通过；`import-export-batch-smoke.ps1` **171/0**
+>   （新增：买家订单导出 200 + BOM + 表头、不含完整手机号、地址含 `****`、按状态筛选、
+>   币流水导出 200 + 表头、未登录 401）。
+> - 说明：浏览器自动化对附件下载会报 `net::ERR_ABORTED`（Chrome 把导航交给下载管理器，属正常现象）；
+>   同一地址经 `http://localhost:8090`（nginx → gateway → trade）会话实测 200 / 425,539 字节 / 表头正确。
+>
+> ---
+>
+> **同一日 · 更早（2026-10-28 · 冲刺第三批完工：异步导出任务 + 站内通知）**：
+>
+> - 矩阵第 9 项落地：新增 `t_export_job` 与 4 个运营端点 ——
+>   `POST /api/admin/export-jobs`（创建）、`GET /api/admin/export-jobs`（我的任务）、
+>   `GET /api/admin/export-jobs/{id}`（轮询）、`GET /api/admin/export-jobs/{id}/download`（下载）。
+> - **同步导出不再静默截断**：`GET /api/admin/orders/export` 先 count，超过 5 万行返回 **409**
+>   并提示改用异步任务（旧实现 `LIMIT 50000` 会生成「看起来完整、其实少行」的 CSV）。
+> - **异步任务与同步导出共用查询与列定义**（`adminExportWrapper` + `OrderCsv`），
+>   创建时 count 出 `total_rows` 作为进度分母；生成结束 `row_count` 必须与它相等（冒烟有断言）。
+> - **分页改用 keyset 游标**：分页插件 `maxLimit=100`，直接 `selectPage(size=2000)` 时
+>   第 2 页 offset 跳到 2000、中间 1900 行被静默跳过 —— 不是慢，是导出少数据。
+> - **状态 CAS 只前进**（PENDING → RUNNING → SUCCESS / FAILED / EXPIRED），失败留可读原因；
+>   服务重启后 30 分钟未推进的任务由调度判 FAILED；文件保留 7 天，调度删文件 + 置 EXPIRED，
+>   30 天前的任务行清理。文件落本地卷 `trade-exports`（新增 Dockerfile 预建目录 + compose 卷），
+>   无公开路径，下载必须运营登录且仅**创建人**可取（跨人 404），记录下载次数。
+> - **完成推站内通知**（`SYSTEM` / `EXPORT_JOB_READY|FAILED`，`jumpPage=null`，best-effort）。
+> - 前端：运营后台新增「导出任务」页（创建订单任务 / 进度条 / 3 秒轮询 / 下载 / 失败原因），
+>   「订单干预」工具栏拆成「导出 CSV（≤5 万行）」+「异步导出」；`api-sdk` 增 4 个 helper 与 `ExportJobView`。
+> - 验证：`mvn package`（trade / gateway）**BUILD SUCCESS**、三端 `tsc` 全绿、`vite build` 通过；
+>   `import-export-batch-smoke.ps1` **153/0**（创建 → 轮询 SUCCESS → 行数=预估 → 下载 BOM/表头 →
+>   列表含任务 → 卖家 403 → 不存在 404 → 未知模块 / 无命中 400；补买家侧用例后同一脚本 **171/0**）；
+>   实测 2171 行 / 415.6 KB，浏览器验证「导出任务」页与两个导出按钮。
+>
+> ---
+>
+> **同一日 · 稍早（2026-10-28 · 冲刺第三批：类目 / 品牌导入 + dry-run）**：
+>
+> - 运营后台新增 6 个接口：类目/品牌各一组「模板 → 预演 → 正式导入」——
+>   `GET /api/admin/{categories|brands}/import-template`、
+>   `POST /api/admin/{categories|brands}/import/dry-run`、`POST /api/admin/{categories|brands}/import`。
+> - **dry-run 不落库**，逐行返回 `CREATE / UPDATE / SKIP / ERROR` 与原因；正式导入复用同一套决策逻辑，
+>   因此预演里的 ERROR 行在正式导入时必然失败，不存在「预演通过、导入才炸」。
+> - **按业务键匹配**：类目按「父类目 + 名称」，`父类目` 列支持 ID 或顶级类目名称（留空 / 0 = 顶级，两级树，
+>   新建父类目行必须写在子类目之前）；品牌按同名匹配。更新时**空单元格 = 不改**，不会清空已有内容。
+> - 文件级问题（空文件 / 表头不符 / 只有表头 / 超 500 行 / 超 2MB）整体 4xx；行级失败逐行返回，
+>   部分成功不回滚。权限统一 `OperatorGuard.requireOperator()`；正式导入写 `CATEGORY_CREATE` / `BRAND_CREATE` 审计。
+> - 前端：类目 / 品牌页新增「批量导入」按钮 + 共用 `CatalogImportModal`（下载模板 / 选文件 / 预演计划表 / 导入结果表）；
+>   `api-sdk` 增 6 个 helper 与 `CatalogImportPlanView` 类型。
+> - 修复：品牌页「+ 新建类目」按钮文案误写（应为「+ 新建品牌」）。
+> - 验证：`mvn package`（product）**BUILD SUCCESS**、三端 `tsc` 全绿、运营后台 `vite build` 通过；
+>   `import-export-batch-smoke.ps1` **136/0**（模板表头/BOM、非运营 403、表头不符 / 空表 400、
+>   预演不落库、父子按名称挂接、孤儿行失败、品牌新建→更新→删除全链路）。
+>
+> ---
+>
+> **上一轮（2026-10-28 · 冲刺第三批：商品价格 / 库存导入）**：
+>
+> - 商家端新增 `GET /api/seller/products/price-stock-template`（`商品ID,规格ID,价格(元),库存`）与
+>   `POST /api/seller/products/price-stock-import`（`{content}`，≤500 行 / 2MB）。
+> - **逐行调用既有单 SKU 改价入口 `updateSkuPriceStock`**，不另写 UPDATE：归属、`PRODUCT_PRICE`、
+>   价格上限、库存非负、运营代改第三方商品工单门禁、`min_price/max_price` 重算全部复用同一条写路径；
+>   只改价库存**不重审、不升版本**。
+> - 返回统一 `BatchDtos.Result`：失败行 `id` = CSV 物理行号，`errorCode` 沿用
+>   `VALIDATION_ERROR / NOT_FOUND / FORBIDDEN / BUSINESS_RULE`；部分成功不回滚。
+> - 店员需 `PRODUCT_PRICE`，解析文件之前先判权限（`requirePriceStockAccess`），避免 500 行逐行跑成「全部失败」。
+> - 前端 `Products.tsx` 新增「导入价格库存」按钮 + 弹窗（下载模板 / 选文件 / 逐行结果）；
+>   `api-sdk` 增 `priceStockTemplate` / `importPriceStock`。
+> - 验证：`mvn package`（product / user）**BUILD SUCCESS**、三端 `tsc` 全绿、商家端 `vite build` 通过；
+>   `import-export-batch-smoke.ps1` **106/0**（模板表头/BOM、表头不符 400、空表 400、不存在商品逐行失败、
+>   负库存/双空列 VALIDATION_ERROR、真实 SKU 改价改库存回库断言并恢复原值）。
+>
+> ---
+>
+> **上一轮（2026-10-28 · 冲刺第二批续：中价值导出全覆盖）**：
+>
+> - 商品域：审核台 `GET /api/admin/products/export`、变更历史 `GET /api/admin/products/change-history/export`、
+>   闲置审核 `GET /api/admin/listings/export`；三者都把原列表的筛选抽成私有 wrapper，导出与页面同口径。
+> - 用户域：操作审计 `GET /api/admin/audit-logs/export`、运营账号 `GET /api/admin/users/export`（手机号仍脱敏）、
+>   平台成员 `GET /api/admin/merchant-staff/export`、多多币流水 `GET /api/admin/coins/ledger/export`。
+> - 交易域：秒杀活动 `GET /api/admin/seckill/activities/export`，CSV 平铺为一行一个 SKU。
+> - 运营后台 8 个页面补「导出 CSV」入口，全部携带当前筛选；导出为只读动作，不写审计。
+> - 验证：`mvn package`（product / user / trade）**BUILD SUCCESS**、三端 `tsc` 全绿；
+>   `import-export-batch-smoke.ps1` **90/0**（新增 8 个导出 + 审计导出越权 403）。
+>
+> ---
+>
+> **上一轮（2026-10-28 · 冲刺第二批：全站导入导出 + 批量扩展）**：
+>
+> **① 导出（CSV 流式，统一安全口径）**
+> - 新增 `com.duoduo.common.web.CsvExport`：UTF-8 BOM、RFC 4180 转义、`= + - @` 开头单元格加单引号
+>   （防公式注入）、金额转元两位小数、UTC → 北京时间、`Cache-Control: no-store`。
+> - 商家：订单 `GET /api/seller/orders/export`、结算台账 `GET /api/seller/settlements/export`、
+>   售后 `GET /api/aftersales/seller/export`、员工 `GET /api/seller/staff/export`。
+> - 运营：订单 `GET /api/admin/orders/export`（完整收货信息，仅运营）、
+>   售后 `GET /api/admin/aftersales/export`、评价 `GET /api/admin/reviews/export`、
+>   举报 `GET /api/admin/share-reports/export`、入驻 `GET /api/admin/merchants/export`。
+> - 导出与列表**共用同一筛选与同一 View 装配**（订单抽 `orderFilter`、结算抽 `settlementFilter`），
+>   避免「文件与页面数字不一致」；同步上限 5 万行且单条 `LIMIT`，超出应转异步（矩阵第三批）。
+>
+> **② 导入（员工）**
+> - `GET /api/seller/staff/import-template`：两列模板「手机号 / 权限（分号分隔，留空=全部）」。
+> - `POST /api/seller/staff/import`：≤200 行，逐行复用单条 `invite()`；权限**先规范化再邀请**
+>   （否则非法权限会留下「已入店但权限没配上」的成员）；返回 `rowNo → 逐条结果`。
+> - 前端 `Staff.tsx` 内置最小 CSV 解析（BOM / 引号 / CRLF），失败原因按原表行号列出。
+>
+> **③ 批量扩展**
+> - 秒杀批量上下架 `POST /api/admin/seckill/activities/batch-status`（≤100，逐条结果）。
+> - 员工批量启用 / 停用 `POST /api/seller/staff/batch-enable` / `batch-disable`
+>   —— 刻意拆两个端点：审计动作名分别是 `ENABLE_STAFF` / `DISABLE_STAFF`，合并会记错。
+> - 入驻批量通过 / 驳回 `POST /api/admin/merchants/batch-approve` / `batch-reject`（≤100）；
+>   批量通过会对 `SUBMITTED` 自动先 `startReview` 再 `approve`，已在审核中 / 已通过沿用幂等语义。
+> - 前端：运营秒杀页、入驻审核页、商家员工页接入 `useBatchSelection` / `BatchBar` / `BatchResultModal`。
+>
+> **④ 验证**
+> - `mvn package`（common-web / user / trade / fulfilment）**BUILD SUCCESS**；
+>   三端 `tsc --noEmit` + `vite build` 全绿。
+> - 9 个导出端点实测 200 + `text/csv; charset=UTF-8` + BOM + 表头正确；
+>   运营订单导出 2152 行，金额两位小数、时间为北京时间。
+> - 5 个批量端点实测逐条结果：不存在目标 → 200 + `failedCount`；空驳回原因 → 400；
+>   非运营账号调运营导出 → 403。
+> - 镜像重建 user / trade / fulfilment + 三套 web。
+> - 矩阵与接口清单同步：[导入导出模块矩阵](manuals/import-export-module-matrix.md)。
+
+> **上一轮（2026-10-27 · 冲刺第一批：多多币第三轮 + 未读橙点补齐 + 全量回归）**：
+>
+> **① 多多币第三轮（站内任务 + 节日活动）**
+> - 迁移 `70-duoduo-coins-tasks.sql`：`t_coin_task_def / t_coin_task_progress / t_coin_task_event /
+>   t_coin_campaign / t_coin_campaign_user`，种子 9 个任务（浏览商品、逛分享、收藏、加购、发布、评价、完善资料、首单、首评）。
+> - 用户域新增 `CoinTaskService` / `CoinCampaignService`：任务进度按「一人一任务一业务日」唯一键 + 事件去重；
+>   达成时条件更新 `rewarded=0→1` 并发只发一次；奖励走 `COIN_TASK` 流水（幂等）。
+> - 活动倍率：签到 / 购物返币倍率、总预算与每人上限；预算用条件 UPDATE 原子扣减，不足退回基础值。
+> - 端点：`GET /api/coins/tasks`、`POST /api/coins/tasks/report`（浏览类，停留阈值 15/10 秒）、
+>   `GET /api/coins/campaign/active`、内部 `POST /api/coins/internal/task-event`；
+>   后台任务定义 / 活动 CRUD + 启停（`@Audited`）。
+> - 前端：买家「我的多多币」新增活动横幅 + 任务中心（每日/新人，进度条、已发放状态）；
+>   运营后台「多多币」新增任务定义表与节日活动创建/启停；小程序新增 `pages/coins`（余额/签到/任务/活动）。
+> - 事件接入（全部打通）：浏览（商品详情 15s / 分享详情 10s，前端上报）、加购、收藏、首单、
+>   发布晒单（履约域 ShareService）、评价过审（机审通过 + 人工通过）、完善资料（昵称+头像）。
+>   全部 best-effort，任务系统失败不影响主业务；事件幂等由唯一键兜底。
+> - 实测：任务上报 1/2/3 进度与自动发奖；活动签到倍率 2x（新用户签到 10 币）；加购/收藏各 +5 币并标记已发放；
+>   运营后台任务 9 行、活动预算/倍率展示；购买者余额字段为 JSON 数字。
+>   回归：`coins-smoke.ps1` **65/0**（首单任务 +50 已计入期望）、`coins-signin-smoke.ps1` **17/0**。
+>
+> **② 未读橙点补齐**
+> - 售后列表 `AfterSaleView` 新增 `read`；买家/卖家按 `t_after_sale_read`、运营按 `t_admin_queue_read` 当前页一次取回，
+>   未读优先排序；商家端与运营端售后页新增橙色圆点 + 点行预览 = 已读（橙点消失、角标同步）。
+> - 运营评价 / 举报列表同样新增 `read` + 橙点 + 未读优先；评价/举报详情打开即已读不变。
+>
+> **③ 全量回归与数据清理**
+> - `run-all-smoke.ps1` 全量 **39 套**：38 套通过；唯一失败为 `audit-log-smoke` 的 S4 口径
+>   （已读回执被误计入写端点覆盖）。修正为「排除 `/read` 回执 + 匹配无路径注解」后复跑 **58/0**，全量实际 **39/39**。
+> - I-03 夹具店铺清理：备份 `D:\duoduo-backup\fixture-shops\20261027\duoduo_user_merchant_backup.sql`；
+>   272 家夹具店铺 `SUSPENDED`、278 名成员 `DISABLED`、272 个店主降为 `USER`；
+>   固定测试店（13600003333）与运营账号保持不变。因仍有 235 笔订单 / 23 笔售后引用，本轮采用**停业+降权**，
+>   不做物理删除（避免历史订单失去店铺主体）。
+
+> **上一轮（2026-10-27 · 第一百二十七轮）**：**二级 Tab 角标 + 通知中心批量操作**
+>
+> 用户反馈「各业务页的二级 Tab 没有角标、通知中心不能批量处理」。本轮按四端统一口径补齐：
+>
+> **① 后端新增三个「状态分桶计数」端点**（各自域内 GROUP BY，不跨库、不 N+1）：
+> - `GET /api/orders/status-counts`（trade，买家订单各状态）→ `ORDER countByBuyerAndStatus`
+> - `GET /api/aftersales/status-counts?side=buyer|seller`（fulfilment，可与 `mine`/`seller` 同源对账）
+> - `GET /api/seller/products/audit-counts`（product，与列表同 `requireSellerScope` + `deleted_at IS NULL`）
+>
+> **★ 关键坑（新增 `com.duoduo.common.api.StatusCount`）**：不能用 `Map<String,Long>` 下发计数 ——
+> `LongToStringJacksonModule` 只对**字段名**命中白名单的字段放行数字，Map 的 value 走
+> 全局 `Long.class` 序列化器，会被当成雪花 ID 输出成字符串 `"2"`（前端 `+` 变拼接、
+> `===` 恒 false）。改用 record（字段名 `count` 命中白名单）后为数字。**加字段请保持 `count` 这个名字。**
+>
+> **② 通知中心四个增强**（duoduo-social）：列表支持 `read=UNREAD|READ` 与 `keyword`（标题/正文）；
+> 新增 `POST /api/socials/notices/batch`（`READ` / `DELETE`，`all=true` 走全部）；
+> 新增删除集合表 `t_social_notice_deleted`（`incremental/65`，与已读集合同构，
+> **公告共享行不能被物理删除**）；**修既有缺陷**：`readAll` 原先只取最近 50 条，
+> 通知超过 50 条时「全部已读」清不干净角标 → 改为一次查出全部未读 id 批量写集合。
+>
+> **③ 前端**：新增共用件 `shared/components/badge.tsx`（`Badge` / `TabWithBadge` / `toCountMap`，
+> 0 不渲染、`>99` 显示 `99+`）；挂到 买家订单 7 个页签、买家售后 8 个、商家订单 7 个、
+> 商家售后 8 个、商家商品审核 4 个（admin 沿用既有 H-04 导航角标）；
+> 顶栏新增**铃铛未读弹窗**（`BellPopover`，最新 5 条 + 查看更多，点外部/Esc 关闭）；
+> 通知中心重写：未读/已读筛选 + 防抖搜索 + 复选框全选（本页）+ 批量已读/删除 + 全部删除（带确认）。
+> 所有写操作后列表与角标**同刻刷新**（不靠轮询兜底）。
+>
+> **④ 小程序**：通知页分类 chip 加未读角标（`/unread-by-category` 服务端分桶）+ 列表接口透传 `read`/`keyword`。
+>
+> **验收**：11 模块 `mvn package` BUILD SUCCESS；三端 `tsc --noEmit` + `vite build` 全绿；
+> 镜像重建（trade/fulfilment/product/social + 三套 web）；`t_social_notice_deleted` 已在现有库建表。
+
+> **同轮追加（2026-10-27 · 角标「阅后即消」重构）**：用户反馈"看完角标常驻、发货还加 1"。根因是把
+> **存量事实**与**未读提醒**混成一个数：Tab 直接拿 `COUNT(*) WHERE status=X` 当角标，业务状态不会因为
+> "我看过"而变，于是终态永远挂着；发货这种用户自己触发的迁移也被计入，自己操作反而加未读。修法：
+>
+> - **新增三张已读集合表**（与通知已读同构，复合主键 + `INSERT IGNORE` 幂等）：`t_order_read` /
+>   `t_after_sale_read` / `t_spu_read`（`incremental/66~68`）。只影响角标，不改变任何业务状态。
+> - **计数端点在 SQL 里按"可消状态"排除已读**：买家订单 `CLOSED/REFUNDED`；卖家订单
+>   `SHIPPED/COMPLETED/CLOSED/REFUNDED`；售后 `REFUNDED/CLOSED`（卖家另加 `SELLER_REJECTED`）；
+>   商品 `APPROVED`。**持续提醒类不受影响**（待支付/待发货/待收货/待审核/已驳回）。
+> - **新增三个上报端点**：`POST /api/orders/{no}/read`、`POST /api/aftersales/{id}/read?side=`、
+>   `POST /api/seller/products/{spuId}/read`，均返回**最新分桶**供前端覆盖乐观值。
+> - **发货即已读**：`SellerService#ship` 成功后写一条店铺维度已读 → 「已发货」分桶里该单诞生即已读，
+>   **自己发货不会给「已发货」+1**（已实测：待发货 1→0、已发货保持）。
+> - **前端规则集中**：新增 `shared/lib/badge-rules.ts`（`shouldDismissOnRead` / `shouldDismissAfterSale` /
+>   `applyOptimisticDismiss`），页面里不再写 `if (status === ...)`。
+>   交互：点击即**乐观减一** → 请求成功用服务端分桶覆盖 → **失败回滚**（不本地硬减，杜绝刷新复活）。
+> - **商家父级菜单改为子级聚合**：订单管理 = 子级「待发货」，商品管理 = 子级「待审核 + 已驳回」，
+>   数据源统一到角标端点（用 summary 存量会让父级永远大于子级）。
+> - **买家端入口**：头像菜单移除「通知中心」（铃铛成为唯一入口，路由 `/notifications` 保留给"查看更多"）；
+>   「多多币」提权到顶栏导航。
+> - **小程序**：`utils/unread.js` 清角标已用 `wx.removeTabBarBadge`（非空串），onShow 同步链路不变。
+>
+> **实测**：卖家 `GET /api/seller/orders/status-counts` → `[{CLOSED:1},{SHIPPED:2}]`；
+> 逐条上报后 → `[{SHIPPED:1}]`（已关闭那 1 条消掉、已发货 2→1），刷新不复活。
+
+> **同轮追加 2（2026-10-27 · 父级聚合修正 + 运营端点击即消）**：
+>
+> - **商家父级角标改为「该模块全部子级分桶之和」**：订单 = 待付款/待发货/已发货/已完成/已退款/已关闭；
+>   商品 = 待审核/已通过/已驳回；售后 = 全部状态。上一版父级只聚合「可办事项」（待发货、待审核+已驳回），
+>   点开一张「已发货」卡片时父级不动，与「对应 Tab 和父级菜单必须同步递减」不一致。
+> - 新增 `shared/lib/badge-events.ts`（`notifyBadgeChanged` / `onBadgeChanged`）：页面上报成功后广播，
+>   `MerchantRoot#useNavBadges` 与 `AdminTabs#useAdminBadges` 立即静默重取 —— 父级不再等 30s 轮询。
+> - **运营端新增已读集合** `t_admin_queue_read(user_id, source, biz_id)`（`incremental/69`，复合主键 + `INSERT IGNORE`）：
+>   评价 / 举报 / 售后仲裁按 `source=REVIEW|REPORT|AFTER_SALE` 记录本人已查看。
+>   新增 `GET /api/admin/{reviews|share-reports|aftersales}/unread-count`（`PENDING` 排除本人已读）
+>   与 `POST .../{id}/read`（幂等，返回最新未读数）。前端在「评价·查看」「举报·处理」「售后·仲裁」
+>   弹窗打开时上报；上报失败不本地减，等下一轮服务端值回填。
+> - **内容审核 / 商品审核刻意不做「看过即消」**：它们没有二级详情页（审核材料在列表卡片里全量展开），
+>   审核动作本身会让条目离开 `PENDING`。若也按看过即消，未审内容会从角标消失却仍留在队列里，
+>   把「待办提醒」降级成「已读回执」，更容易漏审。
+> - **实测**：运营 `aftersales/unread-count` = `[{PENDING:1}]` → `POST /{id}/read` → `[]`，
+>   `t_admin_queue_read` 落一行；卖家浏览器：商品「已通过」子级与父级同为 25，点第 2 件「编辑」后服务端变 24；
+>   订单点「查看详情」后「已发货」分桶 1→0（父级同步）。
+> - **验收**：`order-smoke.ps1` 79/0、`aftersale-smoke.ps1` 101/0、`r55-notice-smoke.py` 41/0/1skip；
+>   三端 `tsc --noEmit` + `vite build` 全绿；fulfilment 镜像重建。本机 Mockito mock-maker 初始化失败
+>   （环境问题）导致单测未能整跑，测试构造器已同步新参数；`AuditActionTest` 数量断言补
+>   `COIN_ADMIN_ADJUST`（55→56，这是上一轮 R-P1 漏更新的分母）。
+
+> **同轮追加 3（2026-10-27 · 橙色未读印记 + 预览即已读）**：
+>
+> - **头像角标彻底移除**：买家端顶栏只保留铃铛一个消息入口（头像不再挂 `badge-dot`）。
+>   头像角标点不进任何页面，属于「只能看不能消」的假提示；两处同源会让用户以为有两个未读来源。
+> - **后端列表透出逐条 `read`**：`GET /api/seller/products` 与 `GET /api/seller/orders`（买家侧同样）
+>   在装配视图时按**当前读者**查一页的已读 id（`t_spu_read` / `t_order_read`，`IN (...)` 索引查询），
+>   给每条记录返回 `read: boolean`。只查当前页，成本与页大小相关，不随历史已读累积。
+> - **通用未读印记**：`shared/components/badge.tsx` 新增 `UnreadDot`，样式 `.unread-dot`（橙色圆点）
+>   与 `.unread-card`（卡片左侧橙色描边，与消息中心「未读」同色系）。
+> - **预览卡片 = 已读（原子操作）**：商家「商品管理」表格行、订单卡片点击后弹轻量预览
+>   （商品：主图/价格/SKU/库存/审核态；订单：状态/明细/收货/物流），**打开预览的同一次点击**
+>   调用 `POST .../read`，橙点立即消失；成功用服务端分桶覆盖角标（失败撤橙点并回读）。
+>   「编辑 / 发货 / 退款 / 查看完整详情」等动作仍在预览或操作区进入，行内按钮/复选框
+>   `stopPropagation`，不会误触预览。
+> - **角标口径不变**：橙点对所有状态都消失（看过了）；数字角标只有「阅后即消」类
+>   （商品=已通过；订单=已发货/已完成/已退款/已关闭）才减 —— 待审核/待驳回/待付款/待发货
+>   是还没落定的事，读过也必须继续提醒。
+> - **实测（浏览器）**：商家订单页 1 张未读卡片（橙点+描边）、页签与父级角标均 1 → 点卡片弹「订单预览」
+>   → 关闭后橙点/描边消失、页签与父级角标同时消失；商品「已通过」23 → 点第二行弹「商品预览」
+>   → 关闭后变 22，橙点消失，父级「商品管理」同步 23→22。买家端：铃铛有角标、**头像无角标**、
+>   头像菜单无「通知中心」、导航有「多多币」、铃铛弹窗可用。
+> - **推广口径**：`客服信息`/`售后处理` 复用同一 `UnreadDot` + 预览弹窗；
+>   评价/举报/售后三类后台队列的已读集合已存在（`t_admin_queue_read`），下一步只需在列表 DTO
+>   透出 `read` 并加橙点。结算对账 / 店员管理 / 秒杀活动属配置页，没有「新数据待看」语义，
+>   **不硬造未读态**（否则会出现永远点不完的橙点）。
+
+> **同轮追加 4（2026-10-27 · 未读优先排序 + 预览信息补全）**：
+>
+> - **未读优先排序（后端 SQL，不是前端排当前页）**：
+>   - 商品列表：`ORDER BY (EXISTS(t_spu_read)) ASC, updated_at DESC, id DESC`
+>     （回收站不参与，仍按删除时间）；
+>   - 卖家订单：`ORDER BY (EXISTS(t_order_read)) ASC, created_at DESC, id DESC`。
+>   子查询作为排序列，**每一页都遵守未读在前**；否则未读项散落到第 2/3 页，
+>   用户看第一页全是已读会以为「没有新东西」。
+> - **前端即时归位**：列表再做一次排序（未读在前；订单组内按下单时间倒序），
+>   让刚点开预览的那一条立刻回到已读组的时间位置，不必等刷新。
+> - **商品预览延迟加载全量详情**：列表 DTO 保持轻量，点开预览时才调
+>   `GET /api/seller/products/{id}`。预览新增：副标题、类目名 / 品牌名（详情 DTO 新增
+>   `categoryName` / `brandName`，仅详情路径做两次字典批量查询）、全部图片、
+>   SKU 明细表（规格 / 价格 / 库存 / 状态）、商品介绍、规格参数、包装清单、富文本详情（折叠）。
+> - **订单预览补全**：金额明细（商品总额 / 运费 / 优惠 / 券 / 多多币抵扣 / 实付）、
+>   买家备注、物流、状态时间线（下单 / 支付 / 发货 / 完成 / 退款 / 关闭）。
+> - **实测（浏览器）**：订单列表未读「已关闭」排第一 → 点开预览（含金额明细与时间线）→
+>   关闭后橙点消失并回到两张「已发货」之后；商品「已通过」第一行带橙点 → 预览含
+>   基本信息 / 规格与库存表 / 图片 / 介绍 / 参数 / 富文本 → 关闭后橙点消失并移到底部已读组。
+> - **接口实测**：`GET /api/seller/orders` 未读 CLOSED 排首位、已读组按时间倒序；
+>   `GET /api/seller/products/{id}` 返回 `categoryName=猫主粮`、`brandName=麦富迪`。
+
+> **同轮追加 5（2026-10-27 · 批量操作即已读）**：
+>
+> - **规则**：批量操作成功 = 这批数据已看过。**只认成功条目** —— 逐条结果里 `success=false`
+>   的不写已读、不清橙点（没处理成的事情仍在等人）。
+> - **服务端权威**：`SellerProductService#changeStatusBatch` 在每条成功后写
+>   `t_spu_read`（与单条预览同一份已读集合），并在响应中返回最新 `auditCounts`。
+>   `SellerProductBatchResultView` 新增 `List<StatusCount> auditCounts`。
+> - **前端闭环**（商品管理）：成功 → 成功条目加入本地已读覆盖（橙点消失）→
+>   `auditCounts` 覆盖本地角标（旧后端缺失时用 `applyBatchDismissLocally` 按成功条目状态兜底，
+>   只扣「可消」状态且不出现负数）→ 勾选清空（批量栏收起、全选取消）→ 刷新列表 + 广播父级角标事件。
+> - **通用件**：`shared/lib/badge-rules.ts` 新增 `applyBatchDismissLocally`，
+>   其他模块新增批量按钮时直接复用，不在页面里写「总数减勾选数」的算术。
+> - **模块排查结论**：当前真正带批量管理动作的只有「商品管理 · 批量上下架」；
+>   通知中心批量已读/删除本来就是服务端逐条写已读。订单管理 / 售后 / 客服 / 运营后台
+>   目前**没有**批量按钮（也就不存在需要联动的批量动作）—— 将来新增时按同一契约：
+>   接口逐条返回成败 + 成功即写已读 + 返回最新分桶。
+> - **验收**：接口批量 3 件成功，`auditCounts` 15→12；浏览器勾选 2 件批量上架后
+>   橙点消失、勾选清空、批量栏收起，「已通过」12→10、父级「商品管理」同步 12→10。
+
+> **同轮追加 6（2026-10-27 · 批量操作全覆盖：订单 / 售后 / 运营后台）**：
+>
+> 追加 5 只落了商品管理；本轮按同一契约把其余"有逐条动作"的模块全部补上批量入口。
+>
+> - **公共契约**：新增 `com.duoduo.common.api.BatchDtos`（`Item(id,success,errorCode,message)` +
+>   `Result(total,successCount,failedCount,items,counts)`）。HTTP 200 = 处理完成，逐条成败看
+>   `items[].success`；部分失败不回滚。`id` 一律字符串（雪花 id 不能转 number）。
+> - **交易域**：
+>   - `POST /api/seller/orders/batch-ship`：逐条走单条 `ship` 的状态机与归属校验，
+>     准入/成员身份只解析一次（避免 100 单打 100 次 Feign）；成功条目写店铺已读，返回最新订单分桶。
+>   - `POST /api/admin/orders/batch-force-close`：逐条经代理调用 `forceClose`（每条独立事务），
+>     只关待付款，混入已付款/已发货逐条失败。
+> - **履约域**：
+>   - `POST /api/aftersales/seller/batch-reply`：逐条 `reply`，成功即写卖家已读，返回卖家分桶。
+>   - `POST /api/admin/aftersales/batch-arbitrate`：逐条 `arbitrate`（支持退款会逐单真的退款），
+>     成功写运营已读，返回未读分桶。
+>   - `POST /api/admin/reviews/batch-audit`：逐条经代理调用 `audit`（各自独立事务，
+>     `ProductRatingSyncer` 提交后事件不被整批拖住），成功写运营已读。
+>   - `POST /api/admin/share-reports/batch-handle`：逐条 `handle`（ACCEPT 逐条下架内容），
+>     已处理过的逐条 409 失败。
+> - **商品域**：
+>   - `POST /api/admin/products/batch-audit`：请求逐件带 `{spuId, version}`（乐观锁）；
+>     卖家期间改内容的那件冲突失败，其余继续。
+>   - `POST /api/admin/listings/batch-audit`：逐条走闲置审核（驳回原因必填）。
+> - **前端通用件**：新增 `shared/components/batch.tsx` —— `useBatchSelection`（只选当前页，
+>   切筛选/搜索/翻页自动清空）、`BatchBar`（吸顶批量栏 + 取消选择）、`BatchResultModal`
+>   （成功/失败汇总 + 逐条失败原因）。
+> - **页面接入（8 处）**：商家 卖出订单（批量发货）/ 售后（批量同意/拒绝）；
+>   运营 订单干预（批量强关）/ 售后仲裁（批量裁定）/ 评价（批量通过/下架）/
+>   举报（批量成立/驳回）/ 商品审核（批量通过/驳回）/ 内容审核（批量通过/驳回）。
+>   每页闭环统一：成功条目清橙点（有橙点的页面）→ 用返回分桶覆盖角标（缺失才回读）→
+>   清空选择（批量栏收起、全选取消）→ 刷新列表 + `notifyBadgeChanged()`。
+> - **实测**：8 个批量接口均 200 且返回统一结构（成功/失败路径各覆盖）；
+>   批量发货成功 1 笔：`PAID` 233→232、`SHIPPED` 保持 16（成功条目服务端已读，自己发货不新增未读）。
+>   浏览器逐页验证：勾选 → 批量栏出现 → 取消后消失，8 页全 PASS（空列表页在「全部/已通过」页签复验）。
+> - **边界**：客服会话、结算、秒杀、店员等页面没有"逐条可批量"的动作，本轮不凭空新增业务功能。
+> - **契约收口**：OpenAPI 重导 7 个服务 **404 个端点**（user 95 / product 98 / trade 84 / fulfilment 65 /
+>   marketing 11 / ai 2 / social 49），8 个批量端点全部入清单；交接文档 09 新增 H-05 并标记完成。
+
+
+> **最新一轮（2026-10-26/27 · 第一百二十六轮）**：**B-04 重复收款自动退款 + 多多币 P1 第一轮（R-P1）**
+> 本轮为无人值守连续开发（夜里连续 4 小时+），按既定顺序完成两大项：
+>
+> **① B-04 重复收款自动退款**（交易域）：沙箱支付对「同一订单的重复成功回调」自动识别并原路退款，
+> 台账留痕、幂等可重试、订单详情可见退款记录；新增 `scripts/payment-auto-refund-smoke.ps1` **40/0**，
+> 回归 payment / settlement 冒烟全绿。
+>
+> **② 多多币 P1 第一轮（R-P1，按 PLAN §7 方案）**：单币种积分，**1 币 = 1 分**、与券叠加、
+> 单笔抵扣上限 = 券后金额 50%（向下取整）、12 个月有效、订单完成 T+7 返币（`coin-earn-delay-days:7`）、
+> 平台承担抵扣成本（结算单列 `coinSubsidyAmount` 补贴）。
+> - **用户域**：`t_coin_account / t_coin_lot / t_coin_ledger / t_coin_freeze / t_coin_freeze_lot` 五表
+>   （迁移 `docs/sql/incremental/62-duoduo-coins.sql`）；`CoinService` 账户/批次/流水三账联动，
+>   **不变式：余额 = Σ 未过期批次剩余**（adjust 加发建批次、release 退余额成对退批次、
+>   负调整上限 = 批次可扣量）；冻结 TTL 兜底任务（120 分钟 > 订单过期 30 分钟）。
+> - **交易域**：结算页 `POST /api/orders/preview` 返回币余额/本单抵扣；下单带 `useCoins` 开关
+>   （**只传开关不传币数**，服务端按余额贪心 + 50% 上限逐单分摊 `allocateCoins`，LinkedHashMap 保序）；
+>   失败语义三档（balanceOf 查询降级 0 / freeze·deduct·refundBack 动钱必须抛 / release best-effort + TTL 兜底）；
+>   支付成功 `deductConfirm`；取消/关单/超时 `release`；退款 `refundBack`（失败则整笔回滚可重试）；
+>   完成 T+7 扫单返币（0 币也落游标防重扫）。
+> - **前端**：买家「我的多多币」页（/coins，概览 + 30 天到期批次 + 流水分页）、结算页币开关与抵扣明细、
+>   运营后台「多多币」页（/admin/coins：负债汇总 6 卡 + 人工调整[原因必填 SECURITY 审计] + 全站流水过滤）；
+>   个人中心加快捷入口；顺手修掉 Me.tsx「我的商品」卡片重复渲染；三端 `tsc` + `vite build` 全绿。
+> - **P2 签到（同轮追加）**：`t_coin_signin`（`uk_coin_signin (user_id, sign_date)` 唯一索引 = 防刷最终闸门，
+>   迁移 `incremental/64-duoduo-coins-signin.sql`）；每日 5 币（12 个月批次），连签达 3/7 天**当天那笔**
+>   +10/+30，断签重置；连签判定只读昨天一行快照（O(1) 不回扫历史）；签到行+流水+批次同事务，
+>   不存在「签了到没拿到币」；买家端 `POST /api/coins/signin` + `GET /api/coins/signin/month`，
+>   「我的多多币」页加签到卡（签到按钮 + 当月月历 + 连签天数）；`coins-signin-smoke.ps1` **17/0**
+>   （首签/重复幂等/月历/连签加发/断签重置/账实一致/零残留；踩坑：MySQL 容器是 UTC，
+>   夹具日期必须按 Asia/Shanghai 在脚本侧算好字面量，不能用 CURDATE()）。
+> - **UI e2e（真实浏览器）**：`scripts/e2e/coins-ui-check.mjs` **17/0** —— Me 页入口 → /coins 页渲染
+>   （余额大字 / 概览 / 签到卡 / 7 列月历）→ 签到交互与幂等分支 → 流水区块 → 未登录登录墙 →
+>   运营后台 /admin/coins（负债汇总 / 人工调整表单 / 流水表格）→ console 零报错。
+>   **首跑抓到真 bug**：`GET /api/coins/ledger` 返回裸 List、前端按 `PageResult` 读 `items` → 整页白屏；
+>   已改为标准 `PageResult`（买家 + 后台两个端点，冒烟补「分页元数据齐全」断言，coins 升为 65/0，
+>   见 agent/08 T-71）。OpenAPI 契约同步重导（381 端点，user 78→95）。
+> - **验收**：user 模块 `CoinServiceTest` **27/0**（含签到 6 条 + 分页契约 1 条）、trade `CoinAllocationTest` **6/0**、
+>   新增 `scripts/coins-smoke.ps1` **65/0**（冻结幂等/取消释放/支付扣减/结算补贴单列/退款退币/
+>   T+7 返币[DB 夹具回拨 finished_at]/分页元数据/对账零问题/库存复原）；全量冒烟回归 38 套**全绿**
+>   （本轮顺手修复 4 处：AdminProductAuditController 回收站清空端点补 `@Audited`、
+>   privilege-matrix 应付公式补币抵扣项、upload-smoke URL 正则容忍 COS 图片处理参数、
+>   run-all-smoke 子 shell 判据被 `$env:CI` 劫持致**全量假绿**——见 agent/08 T-70）+ 11 模块 BUILD SUCCESS。
+> - **本轮踩坑（已写入 docs/agent/08）**：T-68 MyBatis 单实体参数占位符必须绑实体属性、T-69 Long 装箱比较必须 `.longValue()`、
+>   T-70 聚合脚本子 shell 判据被环境变量劫持致全量回归假绿、T-71 分页端点返回裸数组致前端整页白屏；
+>   另有两条部署铁律：`compose up -d` 不会用新镜像重建旧容器（必须 `--force-recreate`）、
+>   网关 yml 改动后必须重新 package 再 rebuild（镜像忠实打包 target/ 旧 jar）。
+
+> **最新一轮（2026-10-26 · 第一百二十五轮）**：**商家端 IP 白名单（E-06）—— 店铺维度、默认关、防锁死**
+> 背景：F-05 遗留项里「IP 白名单未启用」的判断是「部署层做不到」；实际网关已经能取到可信对端地址
+> （{@code X-Real-IP} 由网关剥离伪造值后写入），缺的是**店铺维度的名单**与执行点。
+> ① **数据**：`t_merchant` 增 `ip_whitelist_enabled` / `ip_whitelist`（迁移 `docs/sql/incremental/61-merchant-ip-whitelist.sql`）；
+> 规则语法与平台后台白名单一致：精确 IP / IPv4 CIDR / 前缀通配，解析统一走
+> `com.duoduo.common.security.ip.IpRules`（网关执行与用户域保存自检共用一份，避免「自检说没锁死、实际进不去」）。
+> ② **执行点在网关**：`/api/seller/**` 且令牌带 `tid` 时读 Redis 副本 `duoduo:merchant:ipwl:{merchantId}`；
+> 键不存在 = 未启用 → 放行；键存在但为空 = 失败关闭；Redis 读超时 150ms 或异常 → 放行（可用性故障不该扩散成全店进不去）。
+> 拒绝码独立 `MERCHANT_IP_DENIED`（403），与后台 `ADMIN_IP_DENIED` 分开 —— 处置路径完全不同。
+> ③ **三条防锁死**：店主页展示服务端当前 IP 并支持一键加入；新名单不含当前 IP 且未 `confirmLockout=true` → 422
+> 并直接写出「保存后你将无法进入商家端」；运营可 `POST /api/admin/merchants/{id}/ip-whitelist/clear` 远程清除（留痕）。
+> ④ **为什么启用时不允许空名单**：网关对空名单是失败关闭，一次漏填就等于把整间店挡在门外，且页面还写着「已启用」。
+> ⑤ **副本自愈**：保存时写 Redis；服务启动时按库内权威值全量重发（Redis 被清空后不至于静默退回「不限制」）。
+> ⑥ **踩坑**：增量 `mvn package` 会把**旧的 `duoduo-common` 嵌套 jar** 打进 fat jar（新枚举常量缺失 → 启动即
+> `No enum constant`）；改动 common 后必须 `install` + 对依赖方 `clean package`。已写入 `docs/agent/08`。
+> ⑦ **验收**：common `IpRulesTest` 6 条、gateway 判定单测 5 条、user `MerchantIpWhitelistServiceTest` 7 条全绿
+> （user 模块 182/0）；新增 `scripts/merchant-ip-whitelist-smoke.ps1` **40/0**（含网关拦截、同级买家路径不受影响、
+> 配置页自身被拦、运营救援、审计 tenant 归属、收尾复原）；商家端账号安全页新增面板，三端 `tsc` 全绿。
+> ⑧ **小程序手机号登录补 2FA**：`/api/auth/login/token` 早就支持 `totpCode` / `recoveryCode`，
+> 缺的是小程序侧处理 —— 登录页识别 `TOTP_REQUIRED` 切到「验证码 / 恢复码」第二步（不再重复要密码），
+> `TOTP_INVALID` 留在第二步并说明是验证码问题；`api.phoneLogin` / `app.loginByPhone` 透传第二步参数。
+> 后端契约由既有 `admin-2fa-smoke.ps1` **56/0** 覆盖（含 `/login/token` 的 401 与错码分支），真机交互归 G-03。
+> ⑨ **压测基线（I-09）**：新增零依赖压测 `scripts/perf/perf-baseline.mjs`（本机无 JMeter/k6），
+> 定合格线：读 P95≤300ms / P99≤800ms、写前链路 P95≤800ms / P99≤2000ms、错误率≤0.5%、**5xx 必须为 0**；
+> 实测 20 并发 × 15s 四场景 **全部达标**（列表 73/84ms、详情 85/93ms、我的订单 16/20ms、结算预览 19/23ms，0 错误）。
+> 报告 `docs/perf/E-08-perf-baseline.md`，含一个关键坑：**登录态带租户会让商品详情 404**，压测必须区分带不带 Cookie。
+
+> **上轮（2026-10-26 · 第一百二十四轮）**：**折扣券（E-05）—— 两种券并存，一单一券不叠加**
+> 背景：此前只有满减券，运营无法发「8.5 折」这类按比例减的券；券类型白名单刻意只放 FULL_REDUCE。
+> 本轮按你的口径放开为两种：`FULL_REDUCE`（满减）+ `DISCOUNT`（折扣，按比例减、可封顶）。
+> ① **数据**：`t_coupon_template` 增 `discount_percent`（折后应付百分比，85 = 8.5 折）与
+> `max_discount_amount`（封顶，0 = 不封顶）；迁移 `docs/sql/incremental/60-discount-coupon.sql`，初始化 DDL 同步。
+> ② **口径**：抵扣统一由 `CouponService#calculateDiscount` 一条链路算（锁券 / 试算 / 结算页共用）——
+> 满减 `min(固定额, 订单金额)`；折扣 `floor(订单金额 × (100 − 比例) / 100)` 再按封顶裁剪，**一律向下取整**；
+> 算得 0 分时明确拒绝（「本单金额太小，折扣后没有实际优惠」），不做「用了等于没用」的券。
+> ③ **一单一券**：下单只认单个 `couponCode`，多券字段不识别、不叠加；结算页「本单可抵」与最优券排序
+> 全部改为按**本单实际抵扣额**（原先回模板固定额，会出现「页面抵 5 元、实际减 1 元」）。
+> ④ **建券边界**：折扣券必须给比例（1~99）且 `discountAmount` 必须为 0；满减券反之；混填 400，
+> 未知类型 422 并列出当前支持的两种。
+> ⑤ **前端**：领券中心 / 券包面额显示「8.5 折（最高减 ¥20）」，结算页补折率文案；三端 `tsc` 全绿。
+> ⑥ **验收**：marketing 单测 **26/0**（新增 8 条折扣计算）、新增 `scripts/discount-coupon-smoke.ps1` **64/0**、
+> 回归 `coupon-smoke.ps1` **145/0**；容器 17 个 healthy。
+
+> **上轮（2026-10-26 · 第一百二十三轮）**：**生产上线检查清单（I-01 准备）—— 把「上线要什么」写成可执行步骤**
 > 现状：仍是本地 Docker；上线需要的云主机、域名、HTTPS、支付凭据与备份目标都要你提供。
 > ① **新增** `docs/manuals/production-launch-checklist.md`：主机初始化、必改默认值（INTERNAL_TOKEN / JWT / DB / Nacos）、
 > ES 必须显式启用、三域名与 HTTPS、Nginx 反代、上线前自动化与真机验收、回滚与上线后 72 小时巡检。

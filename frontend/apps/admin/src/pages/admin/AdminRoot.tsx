@@ -33,6 +33,8 @@ import { AdminOperatorsPage } from './Operators';
 import { AdminSeckillPage } from './Seckill';
 import { AdminAccountSecurityPage } from './AccountSecurity';
 import { AdminOrdersPage } from './Orders';
+import { AdminExportJobsPage } from './ExportJobs';
+import { AdminCoinsPage } from './AdminCoins';
 import { AdminAfterSalesPage } from './AfterSales';
 import { AdminReviewsPage } from './Reviews';
 import { AdminShareReportsPage } from './ShareReports';
@@ -117,6 +119,10 @@ export const AdminRoot: React.FC = () => (
       <Route path="/admin/categories" element={<AdminCategoriesPage />} />
       <Route path="/admin/brands" element={<AdminBrandsPage />} />
       <Route path="/admin/orders" element={<AdminOrdersPage />} />
+      {/* 矩阵第 9 项 · 异步导出任务：超过 5 万行的订单导出落在这里轮询与下载 */}
+      <Route path="/admin/export-jobs" element={<AdminExportJobsPage />} />
+      {/* R-P1 · 多多币：资金类工单页 —— 汇总（负债视角）+ 人工调整（SECURITY 审计）+ 全站流水 */}
+      <Route path="/admin/coins" element={<AdminCoinsPage />} />
       <Route path="/admin/after-sales" element={<AdminAfterSalesPage />} />
       <Route path="/admin/reviews" element={<AdminReviewsPage />} />
       <Route path="/admin/share-reports" element={<AdminShareReportsPage />} />

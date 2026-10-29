@@ -1,13 +1,18 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.trade.dto.TenantHealthDtos.TenantHealthPanel;
+import com.duoduo.trade.dto.TenantHealthDtos.TenantHealthRow;
 import com.duoduo.trade.service.TenantHealthService;
+import com.duoduo.trade.support.TenantHealthJudgement;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,6 +53,52 @@ public class AdminTenantHealthController {
             @RequestParam(required = false) Integer days,
             @RequestParam(required = false) Integer limit) {
         return ApiResponse.ok(tenantHealthService.panel(days, limit));
+    }
+
+    /** 租户健康导出列（四维：交易 / 售后 / 结算异常 / 接口错误率） */
+    private static final List<String> EXPORT_HEADERS = List.of(
+            "租户ID", "店铺", "档位", "下单数", "成交单数", "成交额(元)", "售后立案数",
+            "已退款", "未结案", "卖家败诉", "售后率", "未收回欠款笔数", "未收回金额(元)",
+            "超期托管笔数", "超期托管金额(元)", "缺托管单数", "结算异常合计",
+            "接口调用数", "5xx", "4xx", "接口错误率");
+
+    /**
+     * 导出当前窗口的租户健康 CSV（2026-10-28 · 矩阵 P3）。
+     *
+     * <p>与面板同一次聚合（最多 {@link TenantHealthJudgement#MAX_LIMIT} 家），
+     * 比例字段原样导出；无样本时为空白，不写成 0。
+     */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) Integer days,
+                       HttpServletResponse response) throws java.io.IOException {
+        TenantHealthPanel panel = tenantHealthService.panel(days, TenantHealthJudgement.MAX_LIMIT);
+        List<List<String>> rows = panel.tenants().stream().map(AdminTenantHealthController::row).toList();
+        CsvExport.write(response, "租户健康-" + panel.days() + "天-" + CsvExport.stamp(), EXPORT_HEADERS, rows);
+    }
+
+    private static List<String> row(TenantHealthRow row) {
+        return List.of(
+                String.valueOf(row.tenantId()),
+                row.tenantName() == null ? "" : row.tenantName(),
+                row.level(),
+                String.valueOf(row.orderCount()),
+                String.valueOf(row.paidCount()),
+                CsvExport.yuan(row.gmv()),
+                String.valueOf(row.afterSaleCount()),
+                String.valueOf(row.afterSaleRefundedCount()),
+                String.valueOf(row.afterSaleOpenCount()),
+                String.valueOf(row.afterSaleAdverseCount()),
+                row.afterSaleRate() == null ? "" : row.afterSaleRate(),
+                String.valueOf(row.debtOutstandingCount()),
+                CsvExport.yuan(row.debtOutstandingAmount()),
+                String.valueOf(row.staleCustodyCount()),
+                CsvExport.yuan(row.staleCustodyAmount()),
+                String.valueOf(row.missingSettlementCount()),
+                String.valueOf(row.settlementAbnormalCount()),
+                String.valueOf(row.apiTotal()),
+                String.valueOf(row.apiServerError()),
+                String.valueOf(row.apiClientError()),
+                row.apiErrorRate() == null ? "" : row.apiErrorRate());
     }
 
     /**

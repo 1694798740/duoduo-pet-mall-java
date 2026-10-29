@@ -51,6 +51,18 @@ public final class AdminDtos {
     }
 
     /**
+     * 运营批量强制关单请求（2026-10-27）。
+     *
+     * <p>逐条走与单条完全相同的状态机：仅待付款订单能关，其余逐条失败并带回原因。
+     * 原因对所有选中订单共用一份。
+     */
+    public record BatchForceCloseRequest(
+            List<String> orderNos,
+            @jakarta.validation.constraints.Size(max = 100, message = "关单原因过长") String reason
+    ) {
+    }
+
+    /**
      * 平台垫付请求（第五十八轮 · B-01）。
      *
      * <p>{@code reason} <b>必填</b>：这笔钱由平台出、且要记到卖家头上，

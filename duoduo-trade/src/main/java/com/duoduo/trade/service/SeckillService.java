@@ -1,6 +1,7 @@
 package com.duoduo.trade.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
@@ -550,6 +551,45 @@ public class SeckillService {
         List<SeckillSkuEntity> skus = seckillSkuMapper.selectList(
                 new LambdaQueryWrapper<SeckillSkuEntity>().eq(SeckillSkuEntity::getActivityId, activityId));
         return toView(activity, skus);
+    }
+
+    /**
+     * 批量上下架（2026-10-28）。
+     *
+     * <p>逐条调用 {@link #toggle}，与单条完全同一段状态写入 —— 单条失败（活动不存在）只影响该条，
+     * 已成功的活动保持目标状态，不回滚。活动行很小，每次 {@code toggle} 的 SKU 查询无法避免，
+     * 但批量上限 100 条，成本可控。
+     */
+    public BatchDtos.Result toggleBatch(List<Long> ids, boolean enabled) {
+        if (ids == null || ids.isEmpty()) {
+            throw BizException.validation("ids 不能为空");
+        }
+        java.util.LinkedHashSet<Long> distinct = new java.util.LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id == null) {
+                throw BizException.validation("ids 不能包含空值");
+            }
+            distinct.add(id);
+        }
+        if (distinct.size() > 100) {
+            throw BizException.validation("单次最多批量操作 100 场秒杀活动");
+        }
+        List<BatchDtos.Item> items = new ArrayList<>(distinct.size());
+        int success = 0;
+        for (Long id : distinct) {
+            try {
+                toggle(id, enabled);
+                success++;
+                items.add(new BatchDtos.Item(String.valueOf(id), true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(String.valueOf(id), false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("秒杀批量上下架单条失败 activityId={}", id, ex);
+                items.add(new BatchDtos.Item(String.valueOf(id), false, "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(distinct.size(), success, distinct.size() - success,
+                items, List.of());
     }
 
     /**

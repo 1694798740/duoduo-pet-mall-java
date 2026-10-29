@@ -25,6 +25,7 @@
 import React, { useCallback, useState } from 'react';
 import { adminApi, productApi } from '@duoduo/api-sdk/endpoints';
 import type {
+  BatchResultView,
   ProductCard,
   SeckillActivityCreateRequest,
   SeckillActivityEditRequest,
@@ -35,6 +36,7 @@ import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, priceRangeText, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
 import { SeckillRemainStat } from '@duoduo/shared/components/seckill';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
@@ -172,6 +174,10 @@ export const AdminSeckillPage: React.FC = () => {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  /** 批量上下架结果（2026-10-28 · 批量操作第一批） */
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+
   // ---- 选商品助手：关键词 → SPU → SKU（运营不可能手背 19 位 skuId） ----
   const [pickKeyword, setPickKeyword] = useState('');
   const [pickResults, setPickResults] = useState<ProductCard[]>([]);
@@ -209,10 +215,28 @@ export const AdminSeckillPage: React.FC = () => {
     [operator],
   );
 
+  // ---- 列表侧：搜索 + 分页（接口一次返回全量，故在本地切分） ----
+  // ★ 这些派生计算与下面的批量选择 hook 必须写在提前 return **之前**：
+  //   hooks 不能条件调用，否则 loading 从 true 变 false 时 hooks 数量变化，React 直接抛错。
+  const items = data ?? [];
+  const kw = keyword.toLowerCase();
+  const byKeyword = (i: SeckillActivityView) => !kw || i.title.toLowerCase().includes(kw);
+  const byPhase = (i: SeckillActivityView) =>
+    phaseFilter === 'ALL' ? true
+      : phaseFilter === 'OFF' ? !i.enabled
+        : i.phase === phaseFilter;
+  const filtered = items.filter((i) => byPhase(i) && byKeyword(i));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  // 批量只作用于当前页可见活动；切筛选 / 搜索 / 翻页自动清空
+  const selection = useBatchSelection(
+    visible.map((i) => String(i.id)),
+    `${phaseFilter}|${keyword}|${current}`,
+  );
+
   if (!operator) return <AdminDenied />;
   if (loading) return <LoadingBlock text="正在加载秒杀活动…" />;
-
-  const items = data ?? [];
 
   const openCreate = () => {
     setCreating(true);
@@ -417,6 +441,28 @@ export const AdminSeckillPage: React.FC = () => {
     }
   };
 
+  /**
+   * 批量上下架（2026-10-28 · 批量操作第一批）。
+   *
+   * <p>成功条目由服务端逐条写库；失败（活动已被删除）逐条列在结果弹窗里。
+   */
+  const submitBatchStatus = async (enabled: boolean) => {
+    if (!selection.count || batchBusy) return;
+    setBatchBusy(true);
+    setActionError(null);
+    try {
+      const result = await adminApi.batchSetSeckillStatus(selection.selected, enabled);
+      setBatchResult(result);
+      selection.clear();
+      reload();
+    } catch (err) {
+      // 页面级错误用 toast：actionError 只渲染在创建/编辑弹窗内部，批量失败时看不见
+      push(toFriendlyMessage(err), 'error');
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
   const openEdit = (item: SeckillActivityView) => {
     setEditing(item);
     setEditError(null);
@@ -477,17 +523,6 @@ export const AdminSeckillPage: React.FC = () => {
     }
   };
 
-  // ---- 列表侧：搜索 + 分页（接口一次返回全量，故在本地切分） ----
-  const kw = keyword.toLowerCase();
-  const byKeyword = (i: SeckillActivityView) => !kw || i.title.toLowerCase().includes(kw);
-  const byPhase = (i: SeckillActivityView) =>
-    phaseFilter === 'ALL' ? true
-      : phaseFilter === 'OFF' ? !i.enabled
-        : i.phase === phaseFilter;
-  const filtered = items.filter((i) => byPhase(i) && byKeyword(i));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const current = Math.min(page, pageCount);
-  const visible = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
   // 筛选条上的计数一律按**未筛选的全量**算：它回答的是「这一档一共有几场」。
   // 若跟着当前筛选变，点「已结束」后那个数字会自己缩水，看起来像数据错了。
   const countOf = (f: PhaseFilter) => items.filter((i) =>
@@ -538,6 +573,18 @@ export const AdminSeckillPage: React.FC = () => {
           width={260}
         />
         <span className="small muted">时间均为北京时间 · 含已下架活动</span>
+        <label className="checkbox-row small" style={{ marginLeft: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={selection.allSelected}
+            disabled={!visible.length}
+            onChange={selection.toggleAll}
+          />
+          全选当前页
+        </label>
+        <a className="btn btn-sm btn-ghost" href={adminApi.seckillExportUrl()}>
+          导出 CSV
+        </a>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -561,11 +608,37 @@ export const AdminSeckillPage: React.FC = () => {
           }
         />
       ) : (
+        <div>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={batchBusy}
+              onClick={() => void submitBatchStatus(true)}
+            >
+              批量上架
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={batchBusy}
+              onClick={() => void submitBatchStatus(false)}
+            >
+              批量下架
+            </button>
+          </BatchBar>
         <div className="card card-pad">
           <div className="table-wrap">
             <table className="table seckill-admin-table">
               <thead>
                 <tr>
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前页秒杀活动"
+                      checked={selection.allSelected}
+                      disabled={!visible.length}
+                      onChange={selection.toggleAll}
+                    />
+                  </th>
                   <th>活动</th>
                   <th>时间（北京时间）</th>
                   <th>阶段 / 开关</th>
@@ -587,6 +660,15 @@ export const AdminSeckillPage: React.FC = () => {
                   const endText = bjText(item.endAt);
                   return (
                     <tr key={item.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`选择活动 ${item.title}`}
+                          checked={selection.selectedSet.has(String(item.id))}
+                          disabled={batchBusy}
+                          onChange={() => selection.toggle(String(item.id))}
+                        />
+                      </td>
                       <td>
                         {/* 活动 ID 刻意不展示：19 位数字对运营没有任何决策价值，只会挤掉标题 */}
                         {/* 长标题省略号；完整标题在 title 里，悬停可见 */}
@@ -662,7 +744,10 @@ export const AdminSeckillPage: React.FC = () => {
           </div>
           <Pagination page={current} pageCount={pageCount} total={filtered.length} onChange={setPage} />
         </div>
+        </div>
       )}
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="活动" />
 
       <Modal
         open={creating}

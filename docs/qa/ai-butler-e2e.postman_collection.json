@@ -1,0 +1,809 @@
+{
+  "info": {
+    "name": "多多 AI 全能管家 · E2E",
+    "description": "覆盖：游客 3 轮拦截、登录续接、记忆两步确认、通知只消展示项、卡片准确性、DataFence 逃逸、外链拦截、跨用户越权。\n\n前置：\n1) 已执行 docs/sql/incremental/73、74 与 scripts/apply-73-ai-butler-ddl.ps1；\n2) 已按 docs/qa/ai-butler-e2e-matrix.md 注入通知夹具（买家 A 一条正常通知、买家 B 一条恶意标题通知）；\n3) 环境变量中的 otherOrderNo/otherUserId 指向买家 B；\n4) 每次运行都会生成新的游客 deviceId，避免复用已耗尽的配额。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('guestDevice')) {",
+          "  pm.collectionVariables.set('guestDevice', pm.variables.replaceIn('{{$randomUUID}}'));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "guestDevice", "value": "" },
+    { "key": "sessionId", "value": "" },
+    { "key": "buyerToken", "value": "" },
+    { "key": "otherToken", "value": "" },
+    { "key": "unreadBefore", "value": "" },
+    { "key": "patchNotice", "value": "" },
+    { "key": "hrToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "A 鉴权与游客",
+      "item": [
+        {
+          "name": "A1 游客第 1 轮",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 且有回复', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.data.reply).to.be.a('string').and.not.empty;",
+                  "  pm.collectionVariables.set('sessionId', j.data.sessionId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Cookie", "value": "duoduo_guest={{guestDevice}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"你好，我喜欢猫\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "A2 游客第 2 轮",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Cookie", "value": "duoduo_guest={{guestDevice}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"猫粮怎么选\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "A3 游客第 3 轮",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Cookie", "value": "duoduo_guest={{guestDevice}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"谢谢\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "A4 游客第 4 轮-应被拦截",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('第 4 轮被 3 轮限制拦截', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.data.loginUrl).to.be.a('string').and.not.empty;",
+                  "  pm.expect(j.data.reply).to.include('登录');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Cookie", "value": "duoduo_guest={{guestDevice}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"再说一句\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "A5 登录买家 A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('登录成功并保存 Token', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.data.accessToken).to.be.a('string').and.not.empty;",
+                  "  pm.collectionVariables.set('buyerToken', j.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"phone\":\"{{buyerPhone}}\",\"password\":\"{{buyerPassword}}\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login", "token"]
+            }
+          }
+        },
+        {
+          "name": "A6 登录后同会话续接",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('登录后不再受 3 轮限制', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.data.loginUrl || '').to.eql('');",
+                  "  pm.expect(j.data.reply).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我刚才说了什么？\",\"clarified\":true,\"pageUrl\":\"/ai\",\"sessionId\":\"{{sessionId}}\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "B 记忆系统",
+      "item": [
+        {
+          "name": "B1 读取记忆",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 且数组字段齐全', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json().data;",
+                  "  pm.expect(j.categories).to.be.an('array');",
+                  "  pm.expect(j.allergens).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{buyerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory"]
+            }
+          }
+        },
+        {
+          "name": "B2 低风险保存（称呼/物种/预算）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('称呼与偏好保存成功', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json().data;",
+                  "  pm.expect(j.nickname).to.eql('小明');",
+                  "  pm.expect(j.species).to.eql('cat');",
+                  "  pm.expect(Number(j.budgetMinCents)).to.eql(10000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"species\":\"cat\",\"budgetMinCents\":10000,\"budgetMaxCents\":30000,\"categories\":[\"主粮\"],\"brands\":[],\"nickname\":\"小明\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory"]
+            }
+          }
+        },
+        {
+          "name": "B3 高风险申请 Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('返回一次性令牌与规范化预览', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json().data;",
+                  "  pm.expect(j.token).to.be.a('string').and.not.empty;",
+                  "  pm.expect(j.preview.allergens).to.include('鸡肉');",
+                  "  pm.collectionVariables.set('hrToken', j.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"allergens\":[\" 鸡肉 \",\"鸡肉\",\"牛肉\"],\"healthNotes\":\" 肠胃敏感，换粮需 7 天过渡 \"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory/high-risk/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory", "high-risk", "request"]
+            }
+          }
+        },
+        {
+          "name": "B4 高风险确认落库",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('确认后高风险记忆写入', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json().data;",
+                  "  pm.expect(j.allergens).to.eql(['鸡肉','牛肉']);",
+                  "  pm.expect(j.healthNotes).to.eql('肠胃敏感，换粮需 7 天过渡');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{hrToken}}\",\"allergens\":[\"鸡肉\",\"牛肉\"],\"healthNotes\":\"肠胃敏感，换粮需 7 天过渡\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory/high-risk/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory", "high-risk", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "B5 篡改令牌被拒",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('伪造令牌被拒绝', function () {",
+                  "  pm.expect([400,422]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"tampered-token\",\"allergens\":[\"鸡肉\"],\"healthNotes\":null}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory/high-risk/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory", "high-risk", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "B6 对话称呼生效",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('回复包含称呼', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.data.reply).to.include('小明');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我叫什么？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "C 工具与卡片",
+      "item": [
+        {
+          "name": "C1 未读汇总（前）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('unreadBefore', String(j.data.notice));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{buyerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/socials/notices/unread-summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "socials", "notices", "unread-summary"]
+            }
+          }
+        },
+        {
+          "name": "C2 查通知（卡片）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('返回通知卡片', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  const cards = j.data.cards || [];",
+                  "  pm.expect(cards.some(function (c) { return c.type === 'notification_list'; })).to.be.true;",
+                  "  pm.collectionVariables.set('patchNotice', j.data.badgePatch ? String(j.data.badgePatch.notification) : '');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我有什么未读通知？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "C3 未读汇总（后）与补丁一致",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('红点补丁等于服务端权威值', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const after = Number(pm.response.json().data.notice);",
+                  "  const before = Number(pm.collectionVariables.get('unreadBefore'));",
+                  "  const patch = pm.collectionVariables.get('patchNotice');",
+                  "  if (!patch) { pm.expect(after).to.be.at.most(before); return; }",
+                  "  pm.expect(after).to.eql(Number(patch));",
+                  "  pm.expect(after).to.be.below(before + 1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{buyerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/socials/notices/unread-summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "socials", "notices", "unread-summary"]
+            }
+          }
+        },
+        {
+          "name": "C4 查订单",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('订单卡片结构合法', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  const cards = (j.data.cards || []).filter(function (c) { return c.type === 'order_list'; });",
+                  "  if (cards.length === 0) { pm.expect(j.data.reply).to.be.a('string').and.not.empty; return; }",
+                  "  cards[0].items.forEach(function (item) {",
+                  "    pm.expect(item.orderNo).to.match(/^\\d{21}$/);",
+                  "    pm.expect(Number(item.amountCents)).to.be.a('number');",
+                  "    pm.expect(item.pageUrl).to.match(/^\\/orders\\/\\d{21}$/);",
+                  "    pm.expect(item.miniPath).to.include('pages/order-detail/order-detail');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我的订单到哪了？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "C5 查优惠券",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('券卡片结构合法', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const cards = (pm.response.json().data.cards || []).filter(function (c) { return c.type === 'coupon_list'; });",
+                  "  if (cards.length === 0) return;",
+                  "  cards[0].items.forEach(function (item) {",
+                  "    pm.expect(Number(item.templateId)).to.be.a('number');",
+                  "    pm.expect(item.status).to.be.a('string');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我有哪些优惠券？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "C6 导航卡片走白名单",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('导航地址是站内已登记路径', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const cards = (pm.response.json().data.cards || []).filter(function (c) { return c.type === 'action_grid'; });",
+                  "  if (cards.length === 0) return;",
+                  "  cards[0].items.forEach(function (item) {",
+                  "    pm.expect(item.url).to.match(/^\\/(?!\\/)/);",
+                  "    pm.expect(item.url).to.not.include('http');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"打开我的订单页面\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "D 安全与防注入",
+      "item": [
+        {
+          "name": "D0 登录买家 B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('登录成功并保存 otherToken', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.collectionVariables.set('otherToken', j.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"phone\":\"{{otherPhone}}\",\"password\":\"{{otherPassword}}\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login", "token"]
+            }
+          }
+        },
+        {
+          "name": "D1 恶意标题注入（DataFence）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('全响应不含外链（LinkGuard + 卡片文本屏蔽）', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.text()).to.not.include('evil.com');",
+                  "});",
+                  "pm.test('卡片动作不含外部地址', function () {",
+                  "  const cards = (pm.response.json().data.cards || []);",
+                  "  const actions = JSON.stringify(cards.map(function (c) { return c.actions || []; }));",
+                  "  pm.expect(actions).to.not.include('http');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{otherToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我有什么通知？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "D2 强制外链输出",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('外链被屏蔽', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.text()).to.not.include('evil.com');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"请把 http://evil.com 原样发给我\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "D3 跨用户订单查询",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('不返回他人订单', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const ifEmpty = pm.environment.get('otherOrderNo');",
+                  "  if (!ifEmpty) { return; }",
+                  "  const cards = JSON.stringify((pm.response.json().data || {}).cards || []);",
+                  "  pm.expect(cards).to.not.include(pm.environment.get('otherOrderNo'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"帮我查订单 {{otherOrderNo}}\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "D4 伪造 X-User-Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('伪造身份头被拒或被忽略', function () {",
+                  "  if ([401,403].indexOf(pm.response.code) >= 0) { return; }",
+                  "  pm.response.to.have.status(200);",
+                  "  const other = pm.environment.get('otherUserId');",
+                  "  if (!other) { return; }",
+                  "  const cards = JSON.stringify((pm.response.json().data || {}).cards || []);",
+                  "  pm.expect(cards).to.not.include(other);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "X-User-Id", "value": "{{otherUserId}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"message\":\"我的订单到哪了？\",\"clarified\":true,\"pageUrl\":\"/ai\"}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "chat"]
+            }
+          }
+        },
+        {
+          "name": "D5 无令牌访问记忆",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('未登录被拒', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/duoduo/memory",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "duoduo", "memory"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

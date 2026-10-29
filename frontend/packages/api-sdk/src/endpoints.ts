@@ -40,10 +40,13 @@ import type {
   AddressView,
   AfterSaleArbitrateRequest,
   AfterSaleCreateRequest,
+  AfterSaleReplyAction,
   AfterSaleReplyRequest,
   AfterSaleView,
   BrandSaveRequest,
   BrandView,
+  CatalogCsvView,
+  CatalogImportPlanView,
   CartItemView,
   CartView,
   CategoryNode,
@@ -79,6 +82,13 @@ import type {
   SellerReviewView,
   PetView,
   PlaceOrderRequest,
+  OrderPreviewResult,
+  CoinBalanceView,
+  CoinLedgerView,
+  CoinAdminSummary,
+  CoinMutationResult,
+  CoinSigninResult,
+  CoinSigninMonthView,
   PlaceOrderResult,
   ProductCard,
   ProductDetail,
@@ -116,6 +126,7 @@ import type {
   TotpEnableView,
   TotpSetupView,
   TotpStatusView,
+  MerchantIpWhitelistView,
   SellerSummary,
   SellerWalletView,
   SettlementBill,
@@ -152,7 +163,30 @@ import type {
   JsApiConfig,
   DeleteBlockersView,
   DeleteAccountView,
+  StatusCount,
 } from './types';
+
+// ---------- CSV 导出 URL ----------
+
+/**
+ * 拼接 CSV 导出地址。
+ *
+ * <p>导出接口走 GET + 同源 Cookie 鉴权，前端直接 `window.open`/`location.href` 即可下载，
+ * 不需要把文件内容读进内存（订单/结算可能上万行）。
+ * 筛选参数与列表接口同名，空值不拼进查询串。
+ */
+export const csvUrl = (
+  path: string,
+  query?: Record<string, string | number | boolean | undefined | null>,
+): string => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+};
 
 // ---------- 认证（/api/auth，令牌走 httpOnly Cookie） ----------
 
@@ -197,6 +231,25 @@ export const twoFactorApi = {
   /** 解绑：动态码与恢复码二选一（手机丢了只能靠后者） */
   disable: (body: { code?: string; recoveryCode?: string }) =>
     api.post<void>('/api/auth/2fa/disable', body),
+};
+
+/**
+ * E-06 · 商家端 IP 白名单（店主专属）。
+ *
+ * <p>网关会对 `/api/seller/**` 做来源地址判定。`currentIp` 是**服务端**看到的来源 IP：
+ * 展示它是为了让店主知道该把哪个地址加进去，而不是凭猜测填一个再把自己锁在门外。
+ */
+export const sellerSecurityApi = {
+  ipWhitelist: () => api.get<MerchantIpWhitelistView>('/api/seller/security/ip-whitelist'),
+
+  /**
+   * 保存白名单。
+   *
+   * `confirmLockout`：当前 IP 不在新名单里时必须显式传 true。不传会被服务端 422 拦下
+   * （提示会写清「保存后你将无法进入商家端」）—— 这是防「配完就把自己锁死」的最后一道闸。
+   */
+  saveIpWhitelist: (body: { enabled: boolean; rules: string[]; confirmLockout?: boolean }) =>
+    api.put<MerchantIpWhitelistView>('/api/seller/security/ip-whitelist', body),
 };
 
 // ---------- 用户（/api/users） ----------
@@ -450,6 +503,15 @@ export const orderApi = {
   list: (query?: { status?: string; orderType?: string; keyword?: string; page?: number; pageSize?: number }) =>
     api.get<PageResult<OrderView>>('/api/orders', { query }),
 
+  /**
+   * 我的订单导出 URL（矩阵 · 买家侧）：仅本人、手机号 / 地址脱敏、上限 5 万条。
+   *
+   * 返回 URL 而不是 blob：导出是文件下载，交给浏览器原生下载行为；
+   * 前端只需要保证筛选参数与列表一致。
+   */
+  exportUrl: (query?: { status?: string; orderType?: string; keyword?: string }) =>
+    csvUrl('/api/orders/export', query),
+
   detail: (orderNo: string) => api.get<OrderView>(`/api/orders/${orderNo}`),
 
   /** 支付预下单：sandbox 渠道返回 codeUrl（二维码内容）与 expireAt */
@@ -469,6 +531,110 @@ export const orderApi = {
 
   /** 查询该订单的资金托管状态（托管中 / 已放款 / 已退回买家） */
   settlement: (orderNo: string) => api.get<SettlementView>(`/api/orders/${orderNo}/settlement`),
+
+  /**
+   * 结算试算（R-P1）：按当前购物车勾选 + 券码 + 用币开关算一遍金额与币抵分摊。
+   * 币抵口径的**唯一权威在服务端** —— 预览结果只用于展示，提交时带 useCoins 开关即可，
+   * 实际抵扣以下单那一刻的冻结结果为准（余额变化会被用户域硬校验拦下）。
+   */
+  preview: (body: { couponCode?: string; useCoins?: boolean }) =>
+    api.post<OrderPreviewResult>('/api/orders/preview', body),
+
+  /**
+   * 我的订单各状态计数（2026-10-27 · 订单页二级 Tab 角标）。
+   *
+   * <p>**服务端全量分桶**，不是「当前页里数出来的」。前端若要给 7 个 Tab 都挂数字，
+   * 只能靠这个接口 —— 每个 Tab 各调一次 list(pageSize=1) 既费请求、又因为 7 次查询
+   * 落在不同时刻而互相不自洽。
+   */
+  statusCounts: () => api.get<StatusCount[]>('/api/orders/status-counts'),
+
+  /**
+   * 上报「我已看过这笔订单」（2026-10-27 · 阅后即消角标）。
+   *
+   * <p>只让已关闭/已退款的角标消失；待支付/待发货/待收货属持续提醒，看过也保留。
+   * 返回**最新分桶**，调用方必须用它覆盖本地乐观值。
+   */
+  markRead: (orderNo: string) => api.post<StatusCount[]>(`/api/orders/${orderNo}/read`),
+};
+
+// ---------- 多多币（/api/coins，需登录；R-P1） ----------
+
+/** 多多币账户接口：余额 / 流水 / 到期提醒。1 币 = 1 分钱。 */
+export const coinsApi = {
+  /** 我的账户（余额 + 累计获得/消耗 + 30 天内到期批次） */
+  me: () => api.get<CoinBalanceView>('/api/coins/me'),
+
+  /** 我的币流水（direction 区分进出，服务端分页；返回 PageResult 而不是裸数组） */
+  ledger: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<CoinLedgerView>>('/api/coins/ledger', { query }),
+
+  /** 我的流水导出 URL（矩阵 · 买家侧）：仅本人，方向翻成「收入 / 支出」，上限 5 万条 */
+  ledgerExportUrl: () => csvUrl('/api/coins/ledger/export'),
+
+  /** 每日签到（R-P2）：一天一次（唯一索引兜底），连签 3/7 天当天加发 */
+  signin: () => api.post<CoinSigninResult>('/api/coins/signin'),
+
+  /** 当月签到月历：已签日期 / 连签天数 / 今日是否已签（?ym=2026-10 可查历史月） */
+  signinMonth: (ym?: string) =>
+    api.get<CoinSigninMonthView>('/api/coins/signin/month', { query: ym ? { ym } : undefined }),
+
+  /** 任务中心：日常 + 新人任务进度（R-P1 第三轮） */
+  tasks: () => api.get<import('./types').CoinTaskView[]>('/api/coins/tasks'),
+
+  /**
+   * 浏览类任务上报：bizId 为商品 / 分享 id，dwellSeconds 为停留秒数。
+   * 服务端校验停留阈值与「同一对象每天只算一次」。
+   */
+  reportTask: (body: { taskCode: string; bizId: string; dwellSeconds: number }) =>
+    api.post<import('./types').CoinTaskView>('/api/coins/tasks/report', body),
+
+  /** 进行中的节日活动；没有则返回 null */
+  activeCampaign: () => api.get<import('./types').CoinCampaignView | null>('/api/coins/campaign/active'),
+};
+
+// ---------- 多多币运营端（/api/admin/coins，需运营权限） ----------
+
+export const adminCoinsApi = {
+  /** 全站汇总：负债余额 / 累计发放 / 消耗 / 过期 / 开户数 / 30 天到期量 */
+  summary: () => api.get<CoinAdminSummary>('/api/admin/coins/summary'),
+
+  /** 全站流水（可按 userId / direction 过滤） */
+  ledger: (query?: { userId?: string; direction?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<CoinLedgerView>>('/api/admin/coins/ledger', { query }),
+
+  /** 按当前筛选导出流水 CSV */
+  ledgerExportUrl: (query?: { userId?: string; direction?: string }) =>
+    csvUrl('/api/admin/coins/ledger/export', query),
+
+  /**
+   * 人工调整（加 / 减，必须写原因）。归 SECURITY 档审计 —— 动币等于动钱。
+   * 回收（负数）上限 = 该用户当前批次可扣量，超出会被服务端拒绝。
+   */
+  adjust: (body: { userId: string; amount: number; reason: string }) =>
+    api.post<CoinMutationResult>('/api/admin/coins/adjust', body),
+
+  /** 任务定义（含停用项） */
+  tasks: () => api.get<import('./types').CoinTaskDefAdminView[]>('/api/admin/coins/tasks'),
+
+  /** 改任务启停 / 奖励 / 每日上限（null = 不改） */
+  updateTask: (code: string, body: { enabled?: boolean; rewardCoins?: number; dailyCap?: number }) =>
+    api.put<import('./types').CoinTaskDefAdminView>(`/api/admin/coins/tasks/${code}`, body),
+
+  /** 节日活动列表 */
+  campaigns: () => api.get<import('./types').CoinCampaignView[]>('/api/admin/coins/campaigns'),
+
+  /** 新建活动 */
+  createCampaign: (body: import('./types').CoinCampaignSaveRequest) =>
+    api.post<import('./types').CoinCampaignView>('/api/admin/coins/campaigns', body),
+
+  /** 编辑活动（不传 status；启停走单独端点） */
+  updateCampaign: (id: string, body: import('./types').CoinCampaignSaveRequest) =>
+    api.put<import('./types').CoinCampaignView>(`/api/admin/coins/campaigns/${id}`, body),
+
+  /** 活动启停 */
+  setCampaignStatus: (id: string, enabled: boolean) =>
+    api.post<import('./types').CoinCampaignView>(`/api/admin/coins/campaigns/${id}/status`, { enabled }),
 };
 
 // ---------- 卖家中心（/api/seller，需登录 + 卖家角色） ----------
@@ -498,6 +664,9 @@ export const sellerApi = {
   /** 按商品的经营统计（2026-10-24）：销量 / 成交额 / 退款件数，商品分析表用 */
   productStats: () => api.get<SellerProductStat[]>('/api/seller/product-stats'),
 
+  /** 商品分析导出（2026-10-28）：一行一个商品，销量 / 成交额 / 退款件数 / 退款金额 */
+  productStatsExportUrl: () => '/api/seller/product-stats/export',
+
   /** 按商品 / SKU 的退款统计（D-05）：退款件数 / 退款金额 / 涉及订单数，售后页用 */
   productRefundStats: () => api.get<SellerProductRefundStat[]>('/api/seller/product-refunds'),
 
@@ -510,6 +679,23 @@ export const sellerApi = {
   /** 卖家发货；物流信息可选，随状态日志留痕。发货后资金仍在托管中 */
   ship: (orderNo: string, body?: ShipRequest) =>
     api.post<OrderView>(`/api/seller/orders/${orderNo}/ship`, body),
+
+  /**
+   * 批量发货（2026-10-27 · 批量操作即已读）。
+   *
+   * 逐条走与单条相同的状态机；成功条目服务端写店铺已读，
+   * 返回最新订单分桶（`counts`），调用方直接覆盖本地角标。
+   */
+  batchShip: (orderNos: string[], body?: { logisticsCompany?: string; logisticsNo?: string }) =>
+    api.post<import('./types').BatchResultView>('/api/seller/orders/batch-ship', { orderNos, ...body }),
+
+  /** 按当前筛选导出订单 CSV（同源 Cookie 鉴权，直接 window.open） */
+  orderExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/seller/orders/export', query),
+
+  /** 按当前筛选导出结算台账 CSV */
+  settlementExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/seller/settlements/export', query),
 
   /** 卖家售后退款（已付款 / 已发货都可，前提是已确认收到退货） */
   refund: (orderNo: string, reason?: string) =>
@@ -558,6 +744,37 @@ export const sellerApi = {
     page?: number;
     pageSize?: number;
   }) => api.get<PageResult<SellerProductView>>('/api/seller/products', { query }),
+
+  /**
+   * 我的商品按审核态计数（2026-10-27 · 商品页审核页签角标）。
+   *
+   * <p>口径与 {@link products} 同源：回收站不计、可见范围由服务端按登录态推导。
+   */
+  productAuditCounts: () => api.get<StatusCount[]>('/api/seller/products/audit-counts'),
+
+  /**
+   * 「看过某商品」上报（2026-10-27 · 阅后即消）。
+   *
+   * <p>只有「已通过」会因此从审核角标里消失；待审核 / 已驳回读过也保留。
+   * 返回最新分桶，调用方必须用它覆盖本地乐观值。
+   */
+  productMarkRead: (spuId: string) =>
+    api.post<StatusCount[]>(`/api/seller/products/${spuId}/read`),
+
+  /**
+   * 卖家端订单页签角标（2026-10-27）：已发货/已完成/已关闭/已退款读过的会减掉。
+   *
+   * <p>与 {@link summary} 分开：summary 是经营存量（不随看不看变化），这个是未读提醒。
+   */
+  orderStatusCounts: () => api.get<StatusCount[]>('/api/seller/orders/status-counts'),
+
+  /**
+   * 卖家「看过某订单」上报（2026-10-27 · 阅后即消）。
+   *
+   * <p>返回最新分桶，调用方必须用它覆盖本地乐观值。
+   */
+  markOrderRead: (orderNo: string) =>
+    api.post<StatusCount[]>(`/api/seller/orders/${orderNo}/read`),
 
   /**
    * 删除商品（A-09，软删进回收站，30 天内可恢复）。
@@ -654,9 +871,32 @@ export const sellerApi = {
   /** 下载商品 CSV 导入模板（表头 + 一行示例） */
   importProductTemplate: () => api.get<SellerProductCsvView>('/api/seller/products/import-template'),
 
-  /** 上传商品 CSV 文本导入：逐分组键创建，部分成功返回逐行详情 */
-  importProductsCsv: (body: { content: string }) =>
+  /**
+   * 商品 xlsx 模板下载地址（2026-10-28）。
+   *
+   * <p>xlsx 是二进制附件，**不能**像 CSV 那样读成 JSON 文本；直接让浏览器导航下载。
+   */
+  importProductTemplateXlsxUrl: () =>
+    csvUrl('/api/seller/products/import-template', { format: 'xlsx' }),
+
+  /** 上传商品文件导入（CSV 文本或 xlsx 的 Base64）：逐分组键创建，部分成功返回逐行详情 */
+  importProductsCsv: (body: { content: string; fileName?: string }) =>
     api.post<SellerProductImportResultView>('/api/seller/products/import', body),
+
+  /** 价格/库存导出地址（2026-10-28）：筛选与商品列表一致，直接 window.location.href 下载 */
+  priceStockExportUrl: (query?: { keyword?: string; auditStatus?: string }) =>
+    csvUrl('/api/seller/products/price-stock/export', query),
+
+  /** 下载价格/库存导入模板：`商品ID,规格ID,价格(元),库存`（价格填元，空列 = 不改） */
+  priceStockTemplate: () => api.get<SellerProductCsvView>('/api/seller/products/price-stock-template'),
+
+  /** 价格/库存 xlsx 模板下载地址（ID 列按文本写，避免科学计数法丢精度） */
+  priceStockTemplateXlsxUrl: () =>
+    csvUrl('/api/seller/products/price-stock-template', { format: 'xlsx' }),
+
+  /** 上传价格/库存文件（CSV 文本或 xlsx 的 Base64）：逐行改价改库存（不重审、不升版本），失败行 id = 文件物理行号 */
+  importPriceStock: (body: { content: string; fileName?: string }) =>
+    api.post<import('./types').BatchResultView>('/api/seller/products/price-stock-import', body),
 
   /** 商品诊断：近 days 天曝光 / 点击 / 点击率 + 建议；days 缺省 30，上限 90 */
   productDiagnostics: (query?: { days?: number }) =>
@@ -684,6 +924,27 @@ export const merchantStaffApi = {
   /** F-04 · 配置店员操作权限（空数组 = 仅查看） */
   updatePermissions: (memberId: string, permissions: string[]) =>
     api.post<StaffView>(`/api/seller/staff/${memberId}/permissions`, { permissions }),
+
+  /** 员工 CSV 导出 / 模板下载（同源 Cookie 鉴权） */
+  exportUrl: () => '/api/seller/staff/export',
+  importTemplateUrl: () => '/api/seller/staff/import-template',
+
+  /** 员工批量导入：服务端逐行邀请，部分失败不回滚；rowNo 用于把失败原因标回原表 */
+  importRows: (rows: Array<{ rowNo?: number; phone: string; permissions?: string[] }>) =>
+    api.post<import('./types').BatchResultView>('/api/seller/staff/import', { rows }),
+
+  /**
+   * 员工批量启用 / 停用（OWNER-only）。
+   *
+   * <p>启用与停用是两个端点：审计里它们是两个不同的动作
+   * （ENABLE_STAFF / DISABLE_STAFF），合成一个端点就只能记成其中一个，
+   * 事后复盘「这批账号是谁停的」时会被误导。
+   */
+  batchStatus: (memberIds: string[], enabled: boolean) =>
+    api.post<import('./types').BatchResultView>(
+      enabled ? '/api/seller/staff/batch-enable' : '/api/seller/staff/batch-disable',
+      { memberIds },
+    ),
 };
 
 /** 平台侧成员总览（E13；跨租户 + 平台处置） */
@@ -694,6 +955,8 @@ export const adminMerchantStaffApi = {
     api.post<StaffAdminView>(`/api/admin/merchant-staff/${memberId}/disable`),
   enable: (memberId: string) =>
     api.post<StaffAdminView>(`/api/admin/merchant-staff/${memberId}/enable`),
+  /** 按当前关键字导出平台成员 CSV */
+  exportUrl: (query?: { keyword?: string }) => csvUrl('/api/admin/merchant-staff/export', query),
 };
 
 /** 入驻审核台（E11；落在 duoduo-user，路径属 E8 的 admin 专属族） */
@@ -740,6 +1003,18 @@ export const adminMerchantApi = {
 
   /** 立即跑一轮入驻抽查（抽昨天那批自动放行的店铺，唯一键幂等） */
   auditSweep: () => api.post<MerchantAuditSampleReport>('/api/admin/merchants/audit-sla/sweep'),
+
+  /** 按筛选导出入驻审核 CSV */
+  exportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/admin/merchants/export', query),
+
+  /** 批量通过入驻申请（逐条幂等，部分失败不回滚） */
+  batchApprove: (ids: string[]) =>
+    api.post<import('./types').BatchResultView>('/api/admin/merchants/batch-approve', { ids }),
+
+  /** 批量驳回入驻申请（结构化原因对全部申请共用） */
+  batchReject: (ids: string[], reasons: unknown[]) =>
+    api.post<import('./types').BatchResultView>('/api/admin/merchants/batch-reject', { ids, reasons }),
 };
 
 export const adminApi = {
@@ -764,6 +1039,9 @@ export const adminApi = {
 
   /** 运行时口径（窗口上限、判级阈值、档位清单）—— 页面用它渲染"为什么是风险" */
   tenantHealthLimits: () => api.get<TenantHealthLimits>('/api/admin/tenant-health/limits'),
+  /** 租户健康导出地址（2026-10-28）：按当前窗口导出四维指标 */
+  tenantHealthExportUrl: (query?: { days?: number }) =>
+    csvUrl('/api/admin/tenant-health/export', query),
 
   // ---- 订单干预（落在 duoduo-trade；仅待付款订单可强关） ----
   orders: (query?: { status?: string; orderNo?: string; keyword?: string; page?: number; pageSize?: number }) =>
@@ -772,14 +1050,81 @@ export const adminApi = {
   forceCloseOrder: (orderNo: string, reason?: string) =>
     api.post<OrderView>(`/api/admin/orders/${orderNo}/force-close`, reason ? { reason } : undefined),
 
+  /**
+   * 批量强制关单（2026-10-27 · 批量操作即已读）。
+   *
+   * 只关待付款订单：批量里混了已付款/已发货时逐条失败并带回原因，其余继续。
+   */
+  batchForceCloseOrders: (orderNos: string[], reason?: string) =>
+    api.post<import('./types').BatchResultView>('/api/admin/orders/batch-force-close',
+      reason ? { orderNos, reason } : { orderNos }),
+
+  /** 运营按筛选导出全平台订单 CSV（超过 5 万行会被 409 拒绝，改用异步任务） */
+  orderExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/admin/orders/export', query),
+
+  /**
+   * 异步导出任务（矩阵第 9 项）：创建后立刻返回任务，后台分页写 CSV。
+   *
+   * 当前只支持全平台订单（module=ORDERS）；返回的任务视图用于跳转到「导出任务」页轮询。
+   */
+  createOrderExportJob: (body?: { status?: string; keyword?: string }) =>
+    api.post<import('./types').ExportJobView>('/api/admin/export-jobs', { module: 'ORDERS', ...body }),
+
+  /** 我的导出任务（别人的任务不在结果里） */
+  exportJobs: (query?: { page?: number; pageSize?: number }) =>
+    api.get<PageResult<import('./types').ExportJobView>>('/api/admin/export-jobs', { query }),
+
+  /** 单个任务状态（轮询用） */
+  exportJob: (id: string) => api.get<import('./types').ExportJobView>(`/api/admin/export-jobs/${id}`),
+
+  /** 任务文件下载地址（登录态 Cookie 鉴权，直接 window.location.href） */
+  exportJobDownloadUrl: (id: string) => `/api/admin/export-jobs/${id}/download`,
+
+  /** 运营按筛选导出全平台售后 CSV */
+  afterSaleExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/admin/aftersales/export', query),
+
+  /** 运营按筛选导出评价 CSV */
+  reviewExportUrl: (query?: { status?: string; rating?: number; keyword?: string }) =>
+    csvUrl('/api/admin/reviews/export', query),
+
+  /** 运营按筛选导出举报 CSV */
+  shareReportExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/admin/share-reports/export', query),
+
+  /** 秒杀活动批量上下架（逐条结果，部分失败不回滚） */
+  batchSetSeckillStatus: (ids: string[], enabled: boolean) =>
+    api.post<import('./types').BatchResultView>('/api/admin/seckill/activities/batch-status', { ids, enabled }),
+
   // ---- 基础数据：类目 / 品牌（落在 duoduo-product） ----
   categories: () => api.get<CategoryNode[]>('/api/admin/categories'),
+  /** 类目导出地址（2026-10-28）：含停用类目与父类目名称 */
+  categoryExportUrl: () => '/api/admin/categories/export',
   createCategory: (body: CategorySaveRequest) => api.post<CategoryNode>('/api/admin/categories', body),
   updateCategory: (id: string, body: CategorySaveRequest) =>
     api.put<CategoryNode>(`/api/admin/categories/${id}`, body),
   setCategoryStatus: (id: string, active: boolean) =>
     api.put<void>(`/api/admin/categories/${id}/status?active=${active}`),
   deleteCategory: (id: string) => api.del<void>(`/api/admin/categories/${id}`),
+
+  // ---- 第三批 · 类目 / 品牌导入（模板 → dry-run → 正式导入） ----
+  // dry-run 不写库：主数据写错会波及大量商品，运营先看逐行计划再决定是否导入。
+  categoryImportTemplate: () => api.get<CatalogCsvView>('/api/admin/categories/import-template'),
+  /** 类目 xlsx 模板下载地址（2026-10-28；只有表头 + 说明页） */
+  categoryImportTemplateXlsxUrl: () =>
+    csvUrl('/api/admin/categories/import-template', { format: 'xlsx' }),
+  checkCategoryImport: (body: { content: string; fileName?: string }) =>
+    api.post<CatalogImportPlanView>('/api/admin/categories/import/dry-run', body),
+  importCategories: (body: { content: string; fileName?: string }) =>
+    api.post<import('./types').BatchResultView>('/api/admin/categories/import', body),
+  brandImportTemplate: () => api.get<CatalogCsvView>('/api/admin/brands/import-template'),
+  /** 品牌 xlsx 模板下载地址（2026-10-28） */
+  brandImportTemplateXlsxUrl: () => csvUrl('/api/admin/brands/import-template', { format: 'xlsx' }),
+  checkBrandImport: (body: { content: string; fileName?: string }) =>
+    api.post<CatalogImportPlanView>('/api/admin/brands/import/dry-run', body),
+  importBrands: (body: { content: string; fileName?: string }) =>
+    api.post<import('./types').BatchResultView>('/api/admin/brands/import', body),
 
   // ---- 类目属性模板（A-10） ----
   // 与类目 CRUD 同一个控制器：模板是类目的从属主数据，运营在类目页里原地维护。
@@ -794,6 +1139,8 @@ export const adminApi = {
   deleteCategoryAttr: (id: string) => api.del<void>(`/api/admin/category-attrs/${id}`),
 
   brands: () => api.get<BrandView[]>('/api/admin/brands'),
+  /** 品牌导出地址（2026-10-28）：含停用品牌 */
+  brandExportUrl: () => '/api/admin/brands/export',
   createBrand: (body: BrandSaveRequest) => api.post<BrandView>('/api/admin/brands', body),
   updateBrand: (id: string, body: BrandSaveRequest) => api.put<BrandView>(`/api/admin/brands/${id}`, body),
   setBrandStatus: (id: string, active: boolean) =>
@@ -806,6 +1153,11 @@ export const adminApi = {
   auditListing: (id: string, body: ListingAuditRequest) =>
     api.post<ListingAuditView>(`/api/admin/listings/${id}/audit`, body),
 
+  /** 批量审核闲置（2026-10-27 · 批量操作即已读）：驳回原因必填 */
+  batchAuditListings: (ids: string[], action: 'APPROVE' | 'REJECT', reason?: string) =>
+    api.post<import('./types').BatchResultView>('/api/admin/listings/batch-audit',
+      reason ? { ids, action, reason } : { ids, action }),
+
   // ---- 第三方商品上架审核（E14，落在 duoduo-product） ----
   // 只列第三方商品：平台自营免审（auditStatus 恒 APPROVED），混进队列只会干扰待办。
   // 与闲置审核同一套状态口径（PENDING / APPROVED / REJECTED + 驳回必填原因），
@@ -816,6 +1168,19 @@ export const adminApi = {
   /** 审核结论：驳回时 reason 必填（服务端会 400）；审核可重入（允许改判） */
   auditProduct: (spuId: string, body: AdminProductAuditRequest) =>
     api.post<AdminProductAuditView>(`/api/admin/products/${spuId}/audit`, body),
+
+  /**
+   * 批量审核商品（2026-10-27 · 批量操作即已读）。
+   *
+   * 必须逐件带 version（乐观锁），批量里版本可能不同，不能共用一个。
+   */
+  batchAuditProducts: (
+    items: Array<{ spuId: string; version: number }>,
+    action: 'APPROVE' | 'REJECT',
+    reason?: string,
+  ) =>
+    api.post<import('./types').BatchResultView>('/api/admin/products/batch-audit',
+      reason ? { items, action, reason } : { items, action }),
 
   /** 审核历史（A-08）：最新在前；limit 缺省 50、服务端上限 100 */
   productAuditHistory: (spuId: string, limit?: number) =>
@@ -878,6 +1243,26 @@ export const adminApi = {
   arbitrateAfterSale: (id: string, body: AfterSaleArbitrateRequest) =>
     api.post<AfterSaleView>(`/api/admin/aftersales/${id}/arbitrate`, body),
 
+  /**
+   * 批量裁定售后（2026-10-27 · 批量操作即已读）。
+   *
+   * 结论与说明对全部选中单共用；支持退款会逐单调用交易域退款，
+   * 某单因「订单已完成、钱已放款」失败只影响该条。
+   */
+  batchArbitrateAfterSales: (ids: string[], result: string, note: string) =>
+    api.post<import('./types').BatchResultView>('/api/admin/aftersales/batch-arbitrate',
+      { ids, result, note }),
+
+  /**
+   * 售后仲裁导航角标：本人尚未点开看过的待处理售后数（2026-10-27 · 点击详情即消除）。
+   *
+   * <p>返回 `[{status:'PENDING', count}]`；计数已排除本人查看过的单（服务端已读集合）。
+   */
+  afterSaleUnreadCount: () => api.get<StatusCount[]>('/api/admin/aftersales/unread-count'),
+
+  /** 点开售后详情 = 已读；返回最新未读数，调用方用它覆盖本地值 */
+  markAfterSaleRead: (id: string) => api.post<StatusCount[]>(`/api/admin/aftersales/${id}/read`),
+
   // ---- 评价管理台（H-02，落在 duoduo-fulfilment） ----
 
   /**
@@ -897,6 +1282,21 @@ export const adminApi = {
   auditReview: (id: string, body: ReviewAuditRequest) =>
     api.post<AdminReviewView>(`/api/admin/reviews/${id}/audit`, body),
 
+  /**
+   * 批量审核评价（2026-10-27 · 批量操作即已读）。
+   *
+   * 下架（REJECT）原因必填；已处于目标态的评价按幂等成功处理。
+   */
+  batchAuditReviews: (ids: string[], action: 'APPROVE' | 'REJECT', reason?: string) =>
+    api.post<import('./types').BatchResultView>('/api/admin/reviews/batch-audit',
+      reason ? { ids, action, reason } : { ids, action }),
+
+  /** 评价管理导航角标：本人尚未点开看过的待审评价数（2026-10-27 · 点击详情即消除） */
+  reviewUnreadCount: () => api.get<StatusCount[]>('/api/admin/reviews/unread-count'),
+
+  /** 点开评价详情 = 已读；返回最新未读数，调用方用它覆盖本地值 */
+  markReviewRead: (id: string) => api.post<StatusCount[]>(`/api/admin/reviews/${id}/read`),
+
   // ---- 分享 / 评论举报处理台（第五十六轮，落在 duoduo-fulfilment） ----
 
   /**
@@ -915,6 +1315,22 @@ export const adminApi = {
    */
   handleShareReport: (id: string, body: ShareReportHandleRequest) =>
     api.post<ShareReportView>(`/api/admin/share-reports/${id}/handle`, body),
+
+  /**
+   * 批量处理举报（2026-10-27 · 批量操作即已读）。
+   *
+   * ACCEPT 会下架每一条被举报的内容；已处理过的一条逐条失败，其余继续。
+   */
+  batchHandleShareReports: (ids: string[], action: 'ACCEPT' | 'REJECT', note: string) =>
+    api.post<import('./types').BatchResultView>('/api/admin/share-reports/batch-handle',
+      { ids, action, note }),
+
+  /** 举报处理导航角标：本人尚未点开看过的待处理举报数（2026-10-27 · 点击详情即消除） */
+  shareReportUnreadCount: () => api.get<StatusCount[]>('/api/admin/share-reports/unread-count'),
+
+  /** 点开举报详情 = 已读；返回最新未读数，调用方用它覆盖本地值 */
+  markShareReportRead: (id: string) =>
+    api.post<StatusCount[]>(`/api/admin/share-reports/${id}/read`),
 
   // ---- 秒杀活动运营（A14，落在 duoduo-trade） ----
 
@@ -962,6 +1378,31 @@ export const adminApi = {
    */
   auditLogs: (query?: AuditLogQuery) =>
     api.get<PageResult<AuditLogView>>('/api/admin/audit-logs', { query }),
+
+  // ---- 第二批导出（2026-10-28）：与各列表同筛选，后端 5 万行上限 ----
+  seckillExportUrl: () => '/api/admin/seckill/activities/export',
+  listingAuditExportUrl: (query?: { auditStatus?: string; keyword?: string }) =>
+    csvUrl('/api/admin/listings/export', query),
+  productAuditExportUrl: (query?: { auditStatus?: string; sellerId?: string; keyword?: string }) =>
+    csvUrl('/api/admin/products/export', query),
+  productHistoryExportUrl: (query?: {
+    spuId?: string;
+    keyword?: string;
+    event?: string;
+    sellerId?: string;
+  }) => csvUrl('/api/admin/products/change-history/export', query),
+  auditLogExportUrl: (query?: {
+    actorId?: string;
+    tenantId?: string;
+    category?: string;
+    action?: string;
+    outcome?: string;
+    targetId?: string;
+    from?: string;
+    to?: string;
+  }) => csvUrl('/api/admin/audit-logs/export', query),
+  operatorExportUrl: (query?: { role?: string; keyword?: string }) =>
+    csvUrl('/api/admin/users/export', query),
 };
 
 // ---------- 支付（/api/payments） ----------
@@ -1034,6 +1475,13 @@ export const reviewApi = {
   /** 商家回复评价（每条一次；回复后不可修改） */
   sellerReply: (id: string, content: string) =>
     api.post<SellerReviewView>(`/api/reviews/${id}/reply`, { content }),
+
+  /** 商家评价导出地址（2026-10-28）：与商家列表同筛选 */
+  sellerExportUrl: (query?: {
+    replied?: boolean;
+    rating?: number;
+    keyword?: string;
+  }) => csvUrl('/api/reviews/seller/export', query),
 };
 
 // ---------- 售后仲裁（/api/aftersales，履约域 A3） ----------
@@ -1066,6 +1514,24 @@ export const afterSaleApi = {
   reply: (id: string, body: AfterSaleReplyRequest) =>
     api.post<AfterSaleView>(`/api/aftersales/${id}/reply`, body),
 
+  /**
+   * 卖家批量处理售后（2026-10-27 · 批量操作即已读）。
+   *
+   * 动作与说明对全部选中单共用；成功条目服务端写卖家已读，
+   * 返回最新分桶（`counts`），调用方直接覆盖本地角标。
+   */
+  sellerBatchReply: (
+    ids: string[],
+    action: AfterSaleReplyAction,
+    reply?: string,
+  ) =>
+    api.post<import('./types').BatchResultView>('/api/aftersales/seller/batch-reply',
+      reply ? { ids, action, reply } : { ids, action }),
+
+  /** 卖家按筛选导出售后 CSV */
+  sellerExportUrl: (query?: { status?: string; keyword?: string }) =>
+    csvUrl('/api/aftersales/seller/export', query),
+
   /** 买家申请平台仲裁（待卖家处理 / 卖家已拒绝 时可进入） */
   escalate: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/escalate`),
 
@@ -1078,6 +1544,23 @@ export const afterSaleApi = {
 
   /** 卖家确认收货并退款：退货退款的钱在这一刻才动，此前一直没动 */
   receiveReturn: (id: string) => api.post<AfterSaleView>(`/api/aftersales/${id}/return-receipt`),
+
+  /**
+   * 售后各状态计数（2026-10-27 · 售后页二级 Tab 角标）。
+   *
+   * @param side buyer = 我提起的（口径同 mine）/ seller = 我店铺收到的（口径同 seller）
+   */
+  statusCounts: (side: 'buyer' | 'seller' = 'buyer') =>
+    api.get<StatusCount[]>('/api/aftersales/status-counts', { query: { side } }),
+
+  /**
+   * 「看过某售后单」上报（2026-10-27 · 阅后即消）。
+   *
+   * <p>只有终态（REFUNDED / CLOSED，卖家侧另加 SELLER_REJECTED）的角标会消失；
+   * 进行中的读过也保留。返回最新分桶，调用方必须用它覆盖本地乐观值。
+   */
+  markRead: (id: string, side: 'buyer' | 'seller' = 'buyer') =>
+    api.post<StatusCount[]>(`/api/aftersales/${id}/read?side=${side}`),
 };
 
 // ---------- 物流轨迹（/api/logistics，履约域 A2） ----------
@@ -1193,9 +1676,56 @@ export const duoduoApi = {
   capabilities: (options?: { signal?: AbortSignal }) =>
     api.get<DuoduoCapability>('/api/duoduo/capabilities', options),
 
-  /** 对话；history 为最近 6 轮的带角色历史（服务端上限 6 条） */
-  chat: (body: { message: string; history?: DuoduoChatTurn[] }) =>
-    api.post<DuoduoChatResponse>('/api/duoduo/chat', body),
+  /** 非流式对话（兼容入口；页面优先用 SSE） */
+  chat: (body: {
+    message: string;
+    history?: DuoduoChatTurn[];
+    sessionId?: string;
+    /**
+     * 用户当前页面（如 `/orders`）。服务端会按 RouteRegistry 白名单校验并丢掉查询串，
+     * 非法值按「未提供」处理 —— 前端传原样路径即可，不必自己裁剪。
+     */
+    pageUrl?: string;
+  }) => api.post<DuoduoChatResponse>('/api/duoduo/chat', body),
+
+  /** 加购二次确认：用户点击确认后调用，服务端消费一次性令牌 */
+  confirm: (body: {
+    token: string;
+    spuId: string;
+    skuId: string;
+    quantity: number;
+    sessionId?: string;
+  }) => api.post<import('./types').DuoduoConfirmResult>('/api/duoduo/confirm', body),
+};
+
+/**
+ * AI 记忆库（2026-10-29 · 第二阶段）。
+ *
+ * <p>全部需要登录；身份由网关透传，接口不接受 userId 参数。
+ * 高风险写入分两步：request 拿一次性令牌 → confirm 带令牌提交，
+ * 令牌与内容绑定且 5 分钟过期。
+ */
+export const memoryApi = {
+  view: (options?: { signal?: AbortSignal }) =>
+    api.get<import('./types').AiMemoryView>('/api/duoduo/memory', options),
+
+  /** 低风险更新（物种 / 预算 / 偏好类目与品牌） */
+  update: (body: import('./types').AiMemoryLowRiskUpdate) =>
+    api.put<import('./types').AiMemoryView>('/api/duoduo/memory', body),
+
+  /** 清除所有记忆（幂等） */
+  remove: () => api.del<void>('/api/duoduo/memory'),
+
+  /** 申请写入高风险记忆：返回一次性确认令牌 */
+  requestHighRisk: (body: import('./types').AiMemoryHighRiskUpdate) =>
+    api.post<import('./types').AiMemoryConfirmTicket>('/api/duoduo/memory/high-risk/request', body),
+
+  /** 确认写入高风险记忆：内容必须与申请时一致 */
+  confirmHighRisk: (body: {
+    token: string;
+    allergens: string[];
+    healthNotes?: string | null;
+  }) => api.post<import('./types').AiMemoryView>('/api/duoduo/memory/high-risk/confirm', body),
 };
 
 // ---------- 限时秒杀（/api/seckill，交易域 A14） ----------
@@ -1283,9 +1813,22 @@ export const uploadApi = {
 
 // ---------- 通知中心 / 关注与粉丝（duoduo-social；第六十七轮补齐 Web 端） ----------
 export const noticeApi = {
-  /** 通知列表：定向通知 + 全站公告合并视图 */
-  list: (query?: { category?: string; page?: number; pageSize?: number }) =>
-    api.get<NoticePageData>('/api/socials/notices', { query }),
+  /**
+   * 通知列表：定向通知 + 全站公告合并视图。
+   *
+   * @param read    UNREAD / READ；留空 = 全部（2026-10-27）
+   * @param keyword 标题或正文包含匹配（2026-10-27）
+   *
+   * <p>筛选**全部走服务端**：前端在「当前页」里 filter 只会得到这一页的结果，
+   * 翻页时上一页被筛掉的又回来了，且 total 仍是全量 —— 用户会看到一个翻不完的未读列表。
+   */
+  list: (query?: {
+    category?: string;
+    read?: 'UNREAD' | 'READ';
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<NoticePageData>('/api/socials/notices', { query }),
   unreadCount: () => api.get<UnreadCount>('/api/socials/notices/unread-count'),
   /**
    * 未读汇总：**通知 + 私信合并口径**（服务端算好再下发，前端不自己相加）。
@@ -1304,6 +1847,16 @@ export const noticeApi = {
   markRead: (id: string) => api.post<void>(`/api/socials/notices/${id}/read`),
   /** 全部已读（幂等） */
   readAll: () => api.post<void>('/api/socials/notices/read-all'),
+  /**
+   * 批量操作（2026-10-27）：勾选后标记已读 / 删除，或全部删除。
+   *
+   * <p>返回 `{affected, unread}`：`unread` 是最新未读数，前端据此一次请求
+   * 就把列表与角标都更新掉，不必再发一次 unread-count（那一次往返还可能与新通知错位）。
+   *
+   * <p>「全部已读」仍走 `readAll`：它额外会清客服会话未读，两个语义不能混。
+   */
+  batch: (body: { action: 'READ' | 'DELETE'; ids?: string[]; all?: boolean }) =>
+    api.post<{ affected: number; unread: number }>('/api/socials/notices/batch', body),
 };
 
 export const followApi = {
@@ -1578,6 +2131,13 @@ export const sellerSupportApi = {
     api.post<SupportMessageView>(`/api/seller/support/sessions/${id}/messages/${messageId}/recall`),
   // 关闭 / 重开已下线（2026-10-23）：关闭权只在买家手里，客服侧调用恒返回 403
   unreadCount: () => api.get<number>('/api/seller/support/unread-count'),
+
+  /** 客服会话导出地址（2026-10-28）：不含聊天正文 */
+  sessionsExportUrl: (query?: {
+    status?: string;
+    filter?: 'ALL' | 'UNREAD' | 'ANSWERED' | 'CLOSED';
+    onlyUnread?: boolean;
+  }) => csvUrl('/api/seller/support/sessions/export', query),
 
   // ---- C-04 · 客服工单认领 / 转交 / 审计 ----
 

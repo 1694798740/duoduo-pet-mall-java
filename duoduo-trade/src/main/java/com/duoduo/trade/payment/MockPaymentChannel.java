@@ -50,4 +50,16 @@ public class MockPaymentChannel implements PaymentChannel {
         throw new BizException(ErrorCode.PAYMENT_SIGNATURE_INVALID,
                 "模拟渠道（MOCK）不支持支付回调：它在预下单时即完成收款");
     }
+
+    /**
+     * 退款（B-04）：模拟渠道没有真实资金流，「受理即到终态」。
+     *
+     * <p>实现它而不是沿用接口默认的「不支持」：重复收款的退款台账若遇到
+     * 永远不支持退款的渠道，会一路 INIT 重试并刷错误日志；模拟渠道既然
+     * 扮演的是「一个能正常收款的渠道」，退款能力也应当一并扮演。
+     */
+    @Override
+    public RefundResult refund(RefundCommand command) {
+        return new RefundResult(command.refundNo(), "MOCK-REFUND-" + command.refundNo(), "SUCCESS", true);
+    }
 }

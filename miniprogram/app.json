@@ -9,6 +9,7 @@
     "pages/product/product",
     "pages/seckill/seckill",
     "pages/coupons/coupons",
+    "pages/coins/coins",
     "pages/address/address",
     "pages/account-delete/account-delete",
     "pages/order-detail/order-detail",

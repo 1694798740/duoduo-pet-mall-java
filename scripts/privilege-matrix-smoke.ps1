@@ -755,8 +755,10 @@ Check "★ ④ 算术：**每一笔退款额都 ≤ 该单实付额**（比对 $
     ($asTotal -gt 0 -and $asBad -eq 0) "checked=$asTotal violations=$asBad"
 
 $ordTotal = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order;")
-$ordBad = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE pay_amount <> total_amount + freight_amount - discount_amount;")
-Check "★ ④ 算术：全库订单都满足 应付 = 商品总额 + 运费 − 优惠（比对 $ordTotal 单，违例 $ordBad 单）" `
+# R-P1（第一百二十六轮）起应付公式加入**多多币抵扣**：应付 = 总额 + 运费 − 优惠 − 币抵。
+# COALESCE 兜底历史行（币列是后加的，旧单为 NULL）。
+$ordBad = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE pay_amount <> total_amount + freight_amount - discount_amount - COALESCE(coin_deduct_amount, 0);")
+Check "★ ④ 算术：全库订单都满足 应付 = 商品总额 + 运费 − 优惠 − 币抵（比对 $ordTotal 单，违例 $ordBad 单）" `
     ($ordTotal -gt 0 -and $ordBad -eq 0) "checked=$ordTotal violations=$ordBad"
 
 $ordBadCoupon = [long](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE discount_amount > total_amount;")

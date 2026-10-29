@@ -1,6 +1,7 @@
 package com.duoduo.fulfilment.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -64,6 +65,26 @@ public final class AfterSaleDtos {
     }
 
     /**
+     * 卖家批量处理请求（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>动作与说明对选中的全部售后单共用一份；逐条结果见 {@code BatchDtos.Result}。
+     */
+    public record AfterSaleBatchReplyRequest(
+            @NotEmpty(message = "ids 不能为空") List<Long> ids,
+            @NotBlank(message = "处理动作不能为空") String action,
+            @Size(max = 500, message = "处理说明不能超过 500 字") String reply
+    ) {
+    }
+
+    /** 运营批量裁定请求（2026-10-27）：结论与说明对全部单共用 */
+    public record AfterSaleBatchArbitrateRequest(
+            @NotEmpty(message = "ids 不能为空") List<Long> ids,
+            @NotBlank(message = "裁定结论不能为空") String result,
+            @Size(max = 500, message = "裁定说明不能超过 500 字") String note
+    ) {
+    }
+
+    /**
      * 买家填写寄回物流请求（第五十八轮 P1-5）。
      *
      * <p>只收「快递公司 + 运单号」两个字段，不收买家自己输入的退货地址：
@@ -117,7 +138,9 @@ public final class AfterSaleDtos {
             /** 卖家确认收货时间（退款在这一刻发生，未签收时为 null） */
             String returnReceivedAt,
             String createdAt,
-            String updatedAt
+            String updatedAt,
+            /** 当前查看者是否已看过（列表逐条橙点用；详情不参与） */
+            boolean read
     ) {
     }
 }

@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
@@ -157,6 +158,93 @@ public interface AfterSaleMapper extends BaseMapper<AfterSaleEntity> {
     /** 本域已知的卖家标识（售后表里出现过的 seller_id，去重）—— 与评价表那份互补 */
     @Select("SELECT DISTINCT seller_id FROM t_after_sale WHERE seller_id IS NOT NULL")
     List<Long> distinctSellerIds();
+
+    /**
+     * 买家自己提起的售后，按状态分桶 —— 买家端售后页二级 Tab 角标的数据源。
+     *
+     * <p>口径与 {@code listMine} 完全一致（{@code buyer_id = 我}），只是把分页换成聚合：
+     * 角标必须覆盖全量，不能拿当前页的条数充数（分页外的未结案会被漏掉）。
+     *
+     * <p><b>2026-10-27 · 阅后即消</b>：终态 {@code REFUNDED / CLOSED} 看过的要从计数里减掉
+     * （用户原话：看完角标常驻）。其余状态都是「还没走完的事」，读过也必须继续提醒 ——
+     * 与订单侧「待支付/待发货/待收货不减」是同一条规则。
+     *
+     * <p>可消状态名单与 {@code shared/lib/badge-rules.ts} 一一对应，改一处必须同时改另一处。
+     */
+    @Select("SELECT a.status AS status, COUNT(*) AS cnt FROM t_after_sale a "
+            + "WHERE a.buyer_id = #{buyerId} "
+            + "AND NOT (a.status IN ('REFUNDED','CLOSED') "
+            + "         AND EXISTS (SELECT 1 FROM t_after_sale_read r "
+            + "                     WHERE r.user_id = #{viewerId} AND r.after_sale_id = a.id)) "
+            + "GROUP BY a.status")
+    List<Map<String, Object>> countByBuyerAndStatus(@Param("buyerId") Long buyerId,
+                                                    @Param("viewerId") Long viewerId);
+
+    /**
+     * 我店铺收到的售后，按状态分桶 —— 卖家端售后页二级 Tab 角标的数据源。
+     *
+     * <p>{@code sellerIds} 与 {@code listForSeller} 的可见范围同源（卖家本人；
+     * 运营额外含平台自营 0），由服务层算好后传入，SQL 这边不自己推导身份。
+     *
+     * <p>可消范围比买家侧多一类：卖家主动拒绝（{@code SELLER_REJECTED}）是「我已经处理完、
+     * 等买家决定下一招」，对卖家而言是已办事项，看过就消。但 {@code PENDING}（待处理）与
+     * {@code RETURNING}（待我签收）必须留着 —— 那是还没办的事。
+     */
+    @Select("<script>"
+            + "SELECT a.status AS status, COUNT(*) AS cnt FROM t_after_sale a "
+            + "WHERE a.seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "AND NOT (a.status IN ('REFUNDED','CLOSED','SELLER_REJECTED') "
+            + "         AND EXISTS (SELECT 1 FROM t_after_sale_read r "
+            + "                     WHERE r.user_id = #{viewerId} AND r.after_sale_id = a.id)) "
+            + "GROUP BY a.status"
+            + "</script>")
+    List<Map<String, Object>> countBySellerAndStatus(@Param("sellerIds") Collection<Long> sellerIds,
+                                                    @Param("viewerId") Long viewerId);
+
+    /**
+     * 记录「某人看过某售后单」：复合主键 + {@code INSERT IGNORE}，重复上报幂等。
+     *
+     * <p>只影响终态角标，不改变售后单任何业务状态。
+     */
+    @org.apache.ibatis.annotations.Insert(
+            "INSERT IGNORE INTO t_after_sale_read (user_id, after_sale_id, read_at) "
+            + "VALUES (#{userId}, #{afterSaleId}, #{at})")
+    int markAfterSaleRead(@Param("userId") Long userId,
+                          @Param("afterSaleId") Long afterSaleId,
+                          @Param("at") LocalDateTime at);
+
+    /**
+     * 当前页已读集合（2026-10-27 · 逐条橙色未读印记）。
+     *
+     * <p>一次 IN 查询取回整页，避免每行一次「看过没有」；
+     * 只影响展示，不参与状态机。
+     */
+    @Select("<script>SELECT after_sale_id FROM t_after_sale_read "
+            + "WHERE user_id = #{userId} AND after_sale_id IN "
+            + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + "</script>")
+    List<Long> listReadIds(@Param("userId") Long userId, @Param("ids") Collection<Long> ids);
+
+    /** 运营后台售后队列的当前页已读集合（source=AFTER_SALE） */
+    @Select("<script>SELECT biz_id FROM t_admin_queue_read "
+            + "WHERE user_id = #{userId} AND source = 'AFTER_SALE' AND biz_id IN "
+            + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + "</script>")
+    List<Long> listAdminReadIds(@Param("userId") Long userId, @Param("ids") Collection<Long> ids);
+
+    /**
+     * 运营后台「售后仲裁」的未读待处理数（2026-10-27 · 点击详情即消除）。
+     *
+     * <p>与卖家侧分开算：运营看的是全平台 {@code PENDING}，且只排除**本运营**
+     * 点开看过的单（{@code t_admin_queue_read}）。卖家侧那份已读集合
+     * （{@code t_after_sale_read}）不影响这里 —— 卖家看过不等于运营看过。
+     */
+    @Select("SELECT COUNT(*) FROM t_after_sale a "
+            + "WHERE a.status = 'PENDING' "
+            + "AND NOT EXISTS (SELECT 1 FROM t_admin_queue_read q "
+            + "                WHERE q.user_id = #{operatorId} AND q.source = 'AFTER_SALE' AND q.biz_id = a.id)")
+    long countUnreadPendingForAdmin(@Param("operatorId") Long operatorId);
 
     // ---------------- E24 · 租户健康度（按卖家 × 时间窗聚合） ----------------
 

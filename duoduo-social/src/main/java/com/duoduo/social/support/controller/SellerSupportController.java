@@ -6,6 +6,7 @@ import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.seller.StaffPermission;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.social.client.dto.MembershipBrief;
 import com.duoduo.social.support.dto.SupportDtos;
 import com.duoduo.social.support.dto.SupportDtos.MessageView;
@@ -16,6 +17,7 @@ import com.duoduo.social.support.dto.SupportDtos.TicketTransferRequest;
 import com.duoduo.social.support.dto.SupportDtos.TicketView;
 import com.duoduo.social.support.service.SupportService;
 import com.duoduo.social.support.service.SupportTicketService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -72,6 +74,47 @@ public class SellerSupportController {
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.ok(supportService.listForSeller(requireStoreOwnerId(), status, filter,
                 onlyUnread, page, pageSize));
+    }
+
+    /** 会话导出列：不含聊天正文（隐私），只带会话元信息 */
+    private static final java.util.List<String> SESSION_EXPORT_HEADERS = java.util.List.of(
+            "会话ID", "买家", "未读消息数", "会话状态", "处理人", "最后消息时间");
+
+    /**
+     * 导出本店客服会话 CSV（2026-10-28 · 矩阵 P3）：筛选与列表一致。
+     *
+     * <p>不导出聊天正文 / 最后消息内容：报表用于排班与未读盘点，正文属于买卖双方隐私。
+     */
+    @GetMapping("/api/seller/support/sessions/export")
+    public void exportSessions(@RequestParam(required = false) String status,
+                               @RequestParam(required = false) String filter,
+                               @RequestParam(defaultValue = "false") boolean onlyUnread,
+                               HttpServletResponse response) throws java.io.IOException {
+        java.util.List<SessionView> rows = supportService.exportForSeller(
+                requireStoreOwnerId(), status, filter, onlyUnread);
+        CsvExport.write(response, "客服会话-" + CsvExport.stamp(), SESSION_EXPORT_HEADERS,
+                rows.stream().map(SellerSupportController::sessionRow).toList());
+    }
+
+    private static java.util.List<String> sessionRow(SessionView view) {
+        return java.util.List.of(
+                String.valueOf(view.id()),
+                view.userName() == null ? "" : view.userName(),
+                String.valueOf(view.unread()),
+                sessionStatusLabel(view.status()),
+                view.assigneeName() == null ? "" : view.assigneeName(),
+                CsvExport.beijingTime(view.lastMessageAt()));
+    }
+
+    private static String sessionStatusLabel(String status) {
+        if (status == null) {
+            return "";
+        }
+        return switch (status) {
+            case "OPEN" -> "进行中";
+            case "CLOSED" -> "已关闭";
+            default -> status;
+        };
     }
 
     @GetMapping("/api/seller/support/sessions/{id}/messages")

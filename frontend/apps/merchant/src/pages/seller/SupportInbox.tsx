@@ -480,6 +480,15 @@ export const SellerSupportPage: React.FC = () => {
             {f.label}
           </button>
         ))}
+        <button
+          className="btn btn-sm btn-ghost"
+          type="button"
+          onClick={() => {
+            window.location.href = sellerSupportApi.sessionsExportUrl({ filter });
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
 
       <div className="sup-layout">

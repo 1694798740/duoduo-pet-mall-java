@@ -15,6 +15,7 @@ import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
+import { CatalogImportModal } from './CatalogImportModal';
 
 /** 本地分页每页条数（数据量小，够用即可） */
 const PAGE_SIZE = 10;
@@ -28,6 +29,8 @@ export const AdminBrandsPage: React.FC = () => {
 
   const [editing, setEditing] = useState<BrandView | null>(null);
   const [creating, setCreating] = useState(false);
+  /** 第三批 · 第 8 项：批量导入（模板 → dry-run → 正式导入） */
+  const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState<BrandSaveRequest>(emptyForm);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -121,7 +124,18 @@ export const AdminBrandsPage: React.FC = () => {
 
       <div className="row-between row-wrap" style={{ marginBottom: 8 }}>
         <span className="small muted">共 {items.length} 个品牌</span>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建类目</button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              window.location.href = adminApi.brandExportUrl();
+            }}
+          >
+            导出 CSV
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setImportOpen(true)}>批量导入</button>
+          <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建品牌</button>
+        </div>
       </div>
 
       <div className="list-toolbar">
@@ -221,6 +235,24 @@ export const AdminBrandsPage: React.FC = () => {
           <textarea className="input" rows={3} value={form.story ?? ''} onChange={(e) => setForm({ ...form, story: e.target.value })} maxLength={500} />
         </Field>
       </Modal>
+
+      {/* 第三批 · 第 8 项：主数据导入必须走 dry-run，先看清逐行计划再落库 */}
+      <CatalogImportModal
+        open={importOpen}
+        title="批量导入品牌（CSV / xlsx）"
+        hint={
+          <>
+            列顺序：名称、国家/地区、Logo地址、品牌故事。同名品牌视为已存在，只更新填了值的列
+            （留空列 = 不改）；新建的品牌默认启用。
+          </>
+        }
+        template={adminApi.brandImportTemplate}
+        templateXlsxUrl={adminApi.brandImportTemplateXlsxUrl()}
+        dryRun={adminApi.checkBrandImport}
+        submit={adminApi.importBrands}
+        onImported={reload}
+        onClose={() => setImportOpen(false)}
+      />
     </div>
   );
 };

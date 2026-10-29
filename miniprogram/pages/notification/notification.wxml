@@ -33,7 +33,11 @@
       class="chip {{activeCategory === item.key ? 'chip-on' : ''}}"
       data-key="{{item.key}}"
       bindtap="switchCategory"
-    >{{item.label}}</view>
+    >
+      <text>{{item.label}}</text>
+      <!-- 分类未读角标（2026-10-27）：数字来自服务端分桶；0 时不渲染 -->
+      <text wx:if="{{item.count > 0}}" class="chip-badge">{{item.count > 99 ? '99+' : item.count}}</text>
+    </view>
   </scroll-view>
 
   <!-- 全部已读：仅在有未读时出现 -->

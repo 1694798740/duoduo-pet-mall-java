@@ -25,11 +25,13 @@ import {
   MerchantApplicationView,
   MerchantLicenseStage,
   MerchantRejectReason,
+  BatchResultView,
 } from '@duoduo/api-sdk/types';
 import {
-  Alert, Empty, LoadingBlock, Modal, Pagination, SearchBar, formatDate, useToast,
+  Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, isOperator } from './shared';
 
@@ -123,6 +125,12 @@ export const AdminMerchantsPage: React.FC = () => {
   const [sweeping, setSweeping] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  /** 批量通过 / 驳回（2026-10-28 · 批量操作第一批） */
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchRejectOpen, setBatchRejectOpen] = useState(false);
+  const [batchRejectNote, setBatchRejectNote] = useState('');
+
   const { data, loading, error, reload } = useAsync(
     useCallback(
       () => adminMerchantApi.page({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
@@ -131,6 +139,10 @@ export const AdminMerchantsPage: React.FC = () => {
     operator,
     [status, keyword, page],
   );
+
+  // hooks 必须在提前 return 之前：选择状态挂在「当前页」上，切页/筛选自动清空
+  const pageIds = (data?.items ?? []).map((item) => item.merchantId);
+  const selection = useBatchSelection(pageIds, `${status}|${keyword}|${page}`);
 
   if (!operator) return <AdminDenied />;
 
@@ -169,6 +181,47 @@ export const AdminMerchantsPage: React.FC = () => {
     }
     await act(() => adminMerchantApi.reject(detail.merchantId, cleaned), '已驳回，商家可修改后重提');
     setRejecting(false);
+  };
+
+  const submitBatchApprove = async () => {
+    if (!selection.count || batchBusy) return;
+    setBatchBusy(true);
+    setActionError(null);
+    try {
+      const result = await adminMerchantApi.batchApprove(selection.selected);
+      setBatchResult(result);
+      selection.clear();
+      reload();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const submitBatchReject = async () => {
+    if (!selection.count || batchBusy) return;
+    const note = batchRejectNote.trim();
+    if (!note) {
+      setActionError('至少写一条驳回说明 —— 商家看到的就是它');
+      return;
+    }
+    setBatchBusy(true);
+    setActionError(null);
+    try {
+      const result = await adminMerchantApi.batchReject(selection.selected, [
+        { scope: 'GENERAL', code: 'OTHER', note },
+      ]);
+      setBatchResult(result);
+      selection.clear();
+      setBatchRejectOpen(false);
+      setBatchRejectNote('');
+      reload();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBatchBusy(false);
+    }
   };
 
   /**
@@ -249,6 +302,27 @@ export const AdminMerchantsPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的申请 {data ? data.total : 0} 条</span>
         ) : null}
+        <button
+          className="btn btn-ghost btn-sm"
+          title="按当前状态与关键词导出入驻申请（CSV，不含证件材料）"
+          onClick={() => {
+            window.location.href = adminMerchantApi.exportUrl({
+              status: status || undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
+        <label className="checkbox-row small" style={{ marginLeft: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={selection.allSelected}
+            disabled={!pageIds.length}
+            onChange={selection.toggleAll}
+          />
+          全选当前页
+        </label>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -263,10 +337,40 @@ export const AdminMerchantsPage: React.FC = () => {
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
+        <div>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={batchBusy}
+              onClick={() => void submitBatchApprove()}
+            >
+              批量通过
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              disabled={batchBusy}
+              onClick={() => {
+                setBatchRejectNote('');
+                setActionError(null);
+                setBatchRejectOpen(true);
+              }}
+            >
+              批量驳回
+            </button>
+          </BatchBar>
         <div className="card card-pad">
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="全选当前页入驻申请"
+                    checked={selection.allSelected}
+                    disabled={!pageIds.length}
+                    onChange={selection.toggleAll}
+                  />
+                </th>
                 <th>店铺名称</th>
                 <th>店主</th>
                 <th>状态</th>
@@ -278,6 +382,15 @@ export const AdminMerchantsPage: React.FC = () => {
             <tbody>
               {data.items.map((item) => (
                 <tr key={item.merchantId}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择申请 ${item.storeName}`}
+                      checked={selection.selectedSet.has(item.merchantId)}
+                      disabled={batchBusy}
+                      onChange={() => selection.toggle(item.merchantId)}
+                    />
+                  </td>
                   <td>
                     {item.storeName}
                     {/* 停业原因直接挂在列表上：运营被问「我的店怎么停了」时，
@@ -301,7 +414,42 @@ export const AdminMerchantsPage: React.FC = () => {
           </table>
           <Pagination page={page} pageCount={Math.max(1, data.pageCount)} total={data.total} onChange={setPage} />
         </div>
+        </div>
       ) : null}
+
+      {/* 批量驳回：说明对全部选中申请共用（结构化为 GENERAL + OTHER，商家端按整体驳回展示） */}
+      <Modal
+        open={batchRejectOpen}
+        title="批量驳回入驻申请"
+        onClose={() => setBatchRejectOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setBatchRejectOpen(false)} disabled={batchBusy}>
+              取消
+            </button>
+            <button className="btn btn-danger" disabled={batchBusy} onClick={() => void submitBatchReject()}>
+              {batchBusy ? '处理中…' : `确认驳回（${selection.count} 家）`}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="warn">
+          将驳回 <b>{selection.count}</b> 家入驻申请（仅当前页）。同一句说明会发给每一家，
+          请写成「所有被选中的店都能照着改」的话；需要逐店不同原因时请逐条驳回。
+        </Alert>
+        <Field label="驳回说明（商家可见，必填）">
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="例如：营业执照照片模糊，请重新上传清晰的原件照片"
+            value={batchRejectNote}
+            onChange={(e) => setBatchRejectNote(e.target.value)}
+          />
+        </Field>
+        {actionError ? <Alert kind="error">{actionError}</Alert> : null}
+      </Modal>
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="商户" />
 
       {detail ? (
         <Modal open title={`入驻申请 · ${detail.storeName}`} onClose={() => setDetail(null)}>

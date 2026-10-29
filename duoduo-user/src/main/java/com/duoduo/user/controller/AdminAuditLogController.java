@@ -7,6 +7,8 @@ import com.duoduo.common.security.perm.RequirePerm;
 import com.duoduo.user.dto.AuditDtos.AuditLogView;
 import com.duoduo.user.dto.AuditDtos.AuditQuery;
 import com.duoduo.user.service.AuditLogService;
+import com.duoduo.common.web.CsvExport;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -59,5 +61,49 @@ public class AdminAuditLogController {
         return ApiResponse.ok(auditLogService.search(
                 new AuditQuery(actorId, tenantId, category, action, outcome, targetId, from, to),
                 page, pageSize));
+    }
+
+    /**
+     * 审计日志导出（矩阵第二批）。
+     *
+     * <p>与检索同一筛选、同一权限（类级 {@code AUDIT_LOG_READ}），单次上限 5 万行；
+     * 导出是只读动作，不写审计 —— 否则「看审计」本身会淹没被看的内容。
+     */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) Long actorId,
+                       @RequestParam(required = false) Long tenantId,
+                       @RequestParam(required = false) String category,
+                       @RequestParam(required = false) String action,
+                       @RequestParam(required = false) String outcome,
+                       @RequestParam(required = false) Long targetId,
+                       @RequestParam(required = false) String from,
+                       @RequestParam(required = false) String to,
+                       HttpServletResponse response) throws java.io.IOException {
+        java.util.List<AuditLogView> views = auditLogService.exportSearch(
+                new AuditQuery(actorId, tenantId, category, action, outcome, targetId, from, to));
+        CsvExport.write(response, "操作审计-" + CsvExport.stamp(), HEADERS,
+                views.stream().map(AdminAuditLogController::row).toList());
+    }
+
+    private static final java.util.List<String> HEADERS = java.util.List.of(
+            "时间", "动作", "类目", "结果", "操作人ID", "操作人手机", "目标类型", "目标ID",
+            "租户", "改前", "改后", "详情", "IP", "请求ID");
+
+    private static java.util.List<String> row(AuditLogView view) {
+        return java.util.List.of(
+                CsvExport.beijingTime(view.createdAt()),
+                view.action() == null ? "" : view.action(),
+                view.category() == null ? "" : view.category(),
+                view.outcome() == null ? "" : view.outcome(),
+                view.actorId() == null ? "" : view.actorId(),
+                view.actorPhone() == null ? "" : view.actorPhone(),
+                view.targetType() == null ? "" : view.targetType(),
+                view.targetId() == null ? "" : view.targetId(),
+                view.tenantId() == null ? "" : view.tenantId(),
+                view.beforeValue() == null ? "" : view.beforeValue(),
+                view.afterValue() == null ? "" : view.afterValue(),
+                view.detail() == null ? "" : view.detail(),
+                view.ip() == null ? "" : view.ip(),
+                view.requestId() == null ? "" : view.requestId());
     }
 }

@@ -247,6 +247,66 @@
                                                                                          }
                                                                        }
                                                           },
+                  "/api/seller/orders/{orderNo}/read":  {
+                                                            "post":  {
+                                                                         "tags":  [
+                                                                                      "seller-controller"
+                                                                                  ],
+                                                                         "operationId":  "markOrderRead",
+                                                                         "parameters":  [
+                                                                                            {
+                                                                                                "name":  "orderNo",
+                                                                                                "in":  "path",
+                                                                                                "required":  true,
+                                                                                                "schema":  {
+                                                                                                               "type":  "string"
+                                                                                                           }
+                                                                                            }
+                                                                                        ],
+                                                                         "responses":  {
+                                                                                           "200":  {
+                                                                                                       "description":  "OK",
+                                                                                                       "content":  {
+                                                                                                                       "*/*":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                                   }
+                                                                                                   }
+                                                                                       }
+                                                                     }
+                                                        },
+                  "/api/seller/orders/batch-ship":  {
+                                                        "post":  {
+                                                                     "tags":  [
+                                                                                  "seller-controller"
+                                                                              ],
+                                                                     "operationId":  "batchShip",
+                                                                     "requestBody":  {
+                                                                                         "content":  {
+                                                                                                         "application/json":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/BatchShipRequest"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                     },
+                                                                                         "required":  true
+                                                                                     },
+                                                                     "responses":  {
+                                                                                       "200":  {
+                                                                                                   "description":  "OK",
+                                                                                                   "content":  {
+                                                                                                                   "*/*":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                               }
+                                                                                               }
+                                                                                   }
+                                                                 }
+                                                    },
                   "/api/seckill/orders":  {
                                               "post":  {
                                                            "tags":  [
@@ -589,6 +649,36 @@
                                                                                   }
                                                                 }
                                                    },
+                  "/api/orders/{orderNo}/read":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "order-controller"
+                                                                           ],
+                                                                  "operationId":  "markRead",
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "orderNo",
+                                                                                         "in":  "path",
+                                                                                         "required":  true,
+                                                                                         "schema":  {
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                     }
+                                                                                 ],
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
                   "/api/orders/queued":  {
                                              "post":  {
                                                           "tags":  [
@@ -1196,6 +1286,36 @@
                                                                                              }
                                                                            }
                                                               },
+                  "/api/admin/orders/batch-force-close":  {
+                                                              "post":  {
+                                                                           "tags":  [
+                                                                                        "admin-order-controller"
+                                                                                    ],
+                                                                           "operationId":  "batchForceClose",
+                                                                           "requestBody":  {
+                                                                                               "content":  {
+                                                                                                               "application/json":  {
+                                                                                                                                        "schema":  {
+                                                                                                                                                       "$ref":  "#/components/schemas/BatchForceCloseRequest"
+                                                                                                                                                   }
+                                                                                                                                    }
+                                                                                                           },
+                                                                                               "required":  true
+                                                                                           },
+                                                                           "responses":  {
+                                                                                             "200":  {
+                                                                                                         "description":  "OK",
+                                                                                                         "content":  {
+                                                                                                                         "*/*":  {
+                                                                                                                                     "schema":  {
+                                                                                                                                                    "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                                }
+                                                                                                                                 }
+                                                                                                                     }
+                                                                                                     }
+                                                                                         }
+                                                                       }
+                                                          },
                   "/api/admin/mq/dlq/replay":  {
                                                    "post":  {
                                                                 "tags":  [
@@ -1623,6 +1743,26 @@
                                                                                  }
                                                                }
                                                    },
+                  "/api/seller/orders/status-counts":  {
+                                                           "get":  {
+                                                                       "tags":  [
+                                                                                    "seller-controller"
+                                                                                ],
+                                                                       "operationId":  "orderStatusCounts",
+                                                                       "responses":  {
+                                                                                         "200":  {
+                                                                                                     "description":  "OK",
+                                                                                                     "content":  {
+                                                                                                                     "*/*":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                                 }
+                                                                                                 }
+                                                                                     }
+                                                                   }
+                                                       },
                   "/api/seller/analytics":  {
                                                 "get":  {
                                                             "tags":  [
@@ -1724,6 +1864,56 @@
                                                                           }
                                                         }
                                             },
+                  "/api/payments/refunds/mine":  {
+                                                     "get":  {
+                                                                 "tags":  [
+                                                                              "payment-controller"
+                                                                          ],
+                                                                 "operationId":  "myRefunds",
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "payNo",
+                                                                                        "in":  "query",
+                                                                                        "required":  false,
+                                                                                        "schema":  {
+                                                                                                       "type":  "string"
+                                                                                                   }
+                                                                                    },
+                                                                                    {
+                                                                                        "name":  "page",
+                                                                                        "in":  "query",
+                                                                                        "required":  false,
+                                                                                        "schema":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int32",
+                                                                                                       "default":  1
+                                                                                                   }
+                                                                                    },
+                                                                                    {
+                                                                                        "name":  "pageSize",
+                                                                                        "in":  "query",
+                                                                                        "required":  false,
+                                                                                        "schema":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int32",
+                                                                                                       "default":  20
+                                                                                                   }
+                                                                                    }
+                                                                                ],
+                                                                 "responses":  {
+                                                                                   "200":  {
+                                                                                               "description":  "OK",
+                                                                                               "content":  {
+                                                                                                               "*/*":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseListPaymentRefundView"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                                           }
+                                                                                           }
+                                                                               }
+                                                             }
+                                                 },
                   "/api/orders/{orderNo}/settlement":  {
                                                            "get":  {
                                                                        "tags":  [
@@ -1784,6 +1974,26 @@
                                                                           }
                                                         }
                                             },
+                  "/api/orders/status-counts":  {
+                                                    "get":  {
+                                                                "tags":  [
+                                                                             "order-controller"
+                                                                         ],
+                                                                "operationId":  "statusCounts",
+                                                                "responses":  {
+                                                                                  "200":  {
+                                                                                              "description":  "OK",
+                                                                                              "content":  {
+                                                                                                              "*/*":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                                          }
+                                                                                          }
+                                                                              }
+                                                            }
+                                                },
                   "/api/orders/purchased-products":  {
                                                          "get":  {
                                                                      "tags":  [
@@ -2276,12 +2486,78 @@
                                                                            }
                                                          }
                                              },
+                  "/api/admin/payments/refunds":  {
+                                                      "get":  {
+                                                                  "tags":  [
+                                                                               "admin-payment-refund-controller"
+                                                                           ],
+                                                                  "operationId":  "list_4",
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "status",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "payNo",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "orderNo",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "page",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32",
+                                                                                                        "default":  1
+                                                                                                    }
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "pageSize",
+                                                                                         "in":  "query",
+                                                                                         "required":  false,
+                                                                                         "schema":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32",
+                                                                                                        "default":  20
+                                                                                                    }
+                                                                                     }
+                                                                                 ],
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponsePageResultPaymentRefundView"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                  },
                   "/api/admin/orders":  {
                                             "get":  {
                                                         "tags":  [
                                                                      "admin-order-controller"
                                                                  ],
-                                                        "operationId":  "list_4",
+                                                        "operationId":  "list_5",
                                                         "parameters":  [
                                                                            {
                                                                                "name":  "status",
@@ -2424,7 +2700,7 @@
                                                         "tags":  [
                                                                      "admin-mq-controller"
                                                                  ],
-                                                        "operationId":  "list_5",
+                                                        "operationId":  "list_6",
                                                         "parameters":  [
                                                                            {
                                                                                "name":  "key",
@@ -2788,6 +3064,18 @@
                                                                                               "type":  "integer",
                                                                                               "format":  "int64"
                                                                                           },
+                                                                            "coinUsed":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int64"
+                                                                                         },
+                                                                            "coinDeductAmount":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                            "coinEarnAmount":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
                                                                             "receiverName":  {
                                                                                                  "type":  "string"
                                                                                              },
@@ -2838,7 +3126,10 @@
                                                                                                  },
                                                                             "logisticsNo":  {
                                                                                                 "type":  "string"
-                                                                                            }
+                                                                                            },
+                                                                            "read":  {
+                                                                                         "type":  "boolean"
+                                                                                     }
                                                                         }
                                                      },
                                        "SettlementView":  {
@@ -2859,6 +3150,10 @@
                                                                                                      "type":  "integer",
                                                                                                      "format":  "int64"
                                                                                                  },
+                                                                                 "coinSubsidyAmount":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int64"
+                                                                                                       },
                                                                                  "sellerAmount":  {
                                                                                                       "type":  "integer",
                                                                                                       "format":  "int64"
@@ -2944,6 +3239,130 @@
                                                                                               }
                                                                            }
                                                         },
+                                       "ApiResponseListStatusCount":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "$ref":  "#/components/schemas/StatusCount"
+                                                                                                                    }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "StatusCount":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "status":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                              "count":  {
+                                                                                            "type":  "integer",
+                                                                                            "format":  "int64"
+                                                                                        }
+                                                                          }
+                                                       },
+                                       "BatchShipRequest":  {
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "orderNos":  {
+                                                                                                    "type":  "array",
+                                                                                                    "items":  {
+                                                                                                                  "type":  "string"
+                                                                                                              }
+                                                                                                },
+                                                                                   "logisticsCompany":  {
+                                                                                                            "maxLength":  50,
+                                                                                                            "minLength":  0,
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                   "logisticsNo":  {
+                                                                                                       "maxLength":  64,
+                                                                                                       "minLength":  0,
+                                                                                                       "type":  "string"
+                                                                                                   }
+                                                                               }
+                                                            },
+                                       "ApiResponseResult":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "code":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                    "message":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                    "data":  {
+                                                                                                 "$ref":  "#/components/schemas/Result"
+                                                                                             },
+                                                                                    "requestId":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                    "timestamp":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  }
+                                                                                }
+                                                             },
+                                       "Item":  {
+                                                    "type":  "object",
+                                                    "properties":  {
+                                                                       "id":  {
+                                                                                  "type":  "string"
+                                                                              },
+                                                                       "success":  {
+                                                                                       "type":  "boolean"
+                                                                                   },
+                                                                       "errorCode":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                       "message":  {
+                                                                                       "type":  "string"
+                                                                                   }
+                                                                   }
+                                                },
+                                       "Result":  {
+                                                      "type":  "object",
+                                                      "properties":  {
+                                                                         "total":  {
+                                                                                       "type":  "integer",
+                                                                                       "format":  "int32"
+                                                                                   },
+                                                                         "successCount":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32"
+                                                                                          },
+                                                                         "failedCount":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32"
+                                                                                         },
+                                                                         "items":  {
+                                                                                       "type":  "array",
+                                                                                       "items":  {
+                                                                                                     "$ref":  "#/components/schemas/Item"
+                                                                                                 }
+                                                                                   },
+                                                                         "counts":  {
+                                                                                        "type":  "array",
+                                                                                        "items":  {
+                                                                                                      "$ref":  "#/components/schemas/StatusCount"
+                                                                                                  }
+                                                                                    }
+                                                                     }
+                                                  },
                                        "PlaceSeckillRequest":  {
                                                                    "required":  [
                                                                                     "activityId",
@@ -3108,6 +3527,9 @@
                                                                                                        "minLength":  0,
                                                                                                        "type":  "string"
                                                                                                    },
+                                                                                    "useCoins":  {
+                                                                                                     "type":  "boolean"
+                                                                                                 },
                                                                                     "buySkuId":  {
                                                                                                      "type":  "integer",
                                                                                                      "format":  "int64"
@@ -3247,6 +3669,9 @@
                                                                                                          "minLength":  0,
                                                                                                          "type":  "string"
                                                                                                      },
+                                                                                      "useCoins":  {
+                                                                                                       "type":  "boolean"
+                                                                                                   },
                                                                                       "buySkuId":  {
                                                                                                        "type":  "integer",
                                                                                                        "format":  "int64"
@@ -3308,7 +3733,11 @@
                                                                                       "payAmount":  {
                                                                                                         "type":  "integer",
                                                                                                         "format":  "int64"
-                                                                                                    }
+                                                                                                    },
+                                                                                      "coinUsed":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   }
                                                                                   }
                                                                },
                                        "PreviewOrderResult":  {
@@ -3349,7 +3778,19 @@
                                                                                                     },
                                                                                      "couponMessage":  {
                                                                                                            "type":  "string"
-                                                                                                       }
+                                                                                                       },
+                                                                                     "coinBalance":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
+                                                                                     "coinUsed":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                     "coinDeductAmount":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int64"
+                                                                                                          }
                                                                                  }
                                                               },
                                        "ApiResponsePersonalDataCleanupResult":  {
@@ -3452,7 +3893,19 @@
                                                                               "restockFailed":  {
                                                                                                     "type":  "integer",
                                                                                                     "format":  "int32"
-                                                                                                }
+                                                                                                },
+                                                                              "refundsExecuted":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int32"
+                                                                                                  },
+                                                                              "refundsPending":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int32"
+                                                                                                 },
+                                                                              "coinsEarned":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int32"
+                                                                                              }
                                                                           }
                                                        },
                                        "SkuUsageQuery":  {
@@ -3949,6 +4402,22 @@
                                                                                                }
                                                                                 }
                                                              },
+                                       "BatchForceCloseRequest":  {
+                                                                      "type":  "object",
+                                                                      "properties":  {
+                                                                                         "orderNos":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "type":  "string"
+                                                                                                                    }
+                                                                                                      },
+                                                                                         "reason":  {
+                                                                                                        "maxLength":  100,
+                                                                                                        "minLength":  0,
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                     }
+                                                                  },
                                        "DlqReplayRequest":  {
                                                                 "required":  [
                                                                                  "idempotentKey"
@@ -4648,6 +5117,66 @@
                                                                                                             }
                                                                                           }
                                                                        },
+                                       "ApiResponseListPaymentRefundView":  {
+                                                                                "type":  "object",
+                                                                                "properties":  {
+                                                                                                   "code":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                   "message":  {
+                                                                                                                   "type":  "string"
+                                                                                                               },
+                                                                                                   "data":  {
+                                                                                                                "type":  "array",
+                                                                                                                "items":  {
+                                                                                                                              "$ref":  "#/components/schemas/PaymentRefundView"
+                                                                                                                          }
+                                                                                                            },
+                                                                                                   "requestId":  {
+                                                                                                                     "type":  "string"
+                                                                                                                 },
+                                                                                                   "timestamp":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                               }
+                                                                            },
+                                       "PaymentRefundView":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "refundNo":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                                    "payNo":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                    "orderNo":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                    "amount":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
+                                                                                    "status":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                                    "channel":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                    "channelRefundNo":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                    "failReason":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                    "refundedAt":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                                    "createdAt":  {
+                                                                                                      "type":  "string"
+                                                                                                  }
+                                                                                }
+                                                             },
                                        "ApiResponseSettlementView":  {
                                                                          "type":  "object",
                                                                          "properties":  {
@@ -5532,6 +6061,54 @@
                                                                                                }
                                                                             }
                                                          },
+                                       "ApiResponsePageResultPaymentRefundView":  {
+                                                                                      "type":  "object",
+                                                                                      "properties":  {
+                                                                                                         "code":  {
+                                                                                                                      "type":  "string"
+                                                                                                                  },
+                                                                                                         "message":  {
+                                                                                                                         "type":  "string"
+                                                                                                                     },
+                                                                                                         "data":  {
+                                                                                                                      "$ref":  "#/components/schemas/PageResultPaymentRefundView"
+                                                                                                                  },
+                                                                                                         "requestId":  {
+                                                                                                                           "type":  "string"
+                                                                                                                       },
+                                                                                                         "timestamp":  {
+                                                                                                                           "type":  "integer",
+                                                                                                                           "format":  "int64"
+                                                                                                                       }
+                                                                                                     }
+                                                                                  },
+                                       "PageResultPaymentRefundView":  {
+                                                                           "type":  "object",
+                                                                           "properties":  {
+                                                                                              "items":  {
+                                                                                                            "type":  "array",
+                                                                                                            "items":  {
+                                                                                                                          "$ref":  "#/components/schemas/PaymentRefundView"
+                                                                                                                      }
+                                                                                                        },
+                                                                                              "total":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        },
+                                                                                              "page":  {
+                                                                                                           "type":  "integer",
+                                                                                                           "format":  "int32"
+                                                                                                       },
+                                                                                              "pageSize":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int32"
+                                                                                                           },
+                                                                                              "pageCount":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int32"
+                                                                                                            }
+                                                                                          }
+                                                                       },
                                        "ApiResponseListDlqMessageView":  {
                                                                              "type":  "object",
                                                                              "properties":  {

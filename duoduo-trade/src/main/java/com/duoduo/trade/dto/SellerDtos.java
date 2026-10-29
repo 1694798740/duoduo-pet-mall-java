@@ -46,6 +46,20 @@ public final class SellerDtos {
     }
 
     /**
+     * 批量发货请求（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>物流信息对所有选中订单共用一份（批量场景下卖家通常一次交寄同一家快递）；
+     * 留空则与单条发货一致：只改状态，物流信息不入库。
+     * 逐条结果由 {@code BatchDtos.Result} 返回，部分失败不回滚。
+     */
+    public record BatchShipRequest(
+            java.util.List<String> orderNos,
+            @Size(max = 50, message = "物流公司名称过长") String logisticsCompany,
+            @Size(max = 64, message = "物流单号过长") String logisticsNo
+    ) {
+    }
+
+    /**
      * 商家端概览。
      *
      * <p>{@code platformScope} 为 true 表示可见范围里额外包含平台自营

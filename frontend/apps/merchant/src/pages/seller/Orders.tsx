@@ -12,13 +12,17 @@
  * 每单都进详情再点一次，等于把 80% 的操作成本翻了一倍。
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { logisticsApi, sellerApi } from '@duoduo/api-sdk/endpoints';
-import type { OrderView, PageResult, WaybillView } from '@duoduo/api-sdk/types';
+import type { BatchResultView, OrderView, PageResult, WaybillView } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
+import { TabWithBadge, UnreadDot, toCountMap } from '@duoduo/shared/components/badge';
+import { applyOptimisticDismiss, shouldDismissOnRead } from '@duoduo/shared/lib/badge-rules';
+import { notifyBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import {
   Alert,
   Empty,
@@ -82,6 +86,86 @@ export const SellerOrdersPage: React.FC = () => {
   /** B-05 · 快递公司列表（服务端下发，前端不维护第二份编码表） */
   const couriers = useAsync(useCallback(() => logisticsApi.couriers(), []), allowed);
 
+  /**
+   * 订单页签角标（2026-10-27）。
+   *
+   * <p><b>不再用 {@code sellerApi.summary()}</b>：summary 是经营存量（「我一共有多少单」），
+   * 不会因为卖家看过而变；角标要的是「还有多少条我没看过」。
+   * 已发货/已完成/已关闭/已退款读过的会被服务端从分桶里减掉，
+   * 而发货动作本身会写一条店铺已读 —— 所以**自己发货不会让「已发货」+1**。
+   */
+  const countsState = useAsync(
+    useCallback(() => sellerApi.orderStatusCounts(), []),
+    allowed,
+  );
+
+  /** 角标本地态：允许乐观减，之后一律以服务端分桶覆盖 */
+  const [orderCounts, setOrderCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setOrderCounts(toCountMap(countsState.data));
+  }, [countsState.data]);
+  const reloadCounts = countsState.reloadSilently;
+
+  /**
+   * 逐条已读的本地覆盖（2026-10-27 · 橙色未读印记）。
+   * 切筛选/翻页时清空，由服务端回传的 `read` 字段重新决定橙点。
+   */
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setReadIds(new Set());
+  }, [status, keyword, page]);
+  const isRead = (order: OrderView) => order.read === true || readIds.has(order.orderNo);
+
+  /** 批量选择（2026-10-27 · 批量操作即已读）：只作用于当前页，切筛选/翻页自动清空 */
+  const pageIds = (data?.items ?? []).map((order) => order.orderNo);
+  const selection = useBatchSelection(pageIds, `${status}|${keyword}|${page}`);
+  const [batchShipOpen, setBatchShipOpen] = useState(false);
+  const [batchCompany, setBatchCompany] = useState('');
+  const [batchLogisticsNo, setBatchLogisticsNo] = useState('');
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+
+  /** 预览卡片（2026-10-27）：点卡片先看轻量预览，不直接跳详情页 */
+  const [preview, setPreview] = useState<OrderView | null>(null);
+
+  /**
+   * 点开订单 = 已读：上报 + 更新本地橙点/角标。
+   *
+   * <p>橙点对**所有状态**都消失（看过了）；数字角标只有「阅后即消」类
+   * （已发货/已完成/已退款/已关闭）才减 —— 待付款/待发货是还没办完的事，
+   * 读过也必须留着。上报失败撤掉橙点覆盖并回读服务端值，不做假账。
+   */
+  const dismissBadge = useCallback(
+    async (order: OrderView) => {
+      if (readIds.has(order.orderNo)) return;
+      const dismissible = shouldDismissOnRead('seller', order.status);
+      setReadIds((prev) => new Set(prev).add(order.orderNo));
+      if (dismissible) {
+        setOrderCounts((prev) => applyOptimisticDismiss(prev, order.status));
+      }
+      try {
+        const rows = await sellerApi.markOrderRead(order.orderNo);
+        setOrderCounts(toCountMap(rows));
+        // 父级菜单角标与页签同一刻收敛
+        notifyBadgeChanged();
+      } catch {
+        setReadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(order.orderNo);
+          return next;
+        });
+        void reloadCounts();
+      }
+    },
+    [reloadCounts, readIds],
+  );
+
+  /** 打开预览 = 已读（原子操作：渲染与上报只在这一个入口里） */
+  const openPreview = (order: OrderView) => {
+    setPreview(order);
+    void dismissBadge(order);
+  };
+
   const [shipTarget, setShipTarget] = useState<OrderView | null>(null);
   const [refundTarget, setRefundTarget] = useState<OrderView | null>(null);
   const [company, setCompany] = useState('');
@@ -135,6 +219,9 @@ export const SellerOrdersPage: React.FC = () => {
       push('已发货；资金仍在托管中，买家确认收货后放款', 'success');
       setShipTarget(null);
       reload();
+      // 发货后「待发货」减一：「已发货」不新增未读（服务端发货即写店铺已读）
+      reloadCounts();
+      notifyBadgeChanged();
     } catch (err) {
       setActionError(toFriendlyMessage(err));
     } finally {
@@ -177,10 +264,51 @@ export const SellerOrdersPage: React.FC = () => {
       push('退款已完成，款项退回买家', 'success');
       setRefundTarget(null);
       reload();
+      // 退款后「已退款」加一，列表与角标同刻刷新
+      reloadCounts();
+      notifyBadgeChanged();
     } catch (err) {
       setActionError(toFriendlyMessage(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * 批量发货（2026-10-27 · 批量操作即已读）。
+   *
+   * <p>与商品管理同一闭环：逐条结果 → 成功条目清橙点 → 用服务端返回的最新分桶
+   * 覆盖本地角标（拿不到分桶才回读）→ 清空选择 → 刷新列表并广播父级角标。
+   * 选中的订单里混入非「待发货」时，服务端会逐条拒绝并带回原因，不静默跳过。
+   */
+  const submitBatchShip = async () => {
+    if (!selection.count || batchBusy) return;
+    setBatchBusy(true);
+    setActionError(null);
+    try {
+      const result = await sellerApi.batchShip(selection.selected, {
+        logisticsCompany: batchCompany.trim() || undefined,
+        logisticsNo: batchLogisticsNo.trim() || undefined,
+      });
+      setBatchResult(result);
+      const successIds = result.items.filter((item) => item.success).map((item) => item.id);
+      if (successIds.length) {
+        setReadIds((prev) => {
+          const next = new Set(prev);
+          successIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
+      if (result.counts) setOrderCounts(toCountMap(result.counts));
+      else void reloadCounts();
+      selection.clear();
+      setBatchShipOpen(false);
+      reload();
+      notifyBadgeChanged();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBatchBusy(false);
     }
   };
 
@@ -226,18 +354,38 @@ export const SellerOrdersPage: React.FC = () => {
         {rawKeyword.trim() ? (
           <span className="small muted">匹配「{rawKeyword.trim()}」的订单 {data ? data.total : 0} 笔</span>
         ) : null}
+        <button
+          className="btn btn-ghost btn-sm"
+          title="按当前页签与关键词导出本店订单（CSV）"
+          onClick={() => {
+            window.location.href = sellerApi.orderExportUrl({
+              status: status || undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
+        <label className="checkbox-row small" style={{ marginLeft: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={selection.allSelected}
+            disabled={!pageIds.length}
+            onChange={selection.toggleAll}
+          />
+          全选当前页
+        </label>
       </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>
         {TABS.map((tab) => (
-          <button
+          <TabWithBadge
             key={tab.label}
-            type="button"
-            className={`tab${status === tab.value ? ' active' : ''}`}
+            label={tab.label}
+            count={orderCounts[tab.value]}
+            active={status === tab.value}
             onClick={() => setStatus(tab.value)}
-          >
-            {tab.label}
-          </button>
+          />
         ))}
       </div>
 
@@ -252,12 +400,56 @@ export const SellerOrdersPage: React.FC = () => {
         <LoadingBlock text="正在加载卖出订单…" />
       ) : data && data.items.length ? (
         <>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={batchBusy}
+              onClick={() => {
+                setBatchCompany('');
+                setBatchLogisticsNo('');
+                setActionError(null);
+                setBatchShipOpen(true);
+              }}
+            >
+              批量发货
+            </button>
+          </BatchBar>
           <div className="stack">
-            {data.items.map((order) => (
-              <div className="card card-pad" key={order.orderNo}>
+            {/* 未读优先：未读在前；组内按下单时间倒序。
+                后端已按同一口径排序，这里再排一次是为了让「刚点开的那一条」
+                立刻回到已读组的时间位置（不必等刷新） */}
+            {[...data.items]
+              .sort((a, b) => {
+                const byRead = Number(isRead(a)) - Number(isRead(b));
+                if (byRead !== 0) return byRead;
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+              })
+              .map((order) => (
+              <div
+                className={`card card-pad${isRead(order) ? '' : ' unread-card'}`}
+                key={order.orderNo}
+                onClick={() => openPreview(order)}
+                style={{ cursor: 'pointer' }}
+              >
                 <div className="row-between row-wrap">
                   <div className="row row-wrap">
-                    <Link className="small" to={`/seller/orders/${order.orderNo}`}>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择订单 ${order.orderNo}`}
+                      checked={selection.selectedSet.has(order.orderNo)}
+                      disabled={batchBusy}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => selection.toggle(order.orderNo)}
+                    />
+                    {!isRead(order) ? <UnreadDot /> : null}
+                    <Link
+                      className="small"
+                      to={`/seller/orders/${order.orderNo}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void dismissBadge(order);
+                      }}
+                    >
                       <strong>订单号 {order.orderNo}</strong>
                     </Link>
                     <span className="tag">{order.statusLabel}</span>
@@ -312,8 +504,12 @@ export const SellerOrdersPage: React.FC = () => {
                 </div>
 
                 <div className="divider" />
-                <div className="row row-wrap">
-                  <Link className="btn btn-ghost btn-sm" to={`/seller/orders/${order.orderNo}`}>
+                <div className="row row-wrap" onClick={(e) => e.stopPropagation()}>
+                  <Link
+                    className="btn btn-ghost btn-sm"
+                    to={`/seller/orders/${order.orderNo}`}
+                    onClick={() => void dismissBadge(order)}
+                  >
                     查看详情
                   </Link>
                   {canShip(order) ? (
@@ -365,6 +561,118 @@ export const SellerOrdersPage: React.FC = () => {
           }
         />
       )}
+
+      {/* 订单预览卡片（2026-10-27）：点卡片先看摘要，不直接跳全屏详情；
+          打开即已读，橙点消失与角标联动在同一入口完成 */}
+      <Modal
+        open={preview !== null}
+        title="订单预览"
+        onClose={() => setPreview(null)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setPreview(null)}>
+              关闭
+            </button>
+            {preview ? (
+              <Link
+                className="btn btn-primary"
+                to={`/seller/orders/${preview.orderNo}`}
+                onClick={() => setPreview(null)}
+              >
+                查看完整详情
+              </Link>
+            ) : null}
+          </>
+        }
+      >
+        {preview ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+              <strong>订单号 {preview.orderNo}</strong>
+              <span className="tag">{preview.statusLabel}</span>
+              {preview.settlement ? <span className="tag">{preview.settlement.statusLabel}</span> : null}
+            </div>
+            <div className="small muted">
+              下单 {formatDate(preview.createdAt)} · 买家实付{' '}
+              <b style={{ color: 'var(--danger)' }}>{formatPrice(preview.payAmount)}</b>
+            </div>
+            <div className="stack" style={{ gap: 6 }}>
+              {preview.items.map((item) => (
+                <div className="row-between" key={`${preview.orderNo}-${item.skuId}`}>
+                  <span className="small" style={{ minWidth: 0 }}>
+                    {item.title} · {item.specText ?? '默认规格'} × {item.quantity}
+                  </span>
+                  <span className="small">{formatPrice(item.amount)}</span>
+                </div>
+              ))}
+            </div>
+            {/* 金额明细：卖家核对「买家实付 / 平台补贴 / 券与币抵扣」的唯一口径 */}
+            <div className="card card-pad" style={{ padding: 12 }}>
+              <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>金额明细</div>
+              <div className="small muted" style={{ display: 'grid', gap: 4 }}>
+                <div className="row-between">
+                  <span>商品总额</span>
+                  <span>{formatPrice(preview.totalAmount)}</span>
+                </div>
+                <div className="row-between">
+                  <span>运费</span>
+                  <span>{formatPrice(preview.freightAmount)}</span>
+                </div>
+                <div className="row-between">
+                  <span>优惠</span>
+                  <span>-{formatPrice(preview.discountAmount)}</span>
+                </div>
+                {preview.couponCode ? (
+                  <div className="row-between">
+                    <span>优惠券</span>
+                    <span>{preview.couponCode}</span>
+                  </div>
+                ) : null}
+                {preview.coinUsed > 0 ? (
+                  <div className="row-between">
+                    <span>多多币抵扣（{preview.coinUsed} 币）</span>
+                    <span>-{formatPrice(preview.coinDeductAmount)}</span>
+                  </div>
+                ) : null}
+                <div className="row-between" style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                  <span>买家实付</span>
+                  <span>{formatPrice(preview.payAmount)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="small muted">
+              收货：{preview.receiverName} · {preview.receiverPhone} · {preview.receiverAddress}
+            </div>
+            {preview.remark ? (
+              <div className="small muted">买家备注：{preview.remark}</div>
+            ) : null}
+            {preview.logisticsNo ? (
+              <div className="small muted">
+                物流：{preview.logisticsCompany ?? '—'} {preview.logisticsNo}
+              </div>
+            ) : null}
+
+            {/* 状态流转时间线：只列已发生的节点，没发生的时段不占位 */}
+            <div>
+              <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>订单时间线</div>
+              <div className="small muted" style={{ display: 'grid', gap: 4 }}>
+                <span>下单：{formatDate(preview.createdAt)}</span>
+                {preview.paidAt ? <span>支付：{formatDate(preview.paidAt)}</span> : null}
+                {preview.shippedAt ? <span>发货：{formatDate(preview.shippedAt)}</span> : null}
+                {preview.finishedAt ? <span>完成：{formatDate(preview.finishedAt)}</span> : null}
+                {preview.refundedAt ? <span>退款：{formatDate(preview.refundedAt)}</span> : null}
+                {preview.closedAt ? <span>关闭：{formatDate(preview.closedAt)}</span> : null}
+              </div>
+            </div>
+
+            <div className="small muted">
+              打开预览即视为已读：橙点消失；已发货 / 已完成 / 已退款 / 已关闭的角标同步 -1，
+              待付款 / 待发货仍保留提醒（那是还没办完的事）。
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={shipTarget !== null}
@@ -480,6 +788,56 @@ export const SellerOrdersPage: React.FC = () => {
           </Field>
         </div>
       </Modal>
+
+      {/* 批量发货：物流信息对选中订单一共用；仅「待发货」会成功，其余逐条失败 */}
+      <Modal
+        open={batchShipOpen}
+        title="批量发货"
+        onClose={() => setBatchShipOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setBatchShipOpen(false)} disabled={batchBusy}>
+              取消
+            </button>
+            <button className="btn btn-primary" onClick={submitBatchShip} disabled={batchBusy}>
+              {batchBusy ? '提交中…' : `确认发货（${selection.count} 笔）`}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="info">
+          将尝试发货 <b>{selection.count}</b> 笔订单（仅当前页）。只有<b>待发货</b>订单会成功；
+          已付款之外的状态会逐条失败并给出原因，不会静默跳过。
+          发货后资金仍在平台托管，放款要等买家确认收货。
+        </Alert>
+        <div style={{ marginTop: 12 }}>
+          <Field label="物流公司（可选）" hint="留空则只改状态；填写后对全部选中订单共用">
+            <input
+              className="input"
+              value={batchCompany}
+              onChange={(e) => setBatchCompany(e.target.value)}
+              placeholder="如 顺丰速运"
+              maxLength={50}
+            />
+          </Field>
+          <Field label="物流单号（可选）">
+            <input
+              className="input"
+              value={batchLogisticsNo}
+              onChange={(e) => setBatchLogisticsNo(e.target.value)}
+              placeholder="批量交寄通常不逐单填写；可留空"
+              maxLength={64}
+            />
+          </Field>
+        </div>
+        {actionError ? (
+          <div style={{ marginTop: 10 }}>
+            <Alert kind="error">{actionError}</Alert>
+          </div>
+        ) : null}
+      </Modal>
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="订单号" />
     </div>
   );
 };

@@ -73,6 +73,16 @@ public final class OrderDtos {
             @Size(max = 32, message = "优惠券码过长") String couponCode,
 
             /**
+             * R-P1 · 本次结算是否使用多多币抵扣（可空 = 不用）。
+             *
+             * <p>只传开关、<b>不传币数</b>：用多少币由服务端按
+             * 「券后金额的 50% 上限内、按余额能抵多少抵多少」算出 ——
+             * 与券不传金额是同一条铁律：抵扣决定权不能交给浏览器。
+             * 币与券可叠加：先券后币，币只抵券后商品金额（不抵运费）。
+             */
+            Boolean useCoins,
+
+            /**
              * 「立即购买」（直购）的 SKU 与数量（可空，两者必须成对出现）。
              *
              * <p>非空时本次下单**不使用购物车**：直接按该 SKU × 数量结算，且下单成功后
@@ -105,6 +115,8 @@ public final class OrderDtos {
      */
     public record PreviewOrderRequest(
             @Size(max = 32, message = "couponCode 过长") String couponCode,
+            /** R-P1 · 是否使用多多币抵扣（可空 = 不用；用多少由服务端算，见 PlaceOrderRequest.useCoins） */
+            Boolean useCoins,
             Long buySkuId,
             @Min(value = 1, message = "购买数量至少为 1")
             @Max(value = 200, message = "单次购买数量过大") Integer buyQuantity
@@ -124,7 +136,9 @@ public final class OrderDtos {
             long totalAmount,
             long freightAmount,
             long discountAmount,
-            long payAmount
+            long payAmount,
+            /** R-P1 · 本单分摊到的多多币抵扣（个，1 币 = 1 分）；未用币为 0 */
+            long coinUsed
     ) {
     }
 
@@ -146,7 +160,13 @@ public final class OrderDtos {
             Long couponSellerId,
             String couponCode,
             /** 券不可用时的原因（可用或无券为 null）；预览**不拦**这条，只如实告知 */
-            String couponMessage
+            String couponMessage,
+            /** R-P1 · 当前持币余额（个）；用户域故障时降级为 0，前端此时应禁用用币开关 */
+            long coinBalance,
+            /** R-P1 · 本次结算实际使用的币数（各单分摊之和）；开关关闭或余额为 0 时为 0 */
+            long coinUsed,
+            /** R-P1 · 币抵扣金额（分）= coinUsed × 1；与 payAmount 已扣减的金额严格一致 */
+            long coinDeductAmount
     ) {
     }
 
@@ -223,6 +243,12 @@ public final class OrderDtos {
             /** 本单使用的优惠券券码；未用券为 null */
             String couponCode,
             long payAmount,
+            /** R-P1 · 本单使用的多多币（个）；1 币 = 1 分，历史单 / 未用币为 0 */
+            long coinUsed,
+            /** R-P1 · 币抵扣金额（分）= coinUsed；展示「币抵 X 元」与退款退币口径都用它 */
+            long coinDeductAmount,
+            /** R-P1 · 完成返币数（个）；T+7 发放后写入，未发为 0 */
+            long coinEarnAmount,
             String receiverName,
             String receiverPhone,
             String receiverAddress,
@@ -245,7 +271,18 @@ public final class OrderDtos {
              * 卖家要看「我这单发的什么」——同一份事实的两个视角，不该各存一份。
              */
             String logisticsCompany,
-            String logisticsNo
+            String logisticsNo,
+            /**
+             * 当前读者是否已看过这一单（2026-10-27 · 列表橙色未读印记）。
+             *
+             * <p>口径是**逐条已读集合**（{@code t_order_read}），与角标分桶同一份事实：
+             * 列表上的橙点消失，与「该分类角标 -1」必须同时发生，否则用户会看到
+             * 「角标减了但卡片还亮着」。
+             *
+             * <p>买家 / 卖家 / 运营各自按自己的 userId 计算 —— 同一条订单，
+             * 买家看过不代表卖家看过。
+             */
+            boolean read
     ) {
     }
 
@@ -383,7 +420,13 @@ public final class OrderDtos {
             /** 本轮成功入库回补（退款后的货回库）的条数 */
             int restocked,
             /** 入库回补失败、留在 RESTOCK_PENDING 待下轮重试的条数 */
-            int restockFailed
+            int restockFailed,
+            /** 本轮成功执行的重复收款自动退款笔数（B-04） */
+            int refundsExecuted,
+            /** 仍留在 INIT 待下轮重试的退款笔数（B-04） */
+            int refundsPending,
+            /** R-P1 · 本轮成功发出购物返币的订单数（含 0 币订单——它们也会落 coin_earned_at 防重扫） */
+            int coinsEarned
     ) {
     }
 
@@ -418,6 +461,28 @@ public final class OrderDtos {
             String settlementStatusLabel,
             boolean restockPending,
             String refundedAt
+    ) {
+    }
+
+    /**
+     * 重复收款自动退款台账视图（B-04）。
+     *
+     * <p>买家侧（{@code GET /api/payments/refunds/mine}）与运营侧
+     * （{@code GET /api/admin/payments/refunds}）共用一份视图：
+     * 多收的那笔钱退没退、从哪张支付单退的、渠道流水号是什么，一眼可查。
+     * {@code orderNo} 由 order_id 联查得出，便于从订单视角对上号。
+     */
+    public record PaymentRefundView(
+            String refundNo,
+            String payNo,
+            String orderNo,
+            long amount,
+            String status,
+            String channel,
+            String channelRefundNo,
+            String failReason,
+            String refundedAt,
+            String createdAt
     ) {
     }
 

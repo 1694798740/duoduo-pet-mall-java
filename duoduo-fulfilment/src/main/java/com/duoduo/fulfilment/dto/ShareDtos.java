@@ -98,6 +98,22 @@ public final class ShareDtos {
     }
 
     /**
+     * 运营批量处理举报（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>结论与说明对选中的举报共用一份；逐条结果见 {@code BatchDtos.Result}。
+     * 已处理过的一条会逐条失败（409），不影响其它条。
+     */
+    public record ReportBatchHandleRequest(
+            @jakarta.validation.constraints.NotEmpty(message = "ids 不能为空")
+            java.util.List<Long> ids,
+            @NotNull(message = "缺少处理结论")
+            String action,
+            @Size(max = 200, message = "处理说明不能超过 200 字")
+            String note
+    ) {
+    }
+
+    /**
      * 转发分享（第四十六轮）：只带转发人自己的附言。
      *
      * <p>请求体里<b>没有 spuId 也没有商品快照</b>：转发的对象是原帖，商品快照与原帖
@@ -247,7 +263,9 @@ public final class ShareDtos {
             /** 被举报内容的作者 id（运营侧判断「是不是同一个人在反复被举报」） */
             Long targetAuthorId,
             /** 被举报内容所属分享 id（举报评论时用于跳转核对） */
-            Long targetShareId
+            Long targetShareId,
+            /** 当前运营是否已看过（列表橙色未读印记；2026-10-27） */
+            boolean read
     ) {
     }
 

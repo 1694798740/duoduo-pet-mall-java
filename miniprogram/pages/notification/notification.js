@@ -111,9 +111,19 @@ Page({
    * 会话超过一页时私信数偏小，角标与页内数字也会因为两次请求的时序差对不上。
    */
   fetchSummary() {
-    return unread.refresh().then((summary) => {
+    // 合并未读与分类分桶**并行**取：串行会让 chip 上的数字比 tabBar 晚一拍才出现。
+    // 分类失败按空对象兜底 —— 角标是提醒，不能因为它报错让整页进不去。
+    return Promise.all([
+      unread.refresh(),
+      api.social.notice.unreadByCategory().catch(() => ({})),
+    ]).then(([summary, byCategory]) => {
       this.setData({
         msgUnread: summary.message > 0 ? summary.message : 0,
+        // 分类 chip 的角标：数字只认服务端分桶（端上按「已加载列表里 !read 的条数」数，
+        // 会把没加载的页整个漏掉 —— 用户看到 chip 没数字、点进去却有未读）
+        categories: CATEGORIES.map((c) =>
+          Object.assign({}, c, { count: c.key ? Number((byCategory || {})[c.key] || 0) : 0 })
+        ),
       });
       return summary;
     });

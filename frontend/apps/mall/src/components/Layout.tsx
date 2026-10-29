@@ -37,6 +37,7 @@ import { useApp } from '@duoduo/shared/store/app';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { ThemeToggle } from '@duoduo/shared/components/ThemeToggle';
 import { userApi } from '@duoduo/api-sdk/endpoints';
+import { BellPopover } from './BellPopover';
 
 /**
  * 顶栏只放「逛 / 买」这条一级动线 —— 个人事务（订单 / 宠物 / 收货地址）统一收进头像下拉。
@@ -77,6 +78,9 @@ const NAV: NavItem[] = [
   { to: '/listings', label: '二手闲置' },
   { to: '/coupons', label: '优惠券' },
   { to: '/seckill', label: '秒杀' },
+  // ★ 2026-10-27：多多币从「个人中心」提权到顶栏 —— 它是每天要看的资产，
+  // 藏在头像菜单里等于没人知道有这功能。未登录点进来由 /coins 页面自己出登录墙。
+  { to: '/coins', label: '多多币' },
 ];
 
 /** 角标文案：>99 统一成「99+」（三位数在这个尺寸下会被裁切） */
@@ -369,6 +373,15 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               {cartCount > 0 ? <span className="badge-dot">{badgeText(cartCount)}</span> : null}
             </Link>
 
+            {/*
+              铃铛（2026-10-27）：点开是「未读消息弹窗」而不是跳到列表页 ——
+              用户想知道的是「谁找我了」的一眼摘要；要翻历史再去通知中心。
+              ★ 2026-10-27 再次收口：头像上**不再挂未读角标**。铃铛是唯一消息入口，
+                两处数字同源会让人以为有两个未读来源；且头像角标点不进任何页面，
+                属于「只能看不能消」的假提示。
+            */}
+            {user ? <BellPopover total={unread.total} onChanged={refreshUnread} /> : null}
+
             {user ? (
               <div
                 ref={menuRef}
@@ -396,10 +409,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   ) : (
                     <span className="avatar-fallback" aria-hidden>👤</span>
                   )}
-                  {/* 全站可见的未读角标（S7）：用户在任何页面都能看到有新消息 */}
-                  {unread.total > 0 ? (
-                    <span className="badge-dot">{badgeText(unread.total)}</span>
-                  ) : null}
+                  {/* 头像不再挂未读角标：全局唯一消息入口是顶栏铃铛（2026-10-27） */}
                 </button>
 
                 {/* ★ 面板**始终挂载**，只看宿主上的 is-open 类切换：
@@ -464,13 +474,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     <MenuLink to="/share" icon="🌏" label="分享圈" />
                     <MenuLink to="/share/mine" icon="✍️" label="我的分享" />
                     <MenuLink to="/follow" icon="❤️" label="关注与粉丝" />
-                    {/* 通知中心 = 通知未读 + 客服未读（客服已归入「商家」分类展示） */}
-                    <MenuLink
-                      to="/notifications"
-                      icon="🔔"
-                      label="通知中心"
-                      badge={Number(unread.notice) + Number(unread.support)}
-                    />
+                    {/* ★ 2026-10-27：通知中心从本菜单移除 —— 顶栏铃铛是消息的**唯一入口**
+                        （铃铛弹窗底部「查看更多」仍会跳到 /notifications，路由本身保留）。
+                        头像菜单只留「我的内容」类入口。 */}
                     <MenuLink to="/messages" icon="💬" label="私信" badge={Number(unread.message)} />
                   </div>
 

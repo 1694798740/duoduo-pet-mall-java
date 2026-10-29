@@ -143,6 +143,14 @@ export const SellerProductInsightsPage: React.FC = () => {
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
         <h2 className="section-title">商品分析</h2>
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={() => {
+            window.location.href = sellerApi.productStatsExportUrl();
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
       <p className="small muted" style={{ marginTop: -4 }}>
         销量与成交额来自真实订单明细（含已退款订单）；退款件数单列，不从销量里悄悄扣掉。

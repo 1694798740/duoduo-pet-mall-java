@@ -3,6 +3,9 @@ package com.duoduo.fulfilment.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.api.StatusCount;
+import com.duoduo.common.context.LoginUser;
+import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.fulfilment.dto.ShareDtos;
@@ -11,6 +14,7 @@ import com.duoduo.fulfilment.dto.ShareDtos.ReportView;
 import com.duoduo.fulfilment.entity.ShareCommentEntity;
 import com.duoduo.fulfilment.entity.ShareEntity;
 import com.duoduo.fulfilment.entity.ShareReportEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.ShareCommentMapper;
 import com.duoduo.fulfilment.mapper.ShareEngagementMapper;
 import com.duoduo.fulfilment.mapper.ShareMapper;
@@ -58,6 +62,8 @@ public class ShareReportService {
     private static final int EXCERPT_LENGTH = 60;
 
     private final ShareReportMapper reportMapper;
+    /** 运营后台「看过即消」的已读集合（2026-10-27） */
+    private final AdminQueueReadMapper adminQueueReadMapper;
     private final ShareMapper shareMapper;
     private final ShareCommentMapper commentMapper;
     private final ShareEngagementMapper engagementMapper;
@@ -65,12 +71,14 @@ public class ShareReportService {
     private final SnowflakeIdGenerator idGenerator;
 
     public ShareReportService(ShareReportMapper reportMapper,
+                              AdminQueueReadMapper adminQueueReadMapper,
                               ShareMapper shareMapper,
                               ShareCommentMapper commentMapper,
                               ShareEngagementMapper engagementMapper,
                               ShareTopicService topicService,
                               SnowflakeIdGenerator idGenerator) {
         this.reportMapper = reportMapper;
+        this.adminQueueReadMapper = adminQueueReadMapper;
         this.shareMapper = shareMapper;
         this.commentMapper = commentMapper;
         this.engagementMapper = engagementMapper;
@@ -164,13 +172,21 @@ public class ShareReportService {
             wrapper.and(w -> w.like(ShareReportEntity::getReason, keyword.trim())
                     .or().apply("CAST(target_id AS CHAR) LIKE {0}", like));
         }
-        wrapper.orderByDesc(ShareReportEntity::getCreatedAt).orderByDesc(ShareReportEntity::getId);
+        LoginUser viewer = OperatorGuard.requireOperator();
+        // 未读优先：未点开看过的排前面，组内仍按时间倒序
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_admin_queue_read q WHERE q.user_id = "
+                + viewer.userId() + " AND q.source = 'REPORT' AND q.biz_id = t_share_report.id)) "
+                + "ASC, created_at DESC, id DESC");
         Page<ShareReportEntity> result = reportMapper.selectPage(new Page<>(pageNo, size), wrapper);
 
         Map<Long, ShareEntity> shares = loadShares(result.getRecords());
         Map<Long, ShareCommentEntity> comments = loadComments(result.getRecords());
+        java.util.Set<Long> readIds = result.getRecords().isEmpty()
+                ? java.util.Set.of()
+                : java.util.Set.copyOf(reportMapper.listAdminReadIds(viewer.userId(),
+                        result.getRecords().stream().map(ShareReportEntity::getId).toList()));
         List<ReportView> views = result.getRecords().stream()
-                .map(r -> toView(r, shares, comments))
+                .map(r -> toView(r, shares, comments, readIds.contains(r.getId())))
                 .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
     }
@@ -178,6 +194,58 @@ public class ShareReportService {
     /** 兼容旧调用（无关键字） */
     public PageResult<ReportView> listForAdmin(String status, int page, int pageSize) {
         return listForAdmin(status, null, page, pageSize);
+    }
+
+    /**
+     * 举报导出（2026-10-28 · 导入导出第一批）：与 {@link #listForAdmin} 同筛选、同装配。
+     *
+     * <p>按举报时间倒序、最多 5 万行；{@code read} 恒为 false（橙点只服务页面阅读）。
+     */
+    public List<ReportView> exportForAdmin(String status, String keyword) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<ShareReportEntity> wrapper = new LambdaQueryWrapper<>();
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(ShareReportEntity::getStatus, status.trim().toUpperCase());
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.and(w -> w.like(ShareReportEntity::getReason, keyword.trim())
+                    .or().apply("CAST(target_id AS CHAR) LIKE {0}", like));
+        }
+        wrapper.orderByDesc(ShareReportEntity::getCreatedAt).orderByDesc(ShareReportEntity::getId);
+        wrapper.last("LIMIT 50000");
+        List<ShareReportEntity> rows = reportMapper.selectList(wrapper);
+        Map<Long, ShareEntity> shares = loadShares(rows);
+        Map<Long, ShareCommentEntity> comments = loadComments(rows);
+        return rows.stream().map(r -> toView(r, shares, comments, false)).toList();
+    }
+
+    // ---------------- 运营后台角标：未读 · 点击详情即消除（2026-10-27） ----------------
+
+    /** 运营后台「举报处理」的未读待处理数（排除本人已查看的举报） */
+    public List<StatusCount> adminUnreadCount(Long operatorId) {
+        return unreadBucket(reportMapper.countUnreadPending(operatorId));
+    }
+
+    /**
+     * 运营点开举报详情 = 已读（幂等）；返回最新未读数。
+     *
+     * <p>只写已读集合，不改举报状态 —— 看过之后仍要给出处理结论。
+     */
+    public List<StatusCount> markRead(Long operatorId, Long reportId) {
+        if (reportId == null) {
+            throw BizException.validation("举报 id 不能为空");
+        }
+        if (reportMapper.selectById(reportId) == null) {
+            throw BizException.notFound("举报记录不存在");
+        }
+        adminQueueReadMapper.markRead(operatorId, "REPORT", reportId,
+                LocalDateTime.now(ZoneOffset.UTC));
+        return unreadBucket(reportMapper.countUnreadPending(operatorId));
+    }
+
+    private static List<StatusCount> unreadBucket(long count) {
+        return count <= 0 ? List.of() : List.of(new StatusCount("PENDING", count));
     }
 
     /**
@@ -221,6 +289,50 @@ public class ShareReportService {
 
         log.info("运营 {} 处理举报 {}：{}（{}）", operatorId, reportId, action, note);
         return toView(report, loadShares(List.of(report)), loadComments(List.of(report)));
+    }
+
+    /**
+     * 批量处理举报（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>逐条走 {@link #handle}：已处理过的一条会 409 失败，其余继续；
+     * 成功条目写运营已读集合并返回最新未读分桶。
+     * 与单条一致，ACCEPT 会下架内容 —— 批量确认文案必须把这条后果写清楚。
+     */
+    public com.duoduo.common.api.BatchDtos.Result handleBatch(Long operatorId, List<Long> ids,
+                                                             ReportHandleRequest request) {
+        if (ids == null || ids.isEmpty()) {
+            throw BizException.validation("ids 不能为空");
+        }
+        java.util.LinkedHashSet<Long> distinct = new java.util.LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id == null) {
+                throw BizException.validation("ids 不能包含空值");
+            }
+            distinct.add(id);
+        }
+        if (distinct.size() > 100) {
+            throw BizException.validation("单次最多批量操作 100 条举报");
+        }
+        List<com.duoduo.common.api.BatchDtos.Item> items = new java.util.ArrayList<>(distinct.size());
+        int success = 0;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        for (Long id : distinct) {
+            try {
+                handle(operatorId, id, request);
+                success++;
+                adminQueueReadMapper.markRead(operatorId, "REPORT", id, now);
+                items.add(new com.duoduo.common.api.BatchDtos.Item(String.valueOf(id), true, null, null));
+            } catch (com.duoduo.common.exception.BizException ex) {
+                items.add(new com.duoduo.common.api.BatchDtos.Item(String.valueOf(id), false,
+                        ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("批量处理举报单条失败 id={}", id, ex);
+                items.add(new com.duoduo.common.api.BatchDtos.Item(String.valueOf(id), false,
+                        "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new com.duoduo.common.api.BatchDtos.Result(distinct.size(), success,
+                distinct.size() - success, items, adminUnreadCount(operatorId));
     }
 
     /** 下架被举报的内容（软删 + 计数回退） */
@@ -278,6 +390,13 @@ public class ShareReportService {
     private ReportView toView(ShareReportEntity report,
                               Map<Long, ShareEntity> shares,
                               Map<Long, ShareCommentEntity> comments) {
+        return toView(report, shares, comments, false);
+    }
+
+    private ReportView toView(ShareReportEntity report,
+                              Map<Long, ShareEntity> shares,
+                              Map<Long, ShareCommentEntity> comments,
+                              boolean read) {
         String excerpt;
         Long authorId;
         Long shareId;
@@ -307,7 +426,8 @@ public class ShareReportService {
                 report.getHandleNote(),
                 excerpt,
                 authorId,
-                shareId);
+                shareId,
+                read);
     }
 
     /** 摘要裁剪：列表里放不下全文，超长截断加省略号（空内容也给一个中性占位，不留空串） */

@@ -56,6 +56,8 @@ public class ListingService {
     private static final String AUDIT_APPROVED = "APPROVED";
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
     private static final Set<String> ALLOWED_SORTS =
             Set.of("default", "price_asc", "price_desc", "newest");
     private static final Set<String> ALLOWED_CONDITIONS =
@@ -939,6 +941,21 @@ public class ListingService {
         OperatorGuard.requireOperator();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size),
+                auditWrapper(auditStatus, keyword));
+        List<ListingAuditView> views = result.getRecords().stream().map(this::toAuditView).toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /** 闲置审核导出（矩阵第二批）：与列表同一筛选，单次上限 5 万行 */
+    public List<ListingAuditView> exportForAudit(String auditStatus, String keyword) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<ListingEntity> wrapper = auditWrapper(auditStatus, keyword);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return listingMapper.selectList(wrapper).stream().map(this::toAuditView).toList();
+    }
+
+    private LambdaQueryWrapper<ListingEntity> auditWrapper(String auditStatus, String keyword) {
         // 已软删的不进审核队列：通过它也不可见（读路径一律排除 deleted_at），
         // 让运营白审一遍是纯粹的无效动作。
         LambdaQueryWrapper<ListingEntity> wrapper = new LambdaQueryWrapper<ListingEntity>()
@@ -956,9 +973,7 @@ public class ListingService {
         wrapper.orderByAsc(ListingEntity::getAuditStatus)
                 .orderByDesc(ListingEntity::getCreatedAt)
                 .orderByDesc(ListingEntity::getId);
-        Page<ListingEntity> result = listingMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        List<ListingAuditView> views = result.getRecords().stream().map(this::toAuditView).toList();
-        return PageResult.of(views, result.getTotal(), pageNo, size);
+        return wrapper;
     }
 
     /** 兼容旧调用（无关键字） */

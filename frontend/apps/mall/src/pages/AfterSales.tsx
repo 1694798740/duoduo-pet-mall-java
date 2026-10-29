@@ -7,14 +7,20 @@
  * 「还没提过售后」是绝大多数用户的常态，用提示错误的方式呈现会让人以为系统坏了。
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { afterSaleApi } from '@duoduo/api-sdk/endpoints';
+import type { StatusCount } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, LoadingBlock, Pagination, SearchBar, formatDate, formatPrice,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
+import { Badge, toCountMap } from '@duoduo/shared/components/badge';
+import {
+  applyOptimisticDismiss, shouldDismissAfterSale,
+} from '@duoduo/shared/lib/badge-rules';
+import type { AfterSaleView } from '@duoduo/api-sdk/types';
 
 export const AfterSalesPage: React.FC = () => {
   const [status, setStatus] = useState('');
@@ -31,8 +37,50 @@ export const AfterSalesPage: React.FC = () => {
     [status, keyword, page],
   );
 
-  /** 售后由卖家/平台推进状态 —— 列表页同样三层静默刷新，不用手动按 F5 */
-  useLiveRefresh(reloadSilently);
+  /**
+   * 各状态计数（页签角标，2026-10-27）。口径与列表接口同源（{@code side=buyer}），
+   * 但覆盖**全量**而不是当前页 —— 分页外的待处理单也要在页签上看得见。
+   */
+  const countsFetcher = useCallback(() => afterSaleApi.statusCounts('buyer'), []);
+  const { data: countRows, reloadSilently: reloadCounts } = useAsync<StatusCount[]>(
+    countsFetcher,
+    true,
+    [],
+  );
+
+  /** 角标本地态：允许乐观减，之后一律以服务端分桶覆盖 */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setCounts(toCountMap(countRows));
+  }, [countRows]);
+
+  /**
+   * 点开售后详情 → 上报已读 → 服务端分桶覆盖（阅后即消）。
+   *
+   * <p>只有终态（已退款 / 已关闭）会消；进行中的看过也留着（规则见 badge-rules.ts）。
+   * 失败不本地硬减，回滚到服务端值，避免「刷新后又回来」。
+   */
+  const dismissBadge = useCallback(
+    async (item: AfterSaleView) => {
+      if (!shouldDismissAfterSale('buyer', item.status)) return;
+      setCounts((prev) => applyOptimisticDismiss(prev, item.status));
+      try {
+        const rows = await afterSaleApi.markRead(item.id, 'buyer');
+        setCounts(toCountMap(rows));
+      } catch {
+        void reloadCounts();
+      }
+    },
+    [reloadCounts],
+  );
+
+  /** 售后由卖家/平台推进状态 —— 列表页同样三层静默刷新，不用手动按 F5；角标同刻刷新 */
+  useLiveRefresh(
+    useCallback(() => {
+      reloadSilently();
+      reloadCounts();
+    }, [reloadSilently, reloadCounts]),
+  );
 
   return (
     <div>
@@ -59,6 +107,7 @@ export const AfterSalesPage: React.FC = () => {
             }}
           >
             {tab.label}
+            <Badge count={counts[tab.value]} />
           </button>
         ))}
       </div>
@@ -131,7 +180,11 @@ export const AfterSalesPage: React.FC = () => {
                 <span className="small muted">
                   {item.refundAmount !== null ? `已退款 ${formatPrice(item.refundAmount)}` : '退款金额待定'}
                 </span>
-                <Link className="btn btn-sm btn-ghost" to={`/after-sales/${item.id}`}>
+                <Link
+                  className="btn btn-sm btn-ghost"
+                  to={`/after-sales/${item.id}`}
+                  onClick={() => void dismissBadge(item)}
+                >
                   查看详情
                 </Link>
               </div>

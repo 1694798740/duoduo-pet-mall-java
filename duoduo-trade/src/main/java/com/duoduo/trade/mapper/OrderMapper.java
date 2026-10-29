@@ -35,6 +35,78 @@ public interface OrderMapper extends BaseMapper<OrderEntity> {
     @Select("SELECT status, COUNT(*) AS cnt FROM t_order GROUP BY status")
     List<Map<String, Object>> countAllByStatus();
 
+    /**
+     * 某买家自己的订单按状态统计 —— 买家端订单页二级 Tab 角标的数据源。
+     *
+     * <p>必须是**服务端全量分桶**：角标要覆盖「我的全部订单」而不是「当前页里那几条」，
+     * 前端拿 {@code items.filter(status)} 当角标会把第 2 页的待支付整个漏掉，
+     * 表现为「Tab 上没数字、点进去却有待支付」。
+     *
+     * <p><b>2026-10-27 · 阅后即消</b>：{@code CLOSED / REFUNDED} 是终态，用户点进详情看过之后
+     * 不该再占着角标 —— 用 {@code t_order_read} 把这部分减掉。持续提醒类
+     * （{@code PENDING_PAYMENT / PAID / SHIPPED}）**不受已读影响**：它们是「还没办完的事」，
+     * 读过也必须留着，否则用户会漏付、漏收货。
+     *
+     * <p>可消状态的名单与 {@code shared/lib/badge-rules.ts} 一一对应，改一处必须同时改另一处。
+     *
+     * @return 形如 {@code [{status: "PAID", cnt: 3}, ...]}；无订单时返回空列表
+     */
+    @Select("SELECT o.status AS status, COUNT(*) AS cnt FROM t_order o "
+            + "WHERE o.user_id = #{userId} "
+            + "AND NOT (o.status IN ('CLOSED','REFUNDED') "
+            + "         AND EXISTS (SELECT 1 FROM t_order_read r "
+            + "                     WHERE r.user_id = #{userId} AND r.order_id = o.id)) "
+            + "GROUP BY o.status")
+    List<Map<String, Object>> countByBuyerAndStatus(@Param("userId") Long userId);
+
+    /**
+     * 卖家端订单页签角标（2026-10-27）：与 {@link #countBySellerAndStatus} 的区别是
+     * 「已发货 / 已完成 / 已关闭 / 已退款」读过的要从计数里减掉。
+     *
+     * <p><b>为什么「待发货」不减</b>：那是卖家还没办的事，点进去看过也得继续提醒 ——
+     * 这与买家侧「待支付/待收货不减」是同一条规则。
+     *
+     * <p><b>为什么发货后「已发货」不会 +1</b>：卖家点「发货」时服务端顺手写了一条
+     * 卖家已读（{@code SellerService#ship}），于是这条订单在「已发货」分桶里
+     * 从诞生那一刻就是「已读过」—— 自己操作出来的状态不该算成新未读。
+     */
+    @Select("<script>"
+            + "SELECT o.status AS status, COUNT(*) AS cnt FROM t_order o "
+            + "WHERE o.seller_id IN "
+            + "<foreach collection='sellerIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "AND NOT (o.status IN ('SHIPPED','COMPLETED','CLOSED','REFUNDED') "
+            + "         AND EXISTS (SELECT 1 FROM t_order_read r "
+            + "                     WHERE r.user_id = #{userId} AND r.order_id = o.id)) "
+            + "GROUP BY o.status"
+            + "</script>")
+    List<Map<String, Object>> countBySellerAndStatusForBadge(@Param("sellerIds") Collection<Long> sellerIds,
+                                                            @Param("userId") Long userId);
+
+    /**
+     * 记录「某人看过某订单」：复合主键 + {@code INSERT IGNORE}，重复上报天然幂等。
+     *
+     * <p>只影响**阅后即消**那几类状态的角标，不会改变订单本身的任何业务状态。
+     */
+    @org.apache.ibatis.annotations.Insert(
+            "INSERT IGNORE INTO t_order_read (user_id, order_id, read_at) VALUES (#{userId}, #{orderId}, #{at})")
+    int markOrderRead(@Param("userId") Long userId,
+                      @Param("orderId") Long orderId,
+                      @Param("at") java.time.LocalDateTime at);
+
+    /**
+     * 当前页哪些订单已被本人看过（2026-10-27 · 列表「橙色未读印记」的数据源）。
+     *
+     * <p>只查当前页的 id 集合（不整表扫）：列表接口本来就要取这一页，
+     * 再来一条 {@code IN (...)} 的索引查询是常量级开销；
+     * 反过来「把已读集合全捞回来再和页面做交集」会随用户历史线性增长。
+     */
+    @Select("<script>"
+            + "SELECT order_id FROM t_order_read WHERE user_id = #{userId} AND order_id IN "
+            + "<foreach collection='orderIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + "</script>")
+    List<Long> listReadOrderIds(@Param("userId") Long userId,
+                                @Param("orderIds") Collection<Long> orderIds);
+
     // ---------------- 图表聚合（第六十六轮） ----------------
     //
     // 四条查询的公共点：都**只返回聚合结果**，绝不把明细捞回来在内存里算。

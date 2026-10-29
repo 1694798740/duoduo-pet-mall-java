@@ -1,5 +1,7 @@
 package com.duoduo.social.dto;
 
+import com.duoduo.common.web.LongToStringJacksonModule;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -102,6 +104,46 @@ public final class SocialDtos {
             String category,
             java.util.List<Long> ids,
             boolean all
+    ) {
+    }
+
+    /**
+     * 批量操作通知（2026-10-27）：勾选后「标记已读 / 删除」，或「全部已读 / 全部删除」。
+     *
+     * <p>{@code all=true} 时不看 {@code ids}，直接作用于「我的全部通知」——
+     * 这样前端两个「全部」按钮和后端是同一个入口，不会出现
+     * 「全部已读走 read-all、全部删除走另一个端点」这种两套口径。
+     */
+    public record NoticeBatchRequest(
+            @NotBlank(message = "缺少 action")
+            String action,
+
+            /** 勾选的 id 列表；all=true 时可为空 */
+            java.util.List<Long> ids,
+
+            boolean all
+    ) {
+    }
+
+    /**
+     * 批量操作结果。
+     *
+     * <p>带上最新未读数是有意的：前端点完「全部已读」后必须立刻把角标改成 0，
+     * 若为这个数字再发一次 unread-count，就是一次纯浪费的往返 ——
+     * 而且两次请求之间用户可能又收到新通知，反而对不上。
+     *
+     * <p><b>两个字段必须显式标注 NumericLongSerializer</b>：{@code affected} / {@code unread}
+     * 都不在 {@code LongToStringJacksonModule} 的字段名白名单里，不标注就会以字符串
+     * {@code "8"} 下发 —— 前端 {@code unread > 0} 虽能工作，但 {@code = 0} 判断、
+     * 累加、以及与本地计算的比较都会静默失真（实测已出现过 {@code "1"}/{@code "8"}）。
+     * 这是项目注释里写明的「字段名不在白名单但语义是量」时的标准做法。
+     */
+    public record NoticeBatchResult(
+            @JsonSerialize(using = LongToStringJacksonModule.NumericLongSerializer.class)
+            long affected,
+
+            @JsonSerialize(using = LongToStringJacksonModule.NumericLongSerializer.class)
+            long unread
     ) {
     }
 

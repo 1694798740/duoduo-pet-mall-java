@@ -29,6 +29,142 @@
       </view>
     </view>
 
+    <!-- 服务端装配的结构化卡片（阶段四）：通知 / 券 / 订单 / 宫格。
+         点击统一走 utils/navigate（TabBar 用 switchTab、栈满自动降级），
+         跳转地址一律来自服务端 miniPath，页面不拼路径。 -->
+    <view wx:if="{{msg.cards && msg.cards.length > 0}}" class="ai-card-list">
+      <view wx:for="{{msg.cards}}" wx:for-item="card" wx:key="_key">
+        <!-- 通知列表 -->
+        <view wx:if="{{card.type === 'notification_list'}}" class="ai-card">
+          <view class="ai-card-head">
+            <text class="ai-card-title">{{card.title}}</text>
+            <text wx:if="{{card.unreadCount > 0}}" class="ai-card-badge">{{card.unreadCount}}</text>
+          </view>
+          <view wx:if="{{card.items.length === 0}}" class="t3">暂无符合条件的通知</view>
+          <view
+            wx:for="{{card.items}}"
+            wx:for-item="it"
+            wx:key="_key"
+            class="ai-notice {{it.read ? '' : 'ai-notice-unread'}}"
+            data-path="{{it.miniPath}}"
+            bindtap="tapCard"
+          >
+            <view class="ai-notice-dot"></view>
+            <view class="ai-notice-body">
+              <view class="ai-notice-title">{{it.title}}</view>
+              <view wx:if="{{it.summary}}" class="t3 ellipsis">{{it.summary}}</view>
+              <view class="t3">{{it.meta}}</view>
+            </view>
+          </view>
+          <view wx:if="{{card.actions.length > 0}}" class="ai-card-actions">
+            <view
+              wx:for="{{card.actions}}"
+              wx:for-item="act"
+              wx:key="_key"
+              class="clarify-chip"
+              data-path="{{act.miniPath}}"
+              bindtap="tapCard"
+            >{{act.label}}</view>
+          </view>
+        </view>
+
+        <!-- 券包 -->
+        <view wx:if="{{card.type === 'coupon_list'}}" class="ai-card">
+          <view class="ai-card-head">
+            <text class="ai-card-title">{{card.title}}</text>
+          </view>
+          <view wx:if="{{card.items.length === 0}}" class="t3">券包里还没有符合条件的券</view>
+          <view
+            wx:for="{{card.items}}"
+            wx:for-item="it"
+            wx:key="_key"
+            class="ai-coupon"
+            data-path="{{it.miniPath}}"
+            bindtap="tapCard"
+          >
+            <view class="ai-coupon-left">
+              <view class="ai-coupon-amount">{{it.amountText}}</view>
+              <view class="t3">{{it.thresholdText}}</view>
+            </view>
+            <view class="ai-coupon-right">
+              <view class="ai-coupon-name ellipsis">{{it.name}}</view>
+              <view class="t3 ellipsis">{{it.meta}}</view>
+            </view>
+            <text wx:if="{{it.statusLabel}}" class="tag">{{it.statusLabel}}</text>
+          </view>
+          <view wx:if="{{card.actions.length > 0}}" class="ai-card-actions">
+            <view
+              wx:for="{{card.actions}}"
+              wx:for-item="act"
+              wx:key="_key"
+              class="clarify-chip"
+              data-path="{{act.miniPath}}"
+              bindtap="tapCard"
+            >{{act.label}}</view>
+          </view>
+        </view>
+
+        <!-- 订单 -->
+        <view wx:if="{{card.type === 'order_list'}}" class="ai-card">
+          <view class="ai-card-head">
+            <text class="ai-card-title">{{card.title}}</text>
+          </view>
+          <view wx:if="{{card.items.length === 0}}" class="t3">没有符合条件的订单</view>
+          <view
+            wx:for="{{card.items}}"
+            wx:for-item="it"
+            wx:key="_key"
+            class="ai-order"
+            data-path="{{it.miniPath}}"
+            bindtap="tapCard"
+          >
+            <view class="ai-order-top">
+              <text class="t3">订单 …{{it.tail}}</text>
+              <text class="tag">{{it.statusText}}</text>
+            </view>
+            <view class="ai-order-summary ellipsis">{{it.summary}}</view>
+            <view class="ai-order-bottom">
+              <text class="t3">{{it.timeText}}</text>
+              <text class="ai-order-amount">{{it.amountText}}</text>
+            </view>
+          </view>
+          <view wx:if="{{card.actions.length > 0}}" class="ai-card-actions">
+            <view
+              wx:for="{{card.actions}}"
+              wx:for-item="act"
+              wx:key="_key"
+              class="clarify-chip"
+              data-path="{{act.miniPath}}"
+              bindtap="tapCard"
+            >{{act.label}}</view>
+          </view>
+        </view>
+
+        <!-- 导航宫格 -->
+        <view wx:if="{{card.type === 'action_grid'}}" class="ai-card">
+          <view class="ai-card-head">
+            <text class="ai-card-title">{{card.title}}</text>
+          </view>
+          <view class="ai-grid">
+            <view
+              wx:for="{{card.items}}"
+              wx:for-item="it"
+              wx:key="_key"
+              class="clarify-chip"
+              data-path="{{it.miniPath}}"
+              bindtap="tapCard"
+            >{{it.label}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 登录入口（游客轮次用尽 / 功能需登录）：小程序跳自己的登录页 -->
+    <view wx:if="{{msg.needLogin}}" class="ai-login">
+      <text class="t3">登录后可以查订单、通知和优惠券</text>
+      <view class="clarify-chip" bindtap="goLogin">去登录</view>
+    </view>
+
     <!-- 澄清选项（第五十七轮）：点一下就发出去，用户不必打字。
          开放式追问（「请补充更多信息」）用户往往直接忽略，把澄清成本降到一次点击它才会被用。 -->
     <view wx:if="{{msg.options && msg.options.length > 0}}" class="clarify-list">

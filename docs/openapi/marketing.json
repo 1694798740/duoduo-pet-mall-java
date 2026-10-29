@@ -644,10 +644,20 @@
                                                                                                                 "format":  "int64"
                                                                                                             },
                                                                                         "discountAmount":  {
-                                                                                                               "minimum":  1,
+                                                                                                               "minimum":  0,
                                                                                                                "type":  "integer",
                                                                                                                "format":  "int64"
                                                                                                            },
+                                                                                        "discountPercent":  {
+                                                                                                                "minimum":  0,
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int32"
+                                                                                                            },
+                                                                                        "maxDiscountAmount":  {
+                                                                                                                  "minimum":  0,
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              },
                                                                                         "totalCount":  {
                                                                                                            "minimum":  1,
                                                                                                            "type":  "integer",
@@ -709,6 +719,14 @@
                                                                                                       "type":  "integer",
                                                                                                       "format":  "int64"
                                                                                                   },
+                                                                               "discountPercent":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int32"
+                                                                                                   },
+                                                                               "maxDiscountAmount":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
                                                                                "totalCount":  {
                                                                                                   "type":  "integer",
                                                                                                   "format":  "int32"
@@ -813,6 +831,14 @@
                                                                                                     "type":  "integer",
                                                                                                     "format":  "int64"
                                                                                                 },
+                                                                             "discountPercent":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int32"
+                                                                                                 },
+                                                                             "maxDiscountAmount":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   },
                                                                              "status":  {
                                                                                             "type":  "string"
                                                                                         },
@@ -863,6 +889,12 @@
                                                                                "name":  {
                                                                                             "type":  "string"
                                                                                         },
+                                                                               "type":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                               "typeLabel":  {
+                                                                                                 "type":  "string"
+                                                                                             },
                                                                                "thresholdAmount":  {
                                                                                                        "type":  "integer",
                                                                                                        "format":  "int64"
@@ -871,6 +903,14 @@
                                                                                                       "type":  "integer",
                                                                                                       "format":  "int64"
                                                                                                   },
+                                                                               "discountPercent":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int32"
+                                                                                                   },
+                                                                               "maxDiscountAmount":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
                                                                                "expireAt":  {
                                                                                                 "type":  "string"
                                                                                             },

@@ -144,6 +144,13 @@ export const AdminOperatorsPage: React.FC = () => {
         >
           重置
         </button>
+        <a
+          className="btn btn-ghost btn-sm"
+          style={{ marginLeft: 'auto' }}
+          href={adminApi.operatorExportUrl({ role: query.role, keyword: query.keyword })}
+        >
+          导出 CSV
+        </a>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}

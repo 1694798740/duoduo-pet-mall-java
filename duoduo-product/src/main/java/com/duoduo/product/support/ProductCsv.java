@@ -38,6 +38,25 @@ public final class ProductCsv {
 
     public static final String HEADER = String.join(",", COLUMNS);
 
+    /**
+     * 模板的示例行（CSV 与 xlsx 模板共用同一份）。
+     *
+     * <p>类目 ID 故意写 1：模板不能替用户猜类目，否则「导入失败：类目不存在」
+     * 会被当成模板坏了。用户导入前必须删除本行。
+     */
+    public static final List<String> TEMPLATE_EXAMPLE = List.of(
+            "示例1", "示例商品（导入前请删除本行）", "示例副标题", "1", "",
+            "/img/products/sample.svg", "", "示例商品介绍", "示例商品详情", "",
+            "适用阶段:全年龄", "包装形式:袋装", "2kg", "99.00", "100", "");
+
+    /** xlsx 模板「说明」页的文案（CSV 模板没有说明页，规则写在前端弹窗里） */
+    public static final List<String> TEMPLATE_NOTES = List.of(
+            "1. 一个商品有多个规格时，同一商品的所有规格行填同一个「分组键」。",
+            "2. 「类目ID」必须换成自己类目树里的真实 ID（示例里的 1 通常不存在）。",
+            "3. ID 列请保持文本格式：Excel 会把 19 位数字转成科学计数法并丢精度。",
+            "4. 图集用 | 分隔；规格参数 / 包装规格用 名:值 表示一条，条间用 | 分隔。",
+            "5. 单次最多 500 行 / 100 个商品，文件最大 2MB；示例行导入前请删除。");
+
     public static final int COL_GROUP = 0;
     public static final int COL_TITLE = 1;
     public static final int COL_SUBTITLE = 2;

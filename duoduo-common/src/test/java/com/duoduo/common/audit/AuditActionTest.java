@@ -159,7 +159,7 @@ class AuditActionTest {
     }
 
     @Test
-    @DisplayName("清单规模：53 个真实动作 + 1 个兜底")
+    @DisplayName("清单规模：55 个真实动作 + 1 个兜底")
     void 清单规模() {
         // 钉住数量是刻意的：动作清单是**审计覆盖面的分母**。
         // 少了会红（有人删了动作），多了也会红（有人加了动作但没读本文件的说明）。
@@ -171,7 +171,11 @@ class AuditActionTest {
         // H-02：新增 1 个评价审核动作（REVIEW_AUDIT），50 → 51。
         // A-16：新增 1 个商家回复动作（REVIEW_REPLY），51 → 52。
         // F-04：新增 1 个店员权限配置动作（UPDATE_STAFF_PERMISSIONS），52 → 53。
-        assertThat(AuditAction.values()).hasSize(53);
+        // E-06：新增 2 个商家 IP 白名单动作（UPDATE_MERCHANT_IP_WHITELIST /
+        //       ADMIN_RESET_MERCHANT_IP_WHITELIST），53 → 55。
+        // R-P1：新增 1 个多多币人工调整动作（COIN_ADMIN_ADJUST），55 → 56。
+        // R-P1 第三轮：新增 2 个多多币运营动作（COIN_TASK_UPDATE / COIN_CAMPAIGN_UPDATE），56 → 58。
+        assertThat(AuditAction.values()).hasSize(58);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

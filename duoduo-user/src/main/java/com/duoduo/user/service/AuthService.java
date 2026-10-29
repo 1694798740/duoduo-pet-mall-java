@@ -80,6 +80,13 @@ public class AuthService {
     /** E17 · 权限版本的感知副本发布（签发时顺手自愈，变更时由 AdminUserService 负责） */
     private final PermVersionPublisher permVersionPublisher;
     /**
+     * 多多币站内任务（R-P1 第三轮）：资料完善是新人任务之一。
+     *
+     * <p>依赖方向单向「认证 → 任务」：{@code CoinTaskService} 只依赖币的 Mapper / 服务，
+     * 不回调本类，因此不会形成循环依赖。
+     */
+    private final CoinTaskService coinTaskService;
+    /**
      * 新用户初始信用分（= 信用分模型的基础分，默认 60）。
      *
      * <p>必须与履约域 {@code CreditModel} 的 base 权重一致，否则会出现
@@ -99,7 +106,8 @@ public class AuthService {
                        MerchantMapper merchantMapper,
                        MerchantMemberMapper memberMapper,
                        PermVersionPublisher permVersionPublisher,
-                       TwoFactorService twoFactorService) {
+                       TwoFactorService twoFactorService,
+                       CoinTaskService coinTaskService) {
         this.userMapper = userMapper;
         this.refreshTokenMapper = refreshTokenMapper;
         this.passwordEncoder = passwordEncoder;
@@ -111,6 +119,7 @@ public class AuthService {
         this.memberMapper = memberMapper;
         this.permVersionPublisher = permVersionPublisher;
         this.twoFactorService = twoFactorService;
+        this.coinTaskService = coinTaskService;
     }
 
     @Transactional
@@ -532,6 +541,15 @@ public class AuthService {
         }
         entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
         userMapper.updateById(entity);
+
+        // 昵称与头像都完善 → 新人任务（best-effort；事件幂等，重复保存不会重复发奖）
+        if (hasText(entity.getNickname()) && hasText(entity.getAvatar())) {
+            try {
+                coinTaskService.handleEvent(userId, "NEWCOMER_PROFILE", "profile");
+            } catch (RuntimeException e) {
+                log.warn("上报新人资料完善任务失败 userId={}：{}", userId, e.getMessage());
+            }
+        }
         return toView(entity);
     }
 
@@ -806,6 +824,11 @@ public class AuthService {
             return null;
         }
         return store.getOwnerUserId();
+    }
+
+    /** 非空且有内容（资料完善判定：空串 / 纯空白不算填过） */
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private static String maskPhone(String phone) {

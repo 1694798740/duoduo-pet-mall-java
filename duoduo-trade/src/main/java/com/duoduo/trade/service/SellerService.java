@@ -2,18 +2,21 @@ package com.duoduo.trade.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.seller.StaffPermission;
 import com.duoduo.common.seller.StaffPermissions;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.trade.dto.AnalyticsDtos;
 import com.duoduo.trade.dto.AnalyticsDtos.SellerAnalytics;
 import com.duoduo.trade.dto.AnalyticsDtos.Slice;
 import com.duoduo.trade.dto.AnalyticsDtos.TrendPoint;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.RefundResult;
+import com.duoduo.trade.dto.SellerDtos.BatchShipRequest;
 import com.duoduo.trade.dto.SellerDtos.SellerSummary;
 import com.duoduo.trade.dto.SellerDtos.SettlementPage;
 import com.duoduo.trade.dto.SellerDtos.ShipRequest;
@@ -34,6 +37,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +69,17 @@ public class SellerService {
 
     private static final int DEFAULT_PAGE_SIZE = 20;
     private static final int MAX_PAGE_SIZE = 100;
+    /** 批量发货单次上限：超过这个量级应走异步任务，而不是藏在一个 HTTP 请求里 */
+    private static final int MAX_BATCH_ORDERS = 100;
+    /**
+     * 同步导出上限（2026-10-28）：5 万行，与导入导出矩阵一致。
+     *
+     * <p>导出不逐页拉取：分页接口每页最多 100 行，5 万行要打 500 次库，
+     * 且每次都要重新装配店铺名与明细（N+1 的另一种形态）。
+     * 单条 {@code LIMIT 50000} 查询在 5 万行量级仍是一次索引扫描；
+     * 超过这个量级应转为异步导出任务（见 docs/manuals/import-export-module-matrix.md）。
+     */
+    private static final int MAX_EXPORT_ROWS = 50_000;
     private static final Set<String> SETTLEMENT_STATUSES = Set.of(
             SettlementEntity.STATUS_CUSTODY, SettlementEntity.STATUS_RELEASED, SettlementEntity.STATUS_REFUNDED);
 
@@ -172,23 +187,56 @@ public class SellerService {
         SellerScope scope = requireSellerScope();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
-        String normalized = normalizeOrderStatus(status);
+        LambdaQueryWrapper<OrderEntity> wrapper = orderFilter(scope, status, keyword);
+        /**
+         * 未读优先（2026-10-27）：未读订单浮到每一页顶部，组内仍按下单时间倒序。
+         *
+         * <p>与商品列表同一取向：排序放进 SQL，分页时未读项不会散落到后面的页；
+         * 用户读完一条后，它自然回到「已读组」的时间位置。
+         */
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_order_read r WHERE r.user_id = "
+                + scope.sellerId() + " AND r.order_id = t_order.id)) ASC, created_at DESC, id DESC");
 
+        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        // 传店铺主体：店员与店主共用同一份「店铺已读」，橙点不会因为换人登录而重生
+        return PageResult.of(
+                orderService.toViews(result.getRecords(), scope.sellerId()),
+                result.getTotal(), pageNo, size);
+    }
+
+    /** 兼容旧调用（无关键字） */
+    public PageResult<OrderView> listOrders(String status, int page, int pageSize) {
+        return listOrders(status, null, page, pageSize);
+    }
+
+    /**
+     * 商家订单导出（2026-10-28 · 导入导出第一批）。
+     *
+     * <p>筛选口径与 {@link #listOrders} 完全一致（同一个 {@link #orderFilter}），
+     * 差别只有「不按未读优先、不分页、按时间正序倒排 + 上限」——
+     * 导出的读者是财务 / 复盘，不需要未读优先这种为阅读体验服务的排序。
+     */
+    public List<OrderView> exportOrders(String status, String keyword) {
+        SellerScope scope = requireSellerScope();
+        LambdaQueryWrapper<OrderEntity> wrapper = orderFilter(scope, status, keyword)
+                .orderByDesc(OrderEntity::getCreatedAt)
+                .orderByDesc(OrderEntity::getId);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        // 导出不需要逐条已读：传 null 可省掉一次「5 万个 id 的 IN 查询」——
+        // 已读是页面阅读用的，文件里既没有这一列，也没人会在 Excel 里看橙点。
+        return orderService.toViews(orderMapper.selectList(wrapper));
+    }
+
+    /** 订单列表 / 导出的共用筛选：归属范围 + 状态 + 关键字 */
+    private LambdaQueryWrapper<OrderEntity> orderFilter(SellerScope scope, String status, String keyword) {
+        String normalized = normalizeOrderStatus(status);
         LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>()
                 .in(OrderEntity::getSellerId, scope.visibleSellerIds());
         if (normalized != null) {
             wrapper.eq(OrderEntity::getStatus, normalized);
         }
         applyOrderKeyword(wrapper, keyword);
-        wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
-
-        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        return PageResult.of(orderService.toViews(result.getRecords()), result.getTotal(), pageNo, size);
-    }
-
-    /** 兼容旧调用（无关键字） */
-    public PageResult<OrderView> listOrders(String status, int page, int pageSize) {
-        return listOrders(status, null, page, pageSize);
+        return wrapper;
     }
 
     /** 与买家端同口径：订单号 或 商品标题（参数化子查询，不拼串） */
@@ -216,6 +264,65 @@ public class SellerService {
     public OrderView ship(String orderNo, ShipRequest request) {
         SellerScope scope = requireSellerScope();
         requireStaffPermission(scope, StaffPermission.ORDER_SHIP);
+        return ship(scope, orderNo, request);
+    }
+
+    /**
+     * 批量发货（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>与批量上下架同一取向：逐条走与单条发货完全相同的状态机与归属校验，
+     * 单条失败只记录原因、不影响其它条；不加 {@code @Transactional}
+     * （整批回滚会让已成功的订单一起退回，卖家看到「20 单里 1 单失败，结果一单都没发」）。
+     *
+     * <p>准入与成员身份只解析一次：店员身份要查成员服务，逐条解析会让 100 单多打 100 次 Feign。
+     */
+    public BatchDtos.Result shipBatch(BatchShipRequest request) {
+        SellerScope scope = requireSellerScope();
+        requireStaffPermission(scope, StaffPermission.ORDER_SHIP);
+        List<String> orderNos = normalizeBatchOrderNos(request == null ? null : request.orderNos());
+        ShipRequest common = request == null
+                ? null
+                : new ShipRequest(request.logisticsCompany(), request.logisticsNo());
+        List<BatchDtos.Item> items = new ArrayList<>(orderNos.size());
+        int success = 0;
+        for (String orderNo : orderNos) {
+            try {
+                ship(scope, orderNo, common);
+                success++;
+                items.add(new BatchDtos.Item(orderNo, true, null, null));
+            } catch (BizException ex) {
+                // 预期内的逐条拒绝（不是自己的单 / 状态不允许 / 没有发货权限）：原因原样交给卖家
+                items.add(new BatchDtos.Item(orderNo, false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("批量发货单条失败 orderNo={}", orderNo, ex);
+                items.add(new BatchDtos.Item(orderNo, false, "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(orderNos.size(), success, orderNos.size() - success, items,
+                orderStatusCounts());
+    }
+
+    private List<String> normalizeBatchOrderNos(List<String> orderNos) {
+        if (orderNos == null || orderNos.isEmpty()) {
+            throw BizException.validation("orderNos 不能为空");
+        }
+        LinkedHashSet<String> distinct = new LinkedHashSet<>();
+        for (String orderNo : orderNos) {
+            if (orderNo == null || orderNo.isBlank()) {
+                throw BizException.validation("orderNos 不能包含空值");
+            }
+            distinct.add(orderNo.trim());
+        }
+        if (distinct.size() > MAX_BATCH_ORDERS) {
+            throw BizException.validation("单次最多批量操作 " + MAX_BATCH_ORDERS + " 笔订单");
+        }
+        return new ArrayList<>(distinct);
+    }
+
+    /**
+     * 单条发货的共用实现：scope 由调用方解析一次后传入。
+     */
+    private OrderView ship(SellerScope scope, String orderNo, ShipRequest request) {
         OrderEntity order = requireOwnOrder(scope, orderNo);
         String reason = request == null ? "卖家发货" : request.describe();
         log.info("卖家 {} 对订单 {} 执行发货", scope.sellerId(), orderNo);
@@ -223,7 +330,43 @@ public class SellerService {
         // 只写日志的话，卖家事后在详情页看不到自己填的单号。
         String company = request == null ? null : request.logisticsCompany();
         String no = request == null ? null : request.logisticsNo();
-        return orderService.shipInternal(order, reason, company, no);
+        OrderView view = orderService.shipInternal(order, reason, company, no);
+        // ★ 2026-10-27：自己发货 = 自己已经「看过」这条订单 —— 顺手写一条店铺维度的已读，
+        //   于是「已发货」分桶里它一诞生就是已读，不会因为卖家自己的操作而 +1。
+        //   已读主体用 scope.sellerId()（租户键）而不是操作人：店员发货也应该算「店铺已看过」，
+        //   否则店主登录后还会看到一个凭空多出来的未读。
+        orderMapper.markOrderRead(scope.sellerId(), order.getId(),
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        return view;
+    }
+
+    /**
+     * 卖家端订单页签角标（2026-10-27）。
+     *
+     * <p>与 {@link #summary()} 的区别：summary 是**经营概览**，回答「我一共有多少单」，
+     * 数字是存量、不该随看不看而变；这个方法是**角标**，回答「还有多少条我没看过」，
+     * 已发货/已完成/已关闭/已退款读过的会被减掉。
+     *
+     * <p>两个口径刻意分开：概览卡片上「已发货 12」如果点开就变成 11，卖家会以为数据丢了。
+     */
+    public java.util.List<com.duoduo.common.api.StatusCount> orderStatusCounts() {
+        SellerScope scope = requireSellerScope();
+        return OrderService.toStatusCounts(
+                orderMapper.countBySellerAndStatusForBadge(scope.visibleSellerIds(), scope.sellerId()));
+    }
+
+    /**
+     * 卖家「看过某订单」上报（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只让已发货/已完成/已关闭/已退款的角标消失；待发货继续保留。
+     * 幂等；返回最新分桶供前端覆盖乐观值。
+     */
+    public java.util.List<com.duoduo.common.api.StatusCount> markOrderRead(String orderNo) {
+        SellerScope scope = requireSellerScope();
+        OrderEntity order = requireOwnOrder(scope, orderNo);
+        orderMapper.markOrderRead(scope.sellerId(), order.getId(),
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        return orderStatusCounts();
     }
 
     /**
@@ -305,28 +448,8 @@ public class SellerService {
         }
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
-        String normalized = normalizeSettlementStatus(status);
 
-        LambdaQueryWrapper<SettlementEntity> wrapper = new LambdaQueryWrapper<SettlementEntity>()
-                .in(SettlementEntity::getSellerId, scope.visibleSellerIds());
-        if (normalized != null) {
-            wrapper.eq(SettlementEntity::getStatus, normalized);
-        }
-        if (keyword != null && !keyword.isBlank()) {
-            List<Long> orderIds = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
-                            .select(OrderEntity::getId)
-                            .in(OrderEntity::getSellerId, scope.visibleSellerIds())
-                            .like(OrderEntity::getOrderNo, keyword.trim()))
-                    .stream().map(OrderEntity::getId).toList();
-            if (orderIds.isEmpty()) {
-                // 显式空结果（detail 见方法注释：空集合会让 in() 整体失效）。
-                // 用「主键 = -1」而不是提前 return：汇总数字要继续按真实数据算，
-                // 否则搜一个不存在的单号会让「可提现余额」显示成 0，看起来像钱没了。
-                wrapper.eq(SettlementEntity::getId, -1L);
-            } else {
-                wrapper.in(SettlementEntity::getOrderId, orderIds);
-            }
-        }
+        LambdaQueryWrapper<SettlementEntity> wrapper = settlementFilter(scope, status, keyword);
         wrapper.orderByDesc(SettlementEntity::getCreatedAt).orderByDesc(SettlementEntity::getId);
 
         Page<SettlementEntity> result = settlementMapper.selectPage(new Page<>(pageNo, size), wrapper);
@@ -362,6 +485,63 @@ public class SellerService {
     /** 兼容旧调用（无关键字） */
     public SettlementPage settlements(String status, int page, int pageSize) {
         return settlements(status, null, page, pageSize);
+    }
+
+    /**
+     * 结算台账导出（2026-10-28 · 导入导出第一批）。
+     *
+     * <p>与 {@link #settlements} 共用同一个筛选（{@link #settlementFilter}）与同一个
+     * {@code SettlementView} 装配 —— 导出文件里的「应结金额」必须与页面上的逐个一分不差，
+     * 否则商家拿文件去对账时会以为系统给错数。
+     */
+    public List<SettlementView> exportSettlements(String status, String keyword) {
+        SellerScope scope = requireSellerScope();
+        if (scope.staffMember()) {
+            throw BizException.forbidden("店员账号不可查看结算与提现信息，请联系店主");
+        }
+        LambdaQueryWrapper<SettlementEntity> wrapper = settlementFilter(scope, status, keyword);
+        // 对账看的是时间顺序（钱是按天入账的），与页面默认的倒序不同：
+        // 倒序页面便于「最近发生了什么」，正序账表便于逐行核对累计余额。
+        wrapper.orderByAsc(SettlementEntity::getCreatedAt).orderByAsc(SettlementEntity::getId);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+
+        List<SettlementEntity> rows = settlementMapper.selectList(wrapper);
+        Map<Long, String> orderNoById = orderNoOf(rows.stream().map(SettlementEntity::getOrderId).toList());
+        return rows.stream()
+                .map(row -> settlementService.toView(row, orderNoById.get(row.getOrderId())))
+                .toList();
+    }
+
+    /**
+     * 结算列表 / 导出的共用筛选。
+     *
+     * <p>{@code keyword} 是订单号（包含匹配）。结算行本身不存订单号，只能先按订单号查出
+     * orderId 再过滤 —— 因此「关键字命不中」时**必须显式给出空结果**，
+     * 不能把空集合交给 {@code in()}：MyBatis-Plus 会直接跳过这个条件，
+     * 于是「搜一个不存在的单号」反而返回全部结算记录。
+     */
+    private LambdaQueryWrapper<SettlementEntity> settlementFilter(SellerScope scope, String status, String keyword) {
+        String normalized = normalizeSettlementStatus(status);
+        LambdaQueryWrapper<SettlementEntity> wrapper = new LambdaQueryWrapper<SettlementEntity>()
+                .in(SettlementEntity::getSellerId, scope.visibleSellerIds());
+        if (normalized != null) {
+            wrapper.eq(SettlementEntity::getStatus, normalized);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            List<Long> orderIds = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                            .select(OrderEntity::getId)
+                            .in(OrderEntity::getSellerId, scope.visibleSellerIds())
+                            .like(OrderEntity::getOrderNo, keyword.trim()))
+                    .stream().map(OrderEntity::getId).toList();
+            if (orderIds.isEmpty()) {
+                // 用「主键 = -1」而不是提前 return：汇总数字要继续按真实数据算，
+                // 否则搜一个不存在的单号会让「可提现余额」显示成 0，看起来像钱没了。
+                wrapper.eq(SettlementEntity::getId, -1L);
+            } else {
+                wrapper.in(SettlementEntity::getOrderId, orderIds);
+            }
+        }
+        return wrapper;
     }
 
     /** 商家端概览：订单状态分布 + 资金三栏。 */
@@ -522,6 +702,45 @@ public class SellerService {
                         lng(row, "refundAmount"),
                         lng(row, "refundOrderCount")))
                 .toList();
+    }
+
+    /**
+     * 商品分析导出（2026-10-28 · 矩阵 P3）：一行一个商品，销量 / 成交额 / 退款合并。
+     *
+     * <p>页面上的商品分析把「交易域 product-stats」和「交易域 product-refunds」按 spuId
+     * 端侧合并；导出也做同一件事，但放宽到 5000 条 —— 导出是给卖家复盘用的，
+     * 不应该因为页面只展示前 200 名就把第 201 名之后的商品漏掉。
+     *
+     * <p>退款金额按商品汇总：退款统计原本是 SKU 粒度，这里把同一 spuId 的金额相加；
+     * 退款件数直接用订单明细口径，不从销量里扣减（与页面说明一致）。
+     */
+    public List<List<String>> exportProductStatsRows() {
+        SellerScope scope = requireSellerScope();
+        List<Map<String, Object>> stats = orderMapper.productStatsBySeller(scope.visibleSellerIds(), 5000);
+        List<Map<String, Object>> refunds = orderMapper.productRefundStatsBySeller(scope.visibleSellerIds(), 5000);
+
+        Map<Long, long[]> refundBySpu = new HashMap<>();
+        for (Map<String, Object> row : refunds) {
+            Long spuId = lng(row, "spuId");
+            long[] agg = refundBySpu.computeIfAbsent(spuId, ignored -> new long[2]);
+            agg[0] += lng(row, "refundQty");
+            agg[1] += lng(row, "refundAmount");
+        }
+
+        List<List<String>> rows = new ArrayList<>(stats.size());
+        for (Map<String, Object> row : stats) {
+            Long spuId = lng(row, "spuId");
+            long[] refund = refundBySpu.getOrDefault(spuId, new long[2]);
+            rows.add(List.of(
+                    String.valueOf(spuId),
+                    str(row, "name"),
+                    String.valueOf(lng(row, "qty")),
+                    CsvExport.yuan(lng(row, "amount")),
+                    String.valueOf(lng(row, "orderCnt")),
+                    String.valueOf(refund[0]),
+                    CsvExport.yuan(refund[1])));
+        }
+        return rows;
     }
 
     // ---------------- 内部实现 ----------------

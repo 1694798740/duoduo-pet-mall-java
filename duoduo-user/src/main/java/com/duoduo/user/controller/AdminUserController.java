@@ -8,6 +8,8 @@ import com.duoduo.user.dto.UserDtos.AdminUserView;
 import com.duoduo.user.dto.UserDtos.RoleChangeRequest;
 import com.duoduo.user.dto.UserDtos.RoleChangeResult;
 import com.duoduo.user.service.AdminUserService;
+import com.duoduo.common.web.CsvExport;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,6 +47,40 @@ public class AdminUserController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.ok(adminUserService.listUsers(role, keyword, page, pageSize));
+    }
+
+    /**
+     * 运营账号导出（矩阵第二批）。
+     *
+     * <p>手机号沿用列表口径脱敏（导出文件可能被转发，不做「导出即明文」的例外）；
+     * 导入刻意不做 —— 批量建运营账号是提权风险。
+     */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) String role,
+                       @RequestParam(required = false) String keyword,
+                       HttpServletResponse response) throws java.io.IOException {
+        java.util.List<AdminUserView> views = adminUserService.exportUsers(role, keyword);
+        CsvExport.write(response, "运营账号-" + CsvExport.stamp(), HEADERS,
+                views.stream().map(AdminUserController::row).toList());
+    }
+
+    private static final java.util.List<String> HEADERS = java.util.List.of(
+            "用户ID", "手机号", "昵称", "角色", "状态", "实名认证", "信用分", "注册时间");
+
+    private static java.util.List<String> row(AdminUserView view) {
+        return java.util.List.of(
+                view.id() == null ? "" : String.valueOf(view.id()),
+                text(view.phoneMasked()),
+                text(view.nickname()),
+                text(view.role()),
+                text(view.status()),
+                view.realNameVerified() ? "是" : "否",
+                view.creditScore() == null ? "" : String.valueOf(view.creditScore()),
+                CsvExport.beijingTime(view.createdAt()));
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     @PostMapping("/{id}/role")

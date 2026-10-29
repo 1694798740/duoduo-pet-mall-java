@@ -5,6 +5,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.audit.AuditAction;
 import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewAppendRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateResult;
@@ -14,6 +15,7 @@ import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewedOrders;
 import com.duoduo.fulfilment.dto.ReviewDtos.SellerReviewView;
 import com.duoduo.fulfilment.service.ReviewService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -139,6 +141,46 @@ public class ReviewController {
             @RequestParam(defaultValue = "10") int pageSize) {
         return ApiResponse.ok(reviewService.listForSeller(
                 UserContext.requireUserId(), replied, rating, keyword, page, pageSize));
+    }
+
+    /** 商家评价导出列（匿名评价的昵称已由服务端脱敏） */
+    private static final List<String> SELLER_EXPORT_HEADERS = List.of(
+            "评价ID", "订单号", "商品", "评分", "评价内容", "追评", "买家昵称", "匿名",
+            "回复内容", "回复时间", "提交时间");
+
+    /**
+     * 导出我店铺的评价 CSV（2026-10-28 · 矩阵 P3）：筛选与商家评价列表一致。
+     *
+     * <p>直接写 {@code text/csv} 附件，前端用当前 tab / 星级 / 关键词拼下载地址。
+     */
+    @GetMapping("/seller/export")
+    public void exportSeller(@RequestParam(required = false) Boolean replied,
+                             @RequestParam(required = false) Integer rating,
+                             @RequestParam(required = false) String keyword,
+                             HttpServletResponse response) throws java.io.IOException {
+        List<SellerReviewView> rows = reviewService.exportForSeller(
+                UserContext.requireUserId(), replied, rating, keyword);
+        CsvExport.write(response, "店铺评价-" + CsvExport.stamp(), SELLER_EXPORT_HEADERS,
+                rows.stream().map(ReviewController::sellerRow).toList());
+    }
+
+    private static List<String> sellerRow(SellerReviewView view) {
+        return List.of(
+                String.valueOf(view.id()),
+                text(view.orderNo()),
+                text(view.productTitle()),
+                String.valueOf(view.rating()),
+                text(view.content()),
+                text(view.appendContent()),
+                text(view.nickname()),
+                view.anonymous() ? "是" : "否",
+                text(view.replyContent()),
+                CsvExport.beijingTime(view.replyAt()),
+                CsvExport.beijingTime(view.createdAt()));
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value;
     }
 
     /**

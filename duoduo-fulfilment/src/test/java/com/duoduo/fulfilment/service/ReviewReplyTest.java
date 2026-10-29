@@ -8,9 +8,11 @@ import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.CoinTaskClient;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.dto.ReviewDtos.SellerReviewView;
 import com.duoduo.fulfilment.entity.ReviewEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.ReviewRiskJudge;
@@ -56,8 +58,10 @@ class ReviewReplyTest {
     private final UserClient userClient = mock(UserClient.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-    private final ReviewService service = new ReviewService(mapper, orderFacts, userClient, idGenerator,
-            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), 1000, 9, 30, 500);
+    private final ReviewService service = new ReviewService(mapper, mock(AdminQueueReadMapper.class),
+            orderFacts, userClient, idGenerator,
+            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), mock(CoinTaskClient.class),
+            1000, 9, 30, 500);
 
     @BeforeAll
     static void initMybatisMetadata() {

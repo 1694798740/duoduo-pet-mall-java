@@ -9,17 +9,20 @@
  * 页面上的显隐是体验，真正的状态机与归属校验都在服务端（越权 403 / 状态不允许 422）。
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { afterSaleApi, sellerApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import type { AfterSaleReplyAction, AfterSaleView } from '@duoduo/api-sdk/types';
+import type { AfterSaleReplyAction, AfterSaleView, BatchResultView, StatusCount } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AFTER_SALE_STATUS_TABS, AfterSaleStatusTag } from '@duoduo/shared/components/afterSale';
+import { Badge, UnreadDot, toCountMap } from '@duoduo/shared/components/badge';
+import { notifyBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import { SellerApplyCard, canAccessSellerConsole } from './shared';
 
 export const SellerAfterSalesPage: React.FC = () => {
@@ -38,6 +41,21 @@ export const SellerAfterSalesPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  /** 批量处理（2026-10-27 · 批量操作即已读）：动作与说明对选中单共用 */
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchAction, setBatchAction] = useState<AfterSaleReplyAction>('AGREE');
+  const [batchReply, setBatchReply] = useState('');
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+
+  /** 逐条已读覆盖（2026-10-27 · 橙色未读印记）：切筛选/翻页时清空 */
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setReadIds(new Set());
+  }, [status, keyword, page]);
+  const isRead = (item: AfterSaleView) => item.read === true || readIds.has(item.id);
+  /** 预览卡片：点卡片先看详情，不直接进入处理表单 */
+  const [preview, setPreview] = useState<AfterSaleView | null>(null);
+
   const { data, loading, error, reload } = useAsync(
     useCallback(
       () => afterSaleApi.seller({ status: status || undefined, keyword: keyword || undefined, page, pageSize: 10 }),
@@ -52,6 +70,53 @@ export const SellerAfterSalesPage: React.FC = () => {
     useCallback(() => sellerApi.productRefundStats(), []),
     allowed,
   );
+
+  /**
+   * 售后页签角标（2026-10-27）。口径与列表接口同源（{@code side=seller}：
+   * 本人店铺 + 运营可见的自营），覆盖全量而非当前页。
+   */
+  const countsState = useAsync<StatusCount[]>(
+    useCallback(() => afterSaleApi.statusCounts('seller'), []),
+    allowed,
+  );
+  /** 角标本地态：允许乐观减，之后一律以服务端分桶覆盖 */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setCounts(toCountMap(countsState.data));
+  }, [countsState.data]);
+  const reloadCounts = countsState.reloadSilently;
+
+  /**
+   * 处理完一条售后 → 上报「我已看过」→ 服务端分桶覆盖。
+   *
+   * <p>商家端没有独立详情页（直接在列表里弹窗处理），所以上报点挂在**处理动作完成后**：
+   * 刚处理完的单自己当然看过，不该再挂着已退款/已拒绝的角标。
+   * 无条件上报（幂等）：状态可能变成 REFUNDED / SELLER_REJECTED / WAITING_RETURN，
+   * 前两种属可消、后一种服务端本来就不会减 —— 由服务端决定，前端不判断。
+   */
+  const dismissAfterHandled = useCallback(
+    async (id: string) => {
+      // 本地先把橙点去掉，服务端确认后用分桶覆盖；失败回滚，不做假账
+      setReadIds((prev) => new Set(prev).add(id));
+      try {
+        const rows = await afterSaleApi.markRead(id, 'seller');
+        setCounts(toCountMap(rows));
+        notifyBadgeChanged();
+      } catch {
+        setReadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        void reloadCounts();
+      }
+    },
+    [reloadCounts],
+  );
+
+  /** 批量选择：只作用于当前页，切状态 / 搜索 / 翻页自动清空 */
+  const pageIds = (data?.items ?? []).map((item) => item.id);
+  const selection = useBatchSelection(pageIds, `${status}|${keyword}|${page}`);
   const refundRows = refundStats.data ?? [];
   const refundTotalAmount = refundRows.reduce((sum, row) => sum + Number(row.refundAmount || 0), 0);
   const refundTotalQty = refundRows.reduce((sum, row) => sum + Number(row.refundQty || 0), 0);
@@ -70,6 +135,13 @@ export const SellerAfterSalesPage: React.FC = () => {
     setAction('AGREE');
     setReply('');
     setActionError(null);
+    void dismissAfterHandled(item.id);
+  };
+
+  /** 打开预览 = 已读：橙点消失、终态角标同步减（原子入口） */
+  const openPreview = (item: AfterSaleView) => {
+    setPreview(item);
+    void dismissAfterHandled(item.id);
   };
 
   const submit = async () => {
@@ -96,8 +168,45 @@ export const SellerAfterSalesPage: React.FC = () => {
       );
       setHandling(null);
       reload();
+      // 处理后该状态少一条、目标状态多一条：角标同刻刷新；
+      // 同时上报「已看过」，避免已退款/已拒绝这类可消状态挂回角标
+      void dismissAfterHandled(handling.id);
     } catch (err) {
       // 422 的常见原因：订单已完成（钱已放款给卖家），系统退不了，需人工追偿
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 批量处理售后（2026-10-27 · 批量操作即已读）。
+   *
+   * <p>与商品管理同一闭环：逐条结果 → 成功条目服务端已写已读 →
+   * 用返回的最新分桶覆盖本地角标（拿不到才回读）→ 清空选择 → 刷新并广播父级角标。
+   */
+  const submitBatch = async () => {
+    if (!selection.count) return;
+    setActionError(null);
+    if (batchAction === 'REJECT' && !batchReply.trim()) {
+      setActionError('拒绝售后必须填写说明原因');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await afterSaleApi.sellerBatchReply(
+        selection.selected,
+        batchAction,
+        batchReply.trim() || undefined,
+      );
+      setBatchResult(result);
+      if (result.counts) setCounts(toCountMap(result.counts));
+      else void reloadCounts();
+      selection.clear();
+      setBatchOpen(false);
+      reload();
+      notifyBadgeChanged();
+    } catch (err) {
       setActionError(toFriendlyMessage(err));
     } finally {
       setBusy(false);
@@ -110,6 +219,8 @@ export const SellerAfterSalesPage: React.FC = () => {
       await afterSaleApi.receiveReturn(item.id);
       push('已确认收货并退款，款项退回买家', 'success');
       reload();
+      // 签收即退款：RETURNING 减一、REFUNDED 加一；同时上报已读过，REFUNDED 不挂角标
+      void dismissAfterHandled(item.id);
     } catch (err) {
       // 常见失败：订单已完成且已放款（需走平台垫付 / 追偿），后端会给具体原因
       push(toFriendlyMessage(err), 'error');
@@ -190,6 +301,7 @@ export const SellerAfterSalesPage: React.FC = () => {
             }}
           >
             {tab.label}
+            <Badge count={counts[tab.value]} />
           </button>
         ))}
       </div>
@@ -208,6 +320,18 @@ export const SellerAfterSalesPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的售后 {data ? data.total : 0} 条</span>
         ) : null}
+        <button
+          className="btn btn-ghost btn-sm"
+          title="按当前状态与关键词导出本店售后（CSV）"
+          onClick={() => {
+            window.location.href = afterSaleApi.sellerExportUrl({
+              status: status || undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -218,10 +342,46 @@ export const SellerAfterSalesPage: React.FC = () => {
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
+        <div>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('AGREE');
+                setBatchReply('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量同意
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('REJECT');
+                setBatchReply('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量拒绝
+            </button>
+          </BatchBar>
         <div className="card card-pad">
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="全选当前页售后单"
+                    checked={selection.allSelected}
+                    disabled={!pageIds.length}
+                    onChange={selection.toggleAll}
+                  />
+                </th>
                 <th>订单号</th>
                 <th>类型</th>
                 <th>状态</th>
@@ -231,8 +391,31 @@ export const SellerAfterSalesPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
+              {[...data.items]
+                .sort((a, b) => {
+                  const byRead = Number(isRead(a)) - Number(isRead(b));
+                  if (byRead !== 0) return byRead;
+                  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                })
+                .map((item) => (
+                <tr
+                  key={item.id}
+                  onClick={() => openPreview(item)}
+                  style={{ cursor: 'pointer' }}
+                  className={isRead(item) ? undefined : 'unread-card'}
+                >
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`选择售后单 ${item.orderNo}`}
+                        checked={selection.selectedSet.has(item.id)}
+                        disabled={busy}
+                        onChange={() => selection.toggle(item.id)}
+                      />
+                      {!isRead(item) ? <UnreadDot /> : null}
+                    </div>
+                  </td>
                   <td className="mono">{item.orderNo}</td>
                   <td>{item.typeLabel}</td>
                   <td>
@@ -240,7 +423,7 @@ export const SellerAfterSalesPage: React.FC = () => {
                   </td>
                   <td style={{ maxWidth: 260 }}>{item.reason}</td>
                   <td>{formatDate(item.createdAt)}</td>
-                  <td>
+                  <td onClick={(e) => e.stopPropagation()}>
                     {item.status === 'PENDING' ? (
                       <button className="btn btn-sm btn-primary" onClick={() => openHandle(item)}>
                         处理
@@ -264,6 +447,7 @@ export const SellerAfterSalesPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       ) : null}
 
@@ -395,6 +579,148 @@ export const SellerAfterSalesPage: React.FC = () => {
           </div>
         ) : null}
       </Modal>
+
+      {/* 售后预览：点行打开即已读；执行处理仍走独立弹窗（预览不直接执行动作） */}
+      <Modal
+        open={preview !== null}
+        title="售后预览"
+        onClose={() => setPreview(null)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setPreview(null)}>
+              关闭
+            </button>
+            {preview?.status === 'PENDING' ? (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const item = preview;
+                  setPreview(null);
+                  if (item) openHandle(item);
+                }}
+              >
+                去处理
+              </button>
+            ) : null}
+          </>
+        }
+      >
+        {preview ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+              <strong className="mono">订单 {preview.orderNo}</strong>
+              <AfterSaleStatusTag status={preview.status} label={preview.statusLabel} />
+              <span className="tag">{preview.typeLabel}</span>
+            </div>
+            <div className="card card-pad" style={{ padding: 12 }}>
+              <div className="small muted">买家诉求</div>
+              <div style={{ marginTop: 6 }}>{preview.reason || '—'}</div>
+              {preview.images.length > 0 ? (
+                <div className="row row-wrap" style={{ gap: 8, marginTop: 8 }}>
+                  {preview.images.map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer">
+                      <img
+                        src={url}
+                        alt="举证图"
+                        style={{ width: 72, height: 72, borderRadius: 6, objectFit: 'cover' }}
+                      />
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {preview.sellerReply ? (
+              <div className="small muted">卖家处理说明：{preview.sellerReply}</div>
+            ) : null}
+            {preview.arbitrateNote ? (
+              <div className="small muted">平台裁定：{preview.arbitrateNote}</div>
+            ) : null}
+            {preview.refundAmount !== null ? (
+              <div className="small muted">退款金额：{formatPrice(preview.refundAmount)}</div>
+            ) : null}
+            {preview.returnCourier || preview.returnTrackingNo ? (
+              <div className="small muted">
+                寄回物流：{preview.returnCourier ?? '—'} {preview.returnTrackingNo ?? ''}
+              </div>
+            ) : null}
+            <div className="small muted">申请时间：{formatDate(preview.createdAt)}</div>
+            <div className="small muted">
+              打开预览即视为已读：橙点消失；已退款 / 已关闭 / 卖家已拒绝的角标同步 -1，
+              待卖家处理 / 待买家寄回仍保留提醒（事情还没办完）。
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* 批量处理：动作与说明对选中单共用；只有「待卖家处理」会成功 */}
+      <Modal
+        open={batchOpen}
+        title={batchAction === 'AGREE' ? '批量同意售后' : '批量拒绝售后'}
+        onClose={() => setBatchOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setBatchOpen(false)} disabled={busy}>
+              取消
+            </button>
+            <button
+              className={`btn ${batchAction === 'AGREE' ? 'btn-primary' : 'btn-danger'}`}
+              disabled={busy}
+              onClick={submitBatch}
+            >
+              {busy ? '处理中…' : `确认处理（${selection.count} 条）`}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="warn">
+          将处理 <b>{selection.count}</b> 条售后（仅当前页），动作与说明对它们共用。
+          只有<b>待卖家处理</b>的售后会成功；其余状态会逐条失败并给出原因。
+          {batchAction === 'AGREE'
+            ? '仅退款会立刻执行退款；退货退款只代表「同意退货」，钱要等买家寄回并签收后才动。'
+            : '拒绝后买家可以据此申请平台仲裁。'}
+        </Alert>
+        <div className="stack-sm" style={{ marginTop: 12 }}>
+          <label className="checkbox-row">
+            <input
+              type="radio"
+              name="after-sale-batch-action"
+              checked={batchAction === 'AGREE'}
+              onChange={() => setBatchAction('AGREE')}
+            />
+            <span>同意（仅退款立刻退款 / 退货退款等寄回）</span>
+          </label>
+          <label className="checkbox-row">
+            <input
+              type="radio"
+              name="after-sale-batch-action"
+              checked={batchAction === 'REJECT'}
+              onChange={() => setBatchAction('REJECT')}
+            />
+            <span>拒绝（必须填写说明原因）</span>
+          </label>
+        </div>
+        <Field
+          label={batchAction === 'REJECT' ? '拒绝原因（必填）' : '处理说明（可选）'}
+          required={batchAction === 'REJECT'}
+          hint="会展示给买家，并作为后续仲裁的依据"
+        >
+          <textarea
+            className="textarea"
+            rows={3}
+            maxLength={500}
+            value={batchReply}
+            onChange={(e) => setBatchReply(e.target.value)}
+            placeholder={
+              batchAction === 'REJECT'
+                ? '例如：商品已拆封使用，影响二次销售，不同意退款'
+                : '例如：已核对举证，同意退款'
+            }
+          />
+        </Field>
+        {actionError ? <Alert kind="error">{actionError}</Alert> : null}
+      </Modal>
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="售后单" />
     </div>
   );
 };

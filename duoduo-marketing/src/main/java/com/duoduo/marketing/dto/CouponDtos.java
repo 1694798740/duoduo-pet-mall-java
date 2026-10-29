@@ -42,7 +42,12 @@ public final class CouponDtos {
             /** 券类型中文文案，前端不再维护映射表 */
             String typeLabel,
             long thresholdAmount,
+            /** 满减券的固定抵扣额（分）；折扣券恒为 0 */
             long discountAmount,
+            /** 折扣券折后应付比例（百分比）：85 = 8.5 折；满减券恒为 100 */
+            int discountPercent,
+            /** 折扣券封顶抵扣（分）：0 = 不封顶 */
+            long maxDiscountAmount,
             int totalCount,
             int claimedCount,
             int remainingCount,
@@ -63,7 +68,12 @@ public final class CouponDtos {
             String type,
             String typeLabel,
             long thresholdAmount,
+            /** 满减券的固定抵扣额（分）；折扣券恒为 0 */
             long discountAmount,
+            /** 折扣券折后应付比例（百分比）：85 = 8.5 折 */
+            int discountPercent,
+            /** 折扣券封顶抵扣（分）：0 = 不封顶 */
+            long maxDiscountAmount,
             String status,
             /** 状态中文文案（{@code com.duoduo.marketing.support.CouponStatus}） */
             String statusLabel,
@@ -96,12 +106,27 @@ public final class CouponDtos {
     ) {
     }
 
-    /** 结算页的一条候选券：带上「能不能用」与「为什么不能」 */
+    /**
+     * 结算页的一条候选券：带上「能不能用」与「为什么不能」。
+     *
+     * <p>{@code discountAmount} 是<b>本单实际可抵金额</b>，不是模板上的固定额：
+     * 满减券取 {@code min(固定额, 订单金额)}，折扣券按折率算并按封顶裁剪。
+     * 若这里回模板固定额，结算页会显示「抵 5 元」而下单只减 1 元 —— 两条链路各算一次
+     * 正是「页面说能抵、实际抵不到」的来源。
+     */
     public record UsableCoupon(
             String code,
             String name,
+            String type,
+            /** 券类型中文文案（满减券 / 折扣券） */
+            String typeLabel,
             long thresholdAmount,
+            /** 本单实际可抵金额（分） */
             long discountAmount,
+            /** 折扣券折后应付比例（百分比）：85 = 8.5 折；满减券恒为 100 */
+            int discountPercent,
+            /** 折扣券封顶抵扣（分）：0 = 不封顶 */
+            long maxDiscountAmount,
             String expireAt,
             boolean usable,
             /** 不可用时为原因文案；可用时为 null */
@@ -198,9 +223,13 @@ public final class CouponDtos {
     /**
      * 运营创建券模板的请求。
      *
-     * <p>{@code type} 只接受 {@code FULL_REDUCE}：折扣券涉及「百分比 × 金额」的取整与封顶口径，
-     * 在产品拍板前不引入未实现的分支 —— 传其他值一律 422 并明确提示「暂不支持」，
-     * 而不是悄悄按满减处理（那会让运营以为自己建了一张折扣券）。
+     * <p>两种类型共用 {@code thresholdAmount}（券前商品金额门槛）：
+     * <ul>
+     *   <li>{@code FULL_REDUCE}：{@code discountAmount} 必填且 &gt; 0，{@code discountPercent} 忽略；</li>
+     *   <li>{@code DISCOUNT}：{@code discountPercent} 必填（1~99，如 85 = 8.5 折），
+     *       {@code discountAmount} 必须为 0，{@code maxDiscountAmount} 可选（0 = 不封顶）。</li>
+     * </ul>
+     * 两边混填一律 400，而不是「悄悄按某一种处理」—— 运营会以为自己建了另一种券。
      */
     public record CreateTemplateRequest(
             @NotBlank(message = "券名称不能为空")
@@ -212,7 +241,13 @@ public final class CouponDtos {
 
             @Min(value = 0, message = "门槛金额不能为负数") long thresholdAmount,
 
-            @Min(value = 1, message = "抵扣金额必须大于 0") long discountAmount,
+            @Min(value = 0, message = "抵扣金额不能为负数") long discountAmount,
+
+            /** 折扣券折后应付比例（百分比）：85 = 8.5 折；满减券留空 */
+            @Min(value = 0, message = "折扣比例不能为负数") Integer discountPercent,
+
+            /** 折扣券封顶抵扣（分）：留空或 0 表示不封顶 */
+            @Min(value = 0, message = "封顶抵扣不能为负数") Long maxDiscountAmount,
 
             @Min(value = 1, message = "发放总量必须大于 0") int totalCount,
 

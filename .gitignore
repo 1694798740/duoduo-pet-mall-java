@@ -68,6 +68,7 @@ miniprogram/config/amap.js
 # 验证截图与本地工作台工具（不入库）
 scripts/e2e/*.png
 .workbuddy/
+.superpowers/
 
 # TypeScript 增量构建缓存（本地产物，不入库）
 *.tsbuildinfo

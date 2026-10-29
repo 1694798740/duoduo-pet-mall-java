@@ -2,15 +2,19 @@ package com.duoduo.social.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.social.dto.SocialDtos.NoticeBatchRequest;
+import com.duoduo.social.dto.SocialDtos.NoticeBatchResult;
 import com.duoduo.social.dto.SocialDtos.NoticePage;
 import com.duoduo.social.dto.SocialDtos.UnreadCount;
 import com.duoduo.social.dto.SocialDtos.UnreadSummary;
 import com.duoduo.social.service.NoticeService;
 import com.duoduo.social.service.UnreadService;
 import com.duoduo.social.support.service.SupportService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,13 +42,22 @@ public class NoticeController {
         this.supportService = supportService;
     }
 
-    /** 通知列表：定向通知 + 全站公告合并视图（category 可选过滤，page/pageSize 分页） */
+    /**
+     * 通知列表：定向通知 + 全站公告合并视图。
+     *
+     * @param category 分类过滤（ORDER / FRIEND / MERCHANT / SYSTEM / ANNOUNCEMENT）
+     * @param read     UNREAD / READ；留空 = 全部（2026-10-27）
+     * @param keyword  标题或正文包含匹配（2026-10-27）；与服务端筛选同源，前端不做当前页过滤
+     */
     @GetMapping
     public ApiResponse<NoticePage> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize,
-            @RequestParam(required = false) String category) {
-        return ApiResponse.ok(noticeService.list(UserContext.requireUserId(), page, pageSize, category));
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String read,
+            @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(noticeService.list(
+                UserContext.requireUserId(), page, pageSize, category, read, keyword));
     }
 
     /** 未读数（定向未读 + 我没读过的公告数） */
@@ -88,5 +101,19 @@ public class NoticeController {
         // 客服消息已在通知中心展示，全部已读要连会话未读一起清 —— 否则角标还亮着
         supportService.markAllReadForUser(userId);
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * 批量操作（2026-10-27）：勾选后标记已读 / 删除，或全部已读 / 全部删除。
+     *
+     * <p>与 {@link #readAll} 的关系：read-all 额外清客服会话未读（客服角标另有口径），
+     * 所以「全部已读」按钮仍走 read-all；这个端点负责<b>勾选批量</b>与<b>全部删除</b>。
+     *
+     * <p>返回最新未读数，前端据此一次请求就把列表与角标都更新掉。
+     */
+    @PostMapping("/batch")
+    public ApiResponse<NoticeBatchResult> batch(@Valid @RequestBody NoticeBatchRequest request) {
+        return ApiResponse.ok(noticeService.batch(
+                UserContext.requireUserId(), request.action(), request.ids(), request.all()));
     }
 }

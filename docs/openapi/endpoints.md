@@ -12,11 +12,15 @@
 - `GET /api/addresses/default`
 - `GET /api/addresses/internal/snapshot`
 - `GET /api/admin/audit-logs`
+- `POST /api/admin/coins/adjust`
+- `GET /api/admin/coins/ledger`
+- `GET /api/admin/coins/summary`
 - `GET /api/admin/merchants`
 - `GET /api/admin/merchants/{id}`
 - `POST /api/admin/merchants/{id}/approve`
 - `POST /api/admin/merchants/{id}/reject`
 - `POST /api/admin/merchants/{id}/start-review`
+- `POST /api/admin/merchants/{merchantId}/ip-whitelist/clear`
 - `GET /api/admin/merchants/audit-sla/metrics`
 - `GET /api/admin/merchants/audit-sla/samples`
 - `POST /api/admin/merchants/audit-sla/samples/{id}/review`
@@ -44,6 +48,17 @@
 - `POST /api/auth/wechat/rebind`
 - `POST /api/auth/wechat/token`
 - `POST /api/auth/wechat/unbind`
+- `GET /api/coins/internal/balance`
+- `POST /api/coins/internal/deduct`
+- `POST /api/coins/internal/earn`
+- `POST /api/coins/internal/freeze`
+- `GET /api/coins/internal/recon`
+- `POST /api/coins/internal/refund`
+- `POST /api/coins/internal/release`
+- `GET /api/coins/ledger`
+- `GET /api/coins/me`
+- `POST /api/coins/signin`
+- `GET /api/coins/signin/month`
 - `GET /api/geo/jsapi-config`
 - `GET /api/geo/regeo`
 - `GET /api/merchant-materials/{merchantId}/{storedName}`
@@ -52,6 +67,8 @@
 - `DELETE /api/pets/{petId}`
 - `PUT /api/pets/{petId}`
 - `POST /api/pets/{petId}/default`
+- `GET /api/seller/security/ip-whitelist`
+- `PUT /api/seller/security/ip-whitelist`
 - `GET /api/seller/staff`
 - `POST /api/seller/staff`
 - `POST /api/seller/staff/{memberId}/disable`
@@ -83,7 +100,7 @@
 - `POST /api/users/me/realname`
 - `GET /api/users/stores/{ownerUserId}`
 
-小计：**78** 个端点。
+小计：**95** 个端点。
 
 ## product （:8082）
 
@@ -108,11 +125,13 @@
 - `PUT /api/admin/category-attrs/{id}/status`
 - `GET /api/admin/listings`
 - `POST /api/admin/listings/{id}/audit`
+- `POST /api/admin/listings/batch-audit`
 - `GET /api/admin/products`
 - `GET /api/admin/products/{spuId}`
 - `POST /api/admin/products/{spuId}/audit`
 - `GET /api/admin/products/{spuId}/history`
 - `POST /api/admin/products/{spuId}/proxy-off-shelf`
+- `POST /api/admin/products/batch-audit`
 - `GET /api/admin/products/change-history`
 - `GET /api/admin/products/proxy-work-orders`
 - `POST /api/admin/products/recycle/purge`
@@ -167,12 +186,14 @@
 - `PUT /api/seller/products/{spuId}`
 - `POST /api/seller/products/{spuId}/copy`
 - `POST /api/seller/products/{spuId}/delete`
+- `POST /api/seller/products/{spuId}/read`
 - `POST /api/seller/products/{spuId}/restore`
 - `POST /api/seller/products/{spuId}/resubmit`
 - `PUT /api/seller/products/{spuId}/skus`
 - `PUT /api/seller/products/{spuId}/skus/price-stock`
 - `GET /api/seller/products/{spuId}/skus/usage`
 - `POST /api/seller/products/{spuId}/status`
+- `GET /api/seller/products/audit-counts`
 - `POST /api/seller/products/batch-status`
 - `GET /api/seller/products/diagnostics`
 - `GET /api/seller/products/export`
@@ -182,7 +203,7 @@
 - `POST /api/seller/products/proxy-requests`
 - `POST /api/seller/products/proxy-requests/{workOrderNo}/void`
 
-小计：**94** 个端点。
+小计：**98** 个端点。
 
 ## trade （:8083）
 
@@ -193,7 +214,9 @@
 - `POST /api/admin/orders/{orderNo}/force-close`
 - `POST /api/admin/orders/{orderNo}/proxy-aftersale`
 - `POST /api/admin/orders/{orderNo}/proxy-ship`
+- `POST /api/admin/orders/batch-force-close`
 - `GET /api/admin/orders/proxy-work-orders`
+- `GET /api/admin/payments/refunds`
 - `GET /api/admin/recon/rules`
 - `GET /api/admin/recon/runs`
 - `POST /api/admin/recon/runs`
@@ -229,6 +252,7 @@
 - `POST /api/orders/{orderNo}/cancel`
 - `POST /api/orders/{orderNo}/confirm`
 - `POST /api/orders/{orderNo}/pay`
+- `POST /api/orders/{orderNo}/read`
 - `POST /api/orders/{orderNo}/refund`
 - `GET /api/orders/{orderNo}/settlement`
 - `GET /api/orders/internal/{orderNo}/fact`
@@ -241,8 +265,10 @@
 - `POST /api/orders/preview`
 - `GET /api/orders/purchased-products`
 - `POST /api/orders/queued`
+- `GET /api/orders/status-counts`
 - `GET /api/payments/{payNo}`
 - `POST /api/payments/callback/{channel}`
+- `GET /api/payments/refunds/mine`
 - `POST /api/payments/sandbox/{payNo}`
 - `GET /api/seckill/activities`
 - `GET /api/seckill/activities/{id}`
@@ -250,8 +276,11 @@
 - `GET /api/seller/analytics`
 - `GET /api/seller/orders`
 - `GET /api/seller/orders/{orderNo}`
+- `POST /api/seller/orders/{orderNo}/read`
 - `POST /api/seller/orders/{orderNo}/refund`
 - `POST /api/seller/orders/{orderNo}/ship`
+- `POST /api/seller/orders/batch-ship`
+- `GET /api/seller/orders/status-counts`
 - `GET /api/seller/product-refunds`
 - `GET /api/seller/product-stats`
 - `GET /api/seller/proxy-requests`
@@ -263,19 +292,29 @@
 - `GET /api/seller/summary`
 - `GET /sandbox/pay/{payNo}`
 
-小计：**76** 个端点。
+小计：**84** 个端点。
 
 ## fulfilment （:8084）
 
 - `GET /api/admin/aftersales`
 - `POST /api/admin/aftersales/{id}/arbitrate`
+- `POST /api/admin/aftersales/{id}/read`
+- `POST /api/admin/aftersales/batch-arbitrate`
+- `GET /api/admin/aftersales/unread-count`
 - `GET /api/admin/reviews`
 - `POST /api/admin/reviews/{id}/audit`
+- `POST /api/admin/reviews/{id}/read`
+- `POST /api/admin/reviews/batch-audit`
+- `GET /api/admin/reviews/unread-count`
 - `GET /api/admin/share-reports`
 - `POST /api/admin/share-reports/{id}/handle`
+- `POST /api/admin/share-reports/{id}/read`
+- `POST /api/admin/share-reports/batch-handle`
+- `GET /api/admin/share-reports/unread-count`
 - `POST /api/aftersales`
 - `GET /api/aftersales/{id}`
 - `POST /api/aftersales/{id}/escalate`
+- `POST /api/aftersales/{id}/read`
 - `POST /api/aftersales/{id}/reply`
 - `POST /api/aftersales/{id}/return-receipt`
 - `POST /api/aftersales/{id}/return-shipment`
@@ -283,6 +322,8 @@
 - `POST /api/aftersales/internal/users/{userId}/personal-data`
 - `GET /api/aftersales/mine`
 - `GET /api/aftersales/seller`
+- `POST /api/aftersales/seller/batch-reply`
+- `GET /api/aftersales/status-counts`
 - `GET /api/logistics/couriers`
 - `POST /api/logistics/internal/{orderNo}/tracks`
 - `POST /api/logistics/internal/waybills/{orderNo}/advance`
@@ -321,7 +362,7 @@
 - `POST /api/uploads/internal/delete`
 - `GET /uploads/{filename}`
 
-小计：**53** 个端点。
+小计：**65** 个端点。
 
 ## marketing （:8085）
 
@@ -380,6 +421,7 @@
 - `GET /api/socials/messages/unread-count`
 - `GET /api/socials/notices`
 - `POST /api/socials/notices/{noticeId}/read`
+- `POST /api/socials/notices/batch`
 - `POST /api/socials/notices/read-all`
 - `GET /api/socials/notices/unread-by-category`
 - `GET /api/socials/notices/unread-count`
@@ -397,6 +439,6 @@
 - `GET /api/support/sessions`
 - `GET /api/support/unread-count`
 
-小计：**48** 个端点。
+小计：**49** 个端点。
 
-合计：**362** 个端点（7 个业务服务）。
+合计：**404** 个端点（7 个业务服务）。

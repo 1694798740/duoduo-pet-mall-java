@@ -371,6 +371,8 @@ export interface SettlementView {
   sellerId: string | null;
   amount: number;
   platformFee: number;
+  /** 多多币补贴（R-P1）：amount 中由平台出钱的部分，商家实收不受影响 */
+  coinSubsidyAmount: number;
   sellerAmount: number;
   /** CUSTODY 托管中 / RELEASED 已放款 / REFUNDED 已退回买家 */
   status: string;
@@ -409,6 +411,10 @@ export interface OrderView {
   /** 本单使用的优惠券券码；未用券为 null */
   couponCode: string | null;
   payAmount: number;
+  /** 多多币快照（R-P1）：用了多少币 / 抵了多少钱（1 币 = 1 分）/ 完成返了多少币；历史单为 0 */
+  coinUsed: number;
+  coinDeductAmount: number;
+  coinEarnAmount: number;
   receiverName: string;
   receiverPhone: string;
   receiverAddress: string;
@@ -427,6 +433,11 @@ export interface OrderView {
   /** 物流公司与单号；发货后才有值。买家与卖家看的是同一份事实 */
   logisticsCompany: string | null;
   logisticsNo: string | null;
+  /**
+   * 当前读者是否已看过这一单（2026-10-27 · 列表橙色未读印记）。
+   * 与角标分桶同源（t_order_read）；老后端恒为 undefined，前端按「未读」以外的默认值处理。
+   */
+  read?: boolean;
 }
 
 // ---------- 收货地址簿（/api/addresses，A8） ----------
@@ -488,6 +499,11 @@ export interface PlaceOrderRequest {
    * 因此用券时提交的多个订单里只有一个会带优惠。
    */
   couponCode?: string;
+  /**
+   * 是否使用多多币抵扣（R-P1，可省略 = 不用）。
+   * 只传开关、**不传币数**：用多少币由服务端按「券后金额 50% 上限内、按余额能抵多少抵多少」算出。
+   */
+  useCoins?: boolean;
   /** 客户端生成（建议 UUID），同一用户同键重复提交只会产生一个订单 */
   idempotentKey: string;
 }
@@ -689,6 +705,8 @@ export interface SellerProductView {
   deletedAt?: string | null;
   /** 回收站条目将被物理清理的时间（deletedAt + 30 天）；正常商品为 null */
   purgeAt?: string | null;
+  /** 当前读者是否已看过这件商品（2026-10-27 · 列表橙色未读印记，与 t_spu_read 同源） */
+  read?: boolean;
 }
 
 /** 批量上下架的单条结果（A-13）：HTTP 200 不代表这条成功，只看 success */
@@ -710,6 +728,31 @@ export interface SellerProductBatchResultView {
   successCount: number;
   failedCount: number;
   items: SellerProductBatchItemView[];
+  /** 操作后的最新审核分桶（2026-10-27 · 批量操作即已读）；旧后端可能不返回 */
+  auditCounts?: StatusCount[];
+}
+
+/**
+ * 批量操作统一结果（2026-10-27 · 批量操作即已读）。
+ *
+ * <p>与 {@link SellerProductBatchResultView} 同一语义：HTTP 200 只代表处理完成，
+ * 逐条成败看 `items[].success`；`counts` 是操作后的最新角标分桶（可能为空）。
+ */
+export interface BatchItemView {
+  /** 订单号 / 售后单 id / 评价 id / 商品 id（一律字符串，雪花 id 不能转 number） */
+  id: string;
+  success: boolean;
+  errorCode: string | null;
+  message: string | null;
+}
+
+export interface BatchResultView {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  items: BatchItemView[];
+  /** 操作后的最新角标分桶；该模块没有分桶角标时为空数组 */
+  counts?: StatusCount[];
 }
 
 /** 提交商品时的规格项；价格单位是**分**（表单填元，提交前 ×100） */
@@ -850,6 +893,36 @@ export interface SellerProductImportResultView {
   items: SellerProductImportItemView[];
 }
 
+/** 类目 / 品牌导入模板（第三批 · 第 8 项）：只有表头，content 已带 UTF-8 BOM */
+export interface CatalogCsvView {
+  filename: string;
+  content: string;
+}
+
+/**
+ * 主数据导入预演的一行（dry-run，不落库）。
+ *
+ * `action`：CREATE 将新建 / UPDATE 将更新 / SKIP 已存在且无变化 / ERROR 该行有错。
+ * ERROR 行在正式导入时也会失败 —— 预演里先看到，就不用等导入跑完再逐条改。
+ */
+export interface CatalogImportPlanItemView {
+  lineNo: number;
+  action: 'CREATE' | 'UPDATE' | 'SKIP' | 'ERROR';
+  name: string;
+  /** 匹配到的已有记录 ID；CREATE / ERROR 为 null */
+  targetId: string | null;
+  message: string;
+}
+
+export interface CatalogImportPlanView {
+  total: number;
+  createCount: number;
+  updateCount: number;
+  skipCount: number;
+  failedCount: number;
+  items: CatalogImportPlanItemView[];
+}
+
 /** 单商品诊断行（A-17）：ctr 是百分比数值（12.34 = 12.34%） */
 export interface ProductDiagnosticItemView {
   spuId: string;
@@ -898,6 +971,9 @@ export interface SellerProductDetailView {
   subtitle: string | null;
   categoryId: string | null;
   brandId: string | null;
+  /** 类目 / 品牌名（2026-10-27 · 商品预览）；字典缺失或未填品牌时为 null */
+  categoryName?: string | null;
+  brandName?: string | null;
   mainImage: string | null;
   images: string[];
   detail: string | null;
@@ -1303,6 +1379,8 @@ export interface AdminReviewView {
   auditedAt: string | null;
   /** AUTO 机审自动 / MANUAL 人工 / null 历史数据（A-15） */
   auditSource: 'AUTO' | 'MANUAL' | null;
+  /** 当前运营是否已看过（列表橙色未读印记；2026-10-27） */
+  read?: boolean;
 }
 
 export interface ReviewAuditRequest {
@@ -1366,6 +1444,8 @@ export interface AfterSaleView {
   returnReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 当前查看者是否已看过（列表橙色未读印记；2026-10-27） */
+  read?: boolean;
 }
 
 export interface AfterSaleCreateRequest {
@@ -1505,13 +1585,33 @@ export interface CreditView {
   generatedAt: string;
 }
 
+// ---------- 商家端 IP 白名单（E-06） ----------
+
+/**
+ * 本店 IP 白名单配置（店主专属）。
+ *
+ * `currentIp` 由**服务端**给出（网关 X-Real-IP），前端只负责展示 ——
+ * 让店主自己填「当前 IP」是最容易出错的一步，而填错的后果是把自己锁在门外。
+ */
+export interface MerchantIpWhitelistView {
+  enabled: boolean;
+  rules: string[];
+  currentIp: string | null;
+  /** false = 已保存但网关暂未同步（Redis 不可用），页面需提示「稍后生效」 */
+  published: boolean;
+}
+
 // ---------- 优惠券（/api/coupons，营销域 A5） ----------
 
 /** 券状态（与后端 com.duoduo.marketing.support.CouponStatus 一致） */
 export type CouponStatus = 'UNUSED' | 'LOCKED' | 'USED' | 'EXPIRED';
 
-/** 券类型：v1 只实现满减 */
-export type CouponType = 'FULL_REDUCE';
+/**
+ * 券类型：FULL_REDUCE 满减（固定抵扣额）/ DISCOUNT 折扣（按折后比例减，可封顶）。
+ *
+ * 两种类型共用门槛：折扣券同样要「券前商品金额」达到门槛才可用。
+ */
+export type CouponType = 'FULL_REDUCE' | 'DISCOUNT';
 
 /**
  * 券模板（领券中心的一行）。
@@ -1529,8 +1629,12 @@ export interface CouponTemplateView {
   typeLabel: string;
   /** 满减门槛（分）；0 表示无门槛 */
   thresholdAmount: number;
-  /** 抵扣金额（分） */
+  /** 满减券的固定抵扣额（分）；折扣券恒为 0 */
   discountAmount: number;
+  /** 折扣券折后应付比例（百分比）：85 表示 8.5 折；满减券恒为 100 */
+  discountPercent: number;
+  /** 折扣券封顶抵扣（分）；0 表示不封顶 */
+  maxDiscountAmount: number;
   totalCount: number;
   claimedCount: number;
   remainingCount: number;
@@ -1551,7 +1655,12 @@ export interface CouponView {
   type: CouponType | string | null;
   typeLabel: string | null;
   thresholdAmount: number;
+  /** 满减券的固定抵扣额（分）；折扣券恒为 0 */
   discountAmount: number;
+  /** 折扣券折后应付比例（百分比）：85 = 8.5 折 */
+  discountPercent: number;
+  /** 折扣券封顶抵扣（分）；0 表示不封顶 */
+  maxDiscountAmount: number;
   status: CouponStatus | string;
   statusLabel: string;
   claimedAt: string;
@@ -1573,12 +1682,25 @@ export interface CouponClaimResult {
   replay: boolean;
 }
 
-/** 结算页的一条候选券 */
+/**
+ * 结算页的一条候选券。
+ *
+ * `discountAmount` 是**本单实际可抵金额**（服务端按本单金额算好的，不是模板固定额）：
+ * 满减券按订单金额裁剪，折扣券按折率算并封顶。
+ */
 export interface UsableCoupon {
   code: string;
   name: string;
+  type: CouponType | string;
+  /** 券类型中文文案（满减券 / 折扣券） */
+  typeLabel: string;
   thresholdAmount: number;
+  /** 本单实际可抵金额（分） */
   discountAmount: number;
+  /** 折扣券折后应付比例（百分比）：85 = 8.5 折；满减券恒为 100 */
+  discountPercent: number;
+  /** 折扣券封顶抵扣（分）；0 表示不封顶 */
+  maxDiscountAmount: number;
   expireAt: string;
   usable: boolean;
   /** 不可用时的原因；可用时为 null */
@@ -1610,8 +1732,9 @@ export interface UsableCouponResult {
  */
 export interface DuoduoCapability {
   chatAvailable: boolean;
-  mode: 'mock' | 'llm' | 'unconfigured' | string;
+  mode: 'llm' | 'unconfigured' | string;
   hint: string;
+  quickQuestions?: string[];
 }
 
 /** 导购推荐卡片：价格单位为分，与商品详情同一套语义 */
@@ -1639,8 +1762,183 @@ export interface DuoduoChatTurn {
 export interface DuoduoChatResponse {
   reply: string;
   recommendations: DuoduoRecommendation[];
-  /** mock / llm：一眼看清这句话是谁生成的 */
+  /** llm / fallback：一眼看清这句话是谁生成的 */
   mode: string;
+  /**
+   * 2026-10-29 · 阶段三：服务端装配的结构化卡片。
+   *
+   * <p>卡片内容全部来自工具结果（金额、订单号、跳转地址），模型只声明「引用哪个工具」。
+   * 前端只负责按 `type` 渲染，不做二次拼装 —— 页面自己拼 URL 就等于绕开了白名单。
+   */
+  cards?: AiCard[];
+  /** 本轮红点补丁；null/undefined = 这一轮没有任何角标变化（不要拿它当 0 去覆盖） */
+  badgePatch?: AiBadgePatch | null;
+  /** 游客轮次用尽 / 功能需登录时的登录地址（已带站内 next） */
+  loginUrl?: string | null;
+  /** 服务端会话 ID：下一轮务必带回（小程序没有 SSE meta 事件，只能从这里取） */
+  sessionId?: string | null;
+}
+
+/**
+ * 红点补丁（2026-10-29）。
+ *
+ * 四路各自独立：某一路为 null/undefined 表示「这一路没变化」，**不是清零**。
+ * 前端必须用 `patch.notification ?? 旧值` 的方式合并，不能直接覆盖成 0。
+ */
+export interface AiBadgePatch {
+  notification?: number | null;
+  order?: number | null;
+  afterSale?: number | null;
+  support?: number | null;
+}
+
+/** 卡片上的可点击动作：两端的地址都由服务端生成 */
+export interface AiCardAction {
+  type: 'NAVIGATE' | 'CONFIRM' | 'LOGIN' | string;
+  label: string;
+  url?: string | null;
+  miniPath?: string | null;
+}
+
+/** 通知条目（金额/ID 可能是字符串：服务端把 64 位标识序列化成字符串） */
+export interface AiNotificationItem {
+  id: number | string;
+  category: string;
+  title: string;
+  summary?: string | null;
+  bizType?: string | null;
+  bizId?: string | null;
+  read?: boolean;
+  createdAt?: string | null;
+  pageUrl?: string | null;
+  miniPath?: string | null;
+  routeKey?: string | null;
+}
+
+export interface AiNotificationListCard {
+  type: 'notification_list';
+  title?: string | null;
+  unreadCount?: number | string | null;
+  items: AiNotificationItem[];
+  actions?: AiCardAction[];
+}
+
+/** 券条目：金额单位分；折扣券用 discountPercent（85 = 8.5 折） */
+export interface AiCouponItem {
+  templateId: number | string;
+  code?: string | null;
+  name: string;
+  type?: string | null;
+  typeLabel?: string | null;
+  thresholdAmount?: number | string | null;
+  discountAmount?: number | string | null;
+  discountPercent?: number | string | null;
+  maxDiscountAmount?: number | string | null;
+  status?: string | null;
+  statusLabel?: string | null;
+  expireAt?: string | null;
+  claimable?: boolean;
+  pageUrl?: string | null;
+  miniPath?: string | null;
+}
+
+export interface AiCouponListCard {
+  type: 'coupon_list';
+  title?: string | null;
+  items: AiCouponItem[];
+  actions?: AiCardAction[];
+}
+
+export interface AiOrderItem {
+  orderNo: string;
+  status?: string | null;
+  statusText?: string | null;
+  amountCents?: number | string | null;
+  itemsSummary?: string | null;
+  createdAt?: string | null;
+  pageUrl?: string | null;
+  miniPath?: string | null;
+}
+
+export interface AiOrderListCard {
+  type: 'order_list';
+  title?: string | null;
+  items: AiOrderItem[];
+  actions?: AiCardAction[];
+}
+
+export interface AiGridItem {
+  label: string;
+  url?: string | null;
+  miniPath?: string | null;
+}
+
+export interface AiActionGridCard {
+  type: 'action_grid';
+  title?: string | null;
+  items: AiGridItem[];
+}
+
+/** 卡片判别联合：前端按 type 穷尽渲染 */
+export type AiCard =
+  | AiNotificationListCard
+  | AiCouponListCard
+  | AiOrderListCard
+  | AiActionGridCard;
+
+/**
+ * AI 长期记忆视图（2026-10-29 · 第二阶段）。
+ *
+ * <p>低风险项（物种 / 预算 / 偏好）来自表列；高风险项（过敏原 / 健康备注）来自
+ * `memory_json` 快照，必须经过用户确认才会写入。
+ */
+export interface AiMemoryView {
+  userId?: number | string | null;
+  species?: string | null;
+  budgetMinCents?: number | string | null;
+  budgetMaxCents?: number | string | null;
+  categories: string[];
+  brands: string[];
+  allergens: string[];
+  healthNotes?: string | null;
+  consentVersion?: string | null;
+  updatedAt?: string | null;
+  /** 用户希望被怎么称呼（只由用户在记忆页显式保存，不从对话自动抽取） */
+  nickname?: string | null;
+}
+
+/** 低风险更新：未传的字段保持原值 */
+export interface AiMemoryLowRiskUpdate {
+  species?: string | null;
+  budgetMinCents?: number | null;
+  budgetMaxCents?: number | null;
+  categories?: string[] | null;
+  brands?: string[] | null;
+  nickname?: string | null;
+}
+
+/** 高风险内容：过敏原 + 健康备注（与确认令牌绑定的是这份规范化后的值） */
+export interface AiMemoryHighRiskUpdate {
+  allergens: string[];
+  healthNotes?: string | null;
+}
+
+/** 高风险确认申请结果 */
+export interface AiMemoryConfirmTicket {
+  token: string;
+  expireSeconds: number;
+  preview: AiMemoryHighRiskUpdate;
+  hint?: string | null;
+}
+
+/** 加购二次确认结果 */
+export interface DuoduoConfirmResult {
+  success: boolean;
+  code: string;
+  message?: string | null;
+  data?: unknown;
+  needConfirm?: boolean;
+  confirmToken?: string | null;
 }
 
 // ---------- 通用 ----------
@@ -1751,6 +2049,8 @@ export interface ShareReportView {
   targetAuthorId: string | null;
   /** 被举报内容所属分享 id（举报评论时用于核对上下文） */
   targetShareId: string | null;
+  /** 当前运营是否已看过（列表橙色未读印记；2026-10-27） */
+  read?: boolean;
 }
 
 export interface ShareReportHandleRequest {
@@ -1929,6 +2229,21 @@ export interface NoticePageData {
 }
 
 export interface UnreadCount {
+  count: number;
+}
+
+/**
+ * 状态分桶计数（2026-10-27 · 二级 Tab 角标通用契约）。
+ *
+ * <p>服务端在各自域内 GROUP BY 出来，前端只负责渲染 —— 前端绝不拿「当前页里某状态的条数」
+ * 当角标（分页会把不在当前页的数量全部漏掉，表现为「Tab 没数字、点进去却有一堆」）。
+ *
+ * <p>`count` 是**数字**不是字符串：服务端用 `StatusCount` record 下发，
+ * 字段名命中 `LongToStringJacksonModule` 的数字白名单（`Map<String,Long>` 则不命中，
+ * 会退化成 `"2"`，`+` 变拼接、`===` 恒 false）。
+ */
+export interface StatusCount {
+  status: string;
   count: number;
 }
 
@@ -2575,4 +2890,199 @@ export interface JsApiConfig {
   configured: boolean;
   key: string | null;
   securityCode: string | null;
+}
+
+// ---------- 多多币（R-P1 · 第一百二十六轮，用户域 duoduo-user） ----------
+
+/** 我的多多币账户：余额与累计口径；expiringLots 是 30 天内到期的批次（提醒用） */
+export interface CoinBalanceView {
+  /** 可用余额（个；1 币 = 1 分钱） */
+  balance: number;
+  totalEarned: number;
+  totalSpent: number;
+  /** 30 天内到期的币数 */
+  expiringSoonCoins: number;
+  /** 30 天内到期的批次明细（页面提醒「先用快过期的」） */
+  expiringLots: CoinExpiringLot[];
+}
+
+export interface CoinExpiringLot {
+  lotId: string;
+  coins: number;
+  /** ISO 时间；前端展示为「YYYY-MM-DD 前」 */
+  expireAt: string;
+}
+
+/**
+ * 币流水：direction 决定加减（EARN/REFUND/ADJUST 为进，SPEND/EXPIRE 为出）。
+ * amount 一律为正数；进出的语义看 direction 与 bizType。
+ */
+export interface CoinLedgerView {
+  id: string;
+  userId: string;
+  direction: 'EARN' | 'SPEND' | 'REFUND' | 'EXPIRE' | 'CLAWBACK' | 'ADJUST';
+  amount: number;
+  /** 该笔记账后的余额快照（对账展示用） */
+  balanceAfter: number;
+  /** 场景：ORDER_EARN / ORDER_FREEZE / ORDER_RELEASE / ORDER_REFUND / LOT_EXPIRE / ADMIN_ADJUST */
+  bizType: string;
+  bizNo: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+/** 运营端全站汇总（/api/admin/coins/summary） */
+export interface CoinAdminSummary {
+  totalBalance: number;
+  totalEarned: number;
+  totalSpent: number;
+  totalExpired: number;
+  /** 开户数 */
+  accounts: number;
+  /** 30 天内到期的币数（运营要关注集中到期对负债的冲击） */
+  expiringIn30dCoins: number;
+}
+
+/** 多多币任务（R-P1 第三轮）：进度 / 是否已发奖 / 是否达成 */
+export interface CoinTaskView {
+  code: string;
+  name: string;
+  taskType: 'DAILY' | 'NEWCOMER' | string;
+  actionType: string;
+  targetCount: number;
+  progress: number;
+  rewardCoins: number;
+  rewarded: boolean;
+  completed: boolean;
+  description: string | null;
+}
+
+/** 进行中的节日活动（买家端横幅） */
+export interface CoinCampaignView {
+  id: string;
+  code: string;
+  name: string;
+  startAt: string;
+  endAt: string;
+  signinMultiplier: number;
+  earnMultiplier: number;
+  budgetTotal: number;
+  budgetUsed: number;
+  perUserCap: number;
+  status: string;
+}
+
+/** 运营端任务定义（含停用项） */
+export interface CoinTaskDefAdminView {
+  id: string;
+  code: string;
+  name: string;
+  taskType: string;
+  actionType: string;
+  targetCount: number;
+  rewardCoins: number;
+  dailyCap: number;
+  enabled: boolean;
+  sortNo: number;
+  description: string | null;
+}
+
+/** 运营端活动保存命令（时间 ISO；倍率 1.00 = 不加成） */
+export interface CoinCampaignSaveRequest {
+  code: string;
+  name: string;
+  startAt: string;
+  endAt: string;
+  signinMultiplier: number;
+  earnMultiplier: number;
+  budgetTotal: number;
+  perUserCap: number;
+}
+
+/** 结算页预览结果（币抵扣相关字段，R-P1） */
+export interface CoinPreviewFields {
+  coinBalance: number;
+  coinUsed: number;
+  coinDeductAmount: number;
+}
+
+/** 结算试算结果（POST /api/orders/preview；R-P1）—— 一张券只作用于金额最大的那一单 */
+export interface OrderPreviewResult {
+  orders: {
+    sellerId: number;
+    items: unknown[];
+    totalAmount: number;
+    freightAmount: number;
+    discountAmount: number;
+    /** 券后 − 币抵 */
+    payAmount: number;
+    /** 本单分摊到的币数（个） */
+    coinUsed: number;
+  }[];
+  orderCount: number;
+  totalAmount: number;
+  freightAmount: number;
+  discountAmount: number;
+  payAmount: number;
+  couponSellerId: number | null;
+  couponCode: string | null;
+  couponMessage: string | null;
+  /** 当前持币余额；用户域故障时降级为 0（前端此时应禁用用币开关） */
+  coinBalance: number;
+  /** 本次结算实际使用的币数（各单分摊之和） */
+  coinUsed: number;
+  /** 币抵金额（分）= coinUsed × 1 */
+  coinDeductAmount: number;
+}
+
+/** 人工调整响应 */
+export interface CoinMutationResult {
+  applied: boolean;
+  balance: number;
+}
+
+/** 每日签到响应（R-P2）：当日发放数 / 连签天数 / 签后余额 */
+export interface CoinSigninResult {
+  applied: boolean;
+  coins: number;
+  continuousDays: number;
+  balance: number;
+}
+
+/** 当月签到月历（R-P2）：已签日期为 ISO yyyy-MM-dd */
+export interface CoinSigninMonthView {
+  month: string;
+  signedDates: string[];
+  continuousDays: number;
+  signedToday: boolean;
+}
+
+// ---------------- 异步导出任务（矩阵第 9 项 · 2026-10-28） ----------------
+
+/** 任务状态：PENDING 排队中 / RUNNING 生成中 / SUCCESS 已完成 / FAILED 失败 / EXPIRED 已过期 */
+export type ExportJobStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
+
+/**
+ * 导出任务视图。
+ *
+ * <p>rowCount / totalRows 是进度条的数据源：totalRows 在创建时按同一筛选 count 出来，
+ * 不随生成过程变化（筛选快照已固定）。
+ */
+export interface ExportJobView {
+  id: string;
+  module: string;
+  moduleLabel: string;
+  status: ExportJobStatus;
+  statusLabel: string;
+  /** 筛选摘要（由服务端拼好，前端不解析 params） */
+  filters: string;
+  rowCount: number;
+  totalRows: number;
+  fileSize: number;
+  errorMessage: string | null;
+  createdAt: string | null;
+  finishedAt: string | null;
+  expiresAt: string | null;
+  downloadCount: number;
+  downloadable: boolean;
 }

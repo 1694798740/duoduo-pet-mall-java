@@ -42,15 +42,18 @@ public class ProductInteractionService {
     private final ProductViewMapper viewMapper;
     private final SpuMapper spuMapper;
     private final SnowflakeIdGenerator idGenerator;
+    private final com.duoduo.product.client.CoinTaskClient coinTaskClient;
 
     public ProductInteractionService(ProductFavoriteMapper favoriteMapper,
                                      ProductViewMapper viewMapper,
                                      SpuMapper spuMapper,
-                                     SnowflakeIdGenerator idGenerator) {
+                                     SnowflakeIdGenerator idGenerator,
+                                     com.duoduo.product.client.CoinTaskClient coinTaskClient) {
         this.favoriteMapper = favoriteMapper;
         this.viewMapper = viewMapper;
         this.spuMapper = spuMapper;
         this.idGenerator = idGenerator;
+        this.coinTaskClient = coinTaskClient;
     }
 
     /** 切换收藏；返回切换后的状态（true = 已收藏） */
@@ -74,6 +77,13 @@ public class ProductInteractionService {
         } catch (DuplicateKeyException e) {
             // 并发双击：唯一索引兜底，语义上已经是「已收藏」
             return true;
+        }
+        // 收藏成功 → 任务事件（best-effort；事件幂等，取消再收藏不会重复发奖）
+        try {
+            coinTaskClient.taskEvent(java.util.Map.of(
+                    "userId", userId, "event", "FAVORITE", "bizId", String.valueOf(spuId)));
+        } catch (RuntimeException e) {
+            log.warn("上报多多币收藏任务失败 userId={} spuId={}：{}", userId, spuId, e.getMessage());
         }
         return true;
     }

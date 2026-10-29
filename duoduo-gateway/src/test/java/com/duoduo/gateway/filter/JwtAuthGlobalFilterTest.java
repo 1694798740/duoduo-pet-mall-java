@@ -60,7 +60,17 @@ class JwtAuthGlobalFilterTest {
     private final PermVersionChecker checker = userId ->
             Mono.just(Optional.ofNullable(currentVersions.get(userId)));
 
-    private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(jwt, properties, checker);
+    /**
+     * E-06 用的假商家 IP 白名单判定：默认全部放行。
+     *
+     * <p>本组钉的是网关的<b>判定顺序与拒绝形态</b>，不是 Redis 读没读对；
+     * 白名单本身的匹配语义另有 {@code RedisMerchantIpWhitelistCheckerTest} 覆盖。
+     */
+    private final com.duoduo.gateway.support.MerchantIpWhitelistChecker merchantIpChecker =
+            (merchantId, peer) -> Mono.just(true);
+
+    private final JwtAuthGlobalFilter filter =
+            new JwtAuthGlobalFilter(jwt, properties, checker, merchantIpChecker);
 
     /** 跑一次过滤器：返回是否走到了下游，以及下游看到的请求头 */
     private Result run(MockServerHttpRequest.BaseBuilder<?> request) {
@@ -374,7 +384,7 @@ class JwtAuthGlobalFilterTest {
     void 关闭入口裁剪开关后跨端访问放行() {
         GatewaySecurityProperties props = new GatewaySecurityProperties();
         props.setEntryScopeEnabled(false);
-        JwtAuthGlobalFilter relaxed = new JwtAuthGlobalFilter(jwt, props, checker);
+        JwtAuthGlobalFilter relaxed = new JwtAuthGlobalFilter(jwt, props, checker, merchantIpChecker);
 
         String token = jwt.createAccessToken(
                 new com.duoduo.common.context.LoginUser(710000000000000001L, "13900000001", "USER", true), "mall");
@@ -479,7 +489,7 @@ class JwtAuthGlobalFilterTest {
     void 关闭版本校验开关后放行() {
         GatewaySecurityProperties props = new GatewaySecurityProperties();
         props.setPermVersionEnabled(false);
-        JwtAuthGlobalFilter relaxed = new JwtAuthGlobalFilter(jwt, props, checker);
+        JwtAuthGlobalFilter relaxed = new JwtAuthGlobalFilter(jwt, props, checker, merchantIpChecker);
 
         currentVersions.put(SHOP_USER, 4L);
         MockServerWebExchange exchange = MockServerWebExchange.from(

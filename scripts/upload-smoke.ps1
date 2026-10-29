@@ -116,7 +116,8 @@ if ($upJson) {
     try { $url = ($upJson | ConvertFrom-Json).data.url } catch {}
 }
 Check '③ 登录后上传 PNG → 200 + SUCCESS' ([int]$resp.StatusCode -eq 200 -and $upJson -match '"code":"SUCCESS"') ("实际 " + [int]$resp.StatusCode + " " + $upJson)
-Check '③ url 形如 http(s)://host/uploads/<uuid>.png' ($url -match '^https?://.+/uploads/[0-9a-f\-]{36}\.png$') $url
+# COS（数据万象）回的 url 可能带处理参数（?imageMogr2/...），正则允许可选 query —— 存储落点仍是 /uploads/<uuid>.png
+Check '③ url 形如 http(s)://host/uploads/<uuid>.png' ($url -match '^https?://.+/uploads/[0-9a-f\-]{36}\.png(\?.*)?$') $url
 
 # ── ④ GET 上传返回的 url → 200 image/png ────────────────────────────────────
 if ($url) {
@@ -149,7 +150,7 @@ Check '⑦ 容器内的存储后端可识别（只允许 local / cos，不许未
     (@('local', 'cos') -contains $backend) ("STORAGE_TYPE='$backend'")
 
 $storedName = ''
-if ($url -match '/uploads/([0-9a-f\-]{36}\.[a-z]+)$') { $storedName = $Matches[1] }
+if ($url -match '/uploads/([0-9a-f\-]{36}\.[a-z]+)(\?.*)?$') { $storedName = $Matches[1] }
 if (-not $storedName) {
     Check '⑦b 落点自证（需要 ③ 返回的 url）' $false "没能从 url 里取出存储文件名：$url"
 } else {

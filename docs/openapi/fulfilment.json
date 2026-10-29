@@ -886,6 +886,76 @@
                                                                                    }
                                                                  }
                                                     },
+                  "/api/aftersales/{id}/read":  {
+                                                    "post":  {
+                                                                 "tags":  [
+                                                                              "after-sale-controller"
+                                                                          ],
+                                                                 "operationId":  "markRead",
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "id",
+                                                                                        "in":  "path",
+                                                                                        "required":  true,
+                                                                                        "schema":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   }
+                                                                                    },
+                                                                                    {
+                                                                                        "name":  "side",
+                                                                                        "in":  "query",
+                                                                                        "required":  false,
+                                                                                        "schema":  {
+                                                                                                       "type":  "string",
+                                                                                                       "default":  "buyer"
+                                                                                                   }
+                                                                                    }
+                                                                                ],
+                                                                 "responses":  {
+                                                                                   "200":  {
+                                                                                               "description":  "OK",
+                                                                                               "content":  {
+                                                                                                               "*/*":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                                           }
+                                                                                           }
+                                                                               }
+                                                             }
+                                                },
+                  "/api/aftersales/seller/batch-reply":  {
+                                                             "post":  {
+                                                                          "tags":  [
+                                                                                       "after-sale-controller"
+                                                                                   ],
+                                                                          "operationId":  "batchReply",
+                                                                          "requestBody":  {
+                                                                                              "content":  {
+                                                                                                              "application/json":  {
+                                                                                                                                       "schema":  {
+                                                                                                                                                      "$ref":  "#/components/schemas/AfterSaleBatchReplyRequest"
+                                                                                                                                                  }
+                                                                                                                                   }
+                                                                                                          },
+                                                                                              "required":  true
+                                                                                          },
+                                                                          "responses":  {
+                                                                                            "200":  {
+                                                                                                        "description":  "OK",
+                                                                                                        "content":  {
+                                                                                                                        "*/*":  {
+                                                                                                                                    "schema":  {
+                                                                                                                                                   "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                               }
+                                                                                                                                }
+                                                                                                                    }
+                                                                                                    }
+                                                                                        }
+                                                                      }
+                                                         },
                   "/api/aftersales/internal/users/{userId}/personal-data":  {
                                                                                 "post":  {
                                                                                              "tags":  [
@@ -926,6 +996,37 @@
                                                                                                            }
                                                                                          }
                                                                             },
+                  "/api/admin/share-reports/{id}/read":  {
+                                                             "post":  {
+                                                                          "tags":  [
+                                                                                       "share-admin-report-controller"
+                                                                                   ],
+                                                                          "operationId":  "markRead_1",
+                                                                          "parameters":  [
+                                                                                             {
+                                                                                                 "name":  "id",
+                                                                                                 "in":  "path",
+                                                                                                 "required":  true,
+                                                                                                 "schema":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int64"
+                                                                                                            }
+                                                                                             }
+                                                                                         ],
+                                                                          "responses":  {
+                                                                                            "200":  {
+                                                                                                        "description":  "OK",
+                                                                                                        "content":  {
+                                                                                                                        "*/*":  {
+                                                                                                                                    "schema":  {
+                                                                                                                                                   "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                               }
+                                                                                                                                }
+                                                                                                                    }
+                                                                                                    }
+                                                                                        }
+                                                                      }
+                                                         },
                   "/api/admin/share-reports/{id}/handle":  {
                                                                "post":  {
                                                                             "tags":  [
@@ -967,6 +1068,67 @@
                                                                                           }
                                                                         }
                                                            },
+                  "/api/admin/share-reports/batch-handle":  {
+                                                                "post":  {
+                                                                             "tags":  [
+                                                                                          "share-admin-report-controller"
+                                                                                      ],
+                                                                             "operationId":  "batchHandle",
+                                                                             "requestBody":  {
+                                                                                                 "content":  {
+                                                                                                                 "application/json":  {
+                                                                                                                                          "schema":  {
+                                                                                                                                                         "$ref":  "#/components/schemas/ReportBatchHandleRequest"
+                                                                                                                                                     }
+                                                                                                                                      }
+                                                                                                             },
+                                                                                                 "required":  true
+                                                                                             },
+                                                                             "responses":  {
+                                                                                               "200":  {
+                                                                                                           "description":  "OK",
+                                                                                                           "content":  {
+                                                                                                                           "*/*":  {
+                                                                                                                                       "schema":  {
+                                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                                  }
+                                                                                                                                   }
+                                                                                                                       }
+                                                                                                       }
+                                                                                           }
+                                                                         }
+                                                            },
+                  "/api/admin/reviews/{id}/read":  {
+                                                       "post":  {
+                                                                    "tags":  [
+                                                                                 "admin-review-controller"
+                                                                             ],
+                                                                    "operationId":  "markRead_2",
+                                                                    "parameters":  [
+                                                                                       {
+                                                                                           "name":  "id",
+                                                                                           "in":  "path",
+                                                                                           "required":  true,
+                                                                                           "schema":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int64"
+                                                                                                      }
+                                                                                       }
+                                                                                   ],
+                                                                    "responses":  {
+                                                                                      "200":  {
+                                                                                                  "description":  "OK",
+                                                                                                  "content":  {
+                                                                                                                  "*/*":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                              }
+                                                                                              }
+                                                                                  }
+                                                                }
+                                                   },
                   "/api/admin/reviews/{id}/audit":  {
                                                         "post":  {
                                                                      "tags":  [
@@ -1008,6 +1170,67 @@
                                                                                    }
                                                                  }
                                                     },
+                  "/api/admin/reviews/batch-audit":  {
+                                                         "post":  {
+                                                                      "tags":  [
+                                                                                   "admin-review-controller"
+                                                                               ],
+                                                                      "operationId":  "batchAudit",
+                                                                      "requestBody":  {
+                                                                                          "content":  {
+                                                                                                          "application/json":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/ReviewBatchAuditRequest"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                      },
+                                                                                          "required":  true
+                                                                                      },
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK",
+                                                                                                    "content":  {
+                                                                                                                    "*/*":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                                }
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                     },
+                  "/api/admin/aftersales/{id}/read":  {
+                                                          "post":  {
+                                                                       "tags":  [
+                                                                                    "admin-after-sale-controller"
+                                                                                ],
+                                                                       "operationId":  "markRead_3",
+                                                                       "parameters":  [
+                                                                                          {
+                                                                                              "name":  "id",
+                                                                                              "in":  "path",
+                                                                                              "required":  true,
+                                                                                              "schema":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         }
+                                                                                          }
+                                                                                      ],
+                                                                       "responses":  {
+                                                                                         "200":  {
+                                                                                                     "description":  "OK",
+                                                                                                     "content":  {
+                                                                                                                     "*/*":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                                 }
+                                                                                                 }
+                                                                                     }
+                                                                   }
+                                                      },
                   "/api/admin/aftersales/{id}/arbitrate":  {
                                                                "post":  {
                                                                             "tags":  [
@@ -1049,6 +1272,36 @@
                                                                                           }
                                                                         }
                                                            },
+                  "/api/admin/aftersales/batch-arbitrate":  {
+                                                                "post":  {
+                                                                             "tags":  [
+                                                                                          "admin-after-sale-controller"
+                                                                                      ],
+                                                                             "operationId":  "batchArbitrate",
+                                                                             "requestBody":  {
+                                                                                                 "content":  {
+                                                                                                                 "application/json":  {
+                                                                                                                                          "schema":  {
+                                                                                                                                                         "$ref":  "#/components/schemas/AfterSaleBatchArbitrateRequest"
+                                                                                                                                                     }
+                                                                                                                                      }
+                                                                                                             },
+                                                                                                 "required":  true
+                                                                                             },
+                                                                             "responses":  {
+                                                                                               "200":  {
+                                                                                                           "description":  "OK",
+                                                                                                           "content":  {
+                                                                                                                           "*/*":  {
+                                                                                                                                       "schema":  {
+                                                                                                                                                      "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                                  }
+                                                                                                                                   }
+                                                                                                                       }
+                                                                                                       }
+                                                                                           }
+                                                                         }
+                                                            },
                   "/uploads/{filename}":  {
                                               "get":  {
                                                           "tags":  [
@@ -1766,6 +2019,37 @@
                                                                          }
                                                        }
                                            },
+                  "/api/aftersales/status-counts":  {
+                                                        "get":  {
+                                                                    "tags":  [
+                                                                                 "after-sale-controller"
+                                                                             ],
+                                                                    "operationId":  "statusCounts",
+                                                                    "parameters":  [
+                                                                                       {
+                                                                                           "name":  "side",
+                                                                                           "in":  "query",
+                                                                                           "required":  false,
+                                                                                           "schema":  {
+                                                                                                          "type":  "string",
+                                                                                                          "default":  "buyer"
+                                                                                                      }
+                                                                                       }
+                                                                                   ],
+                                                                    "responses":  {
+                                                                                      "200":  {
+                                                                                                  "description":  "OK",
+                                                                                                  "content":  {
+                                                                                                                  "*/*":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                              }
+                                                                                              }
+                                                                                  }
+                                                                }
+                                                    },
                   "/api/aftersales/seller":  {
                                                  "get":  {
                                                              "tags":  [
@@ -1978,6 +2262,26 @@
                                                                              }
                                                            }
                                                },
+                  "/api/admin/share-reports/unread-count":  {
+                                                                "get":  {
+                                                                            "tags":  [
+                                                                                         "share-admin-report-controller"
+                                                                                     ],
+                                                                            "operationId":  "unreadCount",
+                                                                            "responses":  {
+                                                                                              "200":  {
+                                                                                                          "description":  "OK",
+                                                                                                          "content":  {
+                                                                                                                          "*/*":  {
+                                                                                                                                      "schema":  {
+                                                                                                                                                     "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                                 }
+                                                                                                                                  }
+                                                                                                                      }
+                                                                                                      }
+                                                                                          }
+                                                                        }
+                                                            },
                   "/api/admin/reviews":  {
                                              "get":  {
                                                          "tags":  [
@@ -2045,6 +2349,26 @@
                                                                        }
                                                      }
                                          },
+                  "/api/admin/reviews/unread-count":  {
+                                                          "get":  {
+                                                                      "tags":  [
+                                                                                   "admin-review-controller"
+                                                                               ],
+                                                                      "operationId":  "unreadCount_1",
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK",
+                                                                                                    "content":  {
+                                                                                                                    "*/*":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                                }
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                      },
                   "/api/admin/aftersales":  {
                                                 "get":  {
                                                             "tags":  [
@@ -2102,7 +2426,27 @@
                                                                                       }
                                                                           }
                                                         }
-                                            }
+                                            },
+                  "/api/admin/aftersales/unread-count":  {
+                                                             "get":  {
+                                                                         "tags":  [
+                                                                                      "admin-after-sale-controller"
+                                                                                  ],
+                                                                         "operationId":  "unreadCount_2",
+                                                                         "responses":  {
+                                                                                           "200":  {
+                                                                                                       "description":  "OK",
+                                                                                                       "content":  {
+                                                                                                                       "*/*":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                                   }
+                                                                                                   }
+                                                                                       }
+                                                                     }
+                                                         }
               },
     "components":  {
                        "schemas":  {
@@ -3190,6 +3534,133 @@
                                                                                                   }
                                                                                     }
                                                                  },
+                                       "ApiResponseListStatusCount":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "$ref":  "#/components/schemas/StatusCount"
+                                                                                                                    }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "StatusCount":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "status":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                              "count":  {
+                                                                                            "type":  "integer",
+                                                                                            "format":  "int64"
+                                                                                        }
+                                                                          }
+                                                       },
+                                       "AfterSaleBatchReplyRequest":  {
+                                                                          "required":  [
+                                                                                           "action",
+                                                                                           "ids"
+                                                                                       ],
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "ids":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "type":  "integer",
+                                                                                                                       "format":  "int64"
+                                                                                                                   }
+                                                                                                     },
+                                                                                             "action":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                             "reply":  {
+                                                                                                           "maxLength":  500,
+                                                                                                           "minLength":  0,
+                                                                                                           "type":  "string"
+                                                                                                       }
+                                                                                         }
+                                                                      },
+                                       "ApiResponseResult":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "code":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                    "message":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                    "data":  {
+                                                                                                 "$ref":  "#/components/schemas/Result"
+                                                                                             },
+                                                                                    "requestId":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                    "timestamp":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  }
+                                                                                }
+                                                             },
+                                       "Item":  {
+                                                    "type":  "object",
+                                                    "properties":  {
+                                                                       "id":  {
+                                                                                  "type":  "string"
+                                                                              },
+                                                                       "success":  {
+                                                                                       "type":  "boolean"
+                                                                                   },
+                                                                       "errorCode":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                       "message":  {
+                                                                                       "type":  "string"
+                                                                                   }
+                                                                   }
+                                                },
+                                       "Result":  {
+                                                      "type":  "object",
+                                                      "properties":  {
+                                                                         "total":  {
+                                                                                       "type":  "integer",
+                                                                                       "format":  "int32"
+                                                                                   },
+                                                                         "successCount":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32"
+                                                                                          },
+                                                                         "failedCount":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32"
+                                                                                         },
+                                                                         "items":  {
+                                                                                       "type":  "array",
+                                                                                       "items":  {
+                                                                                                     "$ref":  "#/components/schemas/Item"
+                                                                                                 }
+                                                                                   },
+                                                                         "counts":  {
+                                                                                        "type":  "array",
+                                                                                        "items":  {
+                                                                                                      "$ref":  "#/components/schemas/StatusCount"
+                                                                                                  }
+                                                                                    }
+                                                                     }
+                                                  },
                                        "ApiResponsePersonalDataCleanupResult":  {
                                                                                     "type":  "object",
                                                                                     "properties":  {
@@ -3251,6 +3722,30 @@
                                                                                                }
                                                                                   }
                                                                },
+                                       "ReportBatchHandleRequest":  {
+                                                                        "required":  [
+                                                                                         "action",
+                                                                                         "ids"
+                                                                                     ],
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "ids":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                   },
+                                                                                           "action":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                           "note":  {
+                                                                                                        "maxLength":  200,
+                                                                                                        "minLength":  0,
+                                                                                                        "type":  "string"
+                                                                                                    }
+                                                                                       }
+                                                                    },
                                        "ReviewAuditRequest":  {
                                                                   "required":  [
                                                                                    "action"
@@ -3366,6 +3861,30 @@
                                                                                                            }
                                                                                          }
                                                                       },
+                                       "ReviewBatchAuditRequest":  {
+                                                                       "required":  [
+                                                                                        "action",
+                                                                                        "ids"
+                                                                                    ],
+                                                                       "type":  "object",
+                                                                       "properties":  {
+                                                                                          "ids":  {
+                                                                                                      "type":  "array",
+                                                                                                      "items":  {
+                                                                                                                    "type":  "integer",
+                                                                                                                    "format":  "int64"
+                                                                                                                }
+                                                                                                  },
+                                                                                          "action":  {
+                                                                                                         "type":  "string"
+                                                                                                     },
+                                                                                          "reason":  {
+                                                                                                         "maxLength":  255,
+                                                                                                         "minLength":  0,
+                                                                                                         "type":  "string"
+                                                                                                     }
+                                                                                      }
+                                                                   },
                                        "AfterSaleArbitrateRequest":  {
                                                                          "required":  [
                                                                                           "result"
@@ -3382,6 +3901,30 @@
                                                                                                      }
                                                                                         }
                                                                      },
+                                       "AfterSaleBatchArbitrateRequest":  {
+                                                                              "required":  [
+                                                                                               "ids",
+                                                                                               "result"
+                                                                                           ],
+                                                                              "type":  "object",
+                                                                              "properties":  {
+                                                                                                 "ids":  {
+                                                                                                             "type":  "array",
+                                                                                                             "items":  {
+                                                                                                                           "type":  "integer",
+                                                                                                                           "format":  "int64"
+                                                                                                                       }
+                                                                                                         },
+                                                                                                 "result":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                 "note":  {
+                                                                                                              "maxLength":  500,
+                                                                                                              "minLength":  0,
+                                                                                                              "type":  "string"
+                                                                                                          }
+                                                                                             }
+                                                                          },
                                        "ApiResponseListTopicView":  {
                                                                         "type":  "object",
                                                                         "properties":  {

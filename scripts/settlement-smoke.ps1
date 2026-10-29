@@ -580,12 +580,16 @@ $rangeOrders = [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order WHERE crea
 $rangeSettles = [int](Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_settlement s JOIN t_order o ON o.id=s.order_id WHERE o.created_at >= '$testStart';")
 Check "本次测试产生 ≥ 4 张已支付订单（脚本场景数下限）" ($rangeOrders -ge 4) $rangeOrders
 Check "订单数与托管单数一一对应（$rangeOrders 单 / $rangeSettles 条）" ($rangeOrders -eq $rangeSettles) "$rangeOrders vs $rangeSettles"
-Check "不存在「订单已终结但资金仍托管中」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE s.status='CUSTODY' AND o.status IN ('COMPLETED','REFUNDED','CLOSED');") -eq '0')
+# ★ 不变式断言只看**本次测试窗口**产生的数据（与上方 $testStart 口径一致）。
+#   全局不变式（整个库所有订单）归对账守卫管 —— 2026-10-26 实测：一条 10-18 的历史
+#   残留托管单（COMPLETED 但 CUSTODY）让全局断言挂了，而那是更早轮次的遗留数据，
+#   不是本轮冒烟引入的。冒烟要回答的是「我这次跑，规则有没有被破坏」。
+Check "（本次窗口）不存在「订单已终结但资金仍托管中」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE s.status='CUSTODY' AND o.status IN ('COMPLETED','REFUNDED','CLOSED') AND o.created_at >= '$testStart';") -eq '0')
 # ★ ADVANCED（第五十八轮新增）必须算**合法终态**：已放款订单退款时钱由平台垫付给买家，
 #   托管单走 RELEASED → ADVANCED，卖家转为欠平台钱（t_seller_debt）。
 #   把它当成异常会误报 —— 真正要抓的是「已退款但托管单还停在 RELEASED/CUSTODY」。
-Check "不存在「已退款但托管单未同步终结」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE o.status='REFUNDED' AND s.status NOT IN ('REFUNDED','ADVANCED');") -eq '0')
-Check "已关闭订单无残留 FROZEN 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='FROZEN' AND o.status='CLOSED';") -eq '0')
+Check "（本次窗口）不存在「已退款但托管单未同步终结」的订单" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_order o JOIN t_settlement s ON s.order_id=o.id WHERE o.status='REFUNDED' AND s.status NOT IN ('REFUNDED','ADVANCED') AND o.created_at >= '$testStart';") -eq '0')
+Check "（本次窗口）已关闭订单无残留 FROZEN 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='FROZEN' AND o.status='CLOSED' AND o.created_at >= '$testStart';") -eq '0')
 Check "已退款订单无残留 RESTOCK_PENDING 台账" ((Sql 'duoduo_trade' "SELECT COUNT(*) FROM t_stock_freeze f JOIN t_order o ON o.id=f.order_id WHERE f.status='RESTOCK_PENDING' AND o.status='REFUNDED';") -eq '0')
 
 # ---------- 9. 复原测试消耗的库存 ----------

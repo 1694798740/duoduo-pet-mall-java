@@ -50,6 +50,12 @@ public class SettlementEntity {
     private Long amount;
     /** 平台佣金（从托管金额里扣，余下打给卖家） */
     private Long platformFee;
+    /**
+     * R-P1 · 平台多多币补贴（分）：本单买家用币抵掉的部分由平台出钱补进托管，
+     * 商家按「券后商品金额」结算不受影响。单列而不并入 amount 的加减叙事，
+     * 是为了「平台补贴合计 = 订单币抵扣合计」这条对账可以直接 SUM 出来。
+     */
+    private Long coinSubsidyAmount;
     private String status;
     /** 计划放款时间（当前实现为「确认收货」即放款，与 releasedAt 相等；接入结算周期后表示 T+N 的打款日） */
     private LocalDateTime releaseAt;
@@ -67,6 +73,8 @@ public class SettlementEntity {
     public void setAmount(Long amount) { this.amount = amount; }
     public Long getPlatformFee() { return platformFee; }
     public void setPlatformFee(Long platformFee) { this.platformFee = platformFee; }
+    public Long getCoinSubsidyAmount() { return coinSubsidyAmount; }
+    public void setCoinSubsidyAmount(Long coinSubsidyAmount) { this.coinSubsidyAmount = coinSubsidyAmount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getReleaseAt() { return releaseAt; }

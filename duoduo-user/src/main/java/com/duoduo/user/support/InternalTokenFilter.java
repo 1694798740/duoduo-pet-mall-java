@@ -46,7 +46,10 @@ public class InternalTokenFilter extends OncePerRequestFilter {
      */
     private static final String[] INTERNAL_PREFIXES = {
             "/api/users/internal/",
-            "/api/addresses/internal/"
+            "/api/addresses/internal/",
+            // 多多币内部接口（R-P1）：冻结 / 扣减 / 释放 / 退款退币 / 返币 / 对账，
+            // 交易域写钱与币联动全走这里 —— 币是钱，绝不能裸露
+            "/api/coins/internal/"
     };
 
     private final InternalCallAuth internalCallAuth;

@@ -1,10 +1,14 @@
 ﻿# AI 导购「多多」（A9）端到端冒烟（PowerShell 5.1 / pwsh 7 双兼容）
 # 用法： powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ai-smoke.ps1
 #
-# 前置：容器全部 healthy（duoduo-ai 为第 10 个容器），AI 默认 mock 模式（DUODUO_AI_MOCK_ENABLED=true）。
+# 前置：容器全部 healthy（duoduo-ai 为第 10 个容器），且已执行幂等 DDL：
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\apply-73-ai-butler-ddl.ps1
+#
+# 可选：设置环境变量 DUODUO_SMOKE_TOKEN（一个有效用户令牌）以启用「登录态卡片 / 红点」断言；
+#      未提供时该段明确 SKIP，不算失败（不把「没有夹具」伪装成「通过」）。
 #
 # 覆盖：
-#   1. capabilities：mock 形态标识与可用性（前端据此展示入口与提示）；
+#   1. capabilities：可用性标识与提示（llm / unconfigured，前端据此决定是否展示入口）；
 #   2. 对话：回复非空 + 推荐每一条都来自真实商品库（id 可经公开详情接口验证，标题同源）——
 #      「不得编造商品」是 A9 验收①的核心，断言落在 id 与 title 双对齐上；
 #   3. 中文意图召回（幼犬/狗粮/猫）与无匹配时的如实告知；
@@ -18,10 +22,13 @@
 #   3f. 澄清：信息不足反问一次给可点选项，告知已澄清后不再反问；
 #   4. 响应不泄露服务间口径字段（sellerId 不出候选视图）；
 #   5. 空/超长消息边界 400；
-#   6. 每 IP 限流：连发超限必现 429，且**伪造 X-Forwarded-For 不能绕过**
+#   6. 全能管家（3g）：游客深度功能给登录入口、游客第 4 轮被拦；
+#      提供 DUODUO_SMOKE_TOKEN 时额外断言登录态通知卡片与红点补丁一致性；
+#   7. 每 IP 限流：连发超限必现 429，且**伪造 X-Forwarded-For 不能绕过**
 #      （限流键取网关写入的 X-Real-IP，不再信任客户端可写的头）（放最后，避免占用本分钟配额）。
 param(
-    [string]$Gateway = 'http://127.0.0.1:8080'
+    [string]$Gateway = 'http://127.0.0.1:8080',
+    [string]$Token = $env:DUODUO_SMOKE_TOKEN
 )
 
 $ErrorActionPreference = 'Continue'
@@ -292,6 +299,58 @@ Check "空消息返回 400（边界校验）" ($r.status -eq 400) $r.status
 $long = '啊' * 501
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = $long } $null $null
 Check "超长消息返回 400（500 上限）" ($r.status -eq 400) $r.status
+
+# ---------- 3g. 全能管家：卡片 / 红点 / 游客 3 轮（阶段四 + B4） ----------
+Write-Host ""
+Write-Host "> 全能管家：游客登录引导 / 3 轮限制 / 卡片与红点"
+
+# (1) 游客访问深度功能：必须给出登录入口，而不是编一句「已查到」
+#     loginUrl 由服务端工具层冒泡上来（游客没有 userId，工具返回 NEED_LOGIN）
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '帮我看看我的订单'; clarified = $true } $null $null
+Check "游客查订单：200 且给出登录入口（不假装查到）" `
+    ($r.status -eq 200 -and "$($r.body.data.loginUrl)" -ne '') `
+    ("status=$($r.status) loginUrl=[$($r.body.data.loginUrl)] reply=[$($r.body.data.reply)]")
+
+# (2) 游客 3 轮：同一设备（Cookie 会话）第 4 轮必须被拦。
+#     用独立 WebSession 隔离：前面的对话已经把 $sess 的配额用掉一部分。
+$guest = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$blocked = $null
+for ($gi = 1; $gi -le 4; $gi++) {
+    $r = Call 'Post' "$Gateway/api/duoduo/chat" $guest @{ message = "游客轮次探测 $gi"; clarified = $true } $null $null
+    if ($gi -lt 4) {
+        Check "游客第 $gi 轮可对话（200）" ($r.status -eq 200) "status=$($r.status)"
+    } else {
+        $blocked = $r
+    }
+}
+Check "游客第 4 轮被 3 轮限制拦截（给出登录入口）" `
+    ($null -ne $blocked -and $blocked.status -eq 200 -and "$($blocked.body.data.loginUrl)" -ne '') `
+    ("status=$($blocked.status) loginUrl=[$($blocked.body.data.loginUrl)] reply=[$($blocked.body.data.reply)]")
+
+# (3) 登录态卡片与红点：需要 DUODUO_SMOKE_TOKEN（没有夹具时不伪装成通过）
+if (-not $Token) {
+    Write-Host "  [SKIP] 未提供 DUODUO_SMOKE_TOKEN，跳过登录态卡片/红点断言"
+} else {
+    $auth = @{ Authorization = "Bearer $Token" }
+    $before = Call 'Get' "$Gateway/api/socials/notices/unread-summary" $sess $null $auth
+    Check "登录态可读未读汇总（红点前置）" ($before.status -eq 200) "status=$($before.status)"
+
+    $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '我有什么未读通知？'; clarified = $true } $null $auth
+    $noticeCards = @($r.body.data.cards | Where-Object { $_.type -eq 'notification_list' })
+    Check "登录后返回通知卡片（cards 含 notification_list）" `
+        ($r.status -eq 200 -and $noticeCards.Count -eq 1) `
+        ("status=$($r.status) cards=[$($r.body.data.cards | ConvertTo-Json -Compress -Depth 4)]")
+
+    $patch = $r.body.data.badgePatch
+    if ($null -ne $patch -and $null -ne $patch.notification) {
+        $after = Call 'Get' "$Gateway/api/socials/notices/unread-summary" $sess $null $auth
+        Check "红点补丁与服务端未读一致（AI 转述的就是权威值）" `
+            ($after.status -eq 200 -and [int]$after.body.data.notice -eq [int]$patch.notification) `
+            ("before=$($before.body.data.notice) patch=$($patch.notification) after=$($after.body.data.notice)")
+    } else {
+        Write-Host "  [SKIP] 本轮没有红点变化（当前没有未读），跳过补丁一致性断言"
+    }
+}
 
 # ---------- 4. 每 IP 限流（放最后：本分钟配额已被前面用掉一部分） ----------
 Write-Host ""

@@ -293,6 +293,36 @@
                                                                                    }
                                                                  }
                                                     },
+                  "/api/socials/notices/batch":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "notice-controller"
+                                                                           ],
+                                                                  "operationId":  "batch",
+                                                                  "requestBody":  {
+                                                                                      "content":  {
+                                                                                                      "application/json":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "$ref":  "#/components/schemas/NoticeBatchRequest"
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                  },
+                                                                                      "required":  true
+                                                                                  },
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseNoticeBatchResult"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
                   "/api/socials/messages":  {
                                                 "post":  {
                                                              "tags":  [
@@ -1144,6 +1174,22 @@
                                                                                   "schema":  {
                                                                                                  "type":  "string"
                                                                                              }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "read",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "string"
+                                                                                             }
+                                                                              },
+                                                                              {
+                                                                                  "name":  "keyword",
+                                                                                  "in":  "query",
+                                                                                  "required":  false,
+                                                                                  "schema":  {
+                                                                                                 "type":  "string"
+                                                                                             }
                                                                               }
                                                                           ],
                                                            "responses":  {
@@ -1937,6 +1983,61 @@
                                                                                                            }
                                                                                          }
                                                                       },
+                                       "NoticeBatchRequest":  {
+                                                                  "required":  [
+                                                                                   "action"
+                                                                               ],
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "action":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                     "ids":  {
+                                                                                                 "type":  "array",
+                                                                                                 "items":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                             },
+                                                                                     "all":  {
+                                                                                                 "type":  "boolean"
+                                                                                             }
+                                                                                 }
+                                                              },
+                                       "ApiResponseNoticeBatchResult":  {
+                                                                            "type":  "object",
+                                                                            "properties":  {
+                                                                                               "code":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                               "message":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                               "data":  {
+                                                                                                            "$ref":  "#/components/schemas/NoticeBatchResult"
+                                                                                                        },
+                                                                                               "requestId":  {
+                                                                                                                 "type":  "string"
+                                                                                                             },
+                                                                                               "timestamp":  {
+                                                                                                                 "type":  "integer",
+                                                                                                                 "format":  "int64"
+                                                                                                             }
+                                                                                           }
+                                                                        },
+                                       "NoticeBatchResult":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "affected":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                    "unread":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               }
+                                                                                }
+                                                             },
                                        "SendMessageRequest":  {
                                                                   "required":  [
                                                                                    "receiverId"

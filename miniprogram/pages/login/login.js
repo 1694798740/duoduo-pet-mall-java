@@ -38,6 +38,13 @@ Page({
     bindTip: null,
     // 经服务端校验过的登录态（不是"本地存了令牌字符串"就算登录 —— 令牌可能已过期）
     loggedIn: false,
+    /**
+     * 两步验证第二步（E-06 补）：账号开启 2FA 时，手机号登录会先返回 401 + TOTP_REQUIRED，
+     * 此时**不再重复要密码**，只把验证码输入摆出来；手机丢了可切到恢复码。
+     */
+    totpStep: false,
+    totpCode: '',
+    useRecovery: false,
   },
 
   // 是否已登录成功：用于 onUnload 判断要不要唤醒等待方（失败退出）
@@ -69,7 +76,17 @@ Page({
   },
 
   onPhone(e) {
-    this.setData({ phone: e.detail.value });
+    // 换了手机号就不再处于「第二步」：验证码是给上一个账号用的
+    this.setData({ phone: e.detail.value, totpStep: false, totpCode: '' });
+  },
+
+  onTotpCode(e) {
+    this.setData({ totpCode: e.detail.value });
+  },
+
+  /** 动态码 / 恢复码切换：手机丢了只能用恢复码 */
+  toggleRecovery() {
+    this.setData({ useRecovery: !this.data.useRecovery, totpCode: '' });
   },
 
   onPassword(e) {
@@ -279,9 +296,14 @@ Page({
   // ── 手机号登录 / 注册 ───────────────────────────────────
   submitPhone() {
     if (this.data.submitting) return;
-    const { phone, password, nickname, mode } = this.data;
+    const { phone, password, nickname, mode, totpStep, totpCode, useRecovery } = this.data;
     if (!PHONE_REGEX.test(phone)) {
       wx.showToast({ title: '请输入正确的 11 位手机号', icon: 'none' });
+      return;
+    }
+    // 第二步只校验验证码，不再重复要密码（密码已在第一次提交时通过）
+    if (totpStep && !totpCode.trim()) {
+      wx.showToast({ title: useRecovery ? '请输入恢复码' : '请输入 6 位验证码', icon: 'none' });
       return;
     }
     if (!password) {
@@ -296,8 +318,13 @@ Page({
     const app = getApp();
     const doneTitle = mode === 'register' ? '注册成功' : '登录成功';
     this.setData({ submitting: true });
+    const totp = totpStep
+      ? useRecovery
+        ? { recoveryCode: totpCode.trim() }
+        : { code: totpCode.trim() }
+      : undefined;
     const action =
-      mode === 'register' ? app.registerBy(phone, password, nickname) : app.loginByPhone(phone, password);
+      mode === 'register' ? app.registerBy(phone, password, nickname) : app.loginByPhone(phone, password, totp);
     action
       .then(() => this.maybeBindWechat())   // 登录成功后统一处理「要不要绑微信」
       .then((res) => {
@@ -328,6 +355,23 @@ Page({
   handlePhoneAuthError(err, mode) {
     const status = err && err.status;
     const message = (err && err.message) || '操作失败，请重试';
+
+    // 两步验证：第一次提交没带验证码 → 直接切到第二步，**不要**把它当成密码错误
+    if (status === 401 && err.code === 'TOTP_REQUIRED') {
+      this.setData({ submitting: false, totpStep: true, totpCode: '' });
+      wx.showToast({ title: '请输入验证码继续登录', icon: 'none' });
+      return;
+    }
+    // 验证码错误 / 恢复码已被用过：留在第二步，并明确说明是验证码的问题（不是密码）
+    if (status === 401 && err.code === 'TOTP_INVALID') {
+      this.setData({ submitting: false, totpStep: true, totpCode: '' });
+      wx.showModal({
+        title: '验证码不正确',
+        content: message + '\n\n请重新输入当前动态码；若手机不在身边，可改用恢复码。',
+        showCancel: false,
+      });
+      return;
+    }
 
     if (status === 401) {
       const tip = {

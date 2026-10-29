@@ -82,7 +82,15 @@ $results = @()
 # 非 Windows 或 CI 环境用 `pwsh`，Windows 本地用自带的 `powershell`。
 # 不用 `$IsWindows`：它在 Windows PowerShell 5.1 里**不存在**，
 # 取值为 $null 会被判成"非 Windows"，于是本地反而去找不存在的 pwsh。
-$shell = if ($IsLinux -or $IsMacOS -or $env:CI) { 'pwsh' } else { 'powershell' }
+#
+# ★ 2026-10-27 修：判据不能再看 `$env:CI` —— 本机 agent 沙箱里也会带 CI 变量，
+#   结果 Windows 本地全量回归 27 套**全部**死于 'pwsh' is not recognized，
+#   每套都 EXIT=0 + (无汇总行) 照常进表，一个上游变量把整份「全绿」变成假绿。
+#   改成按**可执行文件是否真的存在**选：CI（ubuntu）没有 powershell → pwsh；
+#   Windows 本地有 powershell → 用它，$env:CI 设没设都不再影响。
+$shell = if ($IsLinux -or $IsMacOS) { 'pwsh' }
+elseif (Get-Command powershell -ErrorAction SilentlyContinue) { 'powershell' }
+else { 'pwsh' }
 foreach ($s in $scripts) {
     Write-Host ""
     Write-Host "==================================================================" -ForegroundColor Cyan

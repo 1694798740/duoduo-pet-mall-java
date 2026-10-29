@@ -10,8 +10,10 @@ import com.duoduo.social.dto.SocialDtos.NoticePushItem;
 import com.duoduo.social.dto.SocialDtos.NoticeView;
 import com.duoduo.social.dto.SocialDtos.UnreadCount;
 import com.duoduo.social.entity.SocialMessageEntity;
+import com.duoduo.social.entity.SocialNoticeDeletedEntity;
 import com.duoduo.social.entity.SocialNoticeEntity;
 import com.duoduo.social.entity.SocialNoticeReadEntity;
+import com.duoduo.social.mapper.SocialNoticeDeletedMapper;
 import com.duoduo.social.mapper.SocialNoticeMapper;
 import com.duoduo.social.mapper.SocialNoticeReadMapper;
 import com.duoduo.social.support.MiniProgramPages;
@@ -77,25 +79,42 @@ public class NoticeService {
 
     private final SocialNoticeMapper noticeMapper;
     private final SocialNoticeReadMapper noticeReadMapper;
+    private final SocialNoticeDeletedMapper noticeDeletedMapper;
     private final SnowflakeIdGenerator idGenerator;
 
     public NoticeService(SocialNoticeMapper noticeMapper,
                          SocialNoticeReadMapper noticeReadMapper,
+                         SocialNoticeDeletedMapper noticeDeletedMapper,
                          SnowflakeIdGenerator idGenerator) {
         this.noticeMapper = noticeMapper;
         this.noticeReadMapper = noticeReadMapper;
+        this.noticeDeletedMapper = noticeDeletedMapper;
         this.idGenerator = idGenerator;
     }
 
     // ---------------- 读：列表 / 未读数（需登录） ----------------
 
     public NoticePage list(Long userId, int page, int pageSize, String category) {
+        return list(userId, page, pageSize, category, null, null);
+    }
+
+    /**
+     * 通知列表（2026-10-27 增加「未读/已读筛选」与「标题正文搜索」）。
+     *
+     * @param read    UNREAD / READ / 空=全部。**在 SQL 层筛**而不是内存过滤：
+     *                内存过滤只能筛「已取回的那一页」，翻到第 2 页时第 1 页的已读又会回来，
+     *                且 total 会算成「全部通知数」——用户看到一个永远翻不完的未读列表。
+     * @param keyword 标题或正文包含匹配；同样走 SQL（见上面同一条理由）
+     */
+    public NoticePage list(Long userId, int page, int pageSize, String category, String read, String keyword) {
         int p = Math.max(page, 1);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
 
-        // 两源各取前 p*size 条（足够覆盖切片窗口），内存归并 —— 见类注释第 4 条
-        List<SocialNoticeEntity> directed = selectSource(userId, p * size, category);
-        List<SocialNoticeEntity> announcements = selectSource(0L, p * size, category);
+        // 两源各取前 p*size 条（足够覆盖切片窗口），内存归并 —— 见类注释第 4 条。
+        // ★ 第二个参数是「当前登录用户」而不是收件人：公告行（user_id=0）的已读/删除
+        //   记在 (notice_id, 我) 上，若把 0 当成读者去查，公告的筛选与已读扣除会全部失效。
+        List<SocialNoticeEntity> directed = selectSource(userId, userId, p * size, category, read, keyword);
+        List<SocialNoticeEntity> announcements = selectSource(0L, userId, p * size, category, read, keyword);
 
         List<SocialNoticeEntity> merged = new ArrayList<>(directed);
         merged.addAll(announcements);
@@ -104,7 +123,8 @@ public class NoticeService {
                 .comparing(SocialNoticeEntity::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder()))
                 .thenComparing(SocialNoticeEntity::getId, Comparator.reverseOrder()));
 
-        long total = countSource(userId, category) + countSource(0L, category);
+        long total = countSource(userId, userId, category, read, keyword)
+                + countSource(0L, userId, category, read, keyword);
 
         int from = Math.min((p - 1) * size, merged.size());
         int to = Math.min(from + size, merged.size());
@@ -341,16 +361,129 @@ public class NoticeService {
         insertRead(userId, noticeId);
     }
 
-    /** 全部已读：我的定向通知 + 全部公告，未读的批量补进集合表 */
-    public void readAll(Long userId) {
-        List<SocialNoticeEntity> mine = selectSource(userId, MAX_PAGE_SIZE, null);
-        List<SocialNoticeEntity> announcements = selectSource(0L, MAX_PAGE_SIZE, null);
-        Set<Long> alreadyRead = readIds(userId, mine, announcements);
-        for (SocialNoticeEntity n : mine) {
-            insertRead(userId, n.getId(), alreadyRead);
+    /**
+     * 全部已读：我的定向通知 + 全部公告。
+     *
+     * <p><b>2026-10-27 修复</b>：旧实现只取 {@code MAX_PAGE_SIZE}(50) 条，
+     * 于是「通知 200 条、点全部已读」之后角标仍停在 150 —— 用户点了一次、数字只掉一点点，
+     * 只能反复点。全部已读的语义是「全都」，不能悄悄按页截断。
+     *
+     * <p>改为一次查出**所有未读 id**（排除已删除）再批量写已读集合：
+     * 单表子查询，通知量级下就是一次索引扫描；写集合幂等（撞主键吞掉）。
+     *
+     * @return 本次实际标记的条数（0 表示本来就没有未读）
+     */
+    public int readAll(Long userId) {
+        List<SocialNoticeEntity> unread = noticeMapper.selectList(new LambdaQueryWrapper<SocialNoticeEntity>()
+                .in(SocialNoticeEntity::getUserId, List.of(userId, 0L))
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_read WHERE user_id = {0})", userId)
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_deleted WHERE user_id = {0})", userId)
+                .select(SocialNoticeEntity::getId));
+        for (SocialNoticeEntity n : unread) {
+            insertRead(userId, n.getId());
         }
-        for (SocialNoticeEntity n : announcements) {
-            insertRead(userId, n.getId(), alreadyRead);
+        return unread.size();
+    }
+
+    /**
+     * 批量操作（2026-10-27）：标记已读 / 删除。
+     *
+     * <p><b>归属即一切</b>：只处理「我的定向通知 + 全站公告」，其余 id 静默跳过
+     * （不报 404）。理由：批量操作是逐条幂等的集合操作，用户勾了 10 条、其中 1 条
+     * 已被别的端删掉时，整批失败只会让他反复重试；而返回「成功 9 条」才是事实。
+     *
+     * <p><b>{@code all=true}</b> 表示不按 ids、直接作用于「我的全部通知」
+     * （对应「全部已读 / 全部删除」两个按钮），此时同样排除我已删除的。
+     *
+     * @param action READ / DELETE
+     * @return 本次受影响条数 + 最新未读数（前端据此原地更新角标，不必二次请求）
+     */
+    public SocialDtos.NoticeBatchResult batch(Long userId, String action, List<Long> ids, boolean all) {
+        String normalized = action == null ? "" : action.trim().toUpperCase(java.util.Locale.ROOT);
+        int affected;
+        switch (normalized) {
+            case "READ" -> affected = all ? readAll(userId) : markManyRead(userId, ids);
+            case "DELETE" -> affected = all ? deleteAll(userId) : markManyDeleted(userId, ids);
+            default -> throw BizException.validation("不支持的通知操作：" + action + "（应为 READ / DELETE）");
+        }
+        return new SocialDtos.NoticeBatchResult(affected, unreadCount(userId).count());
+    }
+
+    /** 批量已读：只处理确实属于我（或公告）的 id，其余跳过 */
+    private int markManyRead(Long userId, List<Long> ids) {
+        List<Long> validIds = ownedIds(userId, ids);
+        for (Long id : validIds) {
+            insertRead(userId, id);
+        }
+        return validIds.size();
+    }
+
+    /** 批量删除：写删除集合（共享公告行不能被物理删掉，理由见实体注释） */
+    private int markManyDeleted(Long userId, List<Long> ids) {
+        List<Long> validIds = ownedIds(userId, ids);
+        for (Long id : validIds) {
+            insertDeleted(userId, id, java.util.Set.of());
+        }
+        return validIds.size();
+    }
+
+    /**
+     * 全部删除：我的全部通知（定向 + 公告）都从我的列表里移除。
+     *
+     * <p>不物理删除通知行 —— 公告是共享行；定向通知保留是为了让「通知发过没有」
+     * 这类事实可追溯（客服/运营排查时最常问的就是这个）。
+     */
+    private int deleteAll(Long userId) {
+        List<SocialNoticeEntity> rows = noticeMapper.selectList(new LambdaQueryWrapper<SocialNoticeEntity>()
+                .in(SocialNoticeEntity::getUserId, List.of(userId, 0L))
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_deleted WHERE user_id = {0})", userId)
+                .select(SocialNoticeEntity::getId));
+        Set<Long> already = deletedIds(userId);
+        for (SocialNoticeEntity row : rows) {
+            if (already.contains(row.getId())) {
+                continue;
+            }
+            insertDeleted(userId, row.getId(), already);
+        }
+        return rows.size();
+    }
+
+    /** 这批 id 里真正属于我的（定向 = 我 / 公告 = 0）；不存在与他人的一律剔除 */
+    private List<Long> ownedIds(Long userId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<Long> wanted = ids.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (wanted.isEmpty()) {
+            return List.of();
+        }
+        return noticeMapper.selectList(new LambdaQueryWrapper<SocialNoticeEntity>()
+                        .in(SocialNoticeEntity::getId, wanted)
+                        .in(SocialNoticeEntity::getUserId, List.of(userId, 0L))
+                        .select(SocialNoticeEntity::getId))
+                .stream().map(SocialNoticeEntity::getId).toList();
+    }
+
+    /** 我已删除的通知 id 集合（一次查询，供批量路径去重） */
+    private Set<Long> deletedIds(Long userId) {
+        return noticeDeletedMapper.selectList(new LambdaQueryWrapper<SocialNoticeDeletedEntity>()
+                        .eq(SocialNoticeDeletedEntity::getUserId, userId))
+                .stream().map(SocialNoticeDeletedEntity::getNoticeId).collect(Collectors.toSet());
+    }
+
+    /** 写删除集合（幂等）：已在集合中跳过；并发撞复合主键按「已删除」吞掉 */
+    private void insertDeleted(Long userId, Long noticeId, Set<Long> alreadyDeleted) {
+        if (alreadyDeleted.contains(noticeId)) {
+            return;
+        }
+        SocialNoticeDeletedEntity deleted = new SocialNoticeDeletedEntity();
+        deleted.setNoticeId(noticeId);
+        deleted.setUserId(userId);
+        deleted.setDeletedAt(nowUtc());
+        try {
+            noticeDeletedMapper.insert(deleted);
+        } catch (DuplicateKeyException e) {
+            // 撞复合主键 = 已删除过，幂等返回
         }
     }
 
@@ -405,6 +538,9 @@ public class NoticeService {
                 .eq(SocialNoticeEntity::getCategory, category)
                 .eq(SocialNoticeEntity::getBizType, bizType)
                 .eq(SocialNoticeEntity::getBizId, bizId)
+                // 已被用户删掉的那条不能再被「原地更新」复活：它不在列表里，
+                // 原地更新只会把新消息写进一条用户看不见的行，表现为「朋友发了消息、角标变了、列表没有」
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_deleted WHERE user_id = {0})", userId)
                 .orderByDesc(SocialNoticeEntity::getId)
                 .last("LIMIT " + MERGE_LOOKBACK));
         if (rows.isEmpty()) {
@@ -446,29 +582,76 @@ public class NoticeService {
     }
 
     private List<SocialNoticeEntity> selectSource(Long userId, int limit, String category) {
-        LambdaQueryWrapper<SocialNoticeEntity> wrapper = new LambdaQueryWrapper<SocialNoticeEntity>()
-                .eq(SocialNoticeEntity::getUserId, userId)
-                .last("LIMIT " + Math.max(limit, 1));
-        if (category != null && !category.isBlank()) {
-            wrapper.eq(SocialNoticeEntity::getCategory, category.trim());
-        }
-        wrapper.orderByDesc(SocialNoticeEntity::getCreatedAt);
+        return selectSource(userId, userId, limit, category, null, null);
+    }
+
+    /**
+     * @param ownerId  收件人（定向通知 = 我；公告 = 0）
+     * @param viewerId **当前登录用户** —— 已读/删除集合按它过滤。两个 id 必须分开传：
+     *                 公告行属于「所有人」，但「我读没读过」只属于我。
+     */
+    private List<SocialNoticeEntity> selectSource(Long ownerId, Long viewerId, int limit, String category,
+                                                  String read, String keyword) {
+        LambdaQueryWrapper<SocialNoticeEntity> wrapper =
+                baseSourceWrapper(ownerId, viewerId, category, read, keyword);
+        wrapper.orderByDesc(SocialNoticeEntity::getCreatedAt).last("LIMIT " + Math.max(limit, 1));
         return noticeMapper.selectList(wrapper);
     }
 
     private long countSource(Long userId, String category) {
+        return countSource(userId, userId, category, null, null);
+    }
+
+    private long countSource(Long ownerId, Long viewerId, String category, String read, String keyword) {
+        return noticeMapper.selectCount(baseSourceWrapper(ownerId, viewerId, category, read, keyword));
+    }
+
+    /**
+     * 列表 / 计数共用的 WHERE 骨架 —— <b>唯一</b>一处定义「什么算我的通知」。
+     *
+     * <p>在这里一次性挂上四个条件，是为了让 list 与 total 永远同源：
+     * 若列表加了筛选而 total 忘了加，用户会看到「筛出 3 条、页脚写着共 27 条」。
+     * <ol>
+     *   <li>收件人（定向 = 我 / 公告 = 0）；</li>
+     *   <li>分类；</li>
+     *   <li><b>排除我已删除的</b>（删除集合，见 {@link SocialNoticeDeletedEntity}）；</li>
+     *   <li>已读 / 未读（子查询已读集合表）。</li>
+     * </ol>
+     *
+     * <p>关键字用 {@code and(...)} 包一层括号：不包的话 {@code like title OR like content}
+     * 会把外层的收件人条件一起 OR 掉，变成「搜到所有人的通知」。
+     */
+    private LambdaQueryWrapper<SocialNoticeEntity> baseSourceWrapper(Long ownerId, Long viewerId,
+                                                                     String category,
+                                                                     String read, String keyword) {
         LambdaQueryWrapper<SocialNoticeEntity> wrapper = new LambdaQueryWrapper<SocialNoticeEntity>()
-                .eq(SocialNoticeEntity::getUserId, userId);
+                .eq(SocialNoticeEntity::getUserId, ownerId)
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_deleted WHERE user_id = {0})", viewerId);
         if (category != null && !category.isBlank()) {
             wrapper.eq(SocialNoticeEntity::getCategory, category.trim());
         }
-        return noticeMapper.selectCount(wrapper);
+        if (read != null && !read.isBlank()) {
+            String normalized = read.trim().toUpperCase(java.util.Locale.ROOT);
+            if ("UNREAD".equals(normalized)) {
+                wrapper.apply("id NOT IN (SELECT notice_id FROM t_social_notice_read WHERE user_id = {0})", viewerId);
+            } else if ("READ".equals(normalized)) {
+                wrapper.apply("id IN (SELECT notice_id FROM t_social_notice_read WHERE user_id = {0})", viewerId);
+            }
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            wrapper.and(w -> w.like(SocialNoticeEntity::getTitle, kw)
+                    .or().like(SocialNoticeEntity::getContent, kw));
+        }
+        return wrapper;
     }
 
-    /** 计入角标的通知数（排除私信通知，理由见 {@link #unreadCount}） */
+    /** 计入角标的通知数（排除私信通知，理由见 {@link #unreadCount}；排除我已删除的） */
     private long countForBadge(Long userId, String category) {
         LambdaQueryWrapper<SocialNoticeEntity> wrapper = new LambdaQueryWrapper<SocialNoticeEntity>()
                 .eq(SocialNoticeEntity::getUserId, userId)
+                // 已删除的通知不该再算进角标 —— 否则用户删掉一条未读、红点却纹丝不动
+                .apply("id NOT IN (SELECT notice_id FROM t_social_notice_deleted WHERE user_id = {0})", userId)
                 .and(excludeMessageNotice());
         if (category != null && !category.isBlank()) {
             wrapper.eq(SocialNoticeEntity::getCategory, category.trim());

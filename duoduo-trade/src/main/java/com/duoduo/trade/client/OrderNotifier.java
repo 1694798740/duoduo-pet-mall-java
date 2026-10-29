@@ -89,6 +89,19 @@ public class OrderNotifier {
                 "ORDER_REFUNDED", orderNo, detailPage(orderNo));
     }
 
+    /**
+     * 重复支付自动退款（B-04）：同一订单被多收的那笔钱已按原路退回。
+     *
+     * <p>与 {@link #notifyRefunded} 分开：订单本身还在正常履约（钱进托管、卖家照常发货），
+     * 退的只是**多收的那一笔**。文案必须把这点说清，否则买家会以为整单被退了、
+     * 等着收货却看不到订单变动。
+     */
+    public void notifyAutoRefund(Long buyerId, String orderNo, long amount) {
+        push(buyerId, "重复支付已退款",
+                "检测到订单重复支付，多收的 ¥" + yuan(amount) + " 已按原路退回；订单本身不受影响",
+                "PAYMENT_AUTO_REFUND", orderNo, detailPage(orderNo));
+    }
+
     // ---------------- 内部 ----------------
 
     /** 真正的推送（唯一一处 try/catch）：失败只记日志，绝不向上抛 */

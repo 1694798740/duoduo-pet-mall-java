@@ -6,14 +6,191 @@
 //  * 键盘高度自适配：输入条随键盘上移，且 iOS/Android 表现一致（adjust-position 关掉、自己定位）。
 const api = require('../../utils/api');
 const { getNavMetrics } = require('../../utils/nav');
+const nav = require('../../utils/navigate');
+const unread = require('../../utils/unread');
 
 const MAX_KEEP = 60; // 本地最多保留的消息条数（超出丢最旧的）
 const HISTORY_LIMIT = 6; // 每次请求带的历史条数（后端 @Size(max=6)）
+
+/**
+ * 会话持久化（2026-10-29 修复「切页后会话丢失」）。
+ *
+ * <p>小程序切页会销毁页面实例：`messages` 与 `_sessionId` 一起丢失，
+ * 用户从「我的」再回到 AI 页就成了新会话。这里把最近 30 条消息与会话 ID
+ * 存进本地缓存，2 小时过期（与服务端 Redis 会话 TTL 对齐）。
+ *
+ * <p>不用全局变量：小程序没有稳定的 module 级单例生命周期，
+ * 页面实例销毁后变量不一定还在；本地缓存是唯一可靠的跨页存储。
+ */
+const STORAGE_KEY = 'duoduo.ai.session.v1';
+const STORAGE_TTL_MS = 2 * 60 * 60 * 1000;
+const STORAGE_KEEP = 30;
+
+function loadStoredSession() {
+  try {
+    const raw = wx.getStorageSync(STORAGE_KEY);
+    if (!raw || typeof raw !== 'object') return null;
+    if (typeof raw.savedAt !== 'number' || Date.now() - raw.savedAt > STORAGE_TTL_MS) {
+      wx.removeStorageSync(STORAGE_KEY);
+      return null;
+    }
+    const messages = Array.isArray(raw.messages)
+      ? raw.messages.map((m) => Object.assign({}, m, { streaming: false, confirm: null }))
+      : [];
+    return { sessionId: raw.sessionId || '', messages };
+  } catch (e) {
+    return null;
+  }
+}
+
+function persistSession(page) {
+  try {
+    wx.setStorageSync(STORAGE_KEY, {
+      sessionId: page._sessionId || '',
+      messages: (page.data.messages || []).slice(-STORAGE_KEEP),
+      savedAt: Date.now(),
+    });
+  } catch (e) {
+    // 存储不可用：会话只留在内存，不影响当次对话
+  }
+}
 
 let seq = 0;
 function nextId() {
   seq += 1;
   return 'm' + Date.now().toString(36) + '-' + seq;
+}
+
+const NOTICE_CATEGORY = {
+  ORDER: '订单',
+  FRIEND: '好友',
+  MERCHANT: '商家',
+  SYSTEM: '系统',
+  ANNOUNCEMENT: '公告',
+};
+
+/** 卡片/条目的稳定 key：WXML 的 wx:key 必须是条目自身属性，不能直接写循环下标 */
+function keyOf(prefix, index, value) {
+  return prefix + '-' + (value === undefined || value === null ? index : String(value));
+}
+
+function formatActions(actions) {
+  if (!Array.isArray(actions)) return [];
+  return actions.map((action, index) => ({
+    _key: keyOf('a', index, action && action.label),
+    label: (action && action.label) || '',
+    miniPath: (action && action.miniPath) || '',
+  }));
+}
+
+/**
+ * 服务端卡片 → 小程序可渲染结构（2026-10-29 · 阶段四）。
+ *
+ * <p>格式化只做「展示文案」：金额分转元、时间 UTC 转本地、分类转中文。
+ * 不改业务值、不补默认金额 —— 卡片是服务端装配的事实，前端只是换个写法。
+ * WXML 里不能调函数，所以所有派生文案都在这里算好。
+ */
+function formatCards(cards) {
+  if (!Array.isArray(cards)) return [];
+  return cards
+    .map((card, index) => {
+      if (!card || typeof card !== 'object') return null;
+
+      if (card.type === 'notification_list') {
+        return {
+          _key: keyOf('notice', index),
+          type: 'notification_list',
+          title: card.title || '通知',
+          unreadCount: Number(card.unreadCount) || 0,
+          items: (card.items || []).map((it, i) => ({
+            _key: keyOf('n', i, it && it.id),
+            title: (it && it.title) || '',
+            summary: (it && it.summary) || '',
+            meta: [
+              NOTICE_CATEGORY[(it && it.category) || ''] || (it && it.category) || '',
+              api.shortTime(it && it.createdAt),
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            read: !!(it && it.read),
+            miniPath: (it && it.miniPath) || '',
+          })),
+          actions: formatActions(card.actions),
+        };
+      }
+
+      if (card.type === 'coupon_list') {
+        return {
+          _key: keyOf('coupon', index),
+          type: 'coupon_list',
+          title: card.title || '我的优惠券',
+          items: (card.items || []).map((it, i) => {
+            const percent = Number(it && it.discountPercent) || 0;
+            const threshold = Number(it && it.thresholdAmount) || 0;
+            const maxDiscount = Number(it && it.maxDiscountAmount) || 0;
+            return {
+              _key: keyOf('c', i, it && (it.templateId || it.code)),
+              name: (it && it.name) || '',
+              amountText:
+                percent > 0
+                  ? (percent / 10).toFixed(percent % 10 === 0 ? 0 : 1) + '折'
+                  : '¥' + api.fen2yuan(it && it.discountAmount),
+              thresholdText:
+                threshold > 0 ? '满 ¥' + api.fen2yuan(threshold) + ' 可用' : '无门槛',
+              meta: [
+                it && it.typeLabel,
+                maxDiscount > 0 ? '封顶 ¥' + api.fen2yuan(maxDiscount) : '',
+                it && it.expireAt ? '有效期至 ' + api.shortTime(it.expireAt) : '',
+              ]
+                .filter(Boolean)
+                .join(' · '),
+              statusLabel: (it && it.statusLabel) || '',
+              miniPath: (it && it.miniPath) || '',
+            };
+          }),
+          actions: formatActions(card.actions),
+        };
+      }
+
+      if (card.type === 'order_list') {
+        return {
+          _key: keyOf('order', index),
+          type: 'order_list',
+          title: card.title || '我的订单',
+          items: (card.items || []).map((it, i) => ({
+            _key: keyOf('o', i, it && it.orderNo),
+            // 只露尾号：完整订单号对用户没有意义，还容易被截图带出去
+            tail:
+              it && it.orderNo && it.orderNo.length > 6
+                ? it.orderNo.slice(-6)
+                : (it && it.orderNo) || '',
+            statusText: (it && it.statusText) || (it && it.status) || '',
+            summary: (it && it.itemsSummary) || '（无商品明细）',
+            amountText: '¥' + api.fen2yuan(it && it.amountCents),
+            timeText: api.shortTime(it && it.createdAt),
+            miniPath: (it && it.miniPath) || '',
+          })),
+          actions: formatActions(card.actions),
+        };
+      }
+
+      if (card.type === 'action_grid') {
+        return {
+          _key: keyOf('grid', index),
+          type: 'action_grid',
+          title: card.title || '快捷入口',
+          items: (card.items || []).map((it, i) => ({
+            _key: keyOf('g', i, it && it.label),
+            label: (it && it.label) || '',
+            miniPath: (it && it.miniPath) || '',
+          })),
+        };
+      }
+
+      // 未知卡片类型：整条丢掉（新卡片由前端发版支持，不要渲染半张空壳）
+      return null;
+    })
+    .filter(Boolean);
 }
 
 Page({
@@ -41,14 +218,29 @@ Page({
    */
   _clarifiedSent: false,
 
+  /**
+   * 服务端会话 ID（2026-10-29 · 阶段四）。
+   *
+   * <p>小程序没有 SSE，拿不到 meta 事件里的 sessionId，只能从非流式响应取。
+   * 存在实例上而不是 data 里：它不参与渲染，只随请求带回；放进 data 会让
+   * 每次 setData 白搬一个字符串。
+   */
+  _sessionId: '',
+
   onLoad(query) {
     this.setData({ navTotal: getNavMetrics().navTotalHeight });
-    const initial = [this.greeting()];
+    // 先恢复上一次的会话（切页/重新进入不应该丢上下文）
+    const stored = loadStoredSession();
+    this._sessionId = (stored && stored.sessionId) || '';
+    const initial = stored && stored.messages.length ? stored.messages : [this.greeting()];
     if (query && query.prefill) {
       // 从商品详情「问问 AI」进来：预填问题，同时保留问候语（否则首屏是空的）
       this.setData({ input: decodeURIComponent(query.prefill) });
     }
-    this.setData({ messages: initial });
+    this.setData({
+      messages: initial,
+      scrollInto: initial.length ? 'msg-' + initial[initial.length - 1].id : '',
+    });
     this.bindKeyboard();
     this.checkCapability();
   },
@@ -149,9 +341,36 @@ Page({
       .slice(-HISTORY_LIMIT)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // 当前页面路径（服务端据此知道「用户刚从哪来」，并按白名单校验）
+    let pagePath = '';
+    try {
+      const pages = getCurrentPages();
+      const current = pages[pages.length - 1];
+      pagePath = (current && current.route) || '';
+      // 把页面参数也带上（如商品详情的 id）：服务端只保留路径部分，
+      // 但「从哪个商品页来」这类上下文对意图判断有价值
+      const options = (current && current.options) || {};
+      const query = Object.keys(options)
+        .filter((key) => options[key] !== undefined && options[key] !== null)
+        .map((key) => encodeURIComponent(key) + '=' + encodeURIComponent(String(options[key])))
+        .join('&');
+      if (query) {
+        pagePath += '?' + query;
+      }
+    } catch (e) {
+      pagePath = '';
+    }
+
     return api.ai
-      .chat(text, history, this._clarifiedSent)
+      .chat(text, history, this._clarifiedSent, pagePath, this._sessionId || undefined)
       .then((res) => {
+        // 记下服务端会话 ID：下一轮带回，槽位/摘要/记忆才连得上
+        if (res.sessionId) {
+          this._sessionId = res.sessionId;
+          // 立即落盘：用户可能在收到回复后马上切页
+          persistSession(this);
+        }
+
         // 服务端这一轮是「反问」而不是「回答」：把选项渲染成可点 chips，
         // 并记住「已澄清过」——避免它下一轮又问一次（一次对话最多问一次）
         const clarify = res.clarify;
@@ -165,10 +384,20 @@ Page({
           recs: (res.recommendations || []).map((r) =>
             Object.assign({}, r, { priceText: api.fen2yuan(r.minPrice) })
           ),
+          // 阶段四：服务端装配的卡片（通知/券/订单/宫格），点击走 utils/navigate 统一跳转
+          cards: formatCards(res.cards),
+          // 游客轮次用尽 / 功能需登录：卡片下方给一个「去登录」入口
+          needLogin: !!res.loginUrl,
           options: clarify && clarify.options ? clarify.options : null,
           // 相关追问：由本轮候选推导，候选为空时服务端不给（此时任何追问点下去都是空结果）
           followUps: res.followUps && res.followUps.length ? res.followUps : null,
         });
+
+        // 红点联动（阶段四）：AI 展示并标记了已读 → 用服务端下发的补丁直接刷新
+        // tabBar 角标。补丁是那次操作算出的权威值，再发一次 unread-summary 反而可能对不上。
+        if (res.badgePatch) {
+          unread.refresh();
+        }
       })
       .catch((err) => {
         this.push({
@@ -201,9 +430,34 @@ Page({
       // 滚动锚点用最后一条的 id（下标在裁剪后会漂移）
       scrollInto: 'msg-' + messages[messages.length - 1].id,
     });
+    persistSession(this);
   },
 
   goDetail(e) {
     wx.navigateTo({ url: '/pages/product/product?id=' + e.currentTarget.dataset.id });
+  },
+
+  /**
+   * 卡片 / 通知条目 / 宫格按钮点击（阶段四）。
+   *
+   * <p>miniPath 全部来自服务端装配（已过 RouteWhitelist）。这里统一交给
+   * utils/navigate 处理「TabBar 页面走 switchTab、栈满降级」两件事 ——
+   * 页面自己调 wx.navigateTo 会在通知中心（tabBar 页）上直接失败。
+   *
+   * <p>没有 miniPath 的条目（例如纯公告在网页端没有落地页）只展示不跳转，
+   * 静默忽略，不弹「页面打不开」。
+   */
+  tapCard(e) {
+    const path = e.currentTarget.dataset.path;
+    if (!path) return;
+    nav.navigate(path).catch(() => {});
+  },
+
+  /**
+   * 「去登录」：小程序的登录页是 pages/login/login。
+   * 服务端下发的 loginUrl 是 **Web 路径**（/login?next=…），不能直接给小程序用。
+   */
+  goLogin() {
+    nav.navigate('pages/login/login').catch(() => {});
   },
 });

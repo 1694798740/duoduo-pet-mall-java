@@ -147,6 +147,18 @@ export const AdminProductHistoryPage: React.FC = () => {
           width={260}
         />
         <span className="small muted">共 {total} 条记录</span>
+        <a
+          className="btn btn-sm btn-ghost"
+          style={{ marginLeft: 'auto' }}
+          href={adminApi.productHistoryExportUrl({
+            spuId: spuId.trim() || undefined,
+            sellerId: sellerId.trim() || undefined,
+            event: event || undefined,
+            keyword: keyword || undefined,
+          })}
+        >
+          导出 CSV
+        </a>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}

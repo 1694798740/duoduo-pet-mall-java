@@ -21,6 +21,7 @@ import { useConfirm } from '@duoduo/shared/components/confirm';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
+import { CatalogImportModal } from './CatalogImportModal';
 
 /**
  * 顶级类目的哨兵 parentId。
@@ -66,6 +67,8 @@ export const AdminCategoriesPage: React.FC = () => {
 
   const [editing, setEditing] = useState<CategoryNode | null>(null);
   const [creating, setCreating] = useState(false);
+  /** 第三批 · 第 8 项：批量导入（模板 → dry-run → 正式导入） */
+  const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState<CategorySaveRequest>(emptyForm);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -278,7 +281,18 @@ export const AdminCategoriesPage: React.FC = () => {
 
       <div className="row-between row-wrap" style={{ marginBottom: 8 }}>
         <span className="small muted">共 {items.length} 个类目（两级树，扁平展示）</span>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建类目</button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              window.location.href = adminApi.categoryExportUrl();
+            }}
+          >
+            导出 CSV
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setImportOpen(true)}>批量导入</button>
+          <button className="btn btn-primary btn-sm" onClick={openCreate}>+ 新建类目</button>
+        </div>
       </div>
 
       <div className="list-toolbar">
@@ -509,6 +523,25 @@ export const AdminCategoriesPage: React.FC = () => {
           </div>
         ) : null}
       </Modal>
+
+      {/* 第三批 · 第 8 项：主数据导入必须走 dry-run，先看清逐行计划再落库 */}
+      <CatalogImportModal
+        open={importOpen}
+        title="批量导入类目（CSV / xlsx）"
+        hint={
+          <>
+            列顺序：名称、父类目、排序号、图标。父类目填 <b>ID</b> 或<b>顶级类目名称</b>，
+            留空或 0 表示顶级；只支持两级，本文件新建的父类目行请写在子类目之前。
+            同名且同父类目视为已存在，只更新排序号 / 图标（留空列 = 不改）。
+          </>
+        }
+        template={adminApi.categoryImportTemplate}
+        templateXlsxUrl={adminApi.categoryImportTemplateXlsxUrl()}
+        dryRun={adminApi.checkCategoryImport}
+        submit={adminApi.importCategories}
+        onImported={reload}
+        onClose={() => setImportOpen(false)}
+      />
     </div>
   );
 };

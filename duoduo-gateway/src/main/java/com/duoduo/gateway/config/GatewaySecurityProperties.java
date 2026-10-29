@@ -121,6 +121,9 @@ public class GatewaySecurityProperties {
             // 「需登录才能做的操作」（下单/领券/加购）不由网关拦截，而是靠导购回复里的文案引导登录——
             // 它本身不写任何业务数据，故放行不构成越权面。
             "/api/duoduo/chat",
+            // 2026-10-28：SSE 流式入口同样是「未决定买不买」的咨询场景。
+            // /api/duoduo/confirm 刻意不相对于此：加购是写操作，必须登录。
+            "/api/duoduo/chat/stream",
             "/api/duoduo/capabilities",
             // 限时秒杀（A14）：活动浏览与领券中心同性质 —— 未登录也要看到「正在抢什么」才有导流意义。
             // 只放行 activities 两级**只读**路径；POST /api/seckill/orders 在路径之外，仍由网关强制登录
@@ -325,6 +328,30 @@ public class GatewaySecurityProperties {
 
     public void setAdminIpWhitelist(List<String> adminIpWhitelist) {
         this.adminIpWhitelist = adminIpWhitelist;
+    }
+
+    // ---------------- E-06 · 商家端 IP 白名单 ----------------
+
+    /**
+     * 是否启用「商家端 IP 白名单」判定（作用于 {@code /api/seller/**}）。**默认开启**。
+     *
+     * <h2>为什么与后台白名单的默认值相反</h2>
+     * 后台那份是网关里的一份静态名单：开关打开而没有名单 = 拒绝全部，所以默认必须关。
+     * 商家这份的名单在 Redis 里，<b>键不存在就是「这家店没启用」</b> ——
+     * 默认开启对没配过的商家没有任何影响（一次 Redis GET），却能让配过白名单的商家立刻受保护。
+     * 若默认关，就会出现「店主在页面上开了白名单，实际什么都没拦」的静默失效，
+     * 那是比「默认关」更糟的方向。
+     *
+     * <p>保留开关同样是为了处置：Redis 抖动或误配时改一行配置重启即可退回旧行为。
+     */
+    private boolean merchantIpWhitelistEnabled = true;
+
+    public boolean isMerchantIpWhitelistEnabled() {
+        return merchantIpWhitelistEnabled;
+    }
+
+    public void setMerchantIpWhitelistEnabled(boolean merchantIpWhitelistEnabled) {
+        this.merchantIpWhitelistEnabled = merchantIpWhitelistEnabled;
     }
 
     public boolean isApiMetricsEnabled() {

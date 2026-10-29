@@ -382,6 +382,44 @@ public class SupportService {
                                                  boolean onlyUnread, int page, int pageSize) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize, MAX_PAGE_SIZE));
+        LambdaQueryWrapper<SupportSessionEntity> wrapper = sellerSessionWrapper(sellerId, status, filter, onlyUnread);
+        Page<SupportSessionEntity> result = sessionMapper.selectPage(new Page<>(p, size), wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
+                .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId(), s.getAssigneeId()))
+                .toList());
+        List<SessionView> views = result.getRecords().stream()
+                .map(s -> toSessionView(s, briefs,
+                        loadStoreNames(result.getRecords().stream()
+                                .map(SupportSessionEntity::getSellerId).toList()),
+                        false)).toList();
+        return PageResult.of(views, result.getTotal(), p, size);
+    }
+
+    /**
+     * 商家客服会话导出（2026-10-28 · 矩阵 P3）：与列表同筛选，最多 5 万行。
+     *
+     * <p>只导出会话元信息（买家、未读数、状态、处理人、最后消息时间），
+     * <b>不含聊天正文</b> —— 客服沟通内容是买卖双方隐私，导出报表不需要也不应该带走。
+     * 超过上限明确 409，不静默截断，避免运营按一份少行的表做排班。
+     */
+    public List<SessionView> exportForSeller(Long sellerId, String status, String filter, boolean onlyUnread) {
+        LambdaQueryWrapper<SupportSessionEntity> wrapper = sellerSessionWrapper(sellerId, status, filter, onlyUnread);
+        long total = sessionMapper.selectCount(wrapper);
+        if (total > 50_000) {
+            throw BizException.conflict("会话超过 5 万条，请先按状态或筛选条件缩小范围");
+        }
+        List<SupportSessionEntity> rows = sessionMapper.selectList(wrapper.last("LIMIT 50000"));
+        Map<Long, UserBrief> briefs = loadBriefs(rows.stream()
+                .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId(), s.getAssigneeId()))
+                .toList());
+        Map<Long, String> storeNames = loadStoreNames(rows.stream()
+                .map(SupportSessionEntity::getSellerId).toList());
+        return rows.stream().map(s -> toSessionView(s, briefs, storeNames, false)).toList();
+    }
+
+    /** 商家会话查询条件：列表与导出共用，防止两处筛选口径漂移。 */
+    private LambdaQueryWrapper<SupportSessionEntity> sellerSessionWrapper(Long sellerId, String status,
+                                                                         String filter, boolean onlyUnread) {
         LambdaQueryWrapper<SupportSessionEntity> wrapper = new LambdaQueryWrapper<SupportSessionEntity>()
                 .eq(SupportSessionEntity::getSellerId, sellerId)
                 .orderByDesc(SupportSessionEntity::getLastMessageAt)
@@ -399,16 +437,7 @@ public class SupportService {
             case "CLOSED" -> wrapper.eq(SupportSessionEntity::getStatus, "CLOSED");
             default -> { /* ALL */ }
         }
-        Page<SupportSessionEntity> result = sessionMapper.selectPage(new Page<>(p, size), wrapper);
-        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
-                .flatMap(s -> java.util.stream.Stream.of(s.getSellerId(), s.getUserId(), s.getAssigneeId()))
-                .toList());
-        List<SessionView> views = result.getRecords().stream()
-                .map(s -> toSessionView(s, briefs,
-                        loadStoreNames(result.getRecords().stream()
-                                .map(SupportSessionEntity::getSellerId).toList()),
-                        false)).toList();
-        return PageResult.of(views, result.getTotal(), p, size);
+        return wrapper;
     }
 
     /** 兼容旧签名的重载（内部脚本/旧调用点不传 filter） */

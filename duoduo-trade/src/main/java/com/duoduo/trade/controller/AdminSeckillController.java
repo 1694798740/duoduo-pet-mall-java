@@ -1,15 +1,20 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.audit.AuditAction;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.trade.dto.SeckillDtos.ActivityView;
+import com.duoduo.trade.dto.SeckillDtos.BatchToggleRequest;
 import com.duoduo.trade.dto.SeckillDtos.CreateActivityRequest;
 import com.duoduo.trade.dto.SeckillDtos.EditActivityRequest;
 import com.duoduo.trade.dto.SeckillDtos.ToggleRequest;
+import com.duoduo.common.web.CsvExport;
+import com.duoduo.trade.dto.SeckillDtos.SkuView;
 import com.duoduo.trade.service.SeckillService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,6 +47,54 @@ public class AdminSeckillController {
         return ApiResponse.ok(seckillService.listActivitiesForAdmin());
     }
 
+    /**
+     * 秒杀活动导出（矩阵第二批）：一行一个 SKU。
+     *
+     * <p>列表是「活动 + 内嵌 SKU」结构，CSV 只能平铺 —— 一场活动有 N 个 SKU 就出 N 行，
+     * 活动级字段重复出现；宁可冗余也不要把 SKU 塞进一个单元格（那样无法再筛选/透视）。
+     */
+    @GetMapping("/activities/export")
+    public void export(HttpServletResponse response) throws java.io.IOException {
+        OperatorGuard.requireOperator();
+        List<ActivityView> activities = seckillService.listActivitiesForAdmin();
+        List<List<String>> rows = activities.stream().flatMap(a -> {
+            String status = a.enabled() ? "已上架" : "已下架";
+            if (a.skus() == null || a.skus().isEmpty()) {
+                return java.util.stream.Stream.of(row(a, status, null));
+            }
+            return a.skus().stream().map(s -> row(a, status, s));
+        }).toList();
+        CsvExport.write(response, "秒杀活动-" + CsvExport.stamp(), HEADERS, rows);
+    }
+
+    private static final List<String> HEADERS = List.of(
+            "活动ID", "活动标题", "上架状态", "时段", "开始时间", "结束时间",
+            "商品ID", "SKU ID", "商品标题", "规格", "秒杀价(元)", "原价(元)",
+            "活动配额", "剩余", "限购");
+
+    private static List<String> row(ActivityView activity, String status, SkuView sku) {
+        return List.of(
+                activity.id() == null ? "" : String.valueOf(activity.id()),
+                text(activity.title()),
+                status,
+                text(activity.phase()),
+                CsvExport.beijingTime(activity.startAt()),
+                CsvExport.beijingTime(activity.endAt()),
+                sku == null || sku.spuId() == null ? "" : String.valueOf(sku.spuId()),
+                sku == null || sku.skuId() == null ? "" : String.valueOf(sku.skuId()),
+                sku == null ? "" : text(sku.spuTitle()),
+                sku == null ? "" : text(sku.specText()),
+                sku == null || sku.seckillPrice() == null ? "" : CsvExport.yuan(sku.seckillPrice()),
+                sku == null || sku.originalPrice() == null ? "" : CsvExport.yuan(sku.originalPrice()),
+                sku == null || sku.totalStock() == null ? "" : String.valueOf(sku.totalStock()),
+                sku == null || sku.availableStock() == null ? "" : String.valueOf(sku.availableStock()),
+                sku == null || sku.perLimit() == null ? "" : String.valueOf(sku.perLimit()));
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
     /** 创建秒杀活动（原价缺省取商品当前售价；余量自动装载进 Redis） */
     @PostMapping("/activities")
     @Audited(action = AuditAction.SECKILL_CREATE)
@@ -58,6 +111,21 @@ public class AdminSeckillController {
         AuditTrail.target(id, "SECKILL");
         AuditTrail.change("enabled=" + (!request.enabled()), "enabled=" + request.enabled());
         return ApiResponse.ok(seckillService.toggle(id, request.enabled()));
+    }
+
+    /**
+     * 批量上下架（2026-10-28 · 批量操作第一批）。
+     *
+     * <p>逐条结果：某场活动不存在只让该条失败，其余照常上/下架。
+     * 审计只记一条总数的摘要（目标由 {@code SeckillService#toggle} 逐条写）。
+     */
+    @PostMapping("/activities/batch-status")
+    @Audited(action = AuditAction.SECKILL_STATUS)
+    public ApiResponse<BatchDtos.Result> batchStatus(@Valid @RequestBody BatchToggleRequest request) {
+        OperatorGuard.requireOperator();
+        AuditTrail.note("批量" + (request.enabled() ? "上架" : "下架") + " "
+                + request.ids().size() + " 场秒杀活动");
+        return ApiResponse.ok(seckillService.toggleBatch(request.ids(), request.enabled()));
     }
 
     /**

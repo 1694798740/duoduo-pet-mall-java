@@ -67,6 +67,14 @@ duoduo:
     jwt-secret: ${DUODUO_JWT_SECRET:duoduo-local-dev-secret-please-change-in-production-32b}
     access-token-ttl: 15m
     refresh-token-ttl: 7d
+  auth:
+    # Cookie 生产加固（2026-10-28）。
+    #   · cookie-secure：HTTPS 生产环境必须 COOKIE_SECURE=true；
+    #     本地 http://localhost 必须保持 false，否则浏览器直接丢弃带 Secure 的 Cookie。
+    #   · cookie-same-site：默认 Lax（跨站 POST 不带 Cookie）；三端同站不同子域不受影响。
+    #     SameSite=None 必须搭配 Secure，配错会按 Lax 处理，避免登录态静默失效。
+    cookie-secure: ${COOKIE_SECURE:false}
+    cookie-same-site: ${COOKIE_SAME_SITE:Lax}
   id:
     datacenter-id: ${ID_DATACENTER:1}
     worker-id: ${ID_WORKER:1}

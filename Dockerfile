@@ -23,10 +23,10 @@ ENV APP_PORT=${APP_PORT} \
 
 RUN addgroup -g 10001 duoduo && adduser -D -u 10001 -G duoduo duoduo
 
-# 上传目录（A15）与入驻材料私有目录（E12）：预建并归属运行用户 ——
+# 上传目录（A15）与入驻材料私有目录（E12）与异步导出目录（矩阵第 9 项）：预建并归属运行用户 ——
 # 命名卷首次挂载为空卷时，Docker 会把镜像内挂载点目录的属主复制进卷，
 # 否则卷归 root，非 root 进程写盘直接 AccessDenied（E12 首部署踩的就是这个）。
-RUN mkdir -p /data/uploads /data/merchant-materials && chown -R duoduo:duoduo /data
+RUN mkdir -p /data/uploads /data/merchant-materials /data/exports && chown -R duoduo:duoduo /data
 
 WORKDIR /app
 COPY ${JAR_FILE} /app/app.jar

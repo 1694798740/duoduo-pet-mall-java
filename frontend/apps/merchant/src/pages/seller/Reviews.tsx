@@ -140,6 +140,17 @@ export const SellerReviewsPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的评价 {data ? data.total : 0} 条</span>
         ) : null}
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={() => {
+            window.location.href = reviewApi.sellerExportUrl({
+              replied: tab === '' ? undefined : tab === 'true',
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}

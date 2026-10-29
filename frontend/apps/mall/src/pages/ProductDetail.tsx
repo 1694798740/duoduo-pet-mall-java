@@ -17,7 +17,7 @@ import { RichTextView } from '@duoduo/shared/components/RichText';
 import { detailImages, gallery } from '@duoduo/api-sdk/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { addressApi, cartApi, productApi, reviewApi, seckillApi } from '@duoduo/api-sdk/endpoints';
+import { addressApi, cartApi, coinsApi, productApi, reviewApi, seckillApi } from '@duoduo/api-sdk/endpoints';
 import type { ProductDetail, ReviewSummary } from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { CreditBadge } from '@duoduo/shared/components/CreditBadge';
@@ -90,6 +90,15 @@ export const ProductDetailPage: React.FC = () => {
 
   const fetcher = useCallback(() => productApi.detail(spuId), [spuId]);
   const { data, loading, error, reload } = useAsync<ProductDetail>(fetcher, hasSpuId, [spuId]);
+
+  // 多多币任务：商品详情停留满 15 秒计一次「浏览商品」（服务端按 spuId 每日去重）
+  useEffect(() => {
+    if (!user || !data || !spuId) return;
+    const timer = window.setTimeout(() => {
+      void coinsApi.reportTask({ taskCode: 'BROWSE_PRODUCT', bizId: spuId, dwellSeconds: 15 }).catch(() => {});
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, [user, data, spuId]);
 
   // 全站数据变更广播（2026-10-19）：别处发生写操作（下单/取消/支付）影响本页的
   // 库存与可售状态时立刻重拉 —— 不再等用户离开再回来或手动刷新。

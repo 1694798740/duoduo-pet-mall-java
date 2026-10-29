@@ -54,13 +54,17 @@ public class CartService {
     private final CartItemMapper cartItemMapper;
     private final ProductGateway productGateway;
     private final SnowflakeIdGenerator idGenerator;
+    /** 多多币任务事件（R-P1 第三轮）：加购成功即上报，失败不影响加购 */
+    private final com.duoduo.trade.client.CoinGateway coinGateway;
 
     public CartService(CartItemMapper cartItemMapper,
                        ProductGateway productGateway,
-                       SnowflakeIdGenerator idGenerator) {
+                       SnowflakeIdGenerator idGenerator,
+                       com.duoduo.trade.client.CoinGateway coinGateway) {
         this.cartItemMapper = cartItemMapper;
         this.productGateway = productGateway;
         this.idGenerator = idGenerator;
+        this.coinGateway = coinGateway;
     }
 
     // ---------------- 查询 ----------------
@@ -198,6 +202,8 @@ public class CartService {
         CartItemEntity saved = findBySku(userId, request.skuId());
         CartItemEntity result = saved != null ? saved : row;
         checkMergedLimit(result, snap);
+        // 加购成功 → 任务事件（best-effort；事件幂等，重复加购不会重复发奖）
+        coinGateway.taskEvent(userId, "CART_ADD", String.valueOf(request.skuId()));
         return toView(result, snap);
     }
 

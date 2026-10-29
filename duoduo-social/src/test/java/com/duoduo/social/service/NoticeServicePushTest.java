@@ -5,6 +5,7 @@ import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
 import com.duoduo.social.dto.SocialDtos.NoticePushItem;
 import com.duoduo.social.entity.SocialNoticeEntity;
+import com.duoduo.social.mapper.SocialNoticeDeletedMapper;
 import com.duoduo.social.mapper.SocialNoticeMapper;
 import com.duoduo.social.mapper.SocialNoticeReadMapper;
 import org.junit.jupiter.api.Test;
@@ -38,8 +39,10 @@ class NoticeServicePushTest {
 
     private final SocialNoticeMapper noticeMapper = mock(SocialNoticeMapper.class);
     private final SocialNoticeReadMapper readMapper = mock(SocialNoticeReadMapper.class);
+    /** 删除集合（2026-10-27）：本单测只覆盖推送路径，不触发删除逻辑，mock 即可 */
+    private final SocialNoticeDeletedMapper deletedMapper = mock(SocialNoticeDeletedMapper.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
-    private final NoticeService service = new NoticeService(noticeMapper, readMapper, idGenerator);
+    private final NoticeService service = new NoticeService(noticeMapper, readMapper, deletedMapper, idGenerator);
 
     private static NoticePushItem item(long userId, String category, String jumpPage) {
         return new NoticePushItem(userId, category, "标题", "正文", "ORDER_PLACED", "9001", jumpPage);

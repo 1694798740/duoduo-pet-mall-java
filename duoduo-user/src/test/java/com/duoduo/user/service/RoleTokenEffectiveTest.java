@@ -76,7 +76,7 @@ class RoleTokenEffectiveTest {
 
     private final AuthService authService = new AuthService(userMapper, refreshTokenMapper, passwordEncoder,
             jwt, idGenerator, wechatGateway, 60, merchantMapper, merchantMemberMapper, permVersionPublisher,
-            twoFactorService);
+            twoFactorService, mock(CoinTaskService.class));
     /** 控制器多了一个宠物档案依赖（第五十八轮 S1），这两条断言用不到它 */
     private final PetProfileService petProfileService = mock(PetProfileService.class);
 

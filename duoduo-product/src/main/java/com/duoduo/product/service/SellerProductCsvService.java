@@ -1,5 +1,6 @@
 package com.duoduo.product.service;
 
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductCsvView;
@@ -8,12 +9,14 @@ import com.duoduo.product.dto.ProductDtos.SellerProductImportRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductImportResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductView;
 import com.duoduo.product.dto.ProductDtos.SellerSkuInput;
+import com.duoduo.product.dto.ProductDtos.SellerSkuPriceStockRequest;
+import com.duoduo.product.dto.ProductDtos.SkuPriceStockInput;
 import com.duoduo.product.support.ProductCsv;
+import com.duoduo.product.support.SpreadsheetRows;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,35 +64,37 @@ public class SellerProductCsvService {
     }
 
     /**
-     * 导入 CSV。非卖家在解析之前就被拦下（403），避免「文件格式正确却整批失败」的误导。
+     * 导入商品文件（CSV 文本或 xlsx Base64）。非卖家在解析之前就被拦下（403），
+     * 避免「文件格式正确却整批失败」的误导。
      */
     public SellerProductImportResultView importCsv(SellerProductImportRequest request) {
         sellerProductService.requireSellerAccess();
         String content = request == null ? null : request.content();
+        String fileName = request == null ? null : request.fileName();
         if (content == null || content.isBlank()) {
-            throw BizException.validation("导入内容为空，请选择 CSV 文件");
-        }
-        if (content.getBytes(StandardCharsets.UTF_8).length > MAX_CONTENT_BYTES) {
-            throw BizException.validation("文件过大（上限 2MB），请拆分后导入");
+            throw BizException.validation("导入内容为空，请选择 CSV 或 xlsx 文件");
         }
 
         List<ProductCsv.Row> rows;
         try {
-            rows = ProductCsv.parse(content);
+            if (SpreadsheetRows.byteSize(content, fileName) > MAX_CONTENT_BYTES) {
+                throw BizException.validation("文件过大（上限 2MB），请拆分后导入");
+            }
+            rows = SpreadsheetRows.parse(content, fileName);
         } catch (IllegalArgumentException ex) {
             throw BizException.validation(ex.getMessage());
         }
         if (rows.isEmpty()) {
-            throw BizException.validation("CSV 内容为空");
+            throw BizException.validation("文件内容为空");
         }
         if (!ProductCsv.matchesHeader(rows.get(0).cells())) {
-            throw BizException.validation("CSV 表头与模板不一致，请先下载导入模板（"
+            throw BizException.validation("文件表头与模板不一致，请先下载导入模板（"
                     + ProductCsv.COLUMN_COUNT + " 列，首列为「分组键」）");
         }
 
         List<ProductCsv.Row> dataRows = rows.subList(1, rows.size());
         if (dataRows.isEmpty()) {
-            throw BizException.validation("CSV 只有表头，没有商品数据");
+            throw BizException.validation("文件只有表头，没有商品数据");
         }
         if (dataRows.size() > MAX_DATA_ROWS) {
             throw BizException.validation("单次最多导入 " + MAX_DATA_ROWS + " 行（当前 " + dataRows.size() + " 行）");
@@ -135,6 +140,179 @@ public class SellerProductCsvService {
         }
         log.info("CSV 导入完成：分组 {}，成功 {}，失败 {}", groups.size(), success, groups.size() - success);
         return new SellerProductImportResultView(groups.size(), success, groups.size() - success, items);
+    }
+
+    // ---------------- 价格 / 库存导入（第三批 · 第 7 项） ----------------
+
+    /** 价格库存模板列（顺序即契约；改动必须同步前端说明与冒烟） */
+    public static final List<String> PRICE_STOCK_COLUMNS = List.of("商品ID", "规格ID", "价格(元)", "库存");
+
+    /** xlsx 模板「说明」页：价格库存模板没有示例行，规则只能写在说明里 */
+    public static final List<String> PRICE_STOCK_NOTES = List.of(
+            "1. 每行一个规格：商品ID + 规格ID 必须是自己店铺里真实存在的 ID。",
+            "2. 价格填元、最多两位小数；库存填非负整数。",
+            "3. 价格和库存至少填一项，留空表示不改该列。",
+            "4. 单次最多 500 行，文件最大 2MB。",
+            "5. ID 列请保持文本格式：Excel 会把 19 位数字转成科学计数法并丢精度。");
+    private static final int PRICE_STOCK_COLUMN_COUNT = PRICE_STOCK_COLUMNS.size();
+    /** 与商品导入同口径：每次最多 500 行；更大的批量应走异步任务 */
+    private static final int MAX_PRICE_STOCK_ROWS = 500;
+
+    /**
+     * 价格库存模板：只有表头，没有示例行。
+     *
+     * <p>商品导入模板可以带示例行（内容都是自己编的），价格库存模板不行 ——
+     * 示例行必须写真实的 spuId/skuId 才可能成功，随便填一个只会让用户
+     * 把「第 2 行失败」当成模板坏了。列名本身已经说明了单位与含义。
+     */
+    public SellerProductCsvView priceStockTemplate() {
+        sellerProductService.requirePriceStockAccess();
+        String content = "\uFEFF" + String.join(",", PRICE_STOCK_COLUMNS) + "\r\n";
+        return new SellerProductCsvView("price-stock-import-template.csv", content, 0, 0);
+    }
+
+    /**
+     * 导入价格 / 库存：逐行调用 {@link SellerProductService#updateSkuPriceStock}。
+     *
+     * <p><b>为什么逐行调用而不是自己写 UPDATE</b>：改价是一条带规则的写路径 ——
+     * 归属、店员权限、价格上限、库存非负、运营代改第三方商品的工单门禁，
+     * 以及改完后重算 {@code t_spu.min_price/max_price}。导入只是「另一个入口」，
+     * 不是「另一套规则」；在任何一条上分叉，都会出现「页面改不了、表格能改进去」。
+     *
+     * <p>逐行而不是按商品合并：一行 = 一个规格的一次改动，逐行调用才能给出
+     * 「第几行错、为什么错」的精确结果；部分成功不回滚（与商品导入一致）。
+     *
+     * <p>价格为元、最多两位小数；价格与库存至少填一项，留空表示不改该项。
+     */
+    public BatchDtos.Result importPriceStock(SellerProductImportRequest request) {
+        sellerProductService.requirePriceStockAccess();
+        String content = request == null ? null : request.content();
+        String fileName = request == null ? null : request.fileName();
+        if (content == null || content.isBlank()) {
+            throw BizException.validation("导入内容为空，请选择 CSV 或 xlsx 文件");
+        }
+
+        List<ProductCsv.Row> rows;
+        try {
+            if (SpreadsheetRows.byteSize(content, fileName) > MAX_CONTENT_BYTES) {
+                throw BizException.validation("文件过大（上限 2MB），请拆分后导入");
+            }
+            rows = SpreadsheetRows.parse(content, fileName);
+        } catch (IllegalArgumentException ex) {
+            throw BizException.validation(ex.getMessage());
+        }
+        if (rows.isEmpty()) {
+            throw BizException.validation("文件内容为空");
+        }
+        if (!matchesPriceStockHeader(rows.get(0).cells())) {
+            throw BizException.validation("文件表头与模板不一致，请先下载导入模板（"
+                    + PRICE_STOCK_COLUMN_COUNT + " 列：" + String.join(" / ", PRICE_STOCK_COLUMNS) + "）");
+        }
+        List<ProductCsv.Row> dataRows = rows.subList(1, rows.size());
+        if (dataRows.isEmpty()) {
+            throw BizException.validation("文件只有表头，没有可导入的数据");
+        }
+        if (dataRows.size() > MAX_PRICE_STOCK_ROWS) {
+            throw BizException.validation("单次最多导入 " + MAX_PRICE_STOCK_ROWS + " 行（当前 " + dataRows.size() + " 行）");
+        }
+
+        List<BatchDtos.Item> items = new ArrayList<>(dataRows.size());
+        int success = 0;
+        for (ProductCsv.Row row : dataRows) {
+            String lineId = String.valueOf(row.lineNo());
+            try {
+                PriceStockRow parsed = priceStockRow(row);
+                sellerProductService.updateSkuPriceStock(parsed.spuId(),
+                        new SellerSkuPriceStockRequest(List.of(
+                                new SkuPriceStockInput(parsed.skuId(), parsed.priceCents(), parsed.stock()))));
+                success++;
+                items.add(new BatchDtos.Item(lineId, true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(lineId, false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (IllegalArgumentException ex) {
+                items.add(new BatchDtos.Item(lineId, false, "VALIDATION_ERROR", ex.getMessage()));
+            } catch (Exception ex) {
+                log.warn("价格库存导入第 {} 行失败：{}", row.lineNo(), ex.toString());
+                items.add(new BatchDtos.Item(lineId, false, "INTERNAL_ERROR", "导入失败，请核对该行后重试"));
+            }
+        }
+        log.info("价格库存导入完成：{} 行，成功 {}，失败 {}", dataRows.size(), success, dataRows.size() - success);
+        return new BatchDtos.Result(dataRows.size(), success, dataRows.size() - success, items, List.of());
+    }
+
+    /** 解析后的一行：价格与库存都可为 null（空 = 不改该项），但不会同时为 null。 */
+    private record PriceStockRow(Long spuId, Long skuId, Long priceCents, Integer stock) {
+    }
+
+    /** 价格库存表头校验：允许末尾多出空白列，与商品导入同一口径。 */
+    private boolean matchesPriceStockHeader(List<String> cells) {
+        if (cells == null) {
+            return false;
+        }
+        for (int i = 0; i < PRICE_STOCK_COLUMN_COUNT; i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            if (!PRICE_STOCK_COLUMNS.get(i).equals(value == null ? "" : value.trim())) {
+                return false;
+            }
+        }
+        for (int i = PRICE_STOCK_COLUMN_COUNT; i < cells.size(); i++) {
+            if (cells.get(i) != null && !cells.get(i).isBlank()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private PriceStockRow priceStockRow(ProductCsv.Row row) {
+        List<String> cells = row.cells();
+        int lineNo = row.lineNo();
+        if (cells.size() > PRICE_STOCK_COLUMN_COUNT) {
+            throw new IllegalArgumentException("第 " + lineNo + " 行：列数超过模板（应为 "
+                    + PRICE_STOCK_COLUMN_COUNT + " 列，本行 " + cells.size() + " 列）");
+        }
+        Long spuId = parseId(text(cells, 0), "商品ID", lineNo);
+        Long skuId = parseId(text(cells, 1), "规格ID", lineNo);
+        String priceText = text(cells, 2);
+        String stockText = text(cells, 3);
+        if (priceText.isEmpty() && stockText.isEmpty()) {
+            throw new IllegalArgumentException("第 " + lineNo + " 行：价格和库存至少填写一项（不修改的列留空）");
+        }
+        Long priceCents = null;
+        if (!priceText.isEmpty()) {
+            try {
+                priceCents = ProductCsv.parsePriceCents(priceText);
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException("第 " + lineNo + " 行：" + ex.getMessage());
+            }
+        }
+        Integer stock = null;
+        if (!stockText.isEmpty()) {
+            try {
+                stock = Integer.valueOf(stockText);
+            } catch (NumberFormatException ex) {
+                throw new IllegalArgumentException("第 " + lineNo + " 行：库存必须是整数（" + stockText + "）");
+            }
+            if (stock < 0) {
+                throw new IllegalArgumentException("第 " + lineNo + " 行：库存不能为负数");
+            }
+        }
+        return new PriceStockRow(spuId, skuId, priceCents, stock);
+    }
+
+    private static Long parseId(String raw, String field, int lineNo) {
+        if (raw.isEmpty()) {
+            throw new IllegalArgumentException("第 " + lineNo + " 行：" + field + "不能为空");
+        }
+        long value;
+        try {
+            value = Long.parseLong(raw);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("第 " + lineNo + " 行：" + field + "必须是数字（" + raw + "）");
+        }
+        if (value <= 0) {
+            throw new IllegalArgumentException("第 " + lineNo + " 行：" + field + "必须是正整数（" + raw + "）");
+        }
+        return value;
     }
 
     /**

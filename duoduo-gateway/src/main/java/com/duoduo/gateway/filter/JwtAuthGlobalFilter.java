@@ -5,6 +5,7 @@ import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.security.ClientEntry;
 import com.duoduo.common.security.JwtTokenService;
 import com.duoduo.gateway.config.GatewaySecurityProperties;
+import com.duoduo.gateway.support.MerchantIpWhitelistChecker;
 import com.duoduo.gateway.support.PermVersionChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,17 +95,29 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      */
     private static final String ADMIN_PATH_PATTERN = "/api/admin/**";
 
+    /**
+     * E-06 · 受「商家 IP 白名单」约束的路径族。
+     *
+     * <p>只收窄 {@code /api/seller/**} —— 那是商家经营面的专属族（E8 已按入口收紧过），
+     * 买家与运营的路径不受任何影响。白名单是**店铺维度**的（键里带 merchantId），
+     * 因此同一台电脑上的多家店可以各配各的，不会互相牵连。
+     */
+    private static final String MERCHANT_PATH_PATTERN = "/api/seller/**";
+
     private final JwtTokenService jwtTokenService;
     private final GatewaySecurityProperties properties;
     private final PermVersionChecker permVersionChecker;
+    private final MerchantIpWhitelistChecker merchantIpWhitelistChecker;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     public JwtAuthGlobalFilter(JwtTokenService jwtTokenService,
                                GatewaySecurityProperties properties,
-                               PermVersionChecker permVersionChecker) {
+                               PermVersionChecker permVersionChecker,
+                               MerchantIpWhitelistChecker merchantIpWhitelistChecker) {
         this.jwtTokenService = jwtTokenService;
         this.properties = properties;
         this.permVersionChecker = permVersionChecker;
+        this.merchantIpWhitelistChecker = merchantIpWhitelistChecker;
     }
 
     @Override
@@ -239,6 +252,41 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         ServerHttpRequest mutated = builder.build();
 
         /*
+         * E-06 · 商家端 IP 白名单（店铺维度，默认开启，名单在 Redis）。
+         *
+         * 判定顺序刻意放在权限版本之前：IP 是「这个网络位置能不能进商家经营面」，
+         * 属于比权限更外层的边界；先拒绝不合规来源，再去读第二份 Redis 数据。
+         *
+         * 三个门：令牌有效、路径属于 /api/seller/**、令牌声明了 tid（没有店铺的账号不参与）。
+         * 与后台白名单一样**只看 TCP 对端地址**（peer），不看任何请求头。
+         */
+        if (shouldCheckMerchantIp(payload, path)) {
+            return merchantIpWhitelistChecker.allows(payload.tenantId(), peer).flatMap(ipOk -> {
+                if (!ipOk) {
+                    log.warn("网关拒绝不在白名单内的商家端访问 requestId={} path={} peer={} merchantId={}",
+                            requestId, path, peer, payload.tenantId());
+                    return merchantIpDenied(exchange);
+                }
+                return continueAfterGates(exchange, chain, mutated, payload, path, requestId);
+            });
+        }
+
+        return continueAfterGates(exchange, chain, mutated, payload, path, requestId);
+    }
+
+    /**
+     * 过了前面的门（认证 / 入口 / 后台 IP / 商家 IP）之后，还有 E17 权限版本校验。
+     *
+     * <p>抽成方法而不是继续内联：新增的商家 IP 判定需要「放行后继续走完剩下的门」，
+     * 若复制一份权限版本逻辑，日后任何一处改动都只改到一半。
+     */
+    private Mono<Void> continueAfterGates(ServerWebExchange exchange,
+                                          GatewayFilterChain chain,
+                                          ServerHttpRequest mutated,
+                                          JwtTokenService.TokenPayload payload,
+                                          String path,
+                                          String requestId) {
+        /*
          * E17 · 权限版本校验：令牌里带的版本 vs 该用户当前版本，不一致即 401。
          *
          * 触发条件是"令牌**声明了**版本"（pv 非空）。老令牌没有这个声明 → 不校验，
@@ -275,6 +323,20 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         }
 
         return chain.filter(exchange.mutate().request(mutated).build());
+    }
+
+    /**
+     * 是否需要做商家 IP 判定。
+     *
+     * <p>四道门缺一不可：令牌有效、开关打开、路径属于商家经营面、令牌声明了店铺 id。
+     * 与 {@link #shouldCheckPermVersion} 同样抽成方法 —— 「少拦」在安全逻辑里和「拦错」一样严重，
+     * 但只有前者难以从外部察觉。
+     */
+    private boolean shouldCheckMerchantIp(JwtTokenService.TokenPayload payload, String path) {
+        return payload.valid()
+                && properties.isMerchantIpWhitelistEnabled()
+                && payload.tenantId() != null
+                && pathMatcher.match(MERCHANT_PATH_PATTERN, path);
     }
 
     /**
@@ -391,7 +453,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return false;
         }
         for (String rule : whitelist) {
-            if (matchesIp(rule, peer)) {
+            if (com.duoduo.common.security.ip.IpRules.matches(rule, peer)) {
                 return true;
             }
         }
@@ -399,83 +461,12 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * 规则与地址是否匹配。支持精确地址、IPv4 CIDR、以及 {@code 192.168.1.*} 形式的前缀通配。
+     * 规则匹配已抽到 {@code com.duoduo.common.security.ip.IpRules}（E-06）。
      *
-     * <p><b>刻意不用 {@code InetAddress.getByName}</b>：那个方法对"不是 IP 的字符串"会去做 DNS 解析。
-     * 在认证链路上引入计划外的网络查询有两个坏处：延迟受外部 DNS 影响，
-     * 且一个被污染的配置值能把网关变成 DNS 探测跳板。这里只认字面量 ——
-     * IPv4 按四段数字解析，其余形态一律退化为字符串精确比对。
+     * <p>抽出去的理由：商家 IP 白名单在**保存时**要做同一套「当前 IP 是否还在名单里」自检，
+     * 执行在网关、自检在用户域。两边各写一份匹配逻辑，迟早出现「自检说没锁死、实际进不去」，
+     * 而这正是这个功能最容易伤到人的地方。
      */
-    private static boolean matchesIp(String rule, String ip) {
-        if (rule == null || rule.isBlank() || ip == null) {
-            return false;
-        }
-        String pattern = rule.trim();
-        if (pattern.equals(ip)) {
-            return true;
-        }
-        if (pattern.endsWith("*")) {
-            return ip.startsWith(pattern.substring(0, pattern.length() - 1));
-        }
-        int slash = pattern.indexOf('/');
-        if (slash < 0) {
-            return false;
-        }
-        return matchesIpv4Cidr(pattern.substring(0, slash), pattern.substring(slash + 1), ip);
-    }
-
-    private static boolean matchesIpv4Cidr(String network, String prefixRaw, String ip) {
-        byte[] net = ipv4Bytes(network);
-        byte[] addr = ipv4Bytes(ip);
-        if (net == null || addr == null) {
-            return false;
-        }
-        int prefix;
-        try {
-            prefix = Integer.parseInt(prefixRaw);
-        } catch (NumberFormatException ex) {
-            return false;
-        }
-        if (prefix < 0 || prefix > 32) {
-            return false;
-        }
-        int fullBytes = prefix / 8;
-        for (int i = 0; i < fullBytes; i++) {
-            if (net[i] != addr[i]) {
-                return false;
-            }
-        }
-        int remainingBits = prefix % 8;
-        if (remainingBits == 0) {
-            return true;
-        }
-        int mask = (0xFF << (8 - remainingBits)) & 0xFF;
-        return (net[fullBytes] & mask) == (addr[fullBytes] & mask);
-    }
-
-    /** 只解析 IPv4 字面量（四段、每段 0-255）；不是这个形状就返回 null，绝不触发 DNS 查询 */
-    private static byte[] ipv4Bytes(String value) {
-        String[] parts = value.split("\\.", -1);
-        if (parts.length != 4) {
-            return null;
-        }
-        byte[] out = new byte[4];
-        for (int i = 0; i < 4; i++) {
-            if (parts[i].isEmpty()) {
-                return null;
-            }
-            try {
-                int v = Integer.parseInt(parts[i]);
-                if (v < 0 || v > 255) {
-                    return null;
-                }
-                out[i] = (byte) v;
-            } catch (NumberFormatException ex) {
-                return null;
-            }
-        }
-        return out;
-    }
 
     /**
      * 本次请求的真实对端地址：**只看 TCP 连接，不看任何请求头**。
@@ -534,6 +525,18 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private Mono<Void> adminIpDenied(ServerWebExchange exchange) {
         return reject(exchange, ErrorCode.FORBIDDEN, "ADMIN_IP_DENIED",
                 "当前网络位置不在后台访问白名单内");
+    }
+
+    /**
+     * E-06 · 来源地址不在**本店**商家白名单内 → 403，独立 code {@code MERCHANT_IP_DENIED}。
+     *
+     * <p>为什么必须与后台那个 code 分开：<b>处置方式完全不同</b> ——
+     * 后台是找运维改配置，商家是店主自己在账号安全页里加白名单。
+     * 提示语里直接给出当前 IP 与操作路径，用户不必再联系客服问「我该填哪个」。
+     */
+    private Mono<Void> merchantIpDenied(ServerWebExchange exchange) {
+        return reject(exchange, ErrorCode.FORBIDDEN, "MERCHANT_IP_DENIED",
+                "当前网络位置不在本店 IP 白名单内，请店主在商家端「账号安全 · IP 白名单」中添加后重试");
     }
 
     /**

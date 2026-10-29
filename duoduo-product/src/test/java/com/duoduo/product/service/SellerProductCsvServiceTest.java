@@ -133,6 +133,6 @@ class SellerProductCsvServiceTest {
     private static SellerProductView view(long id, String title) {
         return new SellerProductView(id, title, "https://img/main.png", "ON_SALE", "在售",
                 "APPROVED", "已通过", null, 101L, 1000L, 1000L, 0, 0d, 0,
-                1, 1, null, null);
+                1, 1, null, null, false);
     }
 }

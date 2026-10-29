@@ -59,19 +59,40 @@ class CouponV1BoundaryTest {
         return new CouponService(couponMapper, mock(CouponTemplateMapper.class), idGen);
     }
 
-    // ---------------- 边界一：只支持满减 ----------------
+    // ---------------- 边界一：券类型白名单（2026-10-26 起扩展为两种） ----------------
 
     @Test
-    void 非满减券类型一律拒绝且提示明确() {
+    void 未知券类型一律拒绝且提示明确() {
         CouponService service = service(mock(CouponMapper.class));
         CreateTemplateRequest req = new CreateTemplateRequest(
-                "折扣券", "八折", "DISCOUNT", 8000L, 1000L, 100,
+                "买一送一", "非本站能力", "BUY_ONE_GET_ONE", 8000L, 1000L, null, null, 100,
                 "2026-01-01T00:00:00Z", "2026-12-31T00:00:00Z");
 
         assertThatThrownBy(() -> service.createTemplate(req))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("暂不支持的券类型")
-                .hasMessageContaining("FULL_REDUCE");
+                .hasMessageContaining("FULL_REDUCE")
+                .hasMessageContaining("DISCOUNT");
+    }
+
+    @Test
+    void 折扣券必须给折后比例_且不能同时给固定抵扣额() {
+        CouponService service = service(mock(CouponMapper.class));
+        // 给了比例又给了固定额：两种计费口径同时存在，运营会以为自己建的是另一种券
+        CreateTemplateRequest mixed = new CreateTemplateRequest(
+                "折扣券", "八五折", "DISCOUNT", 8000L, 1000L, 85, 2000L, 100,
+                "2026-01-01T00:00:00Z", "2026-12-31T00:00:00Z");
+        assertThatThrownBy(() -> service.createTemplate(mixed))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("discountAmount 必须为 0");
+
+        // 缺比例：无法算折扣，不能按「满减 0 元」放行（那就是一张永远减 0 的券）
+        CreateTemplateRequest noPercent = new CreateTemplateRequest(
+                "折扣券", "八五折", "DISCOUNT", 8000L, 0L, null, null, 100,
+                "2026-01-01T00:00:00Z", "2026-12-31T00:00:00Z");
+        assertThatThrownBy(() -> service.createTemplate(noPercent))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("折扣券必须设置折后比例");
     }
 
     @Test
@@ -79,7 +100,7 @@ class CouponV1BoundaryTest {
         // 运营从 Excel 复制时带小写是常态；若不 trim/toUpperCase，会变成「支持了却被拒」
         CouponService service = service(mock(CouponMapper.class));
         CreateTemplateRequest req = new CreateTemplateRequest(
-                "满减券", "满 100 减 10", " full_reduce ", 10000L, 1000L, 100,
+                "满减券", "满 100 减 10", " full_reduce ", 10000L, 1000L, null, null, 100,
                 "2026-01-01T00:00:00Z", "2026-12-31T00:00:00Z");
         // 用真实 id 生成器 + mock 的模板 Mapper，断言整条链路走通（类型校验已放行）
         org.assertj.core.api.Assertions.assertThatCode(() -> service.createTemplate(req))

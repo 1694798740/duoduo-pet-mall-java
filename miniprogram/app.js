@@ -171,9 +171,9 @@ App({
     });
   },
 
-  /** 手机号登录（含注册后自动登录），供登录页的手机号入口调用 */
-  loginByPhone(phone, password) {
-    return api.phoneLogin(phone, password).then((user) => {
+  /** 手机号登录（含注册后自动登录），供登录页的手机号入口调用；totp 见 api.phoneLogin */
+  loginByPhone(phone, password, totp) {
+    return api.phoneLogin(phone, password, totp).then((user) => {
       this.finishLogin(user);
       return user;
     });

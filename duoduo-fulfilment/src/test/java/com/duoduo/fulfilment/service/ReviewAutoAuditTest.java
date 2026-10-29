@@ -2,6 +2,7 @@ package com.duoduo.fulfilment.service;
 
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.CoinTaskClient;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.dto.ReviewDtos.ItemReview;
@@ -9,6 +10,7 @@ import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateRequest;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewCreateResult;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
 import com.duoduo.fulfilment.entity.ReviewEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.OrderFacts;
 import com.duoduo.fulfilment.support.ProductRatingSyncer;
@@ -51,8 +53,10 @@ class ReviewAutoAuditTest {
     private final UserClient userClient = mock(UserClient.class);
     private final SnowflakeIdGenerator idGenerator = mock(SnowflakeIdGenerator.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-    private final ReviewService service = new ReviewService(mapper, orderFacts, userClient, idGenerator,
-            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), 1000, 9, 30, 500);
+    private final ReviewService service = new ReviewService(mapper, mock(AdminQueueReadMapper.class),
+            orderFacts, userClient, idGenerator,
+            new ObjectMapper(), eventPublisher, new ReviewRiskJudge(""), mock(CoinTaskClient.class),
+            1000, 9, 30, 500);
 
     @BeforeEach
     void setUp() {

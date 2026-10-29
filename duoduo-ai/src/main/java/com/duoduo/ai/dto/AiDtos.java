@@ -49,7 +49,16 @@ public final class AiDtos {
             String message,
             @Size(max = 6, message = "历史最多保留 6 条")
             List<@Valid ChatTurn> history,
-            Boolean clarified
+            Boolean clarified,
+            /** 2026-10-28：服务端会话 ID；为空时服务端生成并在 meta 事件返回 */
+            String sessionId,
+            /**
+             * 2026-10-29：用户发起本轮对话时所在的页面（如 {@code /orders}）。
+             * 只接受已登记的站内路径；服务端会丢掉查询串后再注入提示词，
+             * 非法值按「未提供」处理（防止把客户端任意文本送进模型上下文）。
+             */
+            @Size(max = 500, message = "页面地址最多 500 个字符")
+            String pageUrl
     ) {
         public boolean clarifiedOnce() {
             return Boolean.TRUE.equals(clarified);
@@ -76,7 +85,24 @@ public final class AiDtos {
              * 相关追问（第五十八轮 S3）：**由当前候选推导**出来的可点问题，
              * 不是固定文案 —— 候选为空时不给（此时任何追问点下去都是空结果）。
              */
-            List<String> followUps
+            List<String> followUps,
+            /**
+             * 2026-10-29 · 阶段三：服务端装配的结构化卡片。
+             * 模型只声明 card_refs，卡片内容全部来自工具结果；无卡片时为空列表。
+             */
+            List<com.duoduo.ai.dto.ai.AiCard> cards,
+            /** 本轮红点补丁；null = 没有角标变化（前端不要拿 null 当 0 去覆盖） */
+            com.duoduo.ai.dto.ai.BadgePatch badgePatch,
+            /** 因游客轮次用尽 / 功能需登录而返回的登录地址；null = 未触发登录拦截 */
+            String loginUrl,
+            /**
+             * 2026-10-29 · 阶段四：本轮的服务端会话 ID。
+             *
+             * <p>SSE 走 meta 事件下发，非流式只能放在响应体里。
+             * 小程序没有 SSE 链路，必须把它存下来在下一轮带回 ——
+             * 否则每一轮都是新会话，槽位、摘要、长期记忆全部接不上。
+             */
+            String sessionId
     ) {
     }
 

@@ -71,7 +71,13 @@ spring:
             # /api/geo/** = 逆地理编码代理（A1 地址改造）：用登录态换一次地图查询，
             #   按次计费 ⇒ 不进白名单，必须登录（匿名开放等于把账单交给公网）。
             #   同样显式列举：本路由不是 /api/** 兜底，漏了只会 404。
-            - Path=/api/geo/**,/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**
+            # /api/seller/security/** = 商家账号安全（E-06 IP 白名单）：配置与店铺数据同在用户库，
+            #   同样必须列在 trade 的 /api/seller/** 兜底**之前** —— 否则会被交易域捕获后 404，
+            #   而且表现正好是「店主被锁在门外时连修复页面也打不开」，属于最坏的一种失败形态。
+            # /api/coins/**（R-P1 多多币）与 /api/admin/coins/**：账户 / 批次 / 流水在用户库，
+            #   币是钱 —— 漏了这一段不会报错，只会「我的多多币」整页 404。
+            #   必须列在 trade 的 /api/payments/** 之前（coins 与 payments 无前缀冲突，但保持列举习惯）。
+            - Path=/api/geo/**,/api/auth/**,/api/users/**,/api/pets/**,/api/addresses/**,/api/coins,/api/coins/**,/api/admin/users/**,/api/admin/merchants/**,/api/admin/merchant-staff/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/api/admin/coins,/api/admin/coins/**,/api/merchant-materials/**,/api/seller/staff,/api/seller/staff/**,/api/seller/security/**
         # 以下路由在后续阶段的服务建好后启用（当前未部署会返回 503，属预期）
         - id: duoduo-product
           uri: lb://duoduo-product
@@ -137,7 +143,12 @@ spring:
             #   仍必须显式列出（这是本文件第 6 次记同一个坑）。★ 两段都写：
             #   面板本体是**集合端点**（GET /api/admin/tenant-health，无尾斜杠），
             #   /limits 才带尾斜杠 —— 只写 /** 会让面板本体静默 404。
-            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**,/api/admin/recon,/api/admin/recon/**,/api/admin/tenant-health,/api/admin/tenant-health/**
+            # /api/admin/payments/refunds = 重复收款自动退款台账（B-04）：台账在交易库，
+            #   同样必须显式列出（本文件第 7 次记同一个坑）。★ 裸路径 + /** 都写。
+            # /api/admin/export-jobs = 异步导出任务（矩阵第 9 项）：任务表在交易库，
+            #   落回 trade 服务。★ 裸路径 + /** 都写：创建 / 列表是集合端点（无尾斜杠），
+            #   只写 /** 会让「创建任务」静默 404（本文件已记过多次的同一个坑）。
+            - Path=/api/cart/**,/api/orders/**,/api/payments/**,/api/seller/**,/sandbox/pay/**,/api/admin/orders/**,/api/admin/settlements/**,/api/admin/reports/**,/api/admin/mq/**,/api/seckill/**,/api/admin/seckill/**,/api/admin/recon,/api/admin/recon/**,/api/admin/tenant-health,/api/admin/tenant-health/**,/api/admin/payments,/api/admin/payments/**,/api/admin/export-jobs,/api/admin/export-jobs/**
         - id: duoduo-fulfilment
           uri: lb://duoduo-fulfilment
           predicates:

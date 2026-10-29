@@ -490,6 +490,24 @@ h4 {
   font-weight: 600;
 }
 
+/* 业务列表的橙色未读印记（2026-10-27）。
+   与消息中心「未读」同色系：一眼能区分「新数据」与「已经看过」，
+   又不会被误认成危险/错误（红色留给删除、失败这类必须停下的动作）。 */
+.unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+  flex: 0 0 auto;
+}
+
+/* 未读卡片：左侧橙色描边（与通知中心未读行一致） */
+.unread-card {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
 /* 行内数字角标（2026-10-18）：跟在「通知中心 / 私信」文字后面，没有未读时不渲染。
    与 .badge-dot 的区别只在于**不绝对定位**——它参与文字排版，不会压住图标。 */
 .badge-inline {
@@ -1734,6 +1752,8 @@ html[data-theme='dark'] .modal-mask {
   display: none;
 }
 .tab {
+  display: inline-flex;
+  align-items: center;
   padding: 10px 14px;
   border: none;
   background: transparent;
@@ -1745,6 +1765,31 @@ html[data-theme='dark'] .modal-mask {
 .tab.active {
   color: var(--brand-dark);
   border-bottom-color: var(--brand);
+}
+
+/**
+ * 数字角标（2026-10-27 · 二级 Tab 待处理数）。
+ *
+ * 用 inline-flex 而不是 position:absolute：页签文字长短不一，
+ * 绝对定位还得给每个页签算 padding-right，容易在窄屏上压到文字。
+ */
+.badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  /* margin 而不是父级 gap：角标既会挂在 .tab（inline-flex）上，
+     也会挂在售后页那种 .btn（inline-block）上 —— 只有 margin 在两种容器里都生效 */
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger, #e5484d);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .filters {
@@ -3493,3 +3538,72 @@ button.chat-quoted, .chat-quoted[role='button'] { cursor: pointer; }
 .kv-editor { display: flex; flex-direction: column; gap: 8px; }
 .kv-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 8px; align-items: center; }
 @media (max-width: 640px) { .kv-row { grid-template-columns: 1fr; } }
+
+/* ---------- 铃铛未读弹窗（2026-10-27） ---------- */
+.bell-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.bell-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  z-index: 60;
+  overflow: hidden;
+}
+.bell-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.bell-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.bell-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  cursor: pointer;
+}
+.bell-item:hover {
+  background: var(--bg-soft, #f7f8fa);
+}
+.bell-item-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.bell-item-time {
+  font-size: 11px;
+  color: var(--text-2, #6b7280);
+  white-space: nowrap;
+}
+/* 两行截断：通知正文可能很长，弹窗里只做摘要，详情去通知中心看 */
+.bell-item-body {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-2, #6b7280);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.bell-foot {
+  padding: 10px 14px;
+  text-align: center;
+  border-top: 1px solid var(--border, #e5e7eb);
+}

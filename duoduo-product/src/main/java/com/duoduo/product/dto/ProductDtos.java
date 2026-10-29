@@ -1,5 +1,7 @@
 package com.duoduo.product.dto;
 
+import com.duoduo.common.api.StatusCount;
+
 import java.util.List;
 import java.util.Map;
 
@@ -292,7 +294,14 @@ public final class ProductDtos {
             /** 软删时间（A-09）：非空 = 回收站条目；正常列表恒为 null */
             String deletedAt,
             /** 回收站条目将被物理清理的时间（deletedAt + 30 天）；正常商品为 null */
-            String purgeAt
+            String purgeAt,
+            /**
+             * 当前读者是否已看过这件商品（2026-10-27 · 列表橙色未读印记）。
+             *
+             * <p>逐条已读集合（{@code t_spu_read}）与角标分桶同一份事实：
+             * 橙点消失与「该分类角标 -1」必须同刻发生。
+             */
+            boolean read
     ) {
     }
 
@@ -320,7 +329,45 @@ public final class ProductDtos {
             int total,
             int successCount,
             int failedCount,
-            List<SellerProductBatchItemView> items
+            List<SellerProductBatchItemView> items,
+            /**
+             * 操作后的最新审核分桶（2026-10-27 · 批量操作即已读）。
+             *
+             * <p>批量动作成功即视为「这批数据已看过」，服务端会为成功条目写已读集合；
+             * 这里把最新分桶一并返回，前端直接覆盖本地角标，省掉一次额外请求，
+             * 也避免「操作成功但角标还是旧值」的中间态。
+             */
+            List<StatusCount> auditCounts
+    ) {
+    }
+
+    // ---------------- 运营批量审核（2026-10-27 · 批量操作即已读） ----------------
+
+    /**
+     * 批量审核的单条对象。
+     *
+     * <p>{@code version} 必须逐条带上：商品审核用乐观锁防并发改判，
+     * 批量里每件商品的版本可能不同，不能用一个全局 version 代替。
+     */
+    public record AdminProductAuditItem(
+            Long spuId,
+            Integer version
+    ) {
+    }
+
+    /** 运营批量商品审核请求：结论与驳回原因对全部条目共用 */
+    public record AdminProductBatchAuditRequest(
+            String action,
+            String reason,
+            List<AdminProductAuditItem> items
+    ) {
+    }
+
+    /** 运营批量闲置审核请求：结论与驳回原因对全部条目共用 */
+    public record ListingBatchAuditRequest(
+            List<Long> ids,
+            String action,
+            String reason
     ) {
     }
 
@@ -510,6 +557,10 @@ public final class ProductDtos {
             String subtitle,
             Long categoryId,
             Long brandId,
+            /** 类目名（2026-10-27 · 商品预览）：字典表缺失时为 null，前端回退显示 #id */
+            String categoryName,
+            /** 品牌名（同上）；未填品牌的商品为 null */
+            String brandName,
             String mainImage,
             List<String> images,
             String detail,
@@ -867,8 +918,17 @@ public final class ProductDtos {
     ) {
     }
 
-    /** CSV 导入请求体：整个文件内容（前端读成文本后上传；上限 2MB） */
-    public record SellerProductImportRequest(String content) {
+    /**
+     * 导入请求体：CSV 读成文本 / xlsx 读成 Base64 后上传（上限 2MB）。
+     *
+     * <p>{@code fileName} 决定服务端按哪种格式解析（{@code .xlsx} → Base64 解码），
+     * 缺失时按内容前缀兜底 —— 老前端只传 {@code content} 也不会把 xlsx 当 CSV 乱切。
+     * 保留单参构造器是为了兼容既有调用方与单元测试。
+     */
+    public record SellerProductImportRequest(String content, String fileName) {
+        public SellerProductImportRequest(String content) {
+            this(content, null);
+        }
     }
 
     /**
@@ -898,6 +958,61 @@ public final class ProductDtos {
             int successCount,
             int failedCount,
             List<SellerProductImportItemView> items
+    ) {
+    }
+
+    // ---------------- 第三批 · 类目 / 品牌导入（dry-run + 逐行结果） ----------------
+
+    /**
+     * 类目 / 品牌导入模板（只有表头，没有示例行）。
+     *
+     * <p>与 {@link SellerProductCsvView} 分开：商品信封里的 {@code productCount}
+     * 对主数据没有意义，复用它会让前端在读「类目模板的商品数」时莫名其妙。
+     */
+    public record CatalogCsvView(String filename, String content) {
+    }
+
+    /**
+     * 类目 / 品牌导入请求体：CSV 文本或 xlsx 的 Base64（上限 2MB）。
+     *
+     * <p>{@code fileName} 口径与商品导入一致：{@code .xlsx} 走 xlsx 解析，
+     * 缺失时按内容前缀兜底。保留单参构造器兼容既有调用方。
+     */
+    public record CatalogImportRequest(String content, String fileName) {
+        public CatalogImportRequest(String content) {
+            this(content, null);
+        }
+    }
+
+    /**
+     * 导入预演（dry-run）的一行。
+     *
+     * <p>{@code action}：{@code CREATE} 将新建 / {@code UPDATE} 将更新 /
+     * {@code SKIP} 已存在且无变化 / {@code ERROR} 该行有错、正式导入时也会失败。
+     * {@code targetId} 是匹配到的已有记录 ID（CREATE / ERROR 为空）。
+     */
+    public record CatalogImportPlanItemView(
+            int lineNo,
+            String action,
+            String name,
+            String targetId,
+            String message
+    ) {
+    }
+
+    /**
+     * 导入预演汇总：不落库，只回答「如果现在导入，会发生什么」。
+     *
+     * <p>运营拿着它先看一遍再决定是否正式导入 —— 类目树、品牌是商品的公共主数据，
+     * 批量写错会让大量商品挂错分类，回滚成本远高于商品导入。
+     */
+    public record CatalogImportPlanView(
+            int total,
+            int createCount,
+            int updateCount,
+            int skipCount,
+            int failedCount,
+            List<CatalogImportPlanItemView> items
     ) {
     }
 

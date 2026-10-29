@@ -439,6 +439,9 @@ export const MePage: React.FC = () => {
       <Link className="btn btn-ghost btn-sm" to="/orders">
         我的订单
       </Link>
+      <Link className="btn btn-ghost btn-sm" to="/coins">
+        我的多多币
+      </Link>
       <Link className="btn btn-ghost btn-sm" to="/coupons">
         我的券包
       </Link>
@@ -453,6 +456,9 @@ export const MePage: React.FC = () => {
       </Link>
       <Link className="btn btn-ghost btn-sm" to="/pets">
         宠物档案
+      </Link>
+      <Link className="btn btn-ghost btn-sm" to="/ai/memory">
+        AI 记忆库
       </Link>
       <Link className="btn btn-ghost btn-sm" to="/listings">
         二手闲置
@@ -549,26 +555,6 @@ export const MePage: React.FC = () => {
                 )}
               </dd>
             </dl>
-          </div>
-
-          {/* C 批：客服「发送商品」的两个来源入口。做成独立卡而不是塞进快捷入口，
-              因为这是"我的商品资产"，与"去哪办事"不是一类东西。 */}
-          <div className="card card-pad" style={{ marginTop: 16 }}>
-            <h3 style={{ marginBottom: 8 }}>我的商品</h3>
-            <Link to="/favorites" className="sup-item" style={{ textDecoration: 'none' }}>
-              <span>
-                <span className="sup-item-name">⭐ 我的收藏夹</span>
-                <span className="sup-item-preview">收藏的商品可以直接发给客服</span>
-              </span>
-              <span className="muted">›</span>
-            </Link>
-            <Link to="/history" className="sup-item" style={{ textDecoration: 'none' }}>
-              <span>
-                <span className="sup-item-name">🕘 我的足迹</span>
-                <span className="sup-item-preview">最近浏览过的商品</span>
-              </span>
-              <span className="muted">›</span>
-            </Link>
           </div>
 
           {/* C 批：客服「发送商品」的两个来源入口。做成独立卡而不是塞进快捷入口，

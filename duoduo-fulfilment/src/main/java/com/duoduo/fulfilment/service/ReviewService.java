@@ -4,12 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.api.StatusCount;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.CoinTaskClient;
 import com.duoduo.fulfilment.client.UserClient;
 import com.duoduo.fulfilment.client.dto.OrderFact;
 import com.duoduo.fulfilment.client.dto.UserBrief;
@@ -22,6 +24,7 @@ import com.duoduo.fulfilment.dto.ReviewDtos.ReviewSummary;
 import com.duoduo.fulfilment.dto.ReviewDtos.ReviewView;
 import com.duoduo.fulfilment.dto.ReviewDtos.SellerReviewView;
 import com.duoduo.fulfilment.entity.ReviewEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.ReviewMapper;
 import com.duoduo.fulfilment.support.ImageUrls;
 import com.duoduo.fulfilment.support.OrderFacts;
@@ -91,35 +94,42 @@ public class ReviewService {
     private static final int DEFAULT_PAGE_SIZE = 10;
 
     private final ReviewMapper reviewMapper;
+    /** 运营后台「看过即消」的已读集合（2026-10-27） */
+    private final AdminQueueReadMapper adminQueueReadMapper;
     private final OrderFacts orderFacts;
     private final UserClient userClient;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final ReviewRiskJudge riskJudge;
+    private final CoinTaskClient coinTaskClient;
     private final int maxContentLength;
     private final int maxImages;
     private final int appendWindowDays;
     private final int maxReplyLength;
 
     public ReviewService(ReviewMapper reviewMapper,
+                         AdminQueueReadMapper adminQueueReadMapper,
                          OrderFacts orderFacts,
                          UserClient userClient,
                          SnowflakeIdGenerator idGenerator,
                          ObjectMapper objectMapper,
                          ApplicationEventPublisher eventPublisher,
                          ReviewRiskJudge riskJudge,
+                         CoinTaskClient coinTaskClient,
                          @Value("${duoduo.review.max-content-length:1000}") int maxContentLength,
                          @Value("${duoduo.review.max-images:9}") int maxImages,
                          @Value("${duoduo.review.append-window-days:30}") int appendWindowDays,
                          @Value("${duoduo.review.max-reply-length:500}") int maxReplyLength) {
         this.reviewMapper = reviewMapper;
+        this.adminQueueReadMapper = adminQueueReadMapper;
         this.orderFacts = orderFacts;
         this.userClient = userClient;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.riskJudge = riskJudge;
+        this.coinTaskClient = coinTaskClient;
         this.maxContentLength = maxContentLength;
         this.maxImages = maxImages;
         this.appendWindowDays = appendWindowDays;
@@ -215,6 +225,12 @@ public class ReviewService {
             // 这里如实转成 409 而不是 500 —— 撞键是**预期内的业务结果**，不是服务故障。
             throw BizException.conflict("该商品已评价过，请勿重复提交");
         }
+
+        // 机审直接放行的评价 = 已经 APPROVED：上报多多币任务事件
+        // （best-effort；事件幂等，重复上报只返回当前进度）
+        reportApproved(toInsert.stream()
+                .filter(e -> AUDIT_APPROVED.equals(e.getAuditStatus()))
+                .toList());
 
         // 评分回写（第七十三轮）：AFTER_COMMIT 触发 —— 事务内发布、提交后才执行，
         // 保证商品域拿到的聚合一定是「已提交」的评价；同步失败只告警，不拖垮主流程
@@ -439,6 +455,39 @@ public class ReviewService {
     public PageResult<SellerReviewView> listForSeller(Long userId, Boolean replied, Integer rating,
                                                       String keyword, int page, int pageSize) {
         LoginUser user = requireSellerConsole(userId);
+        String kw = validateSellerReviewFilters(rating, keyword);
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+
+        LambdaQueryWrapper<ReviewEntity> wrapper = sellerReviewWrapper(user, replied, rating, kw);
+        Page<ReviewEntity> result = reviewMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
+                .map(ReviewEntity::getUserId).distinct().toList());
+        List<SellerReviewView> views = result.getRecords().stream()
+                .map(e -> toSellerView(e, briefs))
+                .toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 商家评价导出（2026-10-28 · 矩阵 P3）：与 {@link #listForSeller} 同筛选、同装配。
+     *
+     * <p>只导出审核通过的评价；匿名评价的昵称在服务端已替换为「匿名用户」，
+     * 导出列不会带 userId / avatar。上限 5 万行，与全站同步导出口径一致。
+     */
+    public List<SellerReviewView> exportForSeller(Long userId, Boolean replied, Integer rating,
+                                                  String keyword) {
+        LoginUser user = requireSellerConsole(userId);
+        String kw = validateSellerReviewFilters(rating, keyword);
+        LambdaQueryWrapper<ReviewEntity> wrapper = sellerReviewWrapper(user, replied, rating, kw);
+        wrapper.last("LIMIT 50000");
+        List<ReviewEntity> rows = reviewMapper.selectList(wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(rows.stream()
+                .map(ReviewEntity::getUserId).distinct().toList());
+        return rows.stream().map(e -> toSellerView(e, briefs)).toList();
+    }
+
+    private String validateSellerReviewFilters(Integer rating, String keyword) {
         if (rating != null) {
             validateRating(rating);
         }
@@ -446,15 +495,18 @@ public class ReviewService {
         if (kw != null && kw.length() > MAX_KEYWORD_LENGTH) {
             throw BizException.validation("搜索关键词不能超过 " + MAX_KEYWORD_LENGTH + " 字");
         }
-        int pageNo = Math.max(1, page);
-        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        return kw;
+    }
 
+    /** 商家评价查询条件：列表与导出共用，避免「页面看到的」和「导出的」筛出口径漂移。 */
+    private LambdaQueryWrapper<ReviewEntity> sellerReviewWrapper(LoginUser user, Boolean replied,
+                                                                Integer rating, String kw) {
         LambdaQueryWrapper<ReviewEntity> wrapper = new LambdaQueryWrapper<ReviewEntity>()
                 .eq(ReviewEntity::getAuditStatus, AUDIT_APPROVED);
         if (user.isOperator()) {
-            wrapper.in(ReviewEntity::getSellerId, List.of(userId, 0L));
+            wrapper.in(ReviewEntity::getSellerId, List.of(user.userId(), 0L));
         } else {
-            wrapper.eq(ReviewEntity::getSellerId, userId);
+            wrapper.eq(ReviewEntity::getSellerId, user.userId());
         }
         if (replied != null) {
             if (replied) {
@@ -474,14 +526,7 @@ public class ReviewService {
                     .or().like(ReviewEntity::getOrderNo, kw));
         }
         wrapper.orderByDesc(ReviewEntity::getCreatedAt).orderByDesc(ReviewEntity::getId);
-
-        Page<ReviewEntity> result = reviewMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
-                .map(ReviewEntity::getUserId).distinct().toList());
-        List<SellerReviewView> views = result.getRecords().stream()
-                .map(e -> toSellerView(e, briefs))
-                .toList();
-        return PageResult.of(views, result.getTotal(), pageNo, size);
+        return wrapper;
     }
 
     /**
@@ -642,15 +687,98 @@ public class ReviewService {
                     .or().like(ReviewEntity::getProductTitle, kw)
                     .or().like(ReviewEntity::getOrderNo, kw));
         }
-        wrapper.orderByDesc(ReviewEntity::getCreatedAt).orderByDesc(ReviewEntity::getId);
+        LoginUser viewer = OperatorGuard.requireOperator();
+        // 未读优先：未点开看过的排前面，组内仍按时间倒序
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_admin_queue_read q WHERE q.user_id = "
+                + viewer.userId() + " AND q.source = 'REVIEW' AND q.biz_id = t_review.id)) "
+                + "ASC, created_at DESC, id DESC");
 
         Page<ReviewEntity> result = reviewMapper.selectPage(new Page<>(pageNo, size), wrapper);
         Map<Long, UserBrief> briefs = loadBriefs(result.getRecords().stream()
                 .map(ReviewEntity::getUserId).distinct().toList());
+        java.util.Set<Long> readIds = result.getRecords().isEmpty()
+                ? java.util.Set.of()
+                : java.util.Set.copyOf(reviewMapper.listAdminReadIds(viewer.userId(),
+                        result.getRecords().stream().map(ReviewEntity::getId).toList()));
         List<AdminReviewView> views = result.getRecords().stream()
-                .map(e -> toAdminView(e, briefs))
+                .map(e -> toAdminView(e, briefs, readIds.contains(e.getId())))
                 .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 评价导出（2026-10-28 · 导入导出第一批）：与 {@link #listAllForAdmin} 同筛选、同装配。
+     *
+     * <p>导出文件供运营复盘「差评分布 / 驳回率」，因此按时间倒序、最多 5 万行；
+     * {@code read} 恒为 false（橙点只服务页面阅读，不进文件）。
+     */
+    public List<AdminReviewView> exportForAdmin(String auditStatus, Integer rating, String keyword) {
+        OperatorGuard.requireOperator();
+        String status = normalizeAuditStatus(auditStatus);
+        if (rating != null) {
+            validateRating(rating);
+        }
+        String kw = trimToNull(keyword);
+        if (kw != null && kw.length() > MAX_KEYWORD_LENGTH) {
+            throw BizException.validation("搜索关键词不能超过 " + MAX_KEYWORD_LENGTH + " 字");
+        }
+        LambdaQueryWrapper<ReviewEntity> wrapper = new LambdaQueryWrapper<>();
+        if (status != null) {
+            wrapper.eq(ReviewEntity::getAuditStatus, status);
+        }
+        if (rating != null) {
+            wrapper.eq(ReviewEntity::getRating, rating);
+        }
+        if (kw != null) {
+            wrapper.and(w -> w.like(ReviewEntity::getContent, kw)
+                    .or().like(ReviewEntity::getAppendContent, kw)
+                    .or().like(ReviewEntity::getProductTitle, kw)
+                    .or().like(ReviewEntity::getOrderNo, kw));
+        }
+        wrapper.orderByDesc(ReviewEntity::getCreatedAt).orderByDesc(ReviewEntity::getId);
+        wrapper.last("LIMIT 50000");
+        List<ReviewEntity> rows = reviewMapper.selectList(wrapper);
+        Map<Long, UserBrief> briefs = loadBriefs(rows.stream()
+                .map(ReviewEntity::getUserId).distinct().toList());
+        return rows.stream().map(e -> toAdminView(e, briefs, false)).toList();
+    }
+
+    // ---------------- 运营后台角标：未读 · 点击详情即消除（2026-10-27） ----------------
+
+    /**
+     * 运营后台「评价管理」的未读待审数，作为导航角标。
+     *
+     * <p>与列表口径同源（{@code audit_status='PENDING'}），只排除**本人**已点开看过的条目。
+     * 返回 {@link StatusCount} 列表而非裸 long：裸 {@code Long} 会被
+     * {@code LongToStringJacksonModule} 序列化成字符串（雪花 ID 保护），
+     * 前端拿到 "12" 再做加法就成了字符串拼接 —— 这是本项目踩过的坑。
+     */
+    public List<StatusCount> adminUnreadCount() {
+        LoginUser operator = OperatorGuard.requireOperator();
+        return unreadBucket(reviewMapper.countUnreadPending(operator.userId()));
+    }
+
+    /**
+     * 运营点开评价详情 = 已读（幂等）；返回最新未读数供前端覆盖本地乐观值。
+     *
+     * <p>只写已读集合，不改评价的审核状态 —— 看过不等于审过。
+     */
+    public List<StatusCount> markReadForAdmin(Long id) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        if (id == null) {
+            throw BizException.validation("评价 id 不能为空");
+        }
+        if (reviewMapper.selectById(id) == null) {
+            throw BizException.notFound("评价不存在");
+        }
+        adminQueueReadMapper.markRead(operator.userId(), "REVIEW", id,
+                LocalDateTime.now(ZoneOffset.UTC));
+        return unreadBucket(reviewMapper.countUnreadPending(operator.userId()));
+    }
+
+    /** 未读分桶：0 条返回空列表（与其余角标端点一致，前端按「缺省即 0」处理） */
+    private static List<StatusCount> unreadBucket(long count) {
+        return count <= 0 ? List.of() : List.of(new StatusCount("PENDING", count));
     }
 
     /**
@@ -731,11 +859,43 @@ public class ReviewService {
         AuditTrail.target(id, "REVIEW");
         AuditTrail.change(current == null ? "-" : current, target);
 
+        // 人工恢复 / 通过 = 评价变为 APPROVED：上报多多币任务事件（best-effort；事件幂等）
+        if (ACTION_APPROVE.equals(action)) {
+            reportApproved(List.of(entity));
+        }
+
         // 事务提交后重算商品评分（下架后可能归零，见 ProductRatingSyncer）
         eventPublisher.publishEvent(new ProductRatingSyncer.ReviewVisibilityChanged(List.of(entity.getSpuId())));
         log.info("运营 {} {} 评价 {}（商品 {}），原因={}",
                 operator.userId(), action, id, entity.getSpuId(), reason);
         return toAdminView(entity, briefs);
+    }
+
+    /**
+     * 评价变为 APPROVED → 用户域任务事件（REVIEW_APPROVED + 新人 FIRST_REVIEW）。
+     *
+     * <p>只在「评价已公开」的两条路径上报：机审直接放行（提交时）与运营人工
+     * APPROVE（恢复 / 通过）。下架、待审都不上报 —— 没公开的内容不该算「评价过」。
+     * best-effort：奖励是附加激励，用户域抖动或任务被停用不该让评价落库 / 审核失败；
+     * 事件在用户域按 {@code (user_id, task_code, biz_date, biz_id)} 幂等，
+     * 同一条评价重复上报不会重复发奖。
+     */
+    private void reportApproved(List<ReviewEntity> entities) {
+        for (ReviewEntity entity : entities) {
+            try {
+                coinTaskClient.taskEvent(Map.of(
+                        "userId", entity.getUserId(),
+                        "event", "REVIEW_APPROVED",
+                        "bizId", String.valueOf(entity.getId())));
+                coinTaskClient.taskEvent(Map.of(
+                        "userId", entity.getUserId(),
+                        "event", "FIRST_REVIEW",
+                        "bizId", String.valueOf(entity.getId())));
+            } catch (RuntimeException e) {
+                log.warn("上报多多币评价任务失败 userId={} reviewId={}：{}",
+                        entity.getUserId(), entity.getId(), e.getMessage());
+            }
+        }
     }
 
     private String normalizeAuditStatus(String status) {
@@ -896,6 +1056,10 @@ public class ReviewService {
     }
 
     private AdminReviewView toAdminView(ReviewEntity entity, Map<Long, UserBrief> briefs) {
+        return toAdminView(entity, briefs, false);
+    }
+
+    private AdminReviewView toAdminView(ReviewEntity entity, Map<Long, UserBrief> briefs, boolean read) {
         boolean anonymous = isAnonymous(entity);
         UserBrief brief = briefs.get(entity.getUserId());
         String nickname = anonymous ? ANONYMOUS_NICKNAME
@@ -921,7 +1085,8 @@ public class ReviewService {
                 entity.getAuditReason(),
                 entity.getAuditedBy(),
                 iso(entity.getAuditedAt()),
-                entity.getAuditSource());
+                entity.getAuditSource(),
+                read);
     }
 
     private boolean isAppendable(ReviewEntity entity, LocalDateTime now) {

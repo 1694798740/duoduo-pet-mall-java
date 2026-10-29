@@ -58,6 +58,7 @@ public class CouponService {
     private static final Logger log = LoggerFactory.getLogger(CouponService.class);
 
     private static final String TYPE_LABEL_FULL_REDUCE = "满减券";
+    private static final String TYPE_LABEL_DISCOUNT = "折扣券";
 
     private final CouponMapper couponMapper;
     private final CouponTemplateMapper templateMapper;
@@ -211,15 +212,30 @@ public class CouponService {
             if (t == null) {
                 continue;
             }
-            boolean ok = amount >= nz(t.getThresholdAmount());
+            long threshold = nz(t.getThresholdAmount());
+            boolean reachThreshold = amount >= threshold;
+            // 抵扣额按「本单金额」算，不直接回模板固定额：满减券要按订单金额裁剪，
+            // 折扣券更是只有拿到订单金额才算得出。回模板额会出现「页面上抵 5 元、实际减 1 元」。
+            long discount = reachThreshold ? calculateDiscount(t, amount) : 0L;
+            boolean ok = reachThreshold && discount > 0;
+            String reason = null;
+            if (!reachThreshold) {
+                reason = "订单金额未达门槛，满 " + fenToYuan(threshold) + " 元可用";
+            } else if (discount <= 0) {
+                reason = noBenefitReason(t);
+            }
             rows.add(new UsableCoupon(
                     coupon.getCode(),
                     t.getName(),
-                    nz(t.getThresholdAmount()),
-                    nz(t.getDiscountAmount()),
+                    t.getType(),
+                    typeLabel(t.getType()),
+                    threshold,
+                    discount,
+                    discountPercentOf(t),
+                    nz(t.getMaxDiscountAmount()),
                     isoTs(coupon.getExpireAt()),
                     ok,
-                    ok ? null : ("订单金额未达门槛，满 " + fenToYuan(t.getThresholdAmount()) + " 元可用")));
+                    reason));
         }
         // 抵扣额大的在前；并列时先到期的在前（先帮用户用掉快过期的）
         rows.sort(Comparator
@@ -323,8 +339,79 @@ public class CouponService {
             return new Precheck(LockResult.reject(
                     "订单金额未达门槛，该券满 " + fenToYuan(threshold) + " 元可用"), threshold);
         }
-        long discount = Math.min(nz(template.getDiscountAmount()), request.orderAmount());
+        long discount = calculateDiscount(template, request.orderAmount());
+        if (discount <= 0) {
+            // 折扣券在小额订单上会算出 0 分（如 1 元 × 5% = 5 分是有的，但 0.05 元 × 5% = 0）。
+            // 允许「用了券但一分没减」比拒绝更糟：用户会认为券坏了。
+            return new Precheck(LockResult.reject(noBenefitReason(template)), threshold);
+        }
         return new Precheck(LockResult.ok(coupon.getCode(), discount), threshold);
+    }
+
+    /**
+     * 本单可抵金额（纯函数，锁券 / 试算 / 结算页三条链路共用）。
+     *
+     * <p>口径：
+     * <ul>
+     *   <li>满减券：{@code min(固定抵扣额, 订单商品金额)}；</li>
+     *   <li>折扣券：{@code floor(订单商品金额 × (100 − 折后比例) / 100)}，
+     *       再按 {@code max_discount_amount} 封顶（0 = 不封顶）；</li>
+     *   <li>两者最终都不超过订单金额（不可能减成负数应付）。</li>
+     * </ul>
+     *
+     * <p><b>折扣一律向下取整</b>：四舍五入会让平台多减最多 1 分，
+     * 而「多减」在大促流量下就是可被放大的资金缺口；少减 1 分只影响展示。
+     *
+     * <p>折后比例缺失或越界时按 <b>不打折（100）</b> 处理：宁可少减，也不按一个
+     * 没人设过的比例去减钱。
+     */
+    static long calculateDiscount(CouponTemplateEntity template, long orderAmount) {
+        long amount = Math.max(0L, orderAmount);
+        long discount;
+        if (CouponTemplateEntity.TYPE_DISCOUNT.equals(template.getType())) {
+            int percent = discountPercentOf(template);
+            discount = amount * (100L - percent) / 100L;
+            long cap = nz(template.getMaxDiscountAmount());
+            if (cap > 0) {
+                discount = Math.min(discount, cap);
+            }
+        } else {
+            discount = nz(template.getDiscountAmount());
+        }
+        return Math.max(0L, Math.min(discount, amount));
+    }
+
+    /** 折扣券可读文案：8.5 折 / 最高减 20 元 */
+    static String discountLabel(CouponTemplateEntity template) {
+        if (!CouponTemplateEntity.TYPE_DISCOUNT.equals(template.getType())) {
+            return null;
+        }
+        int percent = discountPercentOf(template);
+        long cap = nz(template.getMaxDiscountAmount());
+        String label = String.format("%.1f 折", percent / 10.0);
+        return cap > 0 ? label + "（最高减 " + fenToYuan(cap) + " 元）" : label;
+    }
+
+    /** 判定「本单用这张券一分钱都减不到」时给用户的解释 */
+    private static String noBenefitReason(CouponTemplateEntity template) {
+        if (CouponTemplateEntity.TYPE_DISCOUNT.equals(template.getType())) {
+            return "本单金额太小，折扣后没有实际优惠";
+        }
+        return "该券在本单没有可抵金额";
+    }
+
+    /** 折后比例（百分比）：缺失按 100（不打折）处理，越界同样按不打折 */
+    private static int discountPercentOf(CouponTemplateEntity template) {
+        Integer raw = template.getDiscountPercent();
+        if (raw == null) {
+            return 100;
+        }
+        int percent = raw;
+        if (percent < CouponTemplateEntity.MIN_DISCOUNT_PERCENT
+                || percent > CouponTemplateEntity.MAX_DISCOUNT_PERCENT) {
+            return 100;
+        }
+        return percent;
     }
 
     /** 前置校验的内部返回值：判定结果 + 门槛值（仅日志用） */
@@ -388,16 +475,48 @@ public class CouponService {
     public TemplateView createTemplate(CreateTemplateRequest request) {
         LocalDateTime now = nowUtc();
         String type = request.type().trim().toUpperCase();
-        if (!CouponTemplateEntity.TYPE_FULL_REDUCE.equals(type)) {
-            throw BizException.businessRule("暂不支持的券类型：" + request.type() + "（当前仅支持满减券 FULL_REDUCE）");
+        boolean discountType = CouponTemplateEntity.TYPE_DISCOUNT.equals(type);
+        if (!CouponTemplateEntity.TYPE_FULL_REDUCE.equals(type) && !discountType) {
+            throw BizException.businessRule("暂不支持的券类型：" + request.type()
+                    + "（当前支持满减券 FULL_REDUCE 与折扣券 DISCOUNT）");
         }
         LocalDateTime startAt = parseTs(request.startAt(), "领取开始时间");
         LocalDateTime endAt = parseTs(request.endAt(), "领取结束时间");
         if (!endAt.isAfter(startAt)) {
             throw BizException.validation("领取结束时间必须晚于开始时间");
         }
-        if (request.discountAmount() > request.thresholdAmount() && request.thresholdAmount() > 0) {
-            throw BizException.validation("抵扣金额不能大于满减门槛");
+
+        long discountAmount = request.discountAmount();
+        int discountPercent = 100;
+        long maxDiscountAmount = 0L;
+        if (discountType) {
+            Integer rawPercent = request.discountPercent();
+            if (rawPercent == null
+                    || rawPercent < CouponTemplateEntity.MIN_DISCOUNT_PERCENT
+                    || rawPercent > CouponTemplateEntity.MAX_DISCOUNT_PERCENT) {
+                throw BizException.validation("折扣券必须设置折后比例，取值 "
+                        + CouponTemplateEntity.MIN_DISCOUNT_PERCENT + "~"
+                        + CouponTemplateEntity.MAX_DISCOUNT_PERCENT + "（如 85 表示 8.5 折）");
+            }
+            if (discountAmount != 0) {
+                throw BizException.validation("折扣券不使用固定抵扣额，discountAmount 必须为 0");
+            }
+            discountPercent = rawPercent;
+            maxDiscountAmount = request.maxDiscountAmount() == null ? 0L : request.maxDiscountAmount();
+            discountAmount = 0L;
+        } else {
+            if (discountAmount < 1) {
+                throw BizException.validation("满减券的抵扣金额必须大于 0");
+            }
+            if (request.discountPercent() != null && request.discountPercent() != 100) {
+                throw BizException.validation("满减券不使用折扣比例，discountPercent 请留空");
+            }
+            if (request.maxDiscountAmount() != null && request.maxDiscountAmount() > 0) {
+                throw BizException.validation("满减券不使用封顶抵扣，maxDiscountAmount 请留空");
+            }
+            if (discountAmount > request.thresholdAmount() && request.thresholdAmount() > 0) {
+                throw BizException.validation("抵扣金额不能大于满减门槛");
+            }
         }
 
         CouponTemplateEntity entity = new CouponTemplateEntity();
@@ -406,7 +525,9 @@ public class CouponService {
         entity.setDescription(request.description() == null ? null : request.description().trim());
         entity.setType(type);
         entity.setThresholdAmount(request.thresholdAmount());
-        entity.setDiscountAmount(request.discountAmount());
+        entity.setDiscountAmount(discountAmount);
+        entity.setDiscountPercent(discountPercent);
+        entity.setMaxDiscountAmount(maxDiscountAmount);
         entity.setTotalCount(request.totalCount());
         entity.setClaimedCount(0);
         entity.setStartAt(startAt);
@@ -415,9 +536,10 @@ public class CouponService {
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         templateMapper.insert(entity);
-        log.info("运营创建券模板 {}（{}，满 {} 分减 {} 分，共 {} 张）",
-                entity.getId(), entity.getName(), entity.getThresholdAmount(),
-                entity.getDiscountAmount(), entity.getTotalCount());
+        log.info("运营创建券模板 {}（{}，类型 {}，满 {} 分可用，{}，共 {} 张）",
+                entity.getId(), entity.getName(), type, entity.getThresholdAmount(),
+                discountType ? discountLabel(entity) : "减 " + discountAmount + " 分",
+                entity.getTotalCount());
         return toTemplateView(entity, now, false, true);
     }
 
@@ -468,6 +590,8 @@ public class CouponService {
                     t == null ? null : typeLabel(t.getType()),
                     t == null ? 0L : nz(t.getThresholdAmount()),
                     t == null ? 0L : nz(t.getDiscountAmount()),
+                    t == null ? 100 : discountPercentOf(t),
+                    t == null ? 0L : nz(t.getMaxDiscountAmount()),
                     coupon.getStatus(),
                     CouponStatus.labelOf(coupon.getStatus()),
                     isoTs(coupon.getClaimedAt()),
@@ -540,6 +664,8 @@ public class CouponService {
                 typeLabel(t.getType()),
                 nz(t.getThresholdAmount()),
                 nz(t.getDiscountAmount()),
+                discountPercentOf(t),
+                nz(t.getMaxDiscountAmount()),
                 nzInt(t.getTotalCount()),
                 nzInt(t.getClaimedCount()),
                 remaining,
@@ -553,6 +679,9 @@ public class CouponService {
     private static String typeLabel(String type) {
         if (CouponTemplateEntity.TYPE_FULL_REDUCE.equals(type)) {
             return TYPE_LABEL_FULL_REDUCE;
+        }
+        if (CouponTemplateEntity.TYPE_DISCOUNT.equals(type)) {
+            return TYPE_LABEL_DISCOUNT;
         }
         return type == null ? "优惠券" : type;
     }

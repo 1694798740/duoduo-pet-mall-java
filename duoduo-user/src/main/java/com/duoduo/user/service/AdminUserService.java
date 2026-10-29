@@ -60,6 +60,9 @@ public class AdminUserService {
 
     private static final Logger log = LoggerFactory.getLogger(AdminUserService.class);
 
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
+
     /**
      * 角色白名单（E16 起改为引用矩阵的 {@code KNOWN_ROLES}）。
      *
@@ -126,19 +129,27 @@ public class AdminUserService {
      */
     public PageResult<AdminUserView> listUsers(String role, String keyword, int page, int pageSize) {
         OperatorGuard.requireOperator();
+        Page<UserEntity> result = userMapper.selectPage(new Page<>(page, pageSize), userWrapper(role, keyword));
+        List<AdminUserView> items = result.getRecords().stream().map(AdminUserService::toAdminView).toList();
+        return PageResult.of(items, result.getTotal(), page, pageSize);
+    }
 
+    /** 运营账号导出（矩阵第二批）：与列表同一筛选，单次上限 5 万行 */
+    public List<AdminUserView> exportUsers(String role, String keyword) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<UserEntity> wrapper = userWrapper(role, keyword);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return userMapper.selectList(wrapper).stream().map(AdminUserService::toAdminView).toList();
+    }
+
+    private LambdaQueryWrapper<UserEntity> userWrapper(String role, String keyword) {
         String roleFilter = StringUtils.hasText(role) ? role.trim().toUpperCase() : null;
         String kw = StringUtils.hasText(keyword) ? keyword.trim() : null;
-
-        LambdaQueryWrapper<UserEntity> wrapper = Wrappers.<UserEntity>lambdaQuery()
-                .eq(StringUtils.hasText(roleFilter), UserEntity::getRole, roleFilter)
+        return Wrappers.<UserEntity>lambdaQuery()
+                .eq(roleFilter != null, UserEntity::getRole, roleFilter)
                 .and(kw != null,
                         w -> w.like(UserEntity::getPhone, kw).or().like(UserEntity::getNickname, kw))
                 .orderByDesc(UserEntity::getCreatedAt);
-
-        Page<UserEntity> result = userMapper.selectPage(new Page<>(page, pageSize), wrapper);
-        List<AdminUserView> items = result.getRecords().stream().map(AdminUserService::toAdminView).toList();
-        return PageResult.of(items, result.getTotal(), page, pageSize);
     }
 
     /**

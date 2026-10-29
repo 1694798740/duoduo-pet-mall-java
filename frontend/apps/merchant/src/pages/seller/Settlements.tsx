@@ -253,6 +253,18 @@ export const SellerSettlementsPage: React.FC = () => {
         {rawKeyword.trim() ? (
           <span className="small muted">匹配「{rawKeyword.trim()}」的结算 {data ? data.total : 0} 笔</span>
         ) : null}
+        <button
+          className="btn btn-ghost btn-sm"
+          title="按当前状态与订单号导出结算台账（CSV，金额单位为元）"
+          onClick={() => {
+            window.location.href = sellerApi.settlementExportUrl({
+              status: status || undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>

@@ -2,7 +2,9 @@ package com.duoduo.fulfilment.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.api.StatusCount;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
@@ -20,6 +22,7 @@ import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReplyRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleReturnShipRequest;
 import com.duoduo.fulfilment.dto.AfterSaleDtos.AfterSaleView;
 import com.duoduo.fulfilment.entity.AfterSaleEntity;
+import com.duoduo.fulfilment.mapper.AdminQueueReadMapper;
 import com.duoduo.fulfilment.mapper.AfterSaleMapper;
 import com.duoduo.fulfilment.support.AfterSaleStatus;
 import com.duoduo.fulfilment.support.ImageUrls;
@@ -94,6 +97,8 @@ public class AfterSaleService {
     private static final int DEFAULT_PAGE_SIZE = 10;
 
     private final AfterSaleMapper afterSaleMapper;
+    /** 运营后台「看过即消」的已读集合（2026-10-27） */
+    private final AdminQueueReadMapper adminQueueReadMapper;
     /** 只用于执行退款；取订单事实已收敛到 {@link OrderFacts}（见其类注释） */
     private final OrderClient orderClient;
     private final OrderFacts orderFacts;
@@ -104,6 +109,7 @@ public class AfterSaleService {
     private final int maxImages;
 
     public AfterSaleService(AfterSaleMapper afterSaleMapper,
+                            AdminQueueReadMapper adminQueueReadMapper,
                             OrderClient orderClient,
                             OrderFacts orderFacts,
                             SnowflakeIdGenerator idGenerator,
@@ -111,6 +117,7 @@ public class AfterSaleService {
                             FulfilmentNotifier fulfilmentNotifier,
                             @Value("${duoduo.aftersale.max-images:6}") int maxImages) {
         this.afterSaleMapper = afterSaleMapper;
+        this.adminQueueReadMapper = adminQueueReadMapper;
         this.orderClient = orderClient;
         this.orderFacts = orderFacts;
         this.idGenerator = idGenerator;
@@ -230,6 +237,85 @@ public class AfterSaleService {
             fulfilmentNotifier.notifyAfterSaleRejected(entity.getBuyerId(), entity.getOrderNo(), entity.getId(), reply);
         }
         return toView(loadAfterSale(id));
+    }
+
+    /**
+     * 卖家批量处理售后（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>逐条走与单条完全相同状态机与归属校验：只有「待卖家处理」的成功，
+     * 其余（已处理 / 非本店 / 订单已放款退不了）逐条失败并带回原因。
+     * 成功一条就写一条卖家已读 —— 刚处理完的单自己当然看过，
+     * 不该再挂着已退款 / 已拒绝的角标。
+     */
+    public BatchDtos.Result replyBatch(Long userId, List<Long> ids, AfterSaleReplyRequest request) {
+        requireLogin(userId);
+        List<Long> distinct = normalizeBatchIds(ids);
+        List<BatchDtos.Item> items = new ArrayList<>(distinct.size());
+        int success = 0;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        for (Long id : distinct) {
+            try {
+                reply(userId, id, request);
+                success++;
+                afterSaleMapper.markAfterSaleRead(userId, id, now);
+                items.add(new BatchDtos.Item(String.valueOf(id), true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(String.valueOf(id), false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("批量处理售后单条失败 id={}", id, ex);
+                items.add(new BatchDtos.Item(String.valueOf(id), false, "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(distinct.size(), success, distinct.size() - success, items,
+                statusCounts(userId, "seller"));
+    }
+
+    /**
+     * 运营批量裁定售后（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>逐条走 {@link #arbitrate}：支持退款会真的调用交易域退款，
+     * 某一条因「已完成订单已放款」失败时只影响该条，其余继续。
+     * 成功条目写运营已读集合，返回最新未读分桶。
+     */
+    public BatchDtos.Result arbitrateBatch(List<Long> ids, AfterSaleArbitrateRequest request) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        List<Long> distinct = normalizeBatchIds(ids);
+        List<BatchDtos.Item> items = new ArrayList<>(distinct.size());
+        int success = 0;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        for (Long id : distinct) {
+            try {
+                arbitrate(id, request);
+                success++;
+                adminQueueReadMapper.markRead(operator.userId(), "AFTER_SALE", id, now);
+                items.add(new BatchDtos.Item(String.valueOf(id), true, null, null));
+            } catch (BizException ex) {
+                items.add(new BatchDtos.Item(String.valueOf(id), false, ex.getErrorCode().name(), ex.getMessage()));
+            } catch (RuntimeException ex) {
+                log.warn("批量裁定售后单条失败 id={}", id, ex);
+                items.add(new BatchDtos.Item(String.valueOf(id), false, "INTERNAL_ERROR", "系统繁忙，请稍后重试"));
+            }
+        }
+        return new BatchDtos.Result(distinct.size(), success, distinct.size() - success, items,
+                adminUnreadCount());
+    }
+
+    /** 批量 id 去重、拒绝空值、限制单次规模（与商品批量上下架同一上限） */
+    private List<Long> normalizeBatchIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw BizException.validation("ids 不能为空");
+        }
+        java.util.LinkedHashSet<Long> distinct = new java.util.LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id == null) {
+                throw BizException.validation("ids 不能包含空值");
+            }
+            distinct.add(id);
+        }
+        if (distinct.size() > 100) {
+            throw BizException.validation("单次最多批量操作 100 笔售后单");
+        }
+        return new ArrayList<>(distinct);
     }
 
     // ---------------- 退货物流：买家寄回 / 卖家签收（第五十八轮 P1-5） ----------------
@@ -397,7 +483,10 @@ public class AfterSaleService {
                 .eq(AfterSaleEntity::getBuyerId, userId);
         applyStatusFilter(wrapper, status);
         applyKeyword(wrapper, keyword);
-        return page(wrapper, page, pageSize);
+        // 未读优先：与订单/商品列表同一取向，未读不会散落到后面的页
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_after_sale_read r WHERE r.user_id = "
+                + userId + " AND r.after_sale_id = t_after_sale.id)) ASC, created_at DESC, id DESC");
+        return page(wrapper, page, pageSize, userId, false);
     }
 
     /** 兼容旧调用（无关键字） */
@@ -427,7 +516,9 @@ public class AfterSaleService {
                 .in(AfterSaleEntity::getSellerId, scope);
         applyStatusFilter(wrapper, status);
         applyKeyword(wrapper, keyword);
-        return page(wrapper, page, pageSize);
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_after_sale_read r WHERE r.user_id = "
+                + userId + " AND r.after_sale_id = t_after_sale.id)) ASC, created_at DESC, id DESC");
+        return page(wrapper, page, pageSize, userId, false);
     }
 
     /** 兼容旧调用（无关键字） */
@@ -437,16 +528,161 @@ public class AfterSaleService {
 
     /** 全平台售后（运营） */
     public PageResult<AfterSaleView> listAll(String status, String keyword, int page, int pageSize) {
-        OperatorGuard.requireOperator();
+        LoginUser operator = OperatorGuard.requireOperator();
         LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<>();
         applyStatusFilter(wrapper, status);
         applyKeyword(wrapper, keyword);
-        return page(wrapper, page, pageSize);
+        // 运营队列的未读集合与买家/卖家那份分开（source=AFTER_SALE）
+        wrapper.last("ORDER BY (EXISTS (SELECT 1 FROM t_admin_queue_read r WHERE r.user_id = "
+                + operator.userId() + " AND r.source = 'AFTER_SALE' AND r.biz_id = t_after_sale.id)) "
+                + "ASC, created_at DESC, id DESC");
+        return page(wrapper, page, pageSize, operator.userId(), true);
+    }
+
+    /**
+     * 售后按状态分桶（买家端 / 卖家端售后页的二级 Tab 角标，2026-10-27）。
+     *
+     * <p><b>口径与列表接口严格同源</b>，只是把分页换成 GROUP BY：
+     * <ul>
+     *   <li>{@code side=buyer} → 与 {@link #listMine} 同一范围（{@code buyer_id = 我}）；</li>
+     *   <li>{@code side=seller} → 与 {@link #listForSeller} 同一范围（本人；运营额外含自营 0）。</li>
+     * </ul>
+     *
+     * <p>为什么不在前端按当前页 filter 计数：售后单是分页的，第 2 页的「待卖家处理」
+     * 在角标上会整个消失 —— 用户看到 Tab 没数字、点进去却有单，只会认为角标坏了。
+     *
+     * @param side 缺省 buyer；取值只认 buyer / seller，其余按 buyer 处理
+     *             （不抛 400：这是给角标用的只读端点，偶发拼错不应让整个页面白屏）
+     */
+    public java.util.List<StatusCount> statusCounts(Long userId, String side) {
+        LoginUser user = requireLogin(userId);
+        if ("seller".equalsIgnoreCase(side)) {
+            if (!user.canAccessSellerConsole()) {
+                throw BizException.forbidden("仅卖家或运营可查看店铺售后");
+            }
+            List<Long> scope = new ArrayList<>();
+            scope.add(userId);
+            if (user.isOperator()) {
+                scope.add(0L);
+            }
+            return toStatusCounts(afterSaleMapper.countBySellerAndStatus(scope, userId));
+        }
+        return toStatusCounts(afterSaleMapper.countByBuyerAndStatus(userId, userId));
+    }
+
+    /**
+     * 「看过某售后单」上报（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只有终态（{@code REFUNDED / CLOSED}，卖家侧另加 {@code SELLER_REJECTED}）
+     * 的角标会因此消失；进行中的售后读过也继续提醒。
+     *
+     * <p>归属校验复用 {@link #detail}：他人 / 不存在一律 404（与全站同一纪律，
+     * 不区分「不存在」与「不是你的」，避免被用来枚举他人售后单）。
+     *
+     * <p>幂等；返回最新分桶供前端覆盖本地乐观值。
+     */
+    public java.util.List<StatusCount> markRead(Long userId, Long id, String side) {
+        detail(userId, id);
+        afterSaleMapper.markAfterSaleRead(userId, id, LocalDateTime.now(ZoneOffset.UTC));
+        return statusCounts(userId, side);
+    }
+
+    // ---------------- 运营后台角标：未读 · 点击详情即消除（2026-10-27） ----------------
+
+    /** 运营后台「售后仲裁」的未读待处理数（排除本运营已点开看过的单） */
+    public java.util.List<StatusCount> adminUnreadCount() {
+        LoginUser operator = OperatorGuard.requireOperator();
+        return unreadBucket(afterSaleMapper.countUnreadPendingForAdmin(operator.userId()));
+    }
+
+    /**
+     * 运营点开售后详情 = 已读（幂等）；返回最新未读数。
+     *
+     * <p>与买家/卖家的 {@link #markRead} 分开：那份是「终态才可消」的业务角标，
+     * 这份是运营待办队列的「看过就消」，两者的已读集合与可消状态名单都不同，
+     * 共用一个方法迟早把两边规则搅在一起。
+     */
+    public java.util.List<StatusCount> markReadForAdmin(Long id) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        if (id == null) {
+            throw BizException.validation("售后单 id 不能为空");
+        }
+        if (afterSaleMapper.selectById(id) == null) {
+            throw BizException.notFound("售后单不存在");
+        }
+        adminQueueReadMapper.markRead(operator.userId(), "AFTER_SALE", id,
+                LocalDateTime.now(ZoneOffset.UTC));
+        return unreadBucket(afterSaleMapper.countUnreadPendingForAdmin(operator.userId()));
+    }
+
+    private static java.util.List<StatusCount> unreadBucket(long count) {
+        return count <= 0 ? java.util.List.of() : java.util.List.of(new StatusCount("PENDING", count));
+    }
+
+    /**
+     * 聚合行 → 状态计数列表（返回 record 而非 Map，理由见 {@link StatusCount} 类注释；
+     * 列名大小写容错的理由同 {@code OrderService#toStatusCounts}）。
+     */
+    private static java.util.List<StatusCount> toStatusCounts(List<java.util.Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<StatusCount> result = new ArrayList<>(rows.size());
+        for (java.util.Map<String, Object> row : rows) {
+            Object status = row.get("status") != null ? row.get("status") : row.get("STATUS");
+            Object cnt = row.get("cnt") != null ? row.get("cnt") : row.get("CNT");
+            if (status == null || !(cnt instanceof Number n) || n.longValue() <= 0) {
+                continue;
+            }
+            result.add(new StatusCount(String.valueOf(status), n.longValue()));
+        }
+        return result;
     }
 
     /** 兼容旧调用（无关键字） */
     public PageResult<AfterSaleView> listAll(String status, int page, int pageSize) {
         return listAll(status, null, page, pageSize);
+    }
+
+    /**
+     * 卖家售后导出（2026-10-28 · 导入导出第一批）。
+     *
+     * <p>与 {@link #listForSeller} 同一可见范围与同一筛选（{@link #applyStatusFilter} /
+     * {@link #applyKeyword}）；导出不按未读优先，按申请时间倒序，最多 5 万行。
+     * {@code read} 恒为 false —— 导出文件是给对账/复盘看的，橙点没有意义。
+     */
+    public List<AfterSaleView> exportForSeller(Long userId, String status, String keyword) {
+        LoginUser user = requireLogin(userId);
+        if (!user.canAccessSellerConsole()) {
+            throw BizException.forbidden("仅卖家或运营可查看店铺售后");
+        }
+        List<Long> scope = new ArrayList<>();
+        scope.add(userId);
+        if (user.isOperator()) {
+            scope.add(PLATFORM_SELLER_ID);
+        }
+        LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<AfterSaleEntity>()
+                .in(AfterSaleEntity::getSellerId, scope);
+        applyStatusFilter(wrapper, status);
+        applyKeyword(wrapper, keyword);
+        wrapper.orderByDesc(AfterSaleEntity::getCreatedAt).orderByDesc(AfterSaleEntity::getId);
+        wrapper.last("LIMIT 50000");
+        return afterSaleMapper.selectList(wrapper).stream()
+                .map(entity -> toView(entity, false))
+                .toList();
+    }
+
+    /** 全平台售后导出（运营）：与 {@link #listAll} 同筛选，字段与卖家侧一致 */
+    public List<AfterSaleView> exportAll(String status, String keyword) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<AfterSaleEntity> wrapper = new LambdaQueryWrapper<>();
+        applyStatusFilter(wrapper, status);
+        applyKeyword(wrapper, keyword);
+        wrapper.orderByDesc(AfterSaleEntity::getCreatedAt).orderByDesc(AfterSaleEntity::getId);
+        wrapper.last("LIMIT 50000");
+        return afterSaleMapper.selectList(wrapper).stream()
+                .map(entity -> toView(entity, false))
+                .toList();
     }
 
     /**
@@ -604,17 +840,37 @@ public class AfterSaleService {
         }
     }
 
+    /**
+     * 分页装配：当前页一次取回已读集合，逐条下发 {@code read}。
+     *
+     * <p>排序由调用方通过 {@code wrapper.last(...)} 指定（未读优先），
+     * 本方法不再追加 orderBy，否则会拼出两个 ORDER BY。
+     */
     private PageResult<AfterSaleView> page(LambdaQueryWrapper<AfterSaleEntity> wrapper,
-                                           int page, int pageSize) {
+                                           int page, int pageSize,
+                                           Long readerId, boolean adminQueue) {
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
-        wrapper.orderByDesc(AfterSaleEntity::getCreatedAt).orderByDesc(AfterSaleEntity::getId);
         Page<AfterSaleEntity> result = afterSaleMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        List<AfterSaleView> views = result.getRecords().stream().map(this::toView).toList();
+        List<AfterSaleEntity> records = result.getRecords();
+        if (records.isEmpty()) {
+            return PageResult.of(List.of(), result.getTotal(), pageNo, size);
+        }
+        List<Long> ids = records.stream().map(AfterSaleEntity::getId).toList();
+        Set<Long> readIds = Set.copyOf(adminQueue
+                ? afterSaleMapper.listAdminReadIds(readerId, ids)
+                : afterSaleMapper.listReadIds(readerId, ids));
+        List<AfterSaleView> views = records.stream()
+                .map(entity -> toView(entity, readIds.contains(entity.getId())))
+                .toList();
         return PageResult.of(views, result.getTotal(), pageNo, size);
     }
 
     private AfterSaleView toView(AfterSaleEntity entity) {
+        return toView(entity, false);
+    }
+
+    private AfterSaleView toView(AfterSaleEntity entity, boolean read) {
         return new AfterSaleView(
                 // 18 位雪花 id 必须以字符串出网：前端 JSON.parse 会把它四舍五入成另一个整数，
                 // 拿它拼 URL 就会打到不存在的单子上（见 AfterSaleView 的注释）
@@ -637,7 +893,8 @@ public class AfterSaleService {
                 iso(entity.getReturnShippedAt()),
                 iso(entity.getReturnReceivedAt()),
                 iso(entity.getCreatedAt()),
-                iso(entity.getUpdatedAt()));
+                iso(entity.getUpdatedAt()),
+                read);
     }
 
     private String trimToNull(String text) {

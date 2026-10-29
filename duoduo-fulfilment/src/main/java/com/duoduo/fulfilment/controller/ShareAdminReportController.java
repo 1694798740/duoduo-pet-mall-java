@@ -1,15 +1,20 @@
 package com.duoduo.fulfilment.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.audit.AuditAction;
 import com.duoduo.common.audit.AuditTrail;
 import com.duoduo.common.audit.Audited;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.api.StatusCount;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
+import com.duoduo.common.web.CsvExport;
+import com.duoduo.fulfilment.dto.ShareDtos.ReportBatchHandleRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ReportHandleRequest;
 import com.duoduo.fulfilment.dto.ShareDtos.ReportView;
 import com.duoduo.fulfilment.service.ShareReportService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 平台管理后台（运营）分享举报处理台（第五十六轮）。
@@ -50,6 +57,31 @@ public class ShareAdminReportController {
         return ApiResponse.ok(reportService.listForAdmin(status, keyword, page, pageSize));
     }
 
+    /** 举报导出（2026-10-28 · 导入导出第一批）：按状态 / 关键词导出 CSV */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) String status,
+                       @RequestParam(required = false) String keyword,
+                       HttpServletResponse response) throws java.io.IOException {
+        OperatorGuard.requireOperator();
+        java.util.List<ReportView> rows = reportService.exportForAdmin(status, keyword);
+        CsvExport.write(response, "举报处理-" + CsvExport.stamp(), HEADERS,
+                rows.stream().map(ShareAdminReportController::row).toList());
+    }
+
+    /** 运营导航角标：未读待处理举报数（2026-10-27 · 点击详情即消除） */
+    @GetMapping("/unread-count")
+    public ApiResponse<List<StatusCount>> unreadCount() {
+        LoginUser operator = OperatorGuard.requireOperator();
+        return ApiResponse.ok(reportService.adminUnreadCount(operator.userId()));
+    }
+
+    /** 点开举报详情 = 已读；返回最新未读数（前端用它覆盖本地乐观值） */
+    @PostMapping("/{id}/read")
+    public ApiResponse<List<StatusCount>> markRead(@PathVariable Long id) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        return ApiResponse.ok(reportService.markRead(operator.userId(), id));
+    }
+
     /** 处理举报：ACCEPT（成立 → 内容下架）/ REJECT（不成立），**处理说明必填** */
     @PostMapping("/{id}/handle")
     @Audited(action = AuditAction.SHARE_REPORT_HANDLE)
@@ -57,5 +89,45 @@ public class ShareAdminReportController {
                                           @Valid @RequestBody ReportHandleRequest request) {
         LoginUser operator = OperatorGuard.requireOperator();
         return ApiResponse.ok(reportService.handle(operator.userId(), id, request));
+    }
+
+    /**
+     * 批量处理举报（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>逐条走与单条相同的处理逻辑：ACCEPT 会下架每一条被举报的内容，
+     * 已处理过的一条逐条失败、其余继续。成功条目写运营已读并返回最新未读分桶。
+     */
+    @PostMapping("/batch-handle")
+    @Audited(action = AuditAction.SHARE_REPORT_HANDLE)
+    public ApiResponse<BatchDtos.Result> batchHandle(@Valid @RequestBody ReportBatchHandleRequest request) {
+        LoginUser operator = OperatorGuard.requireOperator();
+        AuditTrail.note("批量处理举报 " + request.ids().size() + " 条：" + request.action());
+        return ApiResponse.ok(reportService.handleBatch(operator.userId(), request.ids(),
+                new ReportHandleRequest(request.action(), request.note())));
+    }
+
+    // ---------------- CSV 导出列定义 ----------------
+
+    private static final java.util.List<String> HEADERS = java.util.List.of(
+            "举报ID", "目标类型", "目标ID", "举报人ID", "理由", "状态", "内容摘要",
+            "处理人ID", "处理时间", "处理说明", "举报时间");
+
+    private static java.util.List<String> row(ReportView view) {
+        return java.util.List.of(
+                String.valueOf(view.id()),
+                text(view.targetType()),
+                view.targetId() == null ? "" : String.valueOf(view.targetId()),
+                view.reporterId() == null ? "" : String.valueOf(view.reporterId()),
+                text(view.reason()),
+                text(view.status()),
+                text(view.targetExcerpt()),
+                view.handledBy() == null ? "" : String.valueOf(view.handledBy()),
+                CsvExport.beijingTime(view.handledAt()),
+                text(view.handleNote()),
+                CsvExport.beijingTime(view.createdAt()));
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value;
     }
 }

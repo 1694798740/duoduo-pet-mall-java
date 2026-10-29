@@ -133,6 +133,14 @@ export const AdminTenantHealthPage: React.FC = () => {
         <button className="btn btn-sm btn-ghost" onClick={reload} disabled={loading}>
           {loading ? '刷新中…' : '刷新'}
         </button>
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={() => {
+            window.location.href = adminApi.tenantHealthExportUrl(days == null ? {} : { days });
+          }}
+        >
+          导出 CSV
+        </button>
         {panel ? (
           <span className="small muted" style={{ alignSelf: 'center' }}>
             窗口 {panel.from} ~ {panel.to}（UTC 自然日，含首含尾）

@@ -208,6 +208,19 @@ public class SandboxPaymentChannel implements PaymentChannel {
         return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * 退款（B-04）：沙箱扮演的渠道同样要能原路退回。
+     *
+     * <p>没有真实资金流，「受理即到终态」；渠道退款流水号由退款单号派生，
+     * 可在台账与日志之间相互对上。真实渠道接入后此实现会被覆盖，
+     * 调用方（补偿调度）与台账状态机不需要任何改动。
+     */
+    @Override
+    public RefundResult refund(RefundCommand command) {
+        log.info("沙箱退款受理：refundNo={} payNo={} amount={}分", command.refundNo(), command.payNo(), command.amount());
+        return new RefundResult(command.refundNo(), "SANDBOX-REFUND-" + command.refundNo(), "SUCCESS", true);
+    }
+
     private static String header(Map<String, String> headers, String name) {
         if (headers == null) {
             return null;

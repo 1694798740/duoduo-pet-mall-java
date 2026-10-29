@@ -79,19 +79,38 @@
 
 .chip {
   flex-shrink: 0;
+  /* inline-flex 而不是靠 line-height 居中：chip 里现在有两个节点（文字 + 角标），
+     line-height 方案会让角标把整行撑高、或者文字与角标基线错位 */
+  display: inline-flex;
+  align-items: center;
   height: 56rpx;
-  line-height: 56rpx;
   padding: 0 28rpx;
   margin-right: 16rpx;
   border-radius: 28rpx;
   background: var(--gray-weak);
   color: var(--text-2);
   font-size: 26rpx;
+  line-height: 1;
 }
 
 .chip-on {
   background: #4f6ef7;
   color: #fff;
+}
+
+/* 分类未读角标（2026-10-27）：>99 由 js/wxml 截成 99+ */
+.chip-badge {
+  margin-left: 8rpx;
+  min-width: 28rpx;
+  height: 28rpx;
+  line-height: 28rpx;
+  padding: 0 6rpx;
+  border-radius: 14rpx;
+  background: #e5484d;
+  color: #fff;
+  font-size: 20rpx;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 /* 分页状态提示 */

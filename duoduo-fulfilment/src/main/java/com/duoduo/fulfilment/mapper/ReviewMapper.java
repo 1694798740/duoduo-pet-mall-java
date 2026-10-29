@@ -97,4 +97,25 @@ public interface ReviewMapper extends BaseMapper<ReviewEntity> {
      */
     @Select("SELECT DISTINCT seller_id FROM t_review WHERE seller_id IS NOT NULL")
     List<Long> distinctSellerIds();
+
+    /**
+     * 运营后台「评价管理」的未读待审数（2026-10-27 · 点击详情即消除）。
+     *
+     * <p>口径与 {@code listAllForAdmin(status=PENDING)} 同源，只多一个条件：
+     * 排除本运营已经点开看过的那几条。用 {@code NOT EXISTS} 而不是在 Java 里做差集 ——
+     * 差集要先把整个队列捞回来，队列一大就变成慢查询。
+     */
+    @Select("SELECT COUNT(*) FROM t_review r "
+            + "WHERE r.audit_status = 'PENDING' "
+            + "AND NOT EXISTS (SELECT 1 FROM t_admin_queue_read q "
+            + "                WHERE q.user_id = #{operatorId} AND q.source = 'REVIEW' AND q.biz_id = r.id)")
+    long countUnreadPending(@Param("operatorId") Long operatorId);
+
+    /** 当前页评价的已读集合（source=REVIEW，2026-10-27 · 逐条橙点） */
+    @Select("<script>SELECT biz_id FROM t_admin_queue_read "
+            + "WHERE user_id = #{operatorId} AND source = 'REVIEW' AND biz_id IN "
+            + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + "</script>")
+    List<Long> listAdminReadIds(@Param("operatorId") Long operatorId,
+                                @Param("ids") Collection<Long> ids);
 }

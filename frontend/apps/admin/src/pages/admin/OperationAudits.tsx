@@ -214,6 +214,19 @@ export const AdminOperationAuditsPage: React.FC = () => {
         <button className="btn btn-primary btn-sm" onClick={search}>查询</button>
         <button className="btn btn-ghost btn-sm" onClick={reset}>重置</button>
         <button className="btn btn-ghost btn-sm" onClick={reload}>刷新</button>
+        <a
+          className="btn btn-ghost btn-sm"
+          href={adminApi.auditLogExportUrl({
+            actorId: query.actorId,
+            action: query.action,
+            category: query.category,
+            outcome: query.outcome,
+            from: query.from,
+            to: query.to,
+          })}
+        >
+          导出 CSV
+        </a>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}

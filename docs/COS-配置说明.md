@@ -137,6 +137,12 @@
 > 范围限定在私有桶 `db-backup/*`。如果应用与备份共用一个子账号密钥（当前 `.env` 就是如此），
 > 策略里必须**同时包含** `db-backup/*`，否则备份会 403 `AccessDenied`；
 > 反过来，给备份单独建一把只能写 `db-backup/*` 的密钥更符合最小权限。
+>
+> **权限已核验（2026-10-28）**：
+> - 密钥身份：腾讯云 STS `GetCallerIdentity` 返回 `Type=CAMUser` → **子账号，非主账号**；
+> - 写权限：5 字节探针 `db-backup/manual/...` 上传 → HEAD 读回 5 字节 → 删除成功；
+> - 未过度授权：`GET /?prefix=db-backup/`（列举桶）返回 **403 AccessDenied**，确认没有 `ListBucket`；
+> - 探针对象已删除，并用脚本 `--stat` 复核为「不存在」。
 
 **凭证纪律**：
 - 不用主账号密钥；
@@ -169,7 +175,7 @@
 | 完整性 | 源库表数 = 产物 `CREATE TABLE` 数；`gzip -t`；远端 HEAD 字节数 = 本地；`_manifest.txt` **最后上传**（它存在才算本次完整） |
 | 自检 | `bash scripts/db-backup-cos.sh --check`：HEAD 探测对象，**404 = 桶可达且签名有效** |
 | 定时 | `0 3 * * *`（见 `docs/manuals/production-launch-checklist.md` §4.1） |
-| 生命周期 | 在控制台给 `db-backup/` 配 30 天过期；脚本**不删远端**，避免误删 |
+| 生命周期 | 在控制台给 `db-backup/` 配 30 天过期；脚本**不删远端**，避免误删。**已配置（2026-10-28）**：规则 `db-backup-expire-30d`，前缀 `db-backup/`，当前版本文件删除 30 天，状态开启 |
 | 与应用的关系 | 不经过 `ObjectStorage`、不改 `uploads/` / `materials/` 前缀；私有桶保持私有读写 |
 
 > 注意：`--check` 用 HEAD 而不是 GET，就是为了不要求 `GetObject` —— 备份密钥可以只写不读。

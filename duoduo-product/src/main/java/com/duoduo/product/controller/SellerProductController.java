@@ -1,7 +1,10 @@
 package com.duoduo.product.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.common.api.BatchDtos;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.web.CsvExport;
+import com.duoduo.common.web.XlsxExport;
 import com.duoduo.product.dto.ProductDtos.SellerProductBatchResultView;
 import com.duoduo.product.dto.ProductDtos.SellerProductCreateRequest;
 import com.duoduo.product.dto.ProductDtos.SellerProductCsvView;
@@ -17,6 +20,8 @@ import com.duoduo.product.dto.ProductDtos.SellerSkuStructureRequest;
 import com.duoduo.product.dto.ProductDtos.SellerSkuStructureResultView;
 import com.duoduo.product.service.SellerProductCsvService;
 import com.duoduo.product.service.SellerProductService;
+import com.duoduo.product.support.ProductCsv;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -71,6 +77,28 @@ public class SellerProductController {
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.ok(sellerProductService.list(
                 keyword, auditStatus, sellerId, deleted, page, pageSize));
+    }
+
+    /**
+     * 商家商品按审核态计数（商家端商品页审核页签的角标，2026-10-27）。
+     *
+     * <p>静态路径放在 {@code /{spuId:\d+}} 之前：后者带数字形状约束，本来就捕获不到
+     * {@code audit-counts}，但「静态路径优先」是本项目一贯的声明顺序，别让人再推一遍。
+     */
+    @GetMapping("/audit-counts")
+    public ApiResponse<java.util.List<com.duoduo.common.api.StatusCount>> auditCounts() {
+        return ApiResponse.ok(sellerProductService.auditCounts());
+    }
+
+    /**
+     * 「看过某商品」上报（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只有「已通过」会因此消失；待审核 / 已驳回读过也保留。幂等；返回最新分桶。
+     */
+    @PostMapping("/{spuId:\\d+}/read")
+    public ApiResponse<java.util.List<com.duoduo.common.api.StatusCount>> markRead(
+            @PathVariable Long spuId) {
+        return ApiResponse.ok(sellerProductService.markRead(spuId));
     }
 
     /**
@@ -245,6 +273,21 @@ public class SellerProductController {
     }
 
     /**
+     * 下载 xlsx 导入模板（2026-10-28）。
+     *
+     * <p>与 CSV 模板同源（{@link ProductCsv#TEMPLATE_EXAMPLE}），多一个「说明」页与冻结表头。
+     * 二进制响应直接用浏览器导航下载，不走 JSON 信封 —— 前端若把 xlsx 读成文本会变成乱码，
+     * 而导入又必须原样上传字节，所以模板与导入都按字节处理。
+     */
+    @GetMapping(value = "/import-template", params = "format=xlsx")
+    public void importTemplateXlsx(HttpServletResponse response) throws IOException {
+        // 先走一遍服务层的卖家准入，避免未登录 / 非卖家也能拿到模板下载链接
+        sellerProductCsvService.importTemplate();
+        XlsxExport.write(response, "products-import-template", "商品导入",
+                ProductCsv.COLUMNS, List.of(ProductCsv.TEMPLATE_EXAMPLE), ProductCsv.TEMPLATE_NOTES);
+    }
+
+    /**
      * 导入商品 CSV（A-17）。
      *
      * <p>逐「分组键」创建商品：一组失败不影响其它组，HTTP 200 只代表处理完成，
@@ -254,6 +297,51 @@ public class SellerProductController {
     public ApiResponse<SellerProductImportResultView> importCsv(
             @RequestBody(required = false) SellerProductImportRequest request) {
         return ApiResponse.ok(sellerProductCsvService.importCsv(request));
+    }
+
+    /** 价格 / 库存导出列（与导入模板前四列对齐，另加名称与状态便于核对） */
+    private static final List<String> PRICE_STOCK_EXPORT_HEADERS = List.of(
+            "商品ID", "商品名称", "规格ID", "规格名称", "价格(元)", "库存", "商品状态", "审核状态");
+
+    /**
+     * 导出价格 / 库存 CSV（2026-10-28 · 矩阵 P3）：一个规格一行，筛选与商品列表一致。
+     *
+     * <p>直接写 {@code text/csv} 附件：价格表最多几万行，走 JSON 信封会让浏览器把整份文件
+     * 读进内存；下载链接由前端 {@code window.location.href} 触发，同源 Cookie 鉴权。
+     */
+    @GetMapping("/price-stock/export")
+    public void exportPriceStock(@RequestParam(required = false) String keyword,
+                                 @RequestParam(required = false) String auditStatus,
+                                 HttpServletResponse response) throws IOException {
+        CsvExport.write(response, "价格库存-" + CsvExport.stamp(), PRICE_STOCK_EXPORT_HEADERS,
+                sellerProductService.exportPriceStockRows(keyword, auditStatus));
+    }
+
+    /** 下载价格/库存导入模板（第三批 · 第 7 项）：`商品ID,规格ID,价格(元),库存` */
+    @GetMapping("/price-stock-template")
+    public ApiResponse<SellerProductCsvView> priceStockTemplate() {
+        return ApiResponse.ok(sellerProductCsvService.priceStockTemplate());
+    }
+
+    /** 下载价格/库存 xlsx 模板（2026-10-28）：ID 列按文本写，避免科学计数法丢精度 */
+    @GetMapping(value = "/price-stock-template", params = "format=xlsx")
+    public void priceStockTemplateXlsx(HttpServletResponse response) throws IOException {
+        sellerProductCsvService.priceStockTemplate();
+        XlsxExport.write(response, "price-stock-import-template", "价格库存",
+                SellerProductCsvService.PRICE_STOCK_COLUMNS, List.of(),
+                SellerProductCsvService.PRICE_STOCK_NOTES);
+    }
+
+    /**
+     * 导入价格 / 库存（第三批 · 第 7 项）。
+     *
+     * <p>逐行改价改库存：只改价格与库存，不触发内容重审、不升版本；
+     * 部分成功不回滚，失败行 {@code id} = CSV 物理行号，用户可直接在 Excel 里定位。
+     */
+    @PostMapping("/price-stock-import")
+    public ApiResponse<BatchDtos.Result> importPriceStock(
+            @RequestBody(required = false) SellerProductImportRequest request) {
+        return ApiResponse.ok(sellerProductCsvService.importPriceStock(request));
     }
 
     /**

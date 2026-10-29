@@ -5,6 +5,7 @@ import com.duoduo.common.api.PageResult;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.trade.dto.OrderDtos.CancelRequest;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
 import com.duoduo.trade.dto.OrderDtos.PayRequest;
@@ -22,6 +23,7 @@ import com.duoduo.trade.dto.SettlementDtos.SettlementView;
 import com.duoduo.trade.service.OrderPlaceService;
 import com.duoduo.trade.service.OrderService;
 import com.duoduo.trade.service.PersonalDataCleanupService;
+import com.duoduo.trade.support.OrderCsv;
 import com.duoduo.trade.support.OrderPlaceGuard;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.ObjectProvider;
@@ -174,6 +176,60 @@ public class OrderController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.ok(orderService.listMine(status, orderType, keyword, page, pageSize));
+    }
+
+    /**
+     * 我的订单导出（矩阵 · 买家侧「我的订单」）：只导本人数据，手机号 / 地址脱敏。
+     *
+     * <p>路径是字面量 {@code /export}，不会被 {@code /{orderNo:\d{21}}} 捕获。
+     * 筛选与 {@link #list} 同名同义（status / orderType / keyword），行数上限 5 万；
+     * 超限明确 400 并提示按状态分批 —— 不做静默截断（少行的 CSV 和完整文件长得一样）。
+     */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) String status,
+                       @RequestParam(required = false) String orderType,
+                       @RequestParam(required = false) String keyword,
+                       jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        UserContext.requireUserId();
+        long total = orderService.countMineForExport(status, orderType, keyword);
+        if (total > BUYER_EXPORT_LIMIT) {
+            throw BizException.validation("订单共 " + total + " 条，超过单次导出上限 "
+                    + BUYER_EXPORT_LIMIT + " 条；请按状态筛选后分批导出");
+        }
+        List<OrderView> orders = orderService.exportMine(status, orderType, keyword);
+        CsvExport.write(response, "我的订单-" + CsvExport.stamp(), OrderCsv.BUYER_HEADERS,
+                orders.stream().map(OrderCsv::buyerRow).toList());
+    }
+
+    /** 买家侧同步导出行数上限（本人数据量小；超限提示分批，而不是截断） */
+    private static final long BUYER_EXPORT_LIMIT = 50_000L;
+
+    /**
+     * 我的订单各状态计数（买家端订单页二级 Tab 角标）。
+     *
+     * <p>路径是**单段且不含数字**，不会与 {@code /{orderNo:\d{21}}} 冲突
+     * （那一处刻意加了订单号形状约束，正是为了避免这类静态路径被当成订单号捕获）。
+     *
+     * <p>返回形如 {@code [{status:"PENDING_PAYMENT", count:2}]}；没有订单的状态不出现，
+     * 前端统一按 {@code map[s] ?? 0} 处理 —— 服务端不返回一整排 0 让响应体变胖。
+     */
+    @GetMapping("/status-counts")
+    public ApiResponse<java.util.List<com.duoduo.common.api.StatusCount>> statusCounts() {
+        return ApiResponse.ok(orderService.myStatusCounts());
+    }
+
+    /**
+     * 上报「我已看过这笔订单」（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只让 {@code CLOSED / REFUNDED} 的角标消失；其余状态属「持续提醒」，看过也保留。
+     * 幂等，重复调用无副作用；返回最新分桶供前端覆盖乐观值。
+     *
+     * <p>路径带订单号形状约束（与 {@code /{orderNo}} 同理），避免被短路径误捕获。
+     */
+    @PostMapping("/{orderNo:\\d{21}}/read")
+    public ApiResponse<java.util.List<com.duoduo.common.api.StatusCount>> markRead(
+            @PathVariable String orderNo) {
+        return ApiResponse.ok(orderService.markOrderRead(orderNo));
     }
 
     /**

@@ -33,13 +33,17 @@ CREATE TABLE t_coupon_template (
     id                  BIGINT       NOT NULL,
     name                VARCHAR(100) NOT NULL,
     description         VARCHAR(500),
-    -- 券类型。v1 只实现 FULL_REDUCE（满减）：折扣券涉及「百分比 × 金额」的取整与封顶口径，
-    -- 在没有产品拍板前不引入未实现的分支 —— 传其他值一律 422 并明确提示「暂不支持」。
+    -- 券类型：FULL_REDUCE（满减，固定抵扣额）/ DISCOUNT（折扣，按比例减 + 可选封顶）。
+    -- 两种类型共用门槛字段；传其他值一律 422 并明确提示「暂不支持」。
     type                VARCHAR(20)  NOT NULL DEFAULT 'FULL_REDUCE',
     -- 满减门槛（分）：订单商品总额 >= 门槛才能用，否则 422
     threshold_amount    BIGINT       NOT NULL DEFAULT 0,
-    -- 抵扣金额（分）：满减券的固定抵扣额
+    -- 抵扣金额（分）：满减券的固定抵扣额；折扣券恒为 0
     discount_amount     BIGINT       NOT NULL DEFAULT 0,
+    -- 折扣券折后应付比例（百分比）：85 = 8.5 折；满减券恒为 100
+    discount_percent    INT          NOT NULL DEFAULT 100,
+    -- 折扣券封顶抵扣（分）：0 = 不封顶；满减券恒为 0
+    max_discount_amount BIGINT       NOT NULL DEFAULT 0,
     -- 发放总量与已领数量。已领靠 UPDATE ... SET claimed_count = claimed_count + 1
     -- 配合 WHERE claimed_count < total_count 做 CAS 发放，不靠「先查再插」。
     total_count         INT          NOT NULL DEFAULT 0,

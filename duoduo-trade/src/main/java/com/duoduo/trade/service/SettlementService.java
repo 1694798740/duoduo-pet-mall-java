@@ -100,9 +100,15 @@ public class SettlementService {
      *
      * <p>幂等：先查一次走快路径；并发下由 {@code uk_settle_order} 兜底，
      * 撞车方读取已存在的那条返回 —— 不抛异常，因为「已经建过了」对调用方而言就是成功。
+     *
+     * <p>R-P1 · {@code amount} = 买家实付现金 + 币抵扣 = 券后商品金额，
+     * {@code coinSubsidy} 是其中由平台补贴的部分 —— 商家按券后商品金额收钱，
+     * 不因买家用币少收一分；补贴单独成列，让「平台补贴合计 = 订单币抵扣合计」
+     * 成为一条可以直接 SUM 出来的对账。
      */
     @Transactional
-    public SettlementEntity openCustody(Long orderId, Long sellerId, long amount, LocalDateTime now) {
+    public SettlementEntity openCustody(Long orderId, Long sellerId, long amount, long coinSubsidy,
+                                        LocalDateTime now) {
         SettlementEntity existing = findByOrderId(orderId);
         if (existing != null) {
             return existing;
@@ -112,6 +118,7 @@ public class SettlementService {
         entity.setOrderId(orderId);
         entity.setSellerId(sellerId);
         entity.setAmount(amount);
+        entity.setCoinSubsidyAmount(Math.max(0L, coinSubsidy));
         entity.setPlatformFee(platformFeeOf(sellerId, amount));
         entity.setStatus(SettlementEntity.STATUS_CUSTODY);
         entity.setCreatedAt(now);
@@ -411,6 +418,7 @@ public class SettlementService {
                 entity.getSellerId(),
                 amount,
                 fee,
+                nz(entity.getCoinSubsidyAmount()),
                 amount - fee,
                 entity.getStatus(),
                 SettlementStatus.labelOf(entity.getStatus()),

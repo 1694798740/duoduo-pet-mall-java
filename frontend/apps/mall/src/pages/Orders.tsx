@@ -8,17 +8,19 @@
  *  · 分页结构在 data 内部（items/total/page/pageSize/pageCount），不是顶层 meta
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { productImage } from '@duoduo/api-sdk/images';
 import { Link, useSearchParams } from 'react-router-dom';
 import { orderApi, reviewApi } from '@duoduo/api-sdk/endpoints';
-import type { OrderView, PageResult, ReviewedOrders } from '@duoduo/api-sdk/types';
+import type { OrderView, PageResult, ReviewedOrders, StatusCount } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced, useLiveRefresh } from '@duoduo/shared/components/hooks';
 import {
   Alert, Empty, LoadingBlock, Pagination, SearchBar, formatDate, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { useConfirm } from '@duoduo/shared/components/confirm';
+import { TabWithBadge, toCountMap } from '@duoduo/shared/components/badge';
+import { applyOptimisticDismiss, shouldDismissOnRead } from '@duoduo/shared/lib/badge-rules';
 import { notifyDataChanged } from '@duoduo/shared/lib/dataBus';
 import { SupportEntry } from '../components/SupportEntry';
 
@@ -66,12 +68,15 @@ const OrderActions: React.FC<{
   order: OrderView;
   reviewed?: boolean;
   onCancel: (orderNo: string) => void;
+  /** 点「查看详情」时同步上报已读（2026-10-27 · 阅后即消角标） */
+  onOpen: (order: OrderView) => void;
   cancelling: boolean;
-}> = ({ order, reviewed, onCancel, cancelling }) => (
+}> = ({ order, reviewed, onCancel, onOpen, cancelling }) => (
   <div className="row row-wrap">
     <Link
       className={`btn btn-sm ${order.status === 'PENDING_PAYMENT' ? 'btn-pay' : 'btn-accent'}`}
       to={`/orders/${order.orderNo}`}
+      onClick={() => onOpen(order)}
     >
       {order.status === 'PENDING_PAYMENT' ? '去支付' : '查看详情'}
     </Link>
@@ -153,10 +158,66 @@ export const OrdersPage: React.FC = () => {
   ]);
 
   /**
+   * 各状态计数（页签角标，2026-10-27）。
+   *
+   * <p>**独立于列表请求**：列表按 status + page 翻页，而角标要的是「全部状态的存量」，
+   * 两者参数不同；合在一个请求里会让「翻到第 3 页」也重算一遍全量分桶。
+   */
+  const countsFetcher = useCallback(() => orderApi.statusCounts(), []);
+  const { data: countRows, reloadSilently: reloadCounts } = useAsync<StatusCount[]>(
+    countsFetcher,
+    true,
+    [],
+  );
+
+  /**
+   * 角标本地态（2026-10-27）。
+   *
+   * <p>用 state 而不是直接渲染 `countRows`：点「查看详情」时要**先乐观减一**（立刻有感），
+   * 再拿服务端返回的分桶覆盖。放到 state 才允许这两步。
+   *
+   * <p>每次 `countRows` 变化（轮询/广播/手动刷新）都会整体覆盖，本地乐观值不会残留。
+   */
+  const [toCounts, setToCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setToCounts(toCountMap(countRows));
+  }, [countRows]);
+
+  /**
+   * 点开订单详情 → 上报已读 → 用服务端分桶覆盖（阅后即消）。
+   *
+   * <p>规则不写在这里：`shouldDismissOnRead` 集中定义在 `shared/lib/badge-rules.ts`，
+   * 哪类状态该消、哪类必须保留，三端同一份。
+   *
+   * <p><b>失败不硬减</b>：上报失败说明服务端仍认为它是未读，本地减掉只会出现
+   * 「刷新后又回来」的复活现象 —— 回滚到服务端值才是诚实的。
+   */
+  const dismissBadge = useCallback(
+    async (order: OrderView) => {
+      if (!shouldDismissOnRead('buyer', order.status)) return;
+      setToCounts((prev) => applyOptimisticDismiss(prev, order.status));
+      try {
+        const rows = await orderApi.markRead(order.orderNo);
+        setToCounts(toCountMap(rows));
+      } catch {
+        // 回滚：重新拉服务端分桶，覆盖刚才的乐观值
+        void reloadCounts();
+      }
+    },
+    [reloadCounts],
+  );
+
+  /**
    * 订单状态会因服务端动作变化（超时自动关单、支付回调、商家发货）—— 停在列表页时
    * 用「广播 / 回前台 / 30s 轮询」三层静默刷新，避免看到一条早已过期的「去支付」。
+   * 角标与列表同刻刷新：否则会出现「列表里待支付已经消失、页签上还挂着 1」。
    */
-  useLiveRefresh(reloadSilently);
+  useLiveRefresh(
+    useCallback(() => {
+      reloadSilently();
+      reloadCounts();
+    }, [reloadSilently, reloadCounts]),
+  );
 
   /**
    * 「已完成」订单里我评过哪些 —— 一次批量查，避免每张卡片各发一次请求。
@@ -198,6 +259,8 @@ export const OrdersPage: React.FC = () => {
         await orderApi.cancel(orderNo, '买家在订单列表取消');
         push('订单已取消', 'success');
         reload();
+        // 取消后「待支付」少一笔：角标必须同刻回落，不能等 30s 轮询
+        reloadCounts();
         // 广播：取消释放库存与秒杀配额，首页/详情/秒杀页立即重拉
         notifyDataChanged();
       } catch (err) {
@@ -275,14 +338,13 @@ export const OrdersPage: React.FC = () => {
 
       <div className="tabs" style={{ marginBottom: 16 }}>
         {TABS.map((tab) => (
-          <button
+          <TabWithBadge
             key={tab.label}
-            type="button"
-            className={`tab${status === tab.value ? ' active' : ''}`}
+            label={tab.label}
+            count={toCounts[tab.value]}
+            active={status === tab.value}
             onClick={() => setStatus(tab.value)}
-          >
-            {tab.label}
-          </button>
+          />
         ))}
       </div>
 
@@ -297,6 +359,22 @@ export const OrdersPage: React.FC = () => {
         {rawKeyword.trim() ? (
           <span className="small muted">匹配「{rawKeyword.trim()}」的订单 {data ? data.total : 0} 笔</span>
         ) : null}
+        {/* 矩阵 · 买家侧「我的订单」导出：只导本人数据，手机号 / 地址由服务端脱敏 */}
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          style={{ marginLeft: 'auto' }}
+          title="按当前状态与关键词导出本人订单 CSV（手机号、地址脱敏）"
+          onClick={() => {
+            window.location.href = orderApi.exportUrl({
+              status: status || undefined,
+              orderType: orderType || undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
       </div>
 
       {error ? (
@@ -387,6 +465,7 @@ export const OrdersPage: React.FC = () => {
                   order={order}
                   reviewed={reviewedSet.has(order.orderNo)}
                   onCancel={cancelOrder}
+                  onOpen={(o) => void dismissBadge(o)}
                   cancelling={cancelling === order.orderNo}
                 />
               </div>

@@ -59,6 +59,53 @@
                                                                                        }
                                                                      }
                                                          },
+                  "/api/seller/security/ip-whitelist":  {
+                                                            "get":  {
+                                                                        "tags":  [
+                                                                                     "merchant-security-controller"
+                                                                                 ],
+                                                                        "operationId":  "view",
+                                                                        "responses":  {
+                                                                                          "200":  {
+                                                                                                      "description":  "OK",
+                                                                                                      "content":  {
+                                                                                                                      "*/*":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseIpWhitelistView"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                                  }
+                                                                                                  }
+                                                                                      }
+                                                                    },
+                                                            "put":  {
+                                                                        "tags":  [
+                                                                                     "merchant-security-controller"
+                                                                                 ],
+                                                                        "operationId":  "save",
+                                                                        "requestBody":  {
+                                                                                            "content":  {
+                                                                                                            "application/json":  {
+                                                                                                                                     "schema":  {
+                                                                                                                                                    "$ref":  "#/components/schemas/IpWhitelistRequest"
+                                                                                                                                                }
+                                                                                                                                 }
+                                                                                                        }
+                                                                                        },
+                                                                        "responses":  {
+                                                                                          "200":  {
+                                                                                                      "description":  "OK",
+                                                                                                      "content":  {
+                                                                                                                      "*/*":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseIpWhitelistView"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                                  }
+                                                                                                  }
+                                                                                      }
+                                                                    }
+                                                        },
                   "/api/pets/{petId}":  {
                                             "put":  {
                                                         "tags":  [
@@ -754,6 +801,191 @@
                                                                                }
                                                              }
                                                 },
+                  "/api/coins/signin":  {
+                                            "post":  {
+                                                         "tags":  [
+                                                                      "coin-controller"
+                                                                  ],
+                                                         "operationId":  "signin",
+                                                         "responses":  {
+                                                                           "200":  {
+                                                                                       "description":  "OK",
+                                                                                       "content":  {
+                                                                                                       "*/*":  {
+                                                                                                                   "schema":  {
+                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseCoinSigninResult"
+                                                                                                                              }
+                                                                                                               }
+                                                                                                   }
+                                                                                   }
+                                                                       }
+                                                     }
+                                        },
+                  "/api/coins/internal/release":  {
+                                                      "post":  {
+                                                                   "tags":  [
+                                                                                "coin-internal-controller"
+                                                                            ],
+                                                                   "operationId":  "release",
+                                                                   "requestBody":  {
+                                                                                       "content":  {
+                                                                                                       "application/json":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "type":  "object",
+                                                                                                                                               "additionalProperties":  {
+                                                                                                                                                                            "type":  "object"
+                                                                                                                                                                        }
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                   },
+                                                                                       "required":  true
+                                                                                   },
+                                                                   "responses":  {
+                                                                                     "200":  {
+                                                                                                 "description":  "OK",
+                                                                                                 "content":  {
+                                                                                                                 "*/*":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                             }
+                                                                                             }
+                                                                                 }
+                                                               }
+                                                  },
+                  "/api/coins/internal/refund":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "coin-internal-controller"
+                                                                           ],
+                                                                  "operationId":  "refund",
+                                                                  "requestBody":  {
+                                                                                      "content":  {
+                                                                                                      "application/json":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "type":  "object",
+                                                                                                                                              "additionalProperties":  {
+                                                                                                                                                                           "type":  "object"
+                                                                                                                                                                       }
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                  },
+                                                                                      "required":  true
+                                                                                  },
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
+                  "/api/coins/internal/freeze":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "coin-internal-controller"
+                                                                           ],
+                                                                  "operationId":  "freeze",
+                                                                  "requestBody":  {
+                                                                                      "content":  {
+                                                                                                      "application/json":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "type":  "object",
+                                                                                                                                              "additionalProperties":  {
+                                                                                                                                                                           "type":  "object"
+                                                                                                                                                                       }
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                  },
+                                                                                      "required":  true
+                                                                                  },
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
+                  "/api/coins/internal/earn":  {
+                                                   "post":  {
+                                                                "tags":  [
+                                                                             "coin-internal-controller"
+                                                                         ],
+                                                                "operationId":  "earn",
+                                                                "requestBody":  {
+                                                                                    "content":  {
+                                                                                                    "application/json":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "type":  "object",
+                                                                                                                                            "additionalProperties":  {
+                                                                                                                                                                         "type":  "object"
+                                                                                                                                                                     }
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                },
+                                                                                    "required":  true
+                                                                                },
+                                                                "responses":  {
+                                                                                  "200":  {
+                                                                                              "description":  "OK",
+                                                                                              "content":  {
+                                                                                                              "*/*":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                                          }
+                                                                                          }
+                                                                              }
+                                                            }
+                                               },
+                  "/api/coins/internal/deduct":  {
+                                                     "post":  {
+                                                                  "tags":  [
+                                                                               "coin-internal-controller"
+                                                                           ],
+                                                                  "operationId":  "deduct",
+                                                                  "requestBody":  {
+                                                                                      "content":  {
+                                                                                                      "application/json":  {
+                                                                                                                               "schema":  {
+                                                                                                                                              "type":  "object",
+                                                                                                                                              "additionalProperties":  {
+                                                                                                                                                                           "type":  "object"
+                                                                                                                                                                       }
+                                                                                                                                          }
+                                                                                                                           }
+                                                                                                  },
+                                                                                      "required":  true
+                                                                                  },
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                 },
                   "/api/auth/wechat":  {
                                            "post":  {
                                                         "tags":  [
@@ -1382,6 +1614,37 @@
                                                                                      }
                                                                    }
                                                       },
+                  "/api/admin/merchants/{merchantId}/ip-whitelist/clear":  {
+                                                                               "post":  {
+                                                                                            "tags":  [
+                                                                                                         "admin-merchant-controller"
+                                                                                                     ],
+                                                                                            "operationId":  "clearIpWhitelist",
+                                                                                            "parameters":  [
+                                                                                                               {
+                                                                                                                   "name":  "merchantId",
+                                                                                                                   "in":  "path",
+                                                                                                                   "required":  true,
+                                                                                                                   "schema":  {
+                                                                                                                                  "type":  "integer",
+                                                                                                                                  "format":  "int64"
+                                                                                                                              }
+                                                                                                               }
+                                                                                                           ],
+                                                                                            "responses":  {
+                                                                                                              "200":  {
+                                                                                                                          "description":  "OK",
+                                                                                                                          "content":  {
+                                                                                                                                          "*/*":  {
+                                                                                                                                                      "schema":  {
+                                                                                                                                                                     "$ref":  "#/components/schemas/ApiResponseIpWhitelistView"
+                                                                                                                                                                 }
+                                                                                                                                                  }
+                                                                                                                                      }
+                                                                                                                      }
+                                                                                                          }
+                                                                                        }
+                                                                           },
                   "/api/admin/merchants/{id}/start-review":  {
                                                                  "post":  {
                                                                               "tags":  [
@@ -1624,6 +1887,36 @@
                                                                                                   }
                                                                                 }
                                                                    },
+                  "/api/admin/coins/adjust":  {
+                                                  "post":  {
+                                                               "tags":  [
+                                                                            "admin-coin-controller"
+                                                                        ],
+                                                               "operationId":  "adjust",
+                                                               "requestBody":  {
+                                                                                   "content":  {
+                                                                                                   "application/json":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/CoinAdjustRequest"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                               },
+                                                                                   "required":  true
+                                                                               },
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseCoinMutationResult"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                              },
                   "/api/addresses":  {
                                          "get":  {
                                                      "tags":  [
@@ -2164,6 +2457,149 @@
                                                                           }
                                                         }
                                             },
+                  "/api/coins/signin/month":  {
+                                                  "get":  {
+                                                              "tags":  [
+                                                                           "coin-controller"
+                                                                       ],
+                                                              "operationId":  "signinMonth",
+                                                              "parameters":  [
+                                                                                 {
+                                                                                     "name":  "ym",
+                                                                                     "in":  "query",
+                                                                                     "required":  false,
+                                                                                     "schema":  {
+                                                                                                    "type":  "string"
+                                                                                                }
+                                                                                 }
+                                                                             ],
+                                                              "responses":  {
+                                                                                "200":  {
+                                                                                            "description":  "OK",
+                                                                                            "content":  {
+                                                                                                            "*/*":  {
+                                                                                                                        "schema":  {
+                                                                                                                                       "$ref":  "#/components/schemas/ApiResponseCoinSigninMonthView"
+                                                                                                                                   }
+                                                                                                                    }
+                                                                                                        }
+                                                                                        }
+                                                                            }
+                                                          }
+                                              },
+                  "/api/coins/me":  {
+                                        "get":  {
+                                                    "tags":  [
+                                                                 "coin-controller"
+                                                             ],
+                                                    "operationId":  "me_1",
+                                                    "responses":  {
+                                                                      "200":  {
+                                                                                  "description":  "OK",
+                                                                                  "content":  {
+                                                                                                  "*/*":  {
+                                                                                                              "schema":  {
+                                                                                                                             "$ref":  "#/components/schemas/ApiResponseCoinBalanceView"
+                                                                                                                         }
+                                                                                                          }
+                                                                                              }
+                                                                              }
+                                                                  }
+                                                }
+                                    },
+                  "/api/coins/ledger":  {
+                                            "get":  {
+                                                        "tags":  [
+                                                                     "coin-controller"
+                                                                 ],
+                                                        "operationId":  "ledger",
+                                                        "parameters":  [
+                                                                           {
+                                                                               "name":  "page",
+                                                                               "in":  "query",
+                                                                               "required":  false,
+                                                                               "schema":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32",
+                                                                                              "default":  1
+                                                                                          }
+                                                                           },
+                                                                           {
+                                                                               "name":  "pageSize",
+                                                                               "in":  "query",
+                                                                               "required":  false,
+                                                                               "schema":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32",
+                                                                                              "default":  20
+                                                                                          }
+                                                                           }
+                                                                       ],
+                                                        "responses":  {
+                                                                          "200":  {
+                                                                                      "description":  "OK",
+                                                                                      "content":  {
+                                                                                                      "*/*":  {
+                                                                                                                  "schema":  {
+                                                                                                                                 "$ref":  "#/components/schemas/ApiResponsePageResultCoinLedgerView"
+                                                                                                                             }
+                                                                                                              }
+                                                                                                  }
+                                                                                  }
+                                                                      }
+                                                    }
+                                        },
+                  "/api/coins/internal/recon":  {
+                                                    "get":  {
+                                                                "tags":  [
+                                                                             "coin-internal-controller"
+                                                                         ],
+                                                                "operationId":  "recon",
+                                                                "responses":  {
+                                                                                  "200":  {
+                                                                                              "description":  "OK",
+                                                                                              "content":  {
+                                                                                                              "*/*":  {
+                                                                                                                          "schema":  {
+                                                                                                                                         "$ref":  "#/components/schemas/ApiResponseCoinReconResult"
+                                                                                                                                     }
+                                                                                                                      }
+                                                                                                          }
+                                                                                          }
+                                                                              }
+                                                            }
+                                                },
+                  "/api/coins/internal/balance":  {
+                                                      "get":  {
+                                                                  "tags":  [
+                                                                               "coin-internal-controller"
+                                                                           ],
+                                                                  "operationId":  "balance",
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "userId",
+                                                                                         "in":  "query",
+                                                                                         "required":  true,
+                                                                                         "schema":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    }
+                                                                                     }
+                                                                                 ],
+                                                                  "responses":  {
+                                                                                    "200":  {
+                                                                                                "description":  "OK",
+                                                                                                "content":  {
+                                                                                                                "*/*":  {
+                                                                                                                            "schema":  {
+                                                                                                                                           "$ref":  "#/components/schemas/ApiResponseLong"
+                                                                                                                                       }
+                                                                                                                        }
+                                                                                                            }
+                                                                                            }
+                                                                                }
+                                                              }
+                                                  },
                   "/api/auth/2fa/status":  {
                                                "get":  {
                                                            "tags":  [
@@ -2458,6 +2894,85 @@
                                                                               }
                                                             }
                                                 },
+                  "/api/admin/coins/summary":  {
+                                                   "get":  {
+                                                               "tags":  [
+                                                                            "admin-coin-controller"
+                                                                        ],
+                                                               "operationId":  "summary",
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK",
+                                                                                             "content":  {
+                                                                                                             "*/*":  {
+                                                                                                                         "schema":  {
+                                                                                                                                        "$ref":  "#/components/schemas/ApiResponseCoinAdminSummary"
+                                                                                                                                    }
+                                                                                                                     }
+                                                                                                         }
+                                                                                         }
+                                                                             }
+                                                           }
+                                               },
+                  "/api/admin/coins/ledger":  {
+                                                  "get":  {
+                                                              "tags":  [
+                                                                           "admin-coin-controller"
+                                                                       ],
+                                                              "operationId":  "ledger_1",
+                                                              "parameters":  [
+                                                                                 {
+                                                                                     "name":  "userId",
+                                                                                     "in":  "query",
+                                                                                     "required":  false,
+                                                                                     "schema":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                }
+                                                                                 },
+                                                                                 {
+                                                                                     "name":  "direction",
+                                                                                     "in":  "query",
+                                                                                     "required":  false,
+                                                                                     "schema":  {
+                                                                                                    "type":  "string"
+                                                                                                }
+                                                                                 },
+                                                                                 {
+                                                                                     "name":  "page",
+                                                                                     "in":  "query",
+                                                                                     "required":  false,
+                                                                                     "schema":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int32",
+                                                                                                    "default":  1
+                                                                                                }
+                                                                                 },
+                                                                                 {
+                                                                                     "name":  "pageSize",
+                                                                                     "in":  "query",
+                                                                                     "required":  false,
+                                                                                     "schema":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int32",
+                                                                                                    "default":  20
+                                                                                                }
+                                                                                 }
+                                                                             ],
+                                                              "responses":  {
+                                                                                "200":  {
+                                                                                            "description":  "OK",
+                                                                                            "content":  {
+                                                                                                            "*/*":  {
+                                                                                                                        "schema":  {
+                                                                                                                                       "$ref":  "#/components/schemas/ApiResponsePageResultCoinLedgerView"
+                                                                                                                                   }
+                                                                                                                    }
+                                                                                                        }
+                                                                                        }
+                                                                            }
+                                                          }
+                                              },
                   "/api/admin/audit-logs":  {
                                                 "get":  {
                                                             "tags":  [
@@ -2749,6 +3264,64 @@
                                                                                         }
                                                                            }
                                                         },
+                                       "IpWhitelistRequest":  {
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "enabled":  {
+                                                                                                     "type":  "boolean"
+                                                                                                 },
+                                                                                     "rules":  {
+                                                                                                   "type":  "array",
+                                                                                                   "items":  {
+                                                                                                                 "type":  "string"
+                                                                                                             }
+                                                                                               },
+                                                                                     "confirmLockout":  {
+                                                                                                            "type":  "boolean"
+                                                                                                        }
+                                                                                 }
+                                                              },
+                                       "ApiResponseIpWhitelistView":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/IpWhitelistView"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "IpWhitelistView":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "enabled":  {
+                                                                                                  "type":  "boolean"
+                                                                                              },
+                                                                                  "rules":  {
+                                                                                                "type":  "array",
+                                                                                                "items":  {
+                                                                                                              "type":  "string"
+                                                                                                          }
+                                                                                            },
+                                                                                  "currentIp":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                  "published":  {
+                                                                                                    "type":  "boolean"
+                                                                                                }
+                                                                              }
+                                                           },
                                        "PetUpsertRequest":  {
                                                                 "required":  [
                                                                                  "name",
@@ -3465,6 +4038,80 @@
                                                                                                      }
                                                                                  }
                                                               },
+                                       "ApiResponseCoinSigninResult":  {
+                                                                           "type":  "object",
+                                                                           "properties":  {
+                                                                                              "code":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                              "message":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                              "data":  {
+                                                                                                           "$ref":  "#/components/schemas/CoinSigninResult"
+                                                                                                       },
+                                                                                              "requestId":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                              "timestamp":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int64"
+                                                                                                            }
+                                                                                          }
+                                                                       },
+                                       "CoinSigninResult":  {
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "applied":  {
+                                                                                                   "type":  "boolean"
+                                                                                               },
+                                                                                   "coins":  {
+                                                                                                 "type":  "integer",
+                                                                                                 "format":  "int32"
+                                                                                             },
+                                                                                   "continuousDays":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int32"
+                                                                                                      },
+                                                                                   "balance":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               }
+                                                                               }
+                                                            },
+                                       "ApiResponseCoinMutationResult":  {
+                                                                             "type":  "object",
+                                                                             "properties":  {
+                                                                                                "code":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                                "message":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                "data":  {
+                                                                                                             "$ref":  "#/components/schemas/CoinMutationResult"
+                                                                                                         },
+                                                                                                "requestId":  {
+                                                                                                                  "type":  "string"
+                                                                                                              },
+                                                                                                "timestamp":  {
+                                                                                                                  "type":  "integer",
+                                                                                                                  "format":  "int64"
+                                                                                                              }
+                                                                                            }
+                                                                         },
+                                       "CoinMutationResult":  {
+                                                                  "type":  "object",
+                                                                  "properties":  {
+                                                                                     "applied":  {
+                                                                                                     "type":  "boolean"
+                                                                                                 },
+                                                                                     "balance":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 }
+                                                                                 }
+                                                              },
                                        "WechatLoginRequest":  {
                                                                   "required":  [
                                                                                    "code"
@@ -3987,6 +4634,22 @@
                                                                                                }
                                                                              }
                                                           },
+                                       "CoinAdjustRequest":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "userId":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
+                                                                                    "amount":  {
+                                                                                                   "type":  "integer",
+                                                                                                   "format":  "int64"
+                                                                                               },
+                                                                                    "reason":  {
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                                }
+                                                             },
                                        "UpdateProfileRequest":  {
                                                                     "type":  "object",
                                                                     "properties":  {
@@ -4582,6 +5245,252 @@
                                                                                                }
                                                                           }
                                                        },
+                                       "ApiResponseCoinSigninMonthView":  {
+                                                                              "type":  "object",
+                                                                              "properties":  {
+                                                                                                 "code":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                                 "message":  {
+                                                                                                                 "type":  "string"
+                                                                                                             },
+                                                                                                 "data":  {
+                                                                                                              "$ref":  "#/components/schemas/CoinSigninMonthView"
+                                                                                                          },
+                                                                                                 "requestId":  {
+                                                                                                                   "type":  "string"
+                                                                                                               },
+                                                                                                 "timestamp":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "format":  "int64"
+                                                                                                               }
+                                                                                             }
+                                                                          },
+                                       "CoinSigninMonthView":  {
+                                                                   "type":  "object",
+                                                                   "properties":  {
+                                                                                      "month":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                      "signedDates":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "type":  "string"
+                                                                                                                    }
+                                                                                                      },
+                                                                                      "continuousDays":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int32"
+                                                                                                         },
+                                                                                      "signedToday":  {
+                                                                                                          "type":  "boolean"
+                                                                                                      }
+                                                                                  }
+                                                               },
+                                       "ApiResponseCoinBalanceView":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/CoinBalanceView"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "CoinBalanceView":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "balance":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              },
+                                                                                  "totalEarned":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                  "totalSpent":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                  "expiringSoonCoins":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        },
+                                                                                  "expiringLots":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "$ref":  "#/components/schemas/ExpiringLotView"
+                                                                                                                 }
+                                                                                                   }
+                                                                              }
+                                                           },
+                                       "ExpiringLotView":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "lotId":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                                  "remaining":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                                  "expireAt":  {
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                              }
+                                                           },
+                                       "ApiResponsePageResultCoinLedgerView":  {
+                                                                                   "type":  "object",
+                                                                                   "properties":  {
+                                                                                                      "code":  {
+                                                                                                                   "type":  "string"
+                                                                                                               },
+                                                                                                      "message":  {
+                                                                                                                      "type":  "string"
+                                                                                                                  },
+                                                                                                      "data":  {
+                                                                                                                   "$ref":  "#/components/schemas/PageResultCoinLedgerView"
+                                                                                                               },
+                                                                                                      "requestId":  {
+                                                                                                                        "type":  "string"
+                                                                                                                    },
+                                                                                                      "timestamp":  {
+                                                                                                                        "type":  "integer",
+                                                                                                                        "format":  "int64"
+                                                                                                                    }
+                                                                                                  }
+                                                                               },
+                                       "CoinLedgerView":  {
+                                                              "type":  "object",
+                                                              "properties":  {
+                                                                                 "id":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                                 "userId":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            },
+                                                                                 "direction":  {
+                                                                                                   "type":  "string"
+                                                                                               },
+                                                                                 "amount":  {
+                                                                                                "type":  "integer",
+                                                                                                "format":  "int64"
+                                                                                            },
+                                                                                 "balanceAfter":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                 "bizType":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                 "bizNo":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                 "remark":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                                 "createdAt":  {
+                                                                                                   "type":  "string"
+                                                                                               }
+                                                                             }
+                                                          },
+                                       "PageResultCoinLedgerView":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "items":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "$ref":  "#/components/schemas/CoinLedgerView"
+                                                                                                                   }
+                                                                                                     },
+                                                                                           "total":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
+                                                                                           "page":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32"
+                                                                                                    },
+                                                                                           "pageSize":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int32"
+                                                                                                        },
+                                                                                           "pageCount":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int32"
+                                                                                                         }
+                                                                                       }
+                                                                    },
+                                       "ApiResponseCoinReconResult":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "$ref":  "#/components/schemas/CoinReconResult"
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "CoinReconResult":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "accountsChecked":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "format":  "int32"
+                                                                                                      },
+                                                                                  "issues":  {
+                                                                                                 "type":  "array",
+                                                                                                 "items":  {
+                                                                                                               "type":  "string"
+                                                                                                           }
+                                                                                             }
+                                                                              }
+                                                           },
+                                       "ApiResponseLong":  {
+                                                               "type":  "object",
+                                                               "properties":  {
+                                                                                  "code":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                  "message":  {
+                                                                                                  "type":  "string"
+                                                                                              },
+                                                                                  "data":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int64"
+                                                                                           },
+                                                                                  "requestId":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                  "timestamp":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                }
+                                                                              }
+                                                           },
                                        "ApiResponseTotpStatusView":  {
                                                                          "type":  "object",
                                                                          "properties":  {
@@ -4909,6 +5818,56 @@
                                                                                                          }
                                                                                        }
                                                                     },
+                                       "ApiResponseCoinAdminSummary":  {
+                                                                           "type":  "object",
+                                                                           "properties":  {
+                                                                                              "code":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                              "message":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                              "data":  {
+                                                                                                           "$ref":  "#/components/schemas/CoinAdminSummary"
+                                                                                                       },
+                                                                                              "requestId":  {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                              "timestamp":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "format":  "int64"
+                                                                                                            }
+                                                                                          }
+                                                                       },
+                                       "CoinAdminSummary":  {
+                                                                "type":  "object",
+                                                                "properties":  {
+                                                                                   "totalBalance":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    },
+                                                                                   "totalEarned":  {
+                                                                                                       "type":  "integer",
+                                                                                                       "format":  "int64"
+                                                                                                   },
+                                                                                   "totalSpent":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                   "totalExpired":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    },
+                                                                                   "accounts":  {
+                                                                                                    "type":  "integer",
+                                                                                                    "format":  "int64"
+                                                                                                },
+                                                                                   "expiringIn30dCoins":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "format":  "int64"
+                                                                                                          }
+                                                                               }
+                                                            },
                                        "ApiResponsePageResultAuditLogView":  {
                                                                                  "type":  "object",
                                                                                  "properties":  {

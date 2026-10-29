@@ -73,6 +73,13 @@ export const AdminMerchantStaffPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的成员 {data ? data.total : 0} 人</span>
         ) : null}
+        <a
+          className="btn btn-sm btn-ghost"
+          style={{ marginLeft: 'auto' }}
+          href={adminMerchantStaffApi.exportUrl({ keyword: keyword || undefined })}
+        >
+          导出 CSV
+        </a>
       </div>
 
       {loadError ? <Alert kind="error">{loadError}</Alert> : null}

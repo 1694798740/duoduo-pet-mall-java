@@ -31,7 +31,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { skuImage } from '@duoduo/api-sdk/images';
 import { addressApi, cartApi, couponApi, orderApi } from '@duoduo/api-sdk/endpoints';
-import type { AddressView, CartView, PlaceOrderResult, UsableCouponResult } from '@duoduo/api-sdk/types';
+import type {
+  AddressView,
+  CartView,
+  OrderPreviewResult,
+  PlaceOrderResult,
+  UsableCouponResult,
+} from '@duoduo/api-sdk/types';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { Alert, Field, LoadingBlock, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useApp } from '@duoduo/shared/store/app';
@@ -68,6 +74,11 @@ export const CheckoutPage: React.FC = () => {
    * 混成一个值，用户取消选券后页面会立刻又帮他选回去。
    */
   const [couponChoice, setCouponChoice] = useState<string | null | undefined>(undefined);
+  /**
+   * 多多币开关（R-P1）：默认开启 —— 有余额就尽量用，符合「能抵就抵」的直觉。
+   * 只传开关不传币数：用多少由服务端按「券后 50% 上限内、按余额贪心」算出。
+   */
+  const [useCoins, setUseCoins] = useState(true);
 
   // 幂等键：进入结算页生成一次，提交失败重试时保持不变
   const idempotentKeyRef = useRef<string>(newIdempotentKey());
@@ -138,7 +149,31 @@ export const CheckoutPage: React.FC = () => {
   const effectiveCode = couponChoice === undefined ? bestCode : couponChoice;
   const chosen = coupons.find((c) => c.code === effectiveCode && c.usable) ?? null;
   const discountAmount = chosen ? chosen.discountAmount : 0;
-  const payAmount = Math.max(0, selectedAmount - discountAmount);
+  const localPayAmount = Math.max(0, selectedAmount - discountAmount);
+
+  /**
+   * 结算试算（R-P1）：券 + 币的完整抵扣口径由服务端给出。
+   * 与券查询一样是展示用途 —— 提交只带 useCoins 开关，实际抵扣在冻结那一刻由用户域硬校验。
+   * 预览失败（用户域抖动）降级为「不用币」：结算页必须打得开，币可以不用。
+   */
+  const previewFetcher = useCallback(
+    () =>
+      selectedAmount > 0
+        ? orderApi.preview({ couponCode: effectiveCode ?? undefined, useCoins })
+        : Promise.resolve(null),
+    [selectedAmount, effectiveCode, useCoins],
+  );
+  const { data: preview, loading: previewLoading } = useAsync<OrderPreviewResult | null>(
+    previewFetcher,
+    true,
+    [selectedAmount, effectiveCode, useCoins],
+  );
+
+  const coinBalance = preview?.coinBalance ?? 0;
+  const coinUsed = preview?.coinUsed ?? 0;
+  const coinDeduct = preview?.coinDeductAmount ?? 0;
+  // 金额明细以预览为准（含币抵）；预览未回来或失败时退回本地券后口径
+  const payAmount = preview ? preview.payAmount : localPayAmount;
 
   // 全部所选条目失效（或被清空）时，不允许停留在结算页盲目提交
   useEffect(() => {
@@ -192,6 +227,8 @@ export const CheckoutPage: React.FC = () => {
         remark: remark.trim() || undefined,
         // 只传券码，不传优惠金额：能抵多少由营销域算、交易域落账
         couponCode: chosen ? chosen.code : undefined,
+        // 只传币开关，不传币数：用多少由服务端按余额与 50% 上限算出并冻结
+        useCoins,
         idempotentKey: idempotentKeyRef.current,
       });
       setResult(placed);
@@ -531,7 +568,9 @@ export const CheckoutPage: React.FC = () => {
                       {c.thresholdAmount > 0
                         ? `满 ${formatPrice(c.thresholdAmount)} 可用`
                         : '无门槛'}{' '}
-                      · 抵 {formatPrice(c.discountAmount)}
+                      {/* 折扣券的「抵」是按本单金额算出来的，折率要一并写出，否则用户不知道 8 折是什么概念 */}
+                      {c.type === 'DISCOUNT' ? `${(c.discountPercent / 10).toFixed(1)} 折 · ` : ''}
+                      抵 {formatPrice(c.discountAmount)}
                       {bestCode === c.code ? (
                         <span className="tag tag-success" style={{ marginLeft: 6 }}>
                           推荐
@@ -551,6 +590,51 @@ export const CheckoutPage: React.FC = () => {
           </div>
 
           <div className="card card-pad" style={{ marginTop: 16 }}>
+            <div className="row-between" style={{ marginBottom: 8 }}>
+              <h3>多多币</h3>
+              <Link className="small text-brand" to="/coins">
+                我的币
+              </Link>
+            </div>
+
+            {previewLoading ? <div className="small muted">正在试算币抵扣…</div> : null}
+
+            {!previewLoading && coinBalance <= 0 ? (
+              <div className="small muted">
+                暂无可用多多币。完成任务、完成订单后可获得，
+                <Link to="/coins" className="text-brand">
+                  去看账户
+                </Link>
+                。
+              </div>
+            ) : null}
+
+            {coinBalance > 0 ? (
+              <label className="row row-wrap" style={{ gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={useCoins}
+                  onChange={(e) => setUseCoins(e.target.checked)}
+                />
+                <span style={{ minWidth: 0 }}>
+                  使用多多币抵扣 · 当前 {coinBalance} 币（1 币 = 0.01 元）
+                  {/* 上限口径如实告知：单笔最多抵券后金额的一半，避免「为什么没全抵完」的客诉 */}
+                  {useCoins && coinUsed > 0 ? (
+                    <span className="small" style={{ display: 'block', marginTop: 2, color: 'var(--success)' }}>
+                      本次抵 {coinUsed} 币（单笔最多抵券后金额的 50%）
+                    </span>
+                  ) : null}
+                  {useCoins && coinUsed === 0 ? (
+                    <span className="small muted" style={{ display: 'block', marginTop: 2 }}>
+                      本单金额较低，暂无币抵空间
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            ) : null}
+          </div>
+
+          <div className="card card-pad" style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 12 }}>费用明细</h3>
             <dl className="spec-list">
               <dt>商品总额</dt>
@@ -560,6 +644,10 @@ export const CheckoutPage: React.FC = () => {
               <dt>优惠</dt>
               <dd style={{ color: discountAmount > 0 ? 'var(--success)' : undefined }}>
                 {discountAmount > 0 ? `-${formatPrice(discountAmount)}` : formatPrice(0)}
+              </dd>
+              <dt>多多币抵扣</dt>
+              <dd style={{ color: coinDeduct > 0 ? 'var(--success)' : undefined }}>
+                {coinDeduct > 0 ? `-${formatPrice(coinDeduct)}（${coinUsed} 币）` : formatPrice(0)}
               </dd>
             </dl>
             <div className="divider" />

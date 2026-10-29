@@ -13,16 +13,19 @@
  * 恢复是下架的逆动作，用来纠正误判；恢复后评价重新参与评分计算。
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import type { AdminReviewView } from '@duoduo/api-sdk/types';
+import type { AdminReviewView, BatchResultView } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatDate, useToast,
 } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
+import { UnreadDot } from '@duoduo/shared/components/badge';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { useConfirm } from '@duoduo/shared/components/confirm';
+import { notifyBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
 const STATUS_TABS: Array<{ value: string; label: string }> = [
@@ -77,6 +80,19 @@ export const AdminReviewsPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  /** 批量审核（2026-10-27 · 批量操作即已读）：动作与原因对选中评价共用 */
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchAction, setBatchAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [batchReason, setBatchReason] = useState('');
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+
+  /** 逐条已读覆盖（2026-10-27 · 橙色未读印记） */
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setReadIds(new Set());
+  }, [status, rating, keyword, page]);
+  const isRead = (item: AdminReviewView) => item.read === true || readIds.has(item.id);
+
   const { data, loading, error, reload } = useAsync(
     useCallback(
       () => adminApi.reviews({
@@ -91,6 +107,9 @@ export const AdminReviewsPage: React.FC = () => {
     operator,
     [status, rating, keyword, page],
   );
+
+  const pageIds = (data?.items ?? []).map((item) => item.id);
+  const selection = useBatchSelection(pageIds, `${status}|${rating}|${keyword}|${page}`);
 
   if (!operator) return <AdminDenied />;
 
@@ -142,9 +161,62 @@ export const AdminReviewsPage: React.FC = () => {
     }
   };
 
+  /** 批量审核：成功条目服务端写运营已读，返回最新未读分桶 */
+  const submitBatch = async () => {
+    if (!selection.count || busy) return;
+    setActionError(null);
+    if (batchAction === 'REJECT' && !batchReason.trim()) {
+      setActionError('下架评价必须填写原因');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await adminApi.batchAuditReviews(
+        selection.selected,
+        batchAction,
+        batchAction === 'REJECT' ? batchReason.trim() : undefined,
+      );
+      setBatchResult(result);
+      selection.clear();
+      setBatchOpen(false);
+      reload();
+      notifyBadgeChanged();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 查看详情 = 已读（2026-10-27 · 点击即消除）。
+   *
+   * 上报成功才广播刷新父级导航；上报失败**不本地减** —— 下一次轮询会用服务端值回填，
+   * 先减后加会让角标「闪一下又复活」，比不动更让人困惑。
+   */
+  const markSeen = async (item: AdminReviewView) => {
+    setReadIds((prev) => new Set(prev).add(item.id));
+    try {
+      await adminApi.markReviewRead(item.id);
+      notifyBadgeChanged();
+    } catch {
+      setReadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  };
+
   const renderActions = (item: AdminReviewView) => (
     <div className="row" style={{ gap: 6 }}>
-      <button className="btn btn-sm btn-ghost" onClick={() => setDetail(item)}>
+      <button
+        className="btn btn-sm btn-ghost"
+        onClick={() => {
+          setDetail(item);
+          void markSeen(item);
+        }}
+      >
         查看
       </button>
       {item.auditStatus === 'REJECTED' ? (
@@ -221,6 +293,28 @@ export const AdminReviewsPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的评价 {data ? data.total : 0} 条</span>
         ) : null}
+        <button
+          className="btn btn-ghost btn-sm"
+          title="按当前状态 / 星级 / 关键词导出全平台评价（CSV）"
+          onClick={() => {
+            window.location.href = adminApi.reviewExportUrl({
+              status: status || undefined,
+              rating: rating ?? undefined,
+              keyword: keyword || undefined,
+            });
+          }}
+        >
+          导出 CSV
+        </button>
+        <label className="checkbox-row small" style={{ marginLeft: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={selection.allSelected}
+            disabled={!pageIds.length}
+            onChange={selection.toggleAll}
+          />
+          全选当前页
+        </label>
       </div>
 
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -235,10 +329,46 @@ export const AdminReviewsPage: React.FC = () => {
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (
+        <div>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('APPROVE');
+                setBatchReason('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量通过
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('REJECT');
+                setBatchReason('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量下架
+            </button>
+          </BatchBar>
         <div className="card card-pad">
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="全选当前页评价"
+                    checked={selection.allSelected}
+                    disabled={!pageIds.length}
+                    onChange={selection.toggleAll}
+                  />
+                </th>
                 <th>商品</th>
                 <th>评分</th>
                 <th>评价内容</th>
@@ -249,8 +379,22 @@ export const AdminReviewsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
+              {[...data.items]
+                .sort((a, b) => Number(isRead(a)) - Number(isRead(b)))
+                .map((item) => (
+                <tr key={item.id} className={isRead(item) ? undefined : 'unread-card'}>
+                  <td>
+                    <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`选择评价 ${item.id}`}
+                        checked={selection.selectedSet.has(item.id)}
+                        disabled={busy}
+                        onChange={() => selection.toggle(item.id)}
+                      />
+                      {!isRead(item) ? <UnreadDot /> : null}
+                    </div>
+                  </td>
                   <td style={{ maxWidth: 240 }}>
                     <div className="row" style={{ gap: 8 }}>
                       {item.productImage ? (
@@ -296,6 +440,7 @@ export const AdminReviewsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       ) : null}
 
@@ -435,6 +580,53 @@ export const AdminReviewsPage: React.FC = () => {
           </div>
         ) : null}
       </Modal>
+
+      {/* 批量审核：通过 / 下架；下架必须填原因 */}
+      <Modal
+        open={batchOpen}
+        title={batchAction === 'APPROVE' ? '批量通过评价' : '批量下架评价'}
+        onClose={() => setBatchOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setBatchOpen(false)} disabled={busy}>
+              取消
+            </button>
+            <button
+              className={`btn ${batchAction === 'APPROVE' ? 'btn-primary' : 'btn-danger'}`}
+              disabled={busy}
+              onClick={submitBatch}
+            >
+              {busy
+                ? '提交中…'
+                : batchAction === 'APPROVE'
+                  ? `确认通过（${selection.count} 条）`
+                  : `确认下架（${selection.count} 条）`}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="warn">
+          将处理 <b>{selection.count}</b> 条评价（仅当前页）。
+          {batchAction === 'APPROVE'
+            ? '通过后它们会展示在商品评价区并重新参与评分计算；已通过的评价按幂等成功处理。'
+            : '下架后它们会立即从公开评价区、评分汇总与卖家信用分中移除，并触发商品评分重算。'}
+        </Alert>
+        {batchAction === 'REJECT' ? (
+          <Field label="下架原因（必填，对全部选中评价共用）" required>
+            <textarea
+              className="textarea"
+              rows={3}
+              maxLength={255}
+              placeholder="例如：评价正文含微信号导流，属站外引流"
+              value={batchReason}
+              onChange={(e) => setBatchReason(e.target.value)}
+            />
+          </Field>
+        ) : null}
+        {actionError ? <Alert kind="error">{actionError}</Alert> : null}
+      </Modal>
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="评价" />
     </div>
   );
 };

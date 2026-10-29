@@ -1,40 +1,55 @@
 package com.duoduo.ai.controller;
 
+import com.duoduo.ai.agent.AgentChatService;
+import com.duoduo.ai.agent.AgentCommand;
+import com.duoduo.ai.agent.AgentEvent;
+import com.duoduo.ai.agent.AgentResult;
+import com.duoduo.ai.agent.GuestIdentityService;
+import com.duoduo.ai.agent.tool.ToolCall;
+import com.duoduo.ai.agent.tool.ToolContext;
+import com.duoduo.ai.agent.tool.ToolRegistry;
+import com.duoduo.ai.agent.tool.ToolResult;
 import com.duoduo.ai.dto.AiDtos.CapabilityView;
 import com.duoduo.ai.dto.AiDtos.ChatRequest;
 import com.duoduo.ai.dto.AiDtos.ChatResponse;
-import com.duoduo.ai.service.ChatService;
+import com.duoduo.ai.llm.LlmToolClient;
 import com.duoduo.ai.support.CategoryCatalog;
-import com.duoduo.ai.support.DashScopeClient;
 import com.duoduo.ai.support.IpRateLimiter;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.HttpServletRequest;
-
-import java.util.List;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 
 /**
- * AI 导购「多多」端点（A9）。
+ * AI 导购端点（2026-10-28 重构）。
  *
- * <p>两条路径都在网关白名单（{@code /api/duoduo/chat}、{@code /api/duoduo/capabilities}）：
- * 未登录可问答（验收②），需登录的操作（加购 / 下单）由回复内容引导用户去登录 ——
- * 对话本身不承载身份，也就不需要令牌。
- *
- * <p>限流在业务入口做：LLM 配额是真金白银，网关层限流管全站洪水，
- * 这里管的是「把导购当聊天机器人刷」的定向滥用。**限流键的来源见 {@link #clientKey}** ——
- * 第五十七轮修掉了「键可被客户端伪造」这个洞。
+ * <ul>
+ *   <li>{@code POST /api/duoduo/chat/stream}：SSE 打字机，推荐走 Agent；</li>
+ *   <li>{@code POST /api/duoduo/chat}：非流式兼容入口；</li>
+ *   <li>{@code POST /api/duoduo/confirm}：加购二次确认执行；</li>
+ *   <li>{@code GET /api/duoduo/capabilities}：能力声明。</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/duoduo")
@@ -42,48 +57,105 @@ public class AiController {
 
     private static final Logger log = LoggerFactory.getLogger(AiController.class);
 
-    private final ChatService chatService;
-    private final DashScopeClient dashScopeClient;
+    private final AgentChatService agentChatService;
+    private final GuestIdentityService guestIdentityService;
+    private final ToolRegistry toolRegistry;
+    private final LlmToolClient llm;
     private final IpRateLimiter rateLimiter;
     private final CategoryCatalog categoryCatalog;
-    private final boolean mockEnabled;
+    private final ExecutorService streamExecutor;
+    private final ObjectMapper mapper;
 
-    public AiController(ChatService chatService,
-                        DashScopeClient dashScopeClient,
+    public AiController(AgentChatService agentChatService,
+                        GuestIdentityService guestIdentityService,
+                        ToolRegistry toolRegistry,
+                        LlmToolClient llm,
                         IpRateLimiter rateLimiter,
                         CategoryCatalog categoryCatalog,
-                        @Value("${duoduo.ai.mock-enabled:true}") boolean mockEnabled) {
-        this.chatService = chatService;
-        this.dashScopeClient = dashScopeClient;
+                        @Qualifier("aiStreamExecutor") ExecutorService streamExecutor,
+                        ObjectMapper mapper) {
+        this.agentChatService = agentChatService;
+        this.guestIdentityService = guestIdentityService;
+        this.toolRegistry = toolRegistry;
+        this.llm = llm;
         this.rateLimiter = rateLimiter;
         this.categoryCatalog = categoryCatalog;
-        this.mockEnabled = mockEnabled;
+        this.streamExecutor = streamExecutor;
+        this.mapper = mapper;
     }
 
     @PostMapping("/chat")
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request,
-                                          HttpServletRequest httpRequest) {
-        if (!rateLimiter.allow(clientKey(httpRequest))) {
-            throw new BizException(ErrorCode.RATE_LIMITED, "对话太频繁啦，请一分钟后再来");
-        }
-        // userId 可为 null（匿名问答是硬需求）；有值时 AI 会按宠物档案做个性化（第五十八轮 S1）
+                                          HttpServletRequest httpRequest,
+                                          HttpServletResponse httpResponse) {
+        checkRate(httpRequest);
         LoginUser user = UserContext.get();
-        Long userId = user == null ? null : user.userId();
-        return ApiResponse.ok(chatService.chat(
-                request.message(), request.history(), request.clarifiedOnce(), userId));
+        // 未登录也要有稳定的设备标识：首访签发 HttpOnly Cookie，后续按它计游客轮次
+        GuestIdentityService.GuestIdentity guest =
+                guestIdentityService.resolve(httpRequest, httpResponse);
+        AgentResult result = agentChatService.chat(command(request, user, guest), event -> { });
+        if (!result.success()) {
+            throw new BizException(ErrorCode.DEGRADED, result.errorMessage());
+        }
+        return ApiResponse.ok(new ChatResponse(result.reply(), result.recommendations(),
+                "llm", null, List.of(), result.cards(), result.badgePatch(), result.loginUrl(),
+                result.sessionId()));
     }
 
-    /** 能力声明：前端据此显示/隐藏 AI 入口，并在 mock / 未配置形态下给出相应提示 */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter stream(@Valid @RequestBody ChatRequest request,
+                             HttpServletRequest httpRequest,
+                             HttpServletResponse httpResponse) {
+        checkRate(httpRequest);
+        LoginUser user = UserContext.get();
+        // Cookie 必须在响应提交前写入：SSE 一旦开始吐事件，响应头就冻结了
+        GuestIdentityService.GuestIdentity guest =
+                guestIdentityService.resolve(httpRequest, httpResponse);
+        SseEmitter emitter = new SseEmitter(120_000L);
+        AgentCommand command = command(request, user, guest);
+
+        streamExecutor.execute(() -> {
+            try {
+                agentChatService.chat(command, event -> send(emitter, event));
+                emitter.complete();
+            } catch (Exception e) {
+                log.warn("SSE 对话失败: {}", e.getMessage());
+                send(emitter, AgentEvent.error("AI 暂时不可用，请稍后再试"));
+                emitter.complete();
+            }
+        });
+        return emitter;
+    }
+
+    /** 加购二次确认：只有用户点击确认后才会消费令牌并执行 */
+    @PostMapping("/confirm")
+    public ApiResponse<ToolResult> confirm(@RequestBody ConfirmRequest request,
+                                           HttpServletRequest httpRequest) {
+        checkRate(httpRequest);
+        LoginUser user = UserContext.get();
+        if (user == null) {
+            throw BizException.unauthorized("请先登录");
+        }
+        ObjectNode args = mapper.createObjectNode();
+        args.put("spuId", request.spuId());
+        args.put("skuId", request.skuId());
+        args.put("quantity", request.quantity() == null ? 1 : request.quantity());
+        args.put("confirmToken", request.token());
+        ToolContext context = new ToolContext(user.userId(), user.role(), user.phone(),
+                request.sessionId() == null ? UUID.randomUUID().toString().replace("-", "") : request.sessionId(),
+                UUID.randomUUID().toString().replace("-", ""), true);
+        ToolResult result = toolRegistry.execute(
+                new ToolCall(UUID.randomUUID().toString(), "add_to_cart", args.toString()), context);
+        return ApiResponse.ok(result);
+    }
+
     @GetMapping("/capabilities")
     public ApiResponse<CapabilityView> capabilities() {
-        boolean llmReady = dashScopeClient.isConfigured();
-        String mode = mockEnabled ? "mock" : (llmReady ? "llm" : "unconfigured");
-        boolean available = mockEnabled || llmReady;
-        String hint = mockEnabled
-                ? "当前为演示模式（未接大模型），推荐结果均来自真实商品库。"
-                : (llmReady ? "AI 导购已就绪。" : "AI 服务未配置，暂不可用。");
-        // 快捷问题取自真实类目（第五十八轮 S3）：类目取不到就不给，
-        // 免得用户点了一句「帮我挑一款宠物无人机」却什么都没有
+        boolean ready = llm.isConfigured();
+        String mode = ready ? "llm" : "unconfigured";
+        String hint = ready
+                ? "AI 导购已就绪，正在从真实商品库为你挑选。"
+                : "AI 服务未配置（DASHSCOPE_API_KEY 为空），请联系管理员。";
         List<String> quick = new java.util.ArrayList<>();
         try {
             for (var c : categoryCatalog.clarifyOptions(4)) {
@@ -92,31 +164,38 @@ public class AiController {
         } catch (Exception ex) {
             log.warn("类目取不到，本次不返回快捷问题: {}", ex.getMessage());
         }
-        return ApiResponse.ok(new CapabilityView(available, mode, hint, quick));
+        return ApiResponse.ok(new CapabilityView(ready, mode, hint, quick));
+    }
+
+    private AgentCommand command(ChatRequest request, LoginUser user,
+                                 GuestIdentityService.GuestIdentity guest) {
+        return new AgentCommand(request.sessionId(),
+                user == null ? null : user.userId(),
+                user == null ? null : user.role(),
+                user == null ? null : user.phone(),
+                request.message(),
+                guest == null ? null : guest.deviceId(),
+                request.pageUrl());
+    }
+
+    private void checkRate(HttpServletRequest request) {
+        if (!rateLimiter.allow(clientKey(request))) {
+            throw new BizException(ErrorCode.RATE_LIMITED, "对话太频繁啦，请一分钟后再来");
+        }
+    }
+
+    private void send(SseEmitter emitter, AgentEvent event) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name(event.type())
+                    .data(event.data(), MediaType.APPLICATION_JSON));
+        } catch (IOException e) {
+            emitter.completeWithError(e);
+        }
     }
 
     /**
-     * 限流键（第五十七轮加固）：**绝不采用客户端能自己写的头**。
-     *
-     * <h2>修的是什么
-     * 此前实现取 {@code X-Forwarded-For} 的**首段**并直接当键。问题是那个头由请求方提供：
-     * 每次请求换一个假 IP，就等于每次都是「新用户」，限流形同虚设 ——
-     * 而 LLM 配额是按调用量真金白银付费的。这类洞不会报任何错，
-     * 只有在账单或配额告警上才看得出来。
-     *
-     * <h2>现在怎么取
-     * <ol>
-     *   <li><b>登录态优先用 userId</b>：{@code X-User-Id} 由网关在校验令牌后写入，
-     *       且网关会**先删掉客户端传的同名字段**（见 {@code JwtAuthGlobalFilter}）——
-     *       所以它有可信来源；</li>
-     *   <li><b>未登录用 {@code X-Real-IP}</b>：同样由网关注入（写入前清除客户端伪造值，
-     *       见同一过滤器），不是客户端说了算；</li>
-     *   <li><b>兜底用 TCP 对端地址</b>：直连（不经网关）时至少还有一个真实对端地址，
-     *       仍然优于信任请求头。</li>
-     * </ol>
-     *
-     * <p>就算有人绕过网关直连本服务，也拿不到合法的 {@code X-User-Id}（伪造值会被当匿名处理），
-     * 于是落到第 2/3 条 —— 单键限流仍生效，另外还有全站总配额兜底。
+     * 限流键：登录态用 userId，未登录用网关注入的 X-Real-IP，兜底 TCP 对端。
      */
     private static String clientKey(HttpServletRequest request) {
         LoginUser user = UserContext.get();
@@ -128,5 +207,9 @@ public class AiController {
             return "ip:" + realIp.trim();
         }
         return "ip:" + request.getRemoteAddr();
+    }
+
+    public record ConfirmRequest(String token, Long spuId, Long skuId, Integer quantity,
+                                 String sessionId) {
     }
 }

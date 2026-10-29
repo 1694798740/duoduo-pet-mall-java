@@ -17,13 +17,15 @@
 
 import React, { useCallback, useState } from 'react';
 import { adminApi } from '@duoduo/api-sdk/endpoints';
-import type { AdminProductAuditView, SpuAuditLogView } from '@duoduo/api-sdk/types';
+import type { AdminProductAuditView, BatchResultView, SpuAuditLogView } from '@duoduo/api-sdk/types';
 import {
   Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, SupplyTag, formatPrice, useToast,
 } from '@duoduo/shared/components/ui';
 import { RichTextView } from '@duoduo/shared/components/RichText';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { BatchBar, BatchResultModal, useBatchSelection } from '@duoduo/shared/components/batch';
 import { ApiError, toFriendlyMessage } from '@duoduo/api-sdk/client';
+import { notifyBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AdminDenied, AdminTabs, isOperator } from './shared';
 
@@ -93,6 +95,12 @@ export const AdminProductAuditsPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  /** 批量审核（2026-10-27 · 批量操作即已读）：逐件带 version，结论与原因共用 */
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchAction, setBatchAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [batchReason, setBatchReason] = useState('');
+  const [batchResult, setBatchResult] = useState<BatchResultView | null>(null);
+
   // A-08：审核历史（按需拉取，不跟着列表翻页反复请求）
   const [historyOf, setHistoryOf] = useState<AdminProductAuditView | null>(null);
   const [history, setHistory] = useState<SpuAuditLogView[] | null>(null);
@@ -109,6 +117,9 @@ export const AdminProductAuditsPage: React.FC = () => {
     operator,
     [auditStatus, sellerId, keyword, page],
   );
+
+  const pageIds = (data?.items ?? []).map((item) => item.id);
+  const selection = useBatchSelection(pageIds, `${auditStatus}|${sellerId ?? ''}|${keyword}|${page}`);
 
   if (!operator) return <AdminDenied />;
 
@@ -159,6 +170,46 @@ export const AdminProductAuditsPage: React.FC = () => {
     }
   };
 
+  /**
+   * 批量审核商品（2026-10-27 · 批量操作即已读）。
+   *
+   * <p>逐件把当前列表里的 version 带上（乐观锁，不能共用一个）；
+   * 卖家在此期间改了内容的那件会以 409 失败并出现在结果里，其余继续。
+   */
+  const submitBatch = async () => {
+    if (!selection.count || busy) return;
+    setActionError(null);
+    if (batchAction === 'REJECT' && !batchReason.trim()) {
+      setActionError('驳回商品必须填写原因');
+      return;
+    }
+    const byId = new Map((data?.items ?? []).map((item) => [item.id, item.version]));
+    const targets = selection.selected
+      .map((id) => ({ spuId: id, version: byId.get(id) ?? 0 }))
+      .filter((item) => item.version > 0);
+    if (!targets.length) {
+      setActionError('选中的商品缺少版本号，请刷新列表后重试');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await adminApi.batchAuditProducts(
+        targets,
+        batchAction,
+        batchAction === 'REJECT' ? batchReason.trim() : undefined,
+      );
+      setBatchResult(result);
+      selection.clear();
+      setBatchOpen(false);
+      reload();
+      notifyBadgeChanged();
+    } catch (err) {
+      setActionError(toFriendlyMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openHistory = async (item: AdminProductAuditView) => {
     setHistoryOf(item);
     setHistory(null);
@@ -195,6 +246,25 @@ export const AdminProductAuditsPage: React.FC = () => {
         {keywordInput.trim() ? (
           <span className="small muted">匹配「{keywordInput.trim()}」的商品 {data ? data.total : 0} 件</span>
         ) : null}
+        <label className="checkbox-row small" style={{ marginLeft: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={selection.allSelected}
+            disabled={!pageIds.length}
+            onChange={selection.toggleAll}
+          />
+          全选当前页
+        </label>
+        <a
+          className="btn btn-sm btn-ghost"
+          href={adminApi.productAuditExportUrl({
+            auditStatus: auditStatus || undefined,
+            sellerId: sellerId == null ? undefined : String(sellerId),
+            keyword: keywordInput.trim() || undefined,
+          })}
+        >
+          导出 CSV
+        </a>
       </div>
 
       <div className="row row-wrap row-between" style={{ gap: 12, marginBottom: 14, alignItems: 'flex-end' }}>
@@ -253,12 +323,47 @@ export const AdminProductAuditsPage: React.FC = () => {
           desc="第三方卖家提交商品后，会先进入「待审核」"
         />
       ) : (
+        <div>
+          <BatchBar count={selection.count} onClear={selection.clear}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('APPROVE');
+                setBatchReason('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量通过
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={busy}
+              onClick={() => {
+                setBatchAction('REJECT');
+                setBatchReason('');
+                setActionError(null);
+                setBatchOpen(true);
+              }}
+            >
+              批量驳回
+            </button>
+          </BatchBar>
         <div className="stack">
           {items.map((item) => {
             const approved = item.auditStatus === 'APPROVED';
             return (
               <div className="card card-pad" key={item.id}>
                 <div className="row row-wrap" style={{ gap: 14, alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`选择商品 ${item.title}`}
+                    checked={selection.selectedSet.has(item.id)}
+                    disabled={busy}
+                    onChange={() => selection.toggle(item.id)}
+                    style={{ marginTop: 4 }}
+                  />
                   {item.mainImage ? (
                     <img
                       src={item.mainImage}
@@ -432,6 +537,7 @@ export const AdminProductAuditsPage: React.FC = () => {
             );
           })}
         </div>
+        </div>
       )}
 
       {data ? (
@@ -470,6 +576,54 @@ export const AdminProductAuditsPage: React.FC = () => {
           />
         </Field>
       </Modal>
+
+      {/* 批量审核：逐件带 version；卖家改过内容的那件会 409，其余继续 */}
+      <Modal
+        open={batchOpen}
+        title={batchAction === 'APPROVE' ? '批量通过商品' : '批量驳回商品'}
+        onClose={() => setBatchOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setBatchOpen(false)} disabled={busy}>
+              取消
+            </button>
+            <button
+              className={`btn ${batchAction === 'APPROVE' ? 'btn-primary' : 'btn-danger'}`}
+              disabled={busy}
+              onClick={submitBatch}
+            >
+              {busy
+                ? '处理中…'
+                : batchAction === 'APPROVE'
+                  ? `确认通过（${selection.count} 件）`
+                  : `确认驳回（${selection.count} 件）`}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="warn">
+          将处理 <b>{selection.count}</b> 件商品（仅当前页）。
+          {batchAction === 'APPROVE'
+            ? '通过后商品即刻在前台可见；已通过的商品按幂等成功处理。'
+            : '驳回后商品立即从前台撤下，必须填写原因；卖家修改内容后可重新进入审核队列。'}
+          若卖家在核对期间改了内容，该件会因版本冲突失败并出现在结果里。
+        </Alert>
+        {batchAction === 'REJECT' ? (
+          <Field label="驳回原因（必填，对全部选中商品共用）" required>
+            <textarea
+              className="input"
+              rows={3}
+              value={batchReason}
+              onChange={(e) => setBatchReason(e.target.value)}
+              placeholder="如：主图涉嫌违禁内容 / 标题含夸大宣传 / 类目选择错误 / 资质不匹配"
+              maxLength={200}
+            />
+          </Field>
+        ) : null}
+        {actionError ? <Alert kind="error">{actionError}</Alert> : null}
+      </Modal>
+
+      <BatchResultModal result={batchResult} onClose={() => setBatchResult(null)} idLabel="商品" />
 
       <Modal
         open={historyOf != null}

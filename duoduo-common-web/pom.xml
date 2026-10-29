@@ -74,5 +74,17 @@
       <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
       <optional>true</optional>
     </dependency>
+    <!--
+      第三批 · 商品 xlsx 模板 / 导入（2026-10-28）：POI 负责读写 OOXML。
+      · 写：SXSSFWorkbook 流式写盘，模板/导出都不把整表读进内存；
+      · 读：WorkbookFactory 只读用户上传的 xlsx（≤5MB），不碰 .xls / 加密文件。
+      放 common-web 是因为「表格导入导出」是全站基建（后续导出也可能要 xlsx），
+      不是商品域私有能力；POI 无自动装配，不会像 spring-jdbc 那样影响无库服务启动。
+    -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.2.5</version>
+    </dependency>
   </dependencies>
 </project>

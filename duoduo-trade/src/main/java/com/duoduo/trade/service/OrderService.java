@@ -3,6 +3,7 @@ package com.duoduo.trade.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.api.StatusCount;
 import com.duoduo.common.context.UserContext;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
@@ -199,8 +200,19 @@ public class OrderService {
     private final SchedLeaderLock leaderLock;
     /** 2026-10-22 · 订单卡片店铺名（第三方按店主 userId 跨域取名；自营固定「多多自营」不走该客户端） */
     private final com.duoduo.trade.client.StoreNameClient storeNameClient;
+    /** B-04 · 重复收款自动退款：检出落库与执行都在这里，本类只负责在正确的时机触发 */
+    private final PaymentRefundService paymentRefundService;
+    /** R-P1 · 多多币网关：冻结 / 扣减 / 释放 / 退币 / 返币都经它，失败语义在网关里收敛 */
+    private final com.duoduo.trade.client.CoinGateway coinGateway;
     /** 平台自营的展示名（与商品域 SELF_STORE_NAME 同文案） */
     public static final String SELF_STORE_NAME = "多多自营";
+
+    /**
+     * R-P1 · 购物返币的延迟天数（T+7）：订单完成后第 7 天发币。
+     * 配 0 或负数即关闭返币（币照常抵扣，只是不再新增发放）。
+     */
+    @Value("${duoduo.trade.coin-earn-delay-days:7}")
+    private int coinEarnDelayDays;
 
     public OrderService(OrderMapper orderMapper,
                         OrderItemMapper orderItemMapper,
@@ -220,7 +232,9 @@ public class OrderService {
                         OrderNotifier orderNotifier,
                         SeckillService seckillService,
                         SchedLeaderLock leaderLock,
-                        com.duoduo.trade.client.StoreNameClient storeNameClient) {
+                        com.duoduo.trade.client.StoreNameClient storeNameClient,
+                        PaymentRefundService paymentRefundService,
+                        com.duoduo.trade.client.CoinGateway coinGateway) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -240,6 +254,8 @@ public class OrderService {
         this.seckillService = seckillService;
         this.leaderLock = leaderLock;
         this.storeNameClient = storeNameClient;
+        this.paymentRefundService = paymentRefundService;
+        this.coinGateway = coinGateway;
     }
 
     // ---------------- 结算预览（只读） ----------------
@@ -356,7 +372,18 @@ public class OrderService {
             }
         }
 
-        // 5) 逐单算钱：口径与 createOne 完全一致（应付 = 商品 + 运费 − 优惠，运费本阶段固定 0）
+        // 4.7) 多多币（R-P1）：只读试算。币在券后抵扣、单笔上限 50%、按余额贪心分摊。
+        //
+        // 余额查询失败降级为 0（网关里处理）：结算页必须打得开，
+        // 真正的硬校验在冻结那一刻 —— 展示层的容错不能替资金层的校验做主。
+        boolean useCoins = Boolean.TRUE.equals(request.useCoins());
+        long coinBalance = useCoins ? coinGateway.balanceOf(userId) : 0L;
+        Map<Long, Long> coinAllocations = useCoins && coinBalance > 0
+                ? allocateCoins(groupPaysAfterCoupon(groups, groupAmounts, allocations), coinBalance)
+                : new LinkedHashMap<>();
+
+        // 5) 逐单算钱：口径与 createOne 完全一致
+        //    （应付 = 商品 + 运费 − 优惠 − 币抵扣，运费本阶段固定 0）
         List<PreviewOrderPreview> previews = new ArrayList<>(groups.size());
         long totalAmount = 0L;
         long freightAmount = 0L;
@@ -366,6 +393,7 @@ public class OrderService {
             long groupTotal = groupAmounts.getOrDefault(entry.getKey(), 0L);
             long groupFreight = 0L;
             long groupDiscount = allocations.getOrDefault(entry.getKey(), 0L);
+            long groupCoin = coinAllocations.getOrDefault(entry.getKey(), 0L);
             List<OrderItemView> items = new ArrayList<>(entry.getValue().size());
             for (CartItemEntity row : entry.getValue()) {
                 SkuSnapshot snap = snapshots.get(row.getSkuId());
@@ -374,18 +402,20 @@ public class OrderService {
                 items.add(new OrderItemView(snap.skuId(), snap.spuId(), safeTitle(snap),
                         snap.specText(), snap.image(), snap.price(), quantity, amount));
             }
-            long groupPay = Math.max(0L, groupTotal + groupFreight - groupDiscount);
+            long groupPay = Math.max(0L, groupTotal + groupFreight - groupDiscount - groupCoin);
             previews.add(new PreviewOrderPreview(entry.getKey(), items, groupTotal,
-                    groupFreight, groupDiscount, groupPay));
+                    groupFreight, groupDiscount, groupPay, groupCoin));
             totalAmount += groupTotal;
             freightAmount += groupFreight;
             discountAmount += groupDiscount;
             payAmount += groupPay;
         }
+        long coinUsed = coinAllocations.values().stream().mapToLong(Long::longValue).sum();
 
         return new PreviewOrderResult(previews, previews.size(), totalAmount, freightAmount,
                 discountAmount, payAmount, couponSellerId,
-                couponDiscount > 0 ? couponCode : null, couponMessage);
+                couponDiscount > 0 ? couponCode : null, couponMessage,
+                coinBalance, coinUsed, coinUsed);
     }
 
     /**
@@ -455,6 +485,53 @@ public class OrderService {
         return out;
     }
 
+    // ---------------- 多多币（R-P1）口径 ----------------
+
+    /**
+     * R-P1 · 单笔币抵扣上限：不超过券后商品金额的 50%。
+     *
+     * <p>整除即「向下取整」：101 分的券后金额上限 50 分 ——
+     * 币是整数个（1 币 = 1 分），凑不出半分钱；向上取整则会让「抵扣 + 现金」超过券后金额，
+     * 用户反而多花 1 分，这种反直觉的细节恰恰是客诉来源。
+     */
+    static long coinCapOf(long payAmountAfterCoupon) {
+        return Math.max(0L, payAmountAfterCoupon) / 2;
+    }
+
+    /**
+     * 把可用余额按单分摊：每单上限 {@link #coinCapOf}（券后 × 50%），
+     * 按<b>拆单顺序</b>贪心，前一单没用完的余额留给下一单。
+     *
+     * <p>为什么不是「每单都抵到自己上限」：余额可能不够所有单同时抵满，
+     * 必须有一个确定性的分配顺序 —— 与券的「金额最大单优先」不同，
+     * 币跟着拆单顺序走（LinkedHashMap 保序），规则简单且预览 / 下单两处
+     * 输入一致时输出严格一致，不会出现「预览抵 30、下单抵 20」。
+     * 返回的 Map 与入参键完全一致（没分到的单记 0），调用方无需判空。
+     */
+    static Map<Long, Long> allocateCoins(Map<Long, Long> groupPayAmounts, long balance) {
+        Map<Long, Long> out = new LinkedHashMap<>();
+        long remaining = Math.max(0L, balance);
+        for (Map.Entry<Long, Long> entry : groupPayAmounts.entrySet()) {
+            long use = Math.min(coinCapOf(entry.getValue()), remaining);
+            out.put(entry.getKey(), use);
+            remaining -= use;
+        }
+        return out;
+    }
+
+    /** 各单「券后应付」（分）—— 币抵扣的基数（币只抵券后商品金额，运费本阶段为 0） */
+    private static Map<Long, Long> groupPaysAfterCoupon(Map<Long, List<CartItemEntity>> groups,
+                                                        Map<Long, Long> groupAmounts,
+                                                        Map<Long, Long> couponAllocations) {
+        Map<Long, Long> pays = new LinkedHashMap<>();
+        for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
+            long goods = groupAmounts.getOrDefault(entry.getKey(), 0L);
+            long discount = couponAllocations.getOrDefault(entry.getKey(), 0L);
+            pays.put(entry.getKey(), Math.max(0L, goods - discount));
+        }
+        return pays;
+    }
+
     /**
      * 把预览请求适配成 {@link PlaceOrderRequest} 的形状，仅用于复用 {@link #directBuyRow}。
      *
@@ -463,7 +540,7 @@ public class OrderService {
      * 不复用会导致「直购取行」这段规则在预览与下单之间出现两份实现。
      */
     private PlaceOrderRequest toPlaceOrderShim(PreviewOrderRequest request) {
-        return new PlaceOrderRequest(null, null, null, null, null, null,
+        return new PlaceOrderRequest(null, null, null, null, null, null, null,
                 request.buySkuId(), request.buyQuantity(), null);
     }
 
@@ -621,6 +698,21 @@ public class OrderService {
             allocations = allocateCouponDiscount(groupAmounts, couponDiscount);
         }
 
+        // 4.6) 多多币（R-P1）：预生成各单的币分摊（金额口径与 preview 严格同源）。
+        // 只读一次余额；冻结那一刻用户域还有硬校验（余额不足 409），预览与提交之间的
+        // 余额变化在那里兜底 —— 展示值不需要为它做乐观锁。
+        List<String> coinFrozenOrderNos = new ArrayList<>();
+        boolean useCoins = Boolean.TRUE.equals(request.useCoins());
+        Map<Long, Long> coinAllocations = new LinkedHashMap<>();
+        if (useCoins) {
+            long coinBalance = coinGateway.balanceOf(userId);
+            if (coinBalance > 0) {
+                Map<Long, Long> groupAmounts0 = groupGoodsAmounts(groups, snapshots);
+                coinAllocations = allocateCoins(
+                        groupPaysAfterCoupon(groups, groupAmounts0, allocations), coinBalance);
+            }
+        }
+
         try {
             for (Map.Entry<Long, List<CartItemEntity>> entry : groups.entrySet()) {
                 boolean couponTarget = couponSellerId != null && couponSellerId.equals(entry.getKey());
@@ -632,6 +724,8 @@ public class OrderService {
                         couponTarget ? couponOrderNo : orderNoGenerator.next(),
                         allocations.getOrDefault(entry.getKey(), 0L),
                         couponTarget ? couponCode : null,
+                        coinAllocations.getOrDefault(entry.getKey(), 0L),
+                        coinFrozenOrderNos,
                         frozenRefs));
             }
         } catch (DuplicateKeyException e) {
@@ -644,12 +738,14 @@ public class OrderService {
             // 现在改为标记回滚 + 抛给事务外的入口处理：要么整批成立，要么整批不成立。
             releaseCouponQuietly(couponOrderNo, "幂等撞车补偿");
             releaseQuietly(frozenRefs, "幂等撞车补偿");
+            releaseCoinsQuietly(coinFrozenOrderNos, "幂等撞车补偿");
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             throw new DuplicateOrderKeyException(request.idempotentKey(), e);
         } catch (RuntimeException e) {
-            // 关键补偿：库存冻结与券锁定都在别的服务，不受本事务回滚保护
+            // 关键补偿：库存冻结、券锁定与币冻结都在别的服务，不受本事务回滚保护
             releaseCouponQuietly(couponOrderNo, "下单失败补偿");
             releaseQuietly(frozenRefs, "下单失败补偿");
+            releaseCoinsQuietly(coinFrozenOrderNos, "下单失败补偿");
             throw e;
         }
 
@@ -690,24 +786,28 @@ public class OrderService {
     }
 
     /**
-     * 创建单个订单：订单头 + 明细快照 + 库存冻结 + 冻结台账 + 状态日志。
+     * 创建单个订单：订单头 + 明细快照 + 库存冻结 + 币冻结 + 冻结台账 + 状态日志。
      *
      * @param orderNo        预先生成的订单号（券作用的目标订单必须先有号才能锁券）
      * @param receiver       已解析好的收货信息（地址簿快照或直填值，见 {@link #resolveReceiver}）
      * @param discountAmount 优惠券抵扣（分），由营销域算出、交易域<b>照抄</b>进来
      * @param couponCode     使用的券码（未用券为 null）
+     * @param coinUsed       R-P1 · 本单分摊到的多多币（个，1 币 = 1 分）；0 = 不用币
+     * @param coinFrozenOrderNos 本批已成功冻结币的订单号（异常时逐单补偿释放）
      */
     private OrderEntity createOne(Long userId, Long sellerId, List<CartItemEntity> rows,
                                   Map<Long, SkuSnapshot> snapshots, PlaceOrderRequest request,
                                   Receiver receiver, LocalDateTime now, LocalDateTime expireAt,
                                   String orderNo, long discountAmount, String couponCode,
+                                  long coinUsed, List<String> coinFrozenOrderNos,
                                   List<FrozenRef> frozenRefs) {
         long totalAmount = 0L;
         for (CartItemEntity row : rows) {
             SkuSnapshot snap = snapshots.get(row.getSkuId());
             totalAmount += snap.price() * (row.getQuantity() == null ? 0 : row.getQuantity());
         }
-        // 运费本阶段固定为 0；优惠来自营销域（已锁券并算出抵扣额），口径不变：应付 = 商品 + 运费 − 优惠
+        // 运费本阶段固定为 0；优惠来自营销域（已锁券并算出抵扣额），币抵扣来自本批分摊，
+        // 口径不变：应付 = 商品 + 运费 − 优惠 − 币抵扣（币与券叠加，币只抵券后商品金额）
         long freightAmount = 0L;
 
         OrderEntity order = new OrderEntity();
@@ -721,8 +821,10 @@ public class OrderService {
         order.setFreightAmount(freightAmount);
         order.setDiscountAmount(discountAmount);
         order.setCouponCode(couponCode);
-        // 兜底：抵扣额绝不该大于商品总额（营销域已按 min 处理过，这里是同一事务内的最后一道闸）
-        order.setPayAmount(Math.max(0L, totalAmount + freightAmount - discountAmount));
+        order.setCoinUsed(coinUsed);
+        order.setCoinDeductAmount(coinUsed);
+        // 兜底：抵扣额绝不该大于商品总额（营销域与币分摊都已按 min 处理过，这里是同一事务内的最后一道闸）
+        order.setPayAmount(Math.max(0L, totalAmount + freightAmount - discountAmount - coinUsed));
         // 收货信息快照：用 addressId 下单时这里是用户域拼好的地址文本，
         // 直填时是客户端传来的三个字段。无论哪种来源，**都落在订单自己的列里**，
         // 之后用户改地址簿、甚至删掉那个地址，历史订单的收货信息都不受影响（验收③）。
@@ -786,6 +888,15 @@ public class OrderService {
                     "下单失败：" + describeFailure(outcome, snapshots));
         }
 
+        // R-P1 · 冻结多多币（跨服务；失败即抛，由外层补偿释放）。
+        // 刻意放在库存冻结成功之后：库存不足时根本轮不到币，不给补偿添活。
+        // 币已计入 payAmount，冻结失败必须让本单失败 —— 否则「订单标了抵 20 币、账上一分没扣」，
+        // 等这批冻结被 TTL 兜底还回用户手里，同一笔币就抵了两次钱。
+        if (coinUsed > 0) {
+            coinGateway.freeze(userId, orderNo, coinUsed);
+            coinFrozenOrderNos.add(orderNo);
+        }
+
         writeStatusLog(order.getId(), null, order.getStatus(), OPERATOR_USER, userId, OP_CREATE, now);
         return order;
     }
@@ -817,9 +928,32 @@ public class OrderService {
      * {@code t_order_item}，参数化占位符（{@code {0}}）由 MyBatis 绑定，不拼串。
      */
     public PageResult<OrderView> listMine(String status, String orderType, String keyword, int page, int pageSize) {
-        Long userId = UserContext.requireUserId();
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size),
+                mineWrapper(status, orderType, keyword));
+        return PageResult.of(toViews(result.getRecords(), UserContext.requireUserId()),
+                result.getTotal(), pageNo, size);
+    }
+
+    /** 买家导出：命中行数（导出前判定上限，不做「静默截断」——少行的 CSV 看起来同样完整） */
+    public long countMineForExport(String status, String orderType, String keyword) {
+        return orderMapper.selectCount(mineWrapper(status, orderType, keyword));
+    }
+
+    /** 买家导出：本人订单（与 {@link #listMine} 同一筛选；调用方负责上限判定） */
+    public List<OrderView> exportMine(String status, String orderType, String keyword) {
+        return toViews(orderMapper.selectList(mineWrapper(status, orderType, keyword)));
+    }
+
+    /**
+     * 买家订单筛选（列表 / 导出共用）：归属、状态、类型、关键字、排序只有一份。
+     *
+     * <p>归属写死在 wrapper 里（{@code user_id = 当前登录人}）：导出端点不可能靠一个
+     * 漏传的参数越权读到别人的订单。
+     */
+    private LambdaQueryWrapper<OrderEntity> mineWrapper(String status, String orderType, String keyword) {
+        Long userId = UserContext.requireUserId();
         if (status != null && !status.isBlank() && OrderStatus.of(status.trim()) == null) {
             throw BizException.validation("不支持的订单状态：" + status.trim());
         }
@@ -838,9 +972,7 @@ public class OrderService {
         }
         applyOrderKeyword(wrapper, keyword);
         wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
-
-        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        return PageResult.of(toViews(result.getRecords()), result.getTotal(), pageNo, size);
+        return wrapper;
     }
 
     /** 订单关键字：订单号 或 商品标题（两者都做「包含」匹配，不是前缀匹配） */
@@ -850,6 +982,76 @@ public class OrderService {
         wrapper.and(w -> w.like(OrderEntity::getOrderNo, kw)
                 .or()
                 .apply("id IN (SELECT order_id FROM t_order_item WHERE title LIKE {0})", "%" + kw + "%"));
+    }
+
+    /**
+     * 我的订单各状态计数（买家端订单页二级 Tab 角标，2026-10-27）。
+     *
+     * <p><b>为什么必须有这个端点</b>：订单页的 Tab（待支付 / 待发货 / 待收货 …）需要
+     * 在**不切 Tab、不翻页**的前提下显示「各状态各有多少单」。前端只有两种替代做法，
+     * 两种都会错：
+     * <ul>
+     *   <li>拿当前页 items 按状态 filter 计数 —— 分页后第 2 页的待支付完全看不见；</li>
+     *   <li>为每个 Tab 各调一次 list（pageSize=1）—— 6 个状态 = 6 个请求，
+     *       且这 6 次查询落在不同时刻，数字互相不自洽。</li>
+     * </ul>
+     *
+     * <p>一次 GROUP BY 出全部分桶，口径与 {@link #listMine} 完全同源（{@code user_id = 我}），
+     * 只差一个分页。
+     */
+    public java.util.List<StatusCount> myStatusCounts() {
+        Long userId = UserContext.requireUserId();
+        return toStatusCounts(orderMapper.countByBuyerAndStatus(userId));
+    }
+
+    /**
+     * 买家「看过某订单」上报（2026-10-27 · 阅后即消角标）。
+     *
+     * <p>只有 {@code CLOSED / REFUNDED} 这两类终态的角标会因此消失；待支付/待发货/待收货
+     * 继续保留（它们是「还没办完的事」，读过不等于办完）。
+     *
+     * <p><b>返回最新分桶</b>而不是 {@code void}：前端要拿它**覆盖**本地乐观减过的值 ——
+     * 否则并发（比如另一台设备刚关了一单）时，本地会停在错的数字上。
+     *
+     * <p>归属校验用「按 {@code user_id} 查订单」，查不到就是 404，不区分「不存在」与「不是你的」
+     * （与全站其它按归属取数的地方同一纪律，避免被用来枚举他人订单号）。
+     */
+    public java.util.List<StatusCount> markOrderRead(String orderNo) {
+        Long userId = UserContext.requireUserId();
+        OrderEntity order = findByOrderNo(userId, orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        // 幂等：INSER IGNORE + 复合主键，重复上报不报错也不刷新时间
+        orderMapper.markOrderRead(userId, order.getId(), java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        return myStatusCounts();
+    }
+
+    /**
+     * 聚合行 → 状态计数列表。
+     *
+     * <p>返回 {@link StatusCount} 而不是 {@code Map<String, Long>}：后者的 value
+     * 不经过 {@code LongToStringJacksonModule} 的字段名白名单，会被当成雪花 ID
+     * 序列化成字符串 {@code "2"}（详见 {@link StatusCount} 类注释）。
+     *
+     * <p>列名容错是刻意的：本项目因为「JDBC 返回的列标签大小写与驱动/别名有关」栽过一次
+     * （见 {@code AdminOpsService#str} 的注释），这里对 status / STATUS、cnt / CNT 都做兜底，
+     * 免得换驱动后角标静默变成全 0 而接口仍然 200。
+     */
+    static java.util.List<StatusCount> toStatusCounts(java.util.List<java.util.Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<StatusCount> result = new java.util.ArrayList<>(rows.size());
+        for (java.util.Map<String, Object> row : rows) {
+            Object status = row.get("status") != null ? row.get("status") : row.get("STATUS");
+            Object cnt = row.get("cnt") != null ? row.get("cnt") : row.get("CNT");
+            if (status == null || !(cnt instanceof Number n) || n.longValue() <= 0) {
+                continue;
+            }
+            result.add(new StatusCount(String.valueOf(status), n.longValue()));
+        }
+        return result;
     }
 
     public OrderView detail(String orderNo) {
@@ -885,6 +1087,74 @@ public class OrderService {
 
         Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
         return PageResult.of(toViews(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 运营订单导出（2026-10-28 · 导入导出第一批）：与 {@link #adminList} 同筛选、同装配。
+     *
+     * <p>同步导出上限 5 万行（与商家端一致），由控制层在调用前用
+     * {@link #adminExportCount} 判定；超过时转异步任务（矩阵第 9 项），
+     * <b>不再静默截断</b> —— 被截断的 CSV 看起来像完整报表，财务报表按它算会少钱。
+     */
+    public List<OrderView> adminExportList(String status, String keyword) {
+        return toViews(orderMapper.selectList(adminExportWrapper(status, keyword)));
+    }
+
+    /** 运营订单导出的命中行数（同步导出的上限判定 / 异步任务的进度分母） */
+    public long adminExportCount(String status, String keyword) {
+        return orderMapper.selectCount(adminExportWrapper(status, keyword));
+    }
+
+    /**
+     * 运营订单导出：按游标取一页视图（异步任务分页写 CSV 用）。
+     *
+     * <p><b>为什么不用 {@code selectPage}</b>：交易域的分页插件设了
+     * {@code maxLimit=100}（防止接口被深分页拖垮）。把它当导出分页用会有两个问题：
+     * ① 每页最多 100 行，50 万行要 5000 次往返；② 更糟的是插件按<b>请求的 size</b>
+     * 计算 offset，传入 size=2000 时第 2 页 offset 直接跳到 2000 —— 中间的 1900 行被静默跳过。
+     * 这不是性能问题，是<b>导出少数据</b>，所以这里改用 keyset 游标：
+     * 每页按 {@code (created_at, id)} 向下取，只扫索引，不随页数变慢。
+     *
+     * <p>排序与 {@link #adminExportList} 完全一致（created_at DESC, id DESC），
+     * 游标就是上一页最后一行的位置；第一页传 {@code null}。
+     */
+    public ExportPage adminExportPage(String status, String keyword, ExportCursor cursor, int pageSize) {
+        int size = pageSize <= 0 ? 500 : Math.min(pageSize, 2000);
+        LambdaQueryWrapper<OrderEntity> wrapper = adminExportWrapper(status, keyword);
+        if (cursor != null && cursor.createdAt() != null && cursor.id() != null) {
+            wrapper.and(w -> w.lt(OrderEntity::getCreatedAt, cursor.createdAt())
+                    .or(inner -> inner.eq(OrderEntity::getCreatedAt, cursor.createdAt())
+                            .lt(OrderEntity::getId, cursor.id())));
+        }
+        // LIMIT 由本方法内部常量拼入，不接受外部字符串，不存在注入面
+        wrapper.last("LIMIT " + size);
+        List<OrderEntity> rows = orderMapper.selectList(wrapper);
+        OrderEntity last = rows.isEmpty() ? null : rows.get(rows.size() - 1);
+        return new ExportPage(toViews(rows),
+                last == null ? null : last.getCreatedAt(),
+                last == null ? null : last.getId());
+    }
+
+    /** 异步导出游标：上一页最后一行的 (created_at, id)；第一页为 null */
+    public record ExportCursor(java.time.LocalDateTime createdAt, Long id) {
+    }
+
+    /** 异步导出的一页：视图 + 下一页游标 */
+    public record ExportPage(List<OrderView> items, java.time.LocalDateTime lastCreatedAt, Long lastId) {
+    }
+
+    /** 导出筛选（列表 / 同步导出 / 异步任务共用）：状态合法性校验 + 关键字 + 稳定排序 */
+    private LambdaQueryWrapper<OrderEntity> adminExportWrapper(String status, String keyword) {
+        if (status != null && !status.isBlank() && OrderStatus.of(status.trim()) == null) {
+            throw BizException.validation("不支持的订单状态：" + status.trim());
+        }
+        LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>();
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(OrderEntity::getStatus, status.trim());
+        }
+        applyOrderKeyword(wrapper, keyword);
+        wrapper.orderByDesc(OrderEntity::getCreatedAt).orderByDesc(OrderEntity::getId);
+        return wrapper;
     }
 
     /** 运营按订单号查详情（无归属限制），查不到返回 404 */
@@ -1019,6 +1289,10 @@ public class OrderService {
         // 同步解锁优惠券：与释放冻结同一时点。用户取消后最关心的就是「我的券回来了吗」，
         // 只靠营销域的 TTL 兜底会让他等上三十多分钟。
         releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "用户取消");
+        // R-P1 · 释放下单时冻结的多多币（best-effort，失败由用户域冻结 TTL 兜底任务归还）
+        if (nz(order.getCoinUsed()) > 0) {
+            coinGateway.release(order.getOrderNo(), "用户取消");
+        }
         // A14：秒杀订单取消同样回补活动配额
         seckillService.onOrderClosed(order);
         return toViews(List.of(order)).get(0);
@@ -1056,6 +1330,10 @@ public class OrderService {
 
         paymentMapper.markClosedByOrder(order.getId(), "平台干预关单：" + closeReason, now);
         releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "运营强制关单");
+        // R-P1 · 运营强关同样要还币（待付款订单的币只处于冻结态）
+        if (nz(order.getCoinUsed()) > 0) {
+            coinGateway.release(order.getOrderNo(), "运营强制关单");
+        }
         // A14：运营强关秒杀订单时回补活动配额
         seckillService.onOrderClosed(order);
         int[] release = releaseOrderFreeze(order.getId(), now);
@@ -1288,6 +1566,15 @@ public class OrderService {
 
         // 幂等重放：渠道回调必然重复投递（重试 / 网络抖动），「已成功」是常态路径而非异常
         if (PaymentEntity.STATUS_SUCCESS.equals(payment.getStatus())) {
+            return toPayResult(order, payment, true);
+        }
+        // 重复收款单的回调重放（B-04）：这笔钱已被检出为「多收」并登记自动退款，
+        // 再报错只会让渠道按退避策略无休止重投。按幂等重放应答，应答里如实返回 CLOSED，
+        // 让渠道知道「这笔收款我们收到了且已妥善处理，别再发了」。
+        if (PaymentEntity.STATUS_CLOSED.equals(payment.getStatus())
+                && payment.getFailReason() != null
+                && payment.getFailReason().startsWith("重复支付")) {
+            log.info("重复收款单的重复回调，按已处理应答：payNo={}", payment.getPayNo());
             return toPayResult(order, payment, true);
         }
         if (!PaymentEntity.STATUS_PENDING.equals(payment.getStatus())
@@ -1680,6 +1967,14 @@ public class OrderService {
                     "该订单资金已是「" + SettlementStatus.labelOf(settlement.getStatus()) + "」状态，不能重复退款");
         }
 
+        // 1.5) R-P1 · 退款退币：按订单快照把用掉的币全额退回（原批次退回，过期批次补发 30 天新批次）。
+        // 幂等（用户域流水唯一键），失败抛出让整笔退款回滚 —— 钱退了币没退是最难追的差错，
+        // 让「钱与币要么一起退成、要么一起留给重试」，运营重试即可，不会退两次。
+        long coinUsed = nz(order.getCoinUsed());
+        if (coinUsed > 0) {
+            coinGateway.refundBack(order.getUserId(), order.getOrderNo(), coinUsed);
+        }
+
         // 2) 订单与明细
         order.setStatus(OrderStatus.REFUNDED.name());
         order.setRefundedAt(now);
@@ -1939,11 +2234,15 @@ public class OrderService {
         try {
             SweepResult result = sweepExpiredOrders();
             if (result.scanned() > 0 || result.closed() > 0 || result.released() > 0 || result.releaseFailed() > 0
-                    || result.autoCompleted() > 0 || result.restocked() > 0 || result.restockFailed() > 0) {
+                    || result.autoCompleted() > 0 || result.restocked() > 0 || result.restockFailed() > 0
+                    || result.refundsExecuted() > 0 || result.refundsPending() > 0
+                    || result.coinsEarned() > 0) {
                 log.info("补偿调度：扫描 {} 单，关闭 {} 单，释放 {} 条冻结（失败 {}），"
-                                + "自动收货 {} 单（放款 {} 笔），入库回补 {} 条（失败 {}）",
+                                + "自动收货 {} 单（放款 {} 笔），入库回补 {} 条（失败 {}），"
+                                + "重复收款退款执行 {} 笔（待重试 {}），购物返币 {} 单",
                         result.scanned(), result.closed(), result.released(), result.releaseFailed(),
-                        result.autoCompleted(), result.fundsReleased(), result.restocked(), result.restockFailed());
+                        result.autoCompleted(), result.fundsReleased(), result.restocked(), result.restockFailed(),
+                        result.refundsExecuted(), result.refundsPending(), result.coinsEarned());
             }
         } catch (RuntimeException e) {
             // 调度线程里必须吞掉异常，否则一次异常会让后续调度静默停摆
@@ -1981,6 +2280,10 @@ public class OrderService {
                     OPERATOR_SYSTEM, null, reason, now);
             paymentMapper.markClosedByOrder(order.getId(), reason, now);
             releaseCouponQuietly(order.getCouponCode() == null ? null : order.getOrderNo(), "超时关单");
+            // R-P1 · 超时关单同样释放冻结的币（best-effort；失败由用户域冻结 TTL 兜底任务归还）
+            if (nz(order.getCoinUsed()) > 0) {
+                coinGateway.release(order.getOrderNo(), "超时关单");
+            }
             // A14：秒杀订单关单时回补活动配额（非秒杀单在此方法内直接短路返回）
             seckillService.onOrderClosed(order);
             closed++;
@@ -2093,8 +2396,50 @@ public class OrderService {
             log.error("补偿调度：{} 条退货入库未能完成，台账保持 RESTOCK_PENDING，下轮重试", restockFailed);
         }
 
+        // 5) 重复收款自动退款（B-04）：把检出时登记的退款台账推给渠道执行。
+        //    渠道调用以 refund_no 为幂等号（微信 out_refund_no / 支付宝 out_request_no），
+        //    与手动触发并发执行也不会退两笔；失败保持 INIT，下轮重试。
+        int[] refundResult = paymentRefundService.executePending(now);
+        if (refundResult[1] > 0) {
+            log.error("补偿调度：{} 笔重复收款退款未能完成，台账保持 INIT，下轮重试", refundResult[1]);
+        }
+
+        // 6) 购物返币（R-P1）：完成满 T+7 且未发过币的订单，按「现金实付商品金额」1:1 发币。
+        //    金额口径 = 应付现金 − 运费 − 币抵扣（券抵扣已含在应付里），按元向下取整防超发。
+        //    coin_earned_at 就是游标：发没发过全看它，重复调度天然幂等；
+        //    0 币订单也落游标 —— 不然每轮都被扫出来，白白空转。
+        int coinsEarned = 0;
+        if (coinEarnDelayDays > 0) {
+            LocalDateTime earnDeadline = now.minusDays(coinEarnDelayDays);
+            List<OrderEntity> earnable = orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                    .eq(OrderEntity::getStatus, OrderStatus.COMPLETED.name())
+                    .isNull(OrderEntity::getCoinEarnedAt)
+                    .le(OrderEntity::getFinishedAt, earnDeadline)
+                    .orderByAsc(OrderEntity::getFinishedAt)
+                    .last("LIMIT " + Math.max(1, sweepBatchSize)));
+            for (OrderEntity order : earnable) {
+                long cashGoods = Math.max(0L, nz(order.getPayAmount())
+                        - nz(order.getFreightAmount()) - nz(order.getCoinDeductAmount()));
+                long coins = cashGoods / 100;
+                try {
+                    if (coins > 0) {
+                        coinGateway.earn(order.getUserId(), order.getOrderNo(), coins);
+                    }
+                    order.setCoinEarnAmount(coins);
+                    order.setCoinEarnedAt(now);
+                    order.setUpdatedAt(now);
+                    orderMapper.updateById(order);
+                    coinsEarned++;
+                } catch (RuntimeException e) {
+                    // 单单失败不连累整轮：游标不落，下轮调度自然重试（返币幂等）
+                    log.error("订单 {} 购物返币失败，本轮跳过、下轮重试", order.getOrderNo(), e);
+                }
+            }
+        }
+
         return new SweepResult(expired.size(), closed, released, releaseFailed,
-                autoCompleted, fundsReleased, restocked, restockFailed);
+                autoCompleted, fundsReleased, restocked, restockFailed,
+                refundResult[0], refundResult[1], coinsEarned);
     }
 
     // ---------------- 内部实现 ----------------
@@ -2151,6 +2496,10 @@ public class OrderService {
      *
      * <p>日志用 ERROR：这是一笔要走退款的真实资金，必须能在日志里被检索到
      * （对账守卫 {@code check-payment-recon.mjs} 也会把它列出来）。
+     *
+     * <p><b>B-04 · 检出即退款</b>：留痕的同一事务里立刻落一条自动退款台账（INIT），
+     * 由补偿调度经渠道原路退回 —— 「多收了钱」从人工待办变成系统必达的补偿动作。
+     * 台账落库撞 {@code uk_refund_pay_no} 幂等：并发回调 / 查询兜底同时检出也只会落一条。
      */
     private void markDuplicateCharge(PaymentEntity payment, String channelTradeNo, PaymentEntity anotherPaid) {
         LocalDateTime now = nowUtc();
@@ -2159,8 +2508,9 @@ public class OrderService {
         payment.setStatus(PaymentEntity.STATUS_CLOSED);
         payment.setChannelTradeNo(channelTradeNo);
         payment.setFailReason(reason);
+        paymentRefundService.openAutoRefund(payment, anotherPaid);
         log.error("重复收款：payNo={} tradeNo={} amount={}分 与已入账的 payNo={} 属于同一订单 {}，"
-                        + "本次未入账、需退款（mark={}）",
+                        + "本次未入账、已登记自动退款（mark={}）",
                 payment.getPayNo(), channelTradeNo, payment.getAmount(),
                 anotherPaid.getPayNo(), payment.getOrderId(), marked);
     }
@@ -2240,15 +2590,28 @@ public class OrderService {
                     "优惠券核销失败（券可能已被解锁），本次支付未成立，请重新下单或换一张券");
         }
 
+        // R-P1 · 多多币扣减确认：冻结 → 真正扣掉。失败抛出让支付回滚（渠道可重试，扣减幂等）——
+        // 与券核销同一条铁律：若放过去，冻结的币会被 TTL 兜底任务还回用户手里，等于这单白抵。
+        if (nz(order.getCoinUsed()) > 0) {
+            coinGateway.deductConfirm(order.getOrderNo());
+        }
+
         // 钱进平台托管（C2C 担保交易的核心语义）：
         // 此刻买家已经付了钱，但卖家还不能拿到 —— 要等买家确认收货。
         // 托管单的创建是幂等的（uk_settle_order），重复支付回调不会建出两条。
-        settlementService.openCustody(order.getId(), order.getSellerId(), nz(order.getPayAmount()), now);
+        // R-P1 · 托管金额 = 实付现金 + 币抵扣（商家按券后商品金额收钱，币抵部分由平台补贴，
+        // coinSubsidyAmount 单列 —— 商家实收不因买家用币少一分）。
+        long coinDeduct = nz(order.getCoinUsed());
+        settlementService.openCustody(order.getId(), order.getSellerId(),
+                nz(order.getPayAmount()) + coinDeduct, coinDeduct, now);
 
         // 支付成功通知（第五十五轮）：只有真正入账的那一次会走到这里 ——
         // 并发回调在 CAS 落败时已提前返回，不会推出第二条。
         eventPublisher.publishEvent(new OrderPaidNoticeEvent(
                 order.getUserId(), order.getOrderNo(), nz(order.getPayAmount())));
+
+        // 多多币新人任务：首单（事件幂等，重复支付回调不会重复发奖）
+        coinGateway.taskEvent(order.getUserId(), "FIRST_ORDER", order.getOrderNo());
 
         return toPayResult(order, payment, replay);
     }
@@ -2321,10 +2684,23 @@ public class OrderService {
      * 否则迟早出现「买家看到已放款、卖家看到托管中」这种对不上账的分歧。
      */
     public List<OrderView> toViews(List<OrderEntity> orders) {
+        return toViews(orders, null);
+    }
+
+    /**
+     * 带「逐条已读」的装配（2026-10-27 · 列表橙色未读印记）。
+     *
+     * @param viewerId 当前读列表的人；为 null 时不做已读查询（详情/内部链路仍用旧口径）
+     */
+    public List<OrderView> toViews(List<OrderEntity> orders, Long viewerId) {
         if (orders == null || orders.isEmpty()) {
             return List.of();
         }
         List<Long> orderIds = orders.stream().map(OrderEntity::getId).toList();
+        // 只查当前页：一条 IN 查询，成本与页大小相关，不随历史已读累积增长
+        Set<Long> readIds = viewerId == null
+                ? Set.of()
+                : new LinkedHashSet<>(orderMapper.listReadOrderIds(viewerId, orderIds));
         Map<Long, List<OrderItemEntity>> itemsByOrder = orderItemMapper.selectList(
                         new LambdaQueryWrapper<OrderItemEntity>()
                                 .in(OrderItemEntity::getOrderId, orderIds)
@@ -2358,6 +2734,9 @@ public class OrderService {
                     nz(order.getDiscountAmount()),
                     order.getCouponCode(),
                     nz(order.getPayAmount()),
+                    nz(order.getCoinUsed()),
+                    nz(order.getCoinDeductAmount()),
+                    nz(order.getCoinEarnAmount()),
                     order.getReceiverName(),
                     order.getReceiverPhone(),
                     order.getReceiverAddress(),
@@ -2373,7 +2752,8 @@ public class OrderService {
                     isoTs(order.getRefundedAt()),
                     order.getCloseReason(),
                     order.getLogisticsCompany(),
-                    order.getLogisticsNo()));
+                    order.getLogisticsNo(),
+                    readIds.contains(order.getId())));
         }
         return views;
     }
@@ -2430,6 +2810,17 @@ public class OrderService {
             return;
         }
         marketingGateway.release(orderNo, scene);
+    }
+
+    /**
+     * 补偿释放已冻结的多多币（R-P1）：失败只记日志（网关内处理），不向外抛 ——
+     * 与库存 / 券的补偿同一原则。个别订单释放失败时，冻结单仍留在用户域，
+     * 由冻结 TTL 兜底任务最终归还余额。
+     */
+    private void releaseCoinsQuietly(List<String> orderNos, String scene) {
+        for (String orderNo : orderNos) {
+            coinGateway.release(orderNo, scene);
+        }
     }
 
     /**

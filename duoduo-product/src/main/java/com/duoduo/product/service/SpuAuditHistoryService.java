@@ -61,6 +61,8 @@ public class SpuAuditHistoryService {
 
     public static final int DEFAULT_LIMIT = 50;
     public static final int MAX_LIMIT = 100;
+    /** 同步导出的行数上限（矩阵统一口径：超出应转异步任务） */
+    private static final int MAX_EXPORT_ROWS = 50_000;
 
     /** 单个字段的展示值上限（码点）。超长截断并打标，不静默丢整条变更。 */
     private static final int FIELD_MAX_CODE_POINTS = 2000;
@@ -388,10 +390,26 @@ public class SpuAuditHistoryService {
                                                           String event, Long sellerId,
                                                           int page, int pageSize) {
         OperatorGuard.requireOperator();
-        Long spuId = parseSpuId(spuIdText);
-        String normalizedEvent = normalizeEvent(event);
         int pageNo = Math.max(1, page);
         int size = pageSize <= 0 ? 20 : Math.min(pageSize, MAX_LIMIT);
+        Page<SpuAuditLogEntity> result = logMapper.selectPage(new Page<>(pageNo, size),
+                changeHistoryWrapper(spuIdText, keyword, event, sellerId));
+        return PageResult.of(toChangeItems(result.getRecords()), result.getTotal(), pageNo, size);
+    }
+
+    /** 变更历史导出（矩阵第二批）：与列表同一筛选，单次上限 5 万行 */
+    public List<SpuChangeHistoryItem> exportChangeHistory(String spuIdText, String keyword,
+                                                          String event, Long sellerId) {
+        OperatorGuard.requireOperator();
+        LambdaQueryWrapper<SpuAuditLogEntity> wrapper = changeHistoryWrapper(spuIdText, keyword, event, sellerId);
+        wrapper.last("LIMIT " + MAX_EXPORT_ROWS);
+        return toChangeItems(logMapper.selectList(wrapper));
+    }
+
+    private LambdaQueryWrapper<SpuAuditLogEntity> changeHistoryWrapper(String spuIdText, String keyword,
+                                                                       String event, Long sellerId) {
+        Long spuId = parseSpuId(spuIdText);
+        String normalizedEvent = normalizeEvent(event);
         LambdaQueryWrapper<SpuAuditLogEntity> wrapper = new LambdaQueryWrapper<SpuAuditLogEntity>()
                 .orderByDesc(SpuAuditLogEntity::getId);
         if (spuId != null) {
@@ -407,17 +425,19 @@ public class SpuAuditHistoryService {
             wrapper.apply("spu_id IN (SELECT id FROM t_spu WHERE title LIKE {0})",
                     "%" + keyword.trim() + "%");
         }
-        Page<SpuAuditLogEntity> result = logMapper.selectPage(new Page<>(pageNo, size), wrapper);
-        List<SpuAuditLogEntity> rows = result.getRecords();
+        return wrapper;
+    }
+
+    private List<SpuChangeHistoryItem> toChangeItems(List<SpuAuditLogEntity> rows) {
         if (rows == null || rows.isEmpty()) {
-            return PageResult.of(List.of(), result.getTotal(), pageNo, size);
+            return List.of();
         }
         List<Long> spuIds = rows.stream().map(SpuAuditLogEntity::getSpuId)
                 .filter(Objects::nonNull).distinct().toList();
         Map<Long, String> titles = spuIds.isEmpty() ? Map.of()
                 : spuMapper.selectBatchIds(spuIds).stream()
                         .collect(Collectors.toMap(SpuEntity::getId, SpuEntity::getTitle));
-        List<SpuChangeHistoryItem> items = rows.stream().map(row -> {
+        return rows.stream().map(row -> {
             SpuAuditLogView view = toView(row);
             Long rowSpuId = row.getSpuId();
             return new SpuChangeHistoryItem(
@@ -430,7 +450,6 @@ public class SpuAuditHistoryService {
                     view.fromAuditStatus(), view.toAuditStatus(), view.reason(),
                     view.versionBefore(), view.versionAfter(), view.changes(), view.createdAt());
         }).toList();
-        return PageResult.of(items, result.getTotal(), pageNo, size);
     }
 
     private Long parseSpuId(String raw) {

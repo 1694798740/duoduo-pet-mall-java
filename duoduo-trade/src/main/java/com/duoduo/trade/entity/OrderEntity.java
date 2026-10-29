@@ -40,6 +40,19 @@ public class OrderEntity {
      * 对账与客诉都会卡在这里。
      */
     private String couponCode;
+    /**
+     * R-P1 · 多多币快照三列：用了多少币、抵了多少钱（1 币 = 1 分）、完成时返了多少币。
+     *
+     * <p>为什么必须落在订单上（与券码同理）：币的真实账本在用户域，
+     * 订单上这份是<b>下单那一刻的快照</b> —— 冻结 / 扣减 / 释放 / 退款退币 / 返币
+     * 全部按这个数走，事后用户域数据怎么变都不会牵动历史订单；
+     * 对账时「订单币抵扣合计 = 平台补贴合计」也靠它。
+     */
+    private Long coinUsed;
+    private Long coinDeductAmount;
+    private Long coinEarnAmount;
+    /** 返币发放时间（T+7 调度落笔；IS NULL 即「还没发」，是返币扫描的游标） */
+    private LocalDateTime coinEarnedAt;
     private String receiverName;
     private String receiverPhone;
     private String receiverAddress;
@@ -92,6 +105,14 @@ public class OrderEntity {
     public void setPayAmount(Long payAmount) { this.payAmount = payAmount; }
     public String getCouponCode() { return couponCode; }
     public void setCouponCode(String couponCode) { this.couponCode = couponCode; }
+    public Long getCoinUsed() { return coinUsed; }
+    public void setCoinUsed(Long coinUsed) { this.coinUsed = coinUsed; }
+    public Long getCoinDeductAmount() { return coinDeductAmount; }
+    public void setCoinDeductAmount(Long coinDeductAmount) { this.coinDeductAmount = coinDeductAmount; }
+    public Long getCoinEarnAmount() { return coinEarnAmount; }
+    public void setCoinEarnAmount(Long coinEarnAmount) { this.coinEarnAmount = coinEarnAmount; }
+    public LocalDateTime getCoinEarnedAt() { return coinEarnedAt; }
+    public void setCoinEarnedAt(LocalDateTime coinEarnedAt) { this.coinEarnedAt = coinEarnedAt; }
     public String getReceiverName() { return receiverName; }
     public void setReceiverName(String receiverName) { this.receiverName = receiverName; }
     public String getReceiverPhone() { return receiverPhone; }

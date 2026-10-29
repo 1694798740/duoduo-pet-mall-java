@@ -218,6 +218,22 @@ public final class ReviewDtos {
     }
 
     /**
+     * 批量审核请求（2026-10-27 · 批量操作即已读）。
+     *
+     * <p>动作与原因对选中的评价共用一份；逐条结果见 {@code BatchDtos.Result}。
+     * 已处于目标态的评价按幂等成功处理（与单条一致，不重复写库）。
+     */
+    public record ReviewBatchAuditRequest(
+            @jakarta.validation.constraints.NotEmpty(message = "ids 不能为空")
+            java.util.List<Long> ids,
+            @NotBlank(message = "审核动作不能为空")
+            String action,
+            @Size(max = 255, message = "审核说明不能超过 255 字")
+            String reason
+    ) {
+    }
+
+    /**
      * 运营后台的评价条目：比公开视图多带审核态、审核说明、操作人与时间，
      * 以及真实 userId（匿名只对买家/卖家展示脱敏；运营追责需要真实主体）。
      *
@@ -246,7 +262,9 @@ public final class ReviewDtos {
             Long auditedBy,
             String auditedAt,
             /** AUTO 机审自动 / MANUAL 人工 / null 历史数据；运营据此区分「谁放行的」 */
-            String auditSource
+            String auditSource,
+            /** 当前运营是否已看过（列表橙色未读印记；2026-10-27） */
+            boolean read
     ) {
     }
 }

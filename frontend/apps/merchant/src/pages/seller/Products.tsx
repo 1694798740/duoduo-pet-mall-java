@@ -16,11 +16,12 @@
  *    「我就改了个标题怎么商品不见了」），所以提示语必须说清下一步，而不是只说「不行」。
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { sellerApi, catalogApi } from '@duoduo/api-sdk/endpoints';
 import { ApiError } from '@duoduo/api-sdk/client';
 import type {
+  BatchResultView,
   CategoryAttrView,
   PageResult,
   SellerProductBatchResultView,
@@ -28,9 +29,15 @@ import type {
   SellerProductImportResultView,
   SellerProductUpdateRequest,
   SellerProductView,
+  StatusCount,
 } from '@duoduo/api-sdk/types';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
+import { Badge, UnreadDot, toCountMap } from '@duoduo/shared/components/badge';
+import { applyBatchDismissLocally, applyOptimisticDismiss } from '@duoduo/shared/lib/badge-rules';
+import { notifyBadgeChanged } from '@duoduo/shared/lib/badge-events';
+import { readImportFile } from '@duoduo/shared/lib/import-file';
 import { useConfirm } from '@duoduo/shared/components/confirm';
+import { RichTextView } from '@duoduo/shared/components/RichText';
 import {
   Alert,
   Empty,
@@ -182,6 +189,12 @@ export const SellerProductsPage: React.FC = () => {
   const [importContent, setImportContent] = useState('');
   const [importResult, setImportResult] = useState<SellerProductImportResultView | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  /** 第三批 · 价格/库存导入：与商品导入分开一个弹窗，结果结构也不同（逐行 BatchResult） */
+  const [psOpen, setPsOpen] = useState(false);
+  const [psFileName, setPsFileName] = useState('');
+  const [psContent, setPsContent] = useState('');
+  const [psResult, setPsResult] = useState<BatchResultView | null>(null);
+  const [psBusy, setPsBusy] = useState(false);
 
   const fetcher = useCallback(
     () =>
@@ -199,6 +212,128 @@ export const SellerProductsPage: React.FC = () => {
     allowed,
     [allowed, keywordQuery, auditStatus, inRecycle, page],
   );
+
+  /**
+   * 审核页签角标（2026-10-27）：服务端 GROUP BY audit_status，覆盖全量而非当前页。
+   *
+   * <p>回收站视图不显示这组页签，所以也不拉数 —— 回收站里的商品不参与日常管理，
+   * 把它们算进「待审核」会让卖家永远清不掉那个红点。
+   */
+  const auditCountsState = useAsync<StatusCount[]>(
+    useCallback(() => sellerApi.productAuditCounts(), []),
+    allowed,
+  );
+  /** 角标本地态：允许乐观减，之后一律以服务端分桶覆盖 */
+  const [auditCounts, setAuditCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setAuditCounts(toCountMap(auditCountsState.data));
+  }, [auditCountsState.data]);
+  const reloadAuditCounts = auditCountsState.reloadSilently;
+
+  /**
+   * 逐条已读的本地覆盖（2026-10-27 · 橙色未读印记）。
+   *
+   * <p>列表数据来自 `useAsync`（服务端快照）；点开预览只把这一条加入集合，
+   * 不整页重拉 —— 重拉会闪一下，也会把用户正在看的滚动位置打回顶部。
+   * 切筛选/翻页时清空，由服务端回传的 `read` 字段重新决定橙点。
+   */
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setReadIds(new Set());
+  }, [page, keywordQuery, auditStatus, inRecycle]);
+  const isRead = (item: SellerProductView) => item.read === true || readIds.has(item.id);
+
+  /** 预览卡片（2026-10-27）：点卡片先看轻量预览，不直接进编辑弹窗 */
+  const [preview, setPreview] = useState<SellerProductView | null>(null);
+  /** 预览时才拉全量详情（列表 DTO 保持轻量）：副标题/类目品牌/全部图片/SKU/正文 */
+  const [previewDetail, setPreviewDetail] = useState<SellerProductDetailView | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  /** 请求序号：快速切换商品时丢弃过期的详情响应 */
+  const previewSeq = useRef(0);
+
+  const closePreview = () => {
+    previewSeq.current += 1;
+    setPreview(null);
+    setPreviewDetail(null);
+    setPreviewLoading(false);
+  };
+
+  /**
+   * 打开商品 = 看过：上报已读，「已通过」角标随之消掉（阅后即消）。
+   *
+   * <p>规则：橙点对所有审核态都消失（看过了）；数字角标只有 APPROVED 可消 ——
+   * PENDING（等审核）与 REJECTED（要改）读过也必须留着。
+   * 失败不本地硬减，回滚到服务端值。
+   */
+  const dismissAuditBadge = useCallback(
+    async (item: SellerProductView) => {
+      if (isRead(item)) return;
+      // 橙点：任何审核态都算「看过」（打开预览即已读）
+      setReadIds((prev) => new Set(prev).add(item.id));
+      // 数字角标：只有「已通过」可消（待审核 / 已驳回是还没落定的事，读过也必须留着）
+      const dismissible = item.auditStatus === 'APPROVED';
+      if (dismissible) {
+        setAuditCounts((prev) => applyOptimisticDismiss(prev, item.auditStatus));
+      }
+      try {
+        const rows = await sellerApi.productMarkRead(item.id);
+        if (dismissible) setAuditCounts(toCountMap(rows));
+        notifyBadgeChanged();
+      } catch {
+        // 上报失败：撤掉橙点覆盖，回滚到服务端值（不制造「看过但其实没上报」的假状态）
+        setReadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+        if (dismissible) void reloadAuditCounts();
+      }
+    },
+    [reloadAuditCounts, readIds],
+  );
+
+  /**
+   * 打开预览卡片 = 已读（原子操作）。
+   *
+   * <p>「渲染预览」与「上报已读」必须在同一个入口里完成 —— 放进两个按钮的
+   * onClick 里迟早漏一处，就会出现「看了但角标不动」或「角标动了但没看」。
+   */
+  const openPreview = (item: SellerProductView) => {
+    setPreview(item);
+    setPreviewDetail(null);
+    setPreviewLoading(true);
+    void dismissAuditBadge(item);
+    // 列表只带摘要，预览要展示的类目/品牌/全部图片/SKU/正文在详情接口里；
+    // 延迟加载避免为了预览把所有字段塞进列表响应体（列表是最高频路径）。
+    const seq = previewSeq.current + 1;
+    previewSeq.current = seq;
+    sellerApi
+      .productDetail(item.id)
+      .then((detail) => {
+        if (seq === previewSeq.current) setPreviewDetail(detail);
+      })
+      .catch(() => {
+        // 详情失败仍可用列表摘要展示，不把预览整个挡住
+      })
+      .finally(() => {
+        if (seq === previewSeq.current) setPreviewLoading(false);
+      });
+  };
+
+  /**
+   * 列表 + 审核角标一起刷。
+   *
+   * <p>商品页的写操作有 10 处（提交 / 上架 / 下架 / 删除 / 恢复 / 批量 / 导入…），
+   * 每一处都单独记得「顺手刷一下角标」是不现实的 —— 漏一处就是「列表已变、角标没变」。
+   * 统一收口到这一个函数，写操作只调它。
+   */
+  const reloadAll = useCallback(() => {
+    // 注意：这里必须是 reload（列表），不能写成 reloadAll —— 那就是无限递归
+    reload();
+    reloadAuditCounts();
+    // 上架/下架/删除/恢复都会改变审核分桶，父级菜单即时跟上
+    notifyBadgeChanged();
+  }, [reload, reloadAuditCounts]);
 
   const setQuery = (patch: Record<string, string | undefined>, replace = false) => {
     // 切页/筛选/搜索后，上一页的勾选不能再生效 —— 批量操作只认「眼前这一页」
@@ -267,14 +402,43 @@ export const SellerProductsPage: React.FC = () => {
     try {
       const result = await sellerApi.batchChangeProductStatus(selectedIds, action);
       setBatchResult(result);
+
+      /**
+       * 批量操作即已读（2026-10-27）：
+       * ① 只对**成功**条目清除橙点（失败条目没处理成，提醒必须保留）；
+       * ② 角标优先用接口返回的最新分桶覆盖；旧后端未返回时，按成功条目的状态本地兜底扣减
+       *    （同样只扣「可消」状态，且不会减到负数）；
+       * ③ 勾选清空 → 批量操作栏自动收起、全选框取消。
+       */
+      const successIds = result.items.filter((entry) => entry.success).map((entry) => entry.id);
+      if (successIds.length > 0) {
+        setReadIds((prev) => {
+          const next = new Set(prev);
+          successIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
+      if (result.auditCounts) {
+        setAuditCounts(toCountMap(result.auditCounts)); // 服务端权威值
+      } else {
+        const statusById = new Map((data?.items ?? []).map((item) => [item.id, item.auditStatus]));
+        setAuditCounts((prev) => applyBatchDismissLocally(
+          prev,
+          successIds.map((id) => statusById.get(id)),
+          (status) => status === 'APPROVED',
+        ));
+      }
       setSelectedIds([]);
+
       push(
         result.failedCount === 0
           ? `批量${label}完成：${result.successCount} 件全部成功`
           : `批量${label}完成：成功 ${result.successCount} 件，失败 ${result.failedCount} 件`,
         result.failedCount === 0 ? 'success' : 'error',
       );
+      // 列表照常刷新（状态已变、未读优先会重新排序）；角标已由上面覆盖，不再重复拉
       reload();
+      notifyBadgeChanged();
     } catch (err) {
       push(err instanceof Error ? err.message : `批量${label}失败，请重试`, 'error');
     } finally {
@@ -293,7 +457,7 @@ export const SellerProductsPage: React.FC = () => {
           : `「${item.title}」已下架，买家端不再展示`,
         'success',
       );
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '操作失败，请重试', 'error');
     } finally {
@@ -325,7 +489,7 @@ export const SellerProductsPage: React.FC = () => {
     try {
       await sellerApi.deleteProduct(item.id);
       push(`「${item.title}」已移入回收站，30 天内可恢复`, 'success');
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '删除失败，请重试', 'error');
     } finally {
@@ -339,7 +503,7 @@ export const SellerProductsPage: React.FC = () => {
     try {
       await sellerApi.restoreProduct(item.id);
       push(`「${item.title}」已恢复为下架状态，请核对内容后重新上架`, 'success');
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '恢复失败，请重试', 'error');
     } finally {
@@ -367,7 +531,7 @@ export const SellerProductsPage: React.FC = () => {
     try {
       const copied = await sellerApi.copyProduct(item.id);
       push(`已复制为「${copied.title}」，当前为下架状态，请核对后上架`, 'success');
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '复制失败，请重试', 'error');
     } finally {
@@ -412,9 +576,9 @@ export const SellerProductsPage: React.FC = () => {
       return;
     }
     try {
-      const text = await file.text();
-      setImportFileName(file.name);
-      setImportContent(text);
+      const payload = await readImportFile(file);
+      setImportFileName(payload.fileName);
+      setImportContent(payload.content);
       setImportResult(null);
     } catch {
       push('读取文件失败，请确认文件未损坏', 'error');
@@ -423,19 +587,22 @@ export const SellerProductsPage: React.FC = () => {
 
   const submitImport = async () => {
     if (!importContent) {
-      push('请先选择 CSV 文件', 'error');
+      push('请先选择 CSV 或 xlsx 文件', 'error');
       return;
     }
     setImportBusy(true);
     try {
-      const result = await sellerApi.importProductsCsv({ content: importContent });
+      const result = await sellerApi.importProductsCsv({
+        content: importContent,
+        fileName: importFileName || undefined,
+      });
       setImportResult(result);
       if (result.successCount > 0) {
         push(
           `导入完成：成功 ${result.successCount} 个商品${result.failedCount ? `，失败 ${result.failedCount} 个` : ''}`,
           result.failedCount ? 'error' : 'success',
         );
-        reload();
+        reloadAll();
       } else {
         push('导入未成功，请按下方原因修正后重试', 'error');
       }
@@ -446,12 +613,72 @@ export const SellerProductsPage: React.FC = () => {
     }
   };
 
+  const openPriceStock = () => {
+    setPsFileName('');
+    setPsContent('');
+    setPsResult(null);
+    setPsOpen(true);
+  };
+
+  const downloadPriceStockTemplate = async () => {
+    try {
+      const file = await sellerApi.priceStockTemplate();
+      downloadCsv(file.filename, file.content);
+    } catch (err) {
+      push(err instanceof Error ? err.message : '模板下载失败，请重试', 'error');
+    }
+  };
+
+  const pickPriceStockFile = async (file: File | null) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      push('文件过大（上限 2MB），请拆分后导入', 'error');
+      return;
+    }
+    try {
+      const payload = await readImportFile(file);
+      setPsFileName(payload.fileName);
+      setPsContent(payload.content);
+      setPsResult(null);
+    } catch {
+      push('读取文件失败，请确认文件未损坏', 'error');
+    }
+  };
+
+  const submitPriceStock = async () => {
+    if (!psContent) {
+      push('请先选择 CSV 或 xlsx 文件', 'error');
+      return;
+    }
+    setPsBusy(true);
+    try {
+      const result = await sellerApi.importPriceStock({
+        content: psContent,
+        fileName: psFileName || undefined,
+      });
+      setPsResult(result);
+      if (result.successCount > 0) {
+        push(
+          `改价改库存完成：成功 ${result.successCount} 行${result.failedCount ? `，失败 ${result.failedCount} 行` : ''}`,
+          result.failedCount ? 'error' : 'success',
+        );
+        reloadAll();
+      } else {
+        push('没有一行导入成功，请按下方原因修正后重试', 'error');
+      }
+    } catch (err) {
+      push(err instanceof Error ? err.message : '导入失败，请重试', 'error');
+    } finally {
+      setPsBusy(false);
+    }
+  };
+
   const resubmit = async (item: SellerProductView) => {
     setBusyId(item.id);
     try {
       await sellerApi.resubmitProduct(item.id);
       push(`「${item.title}」已重新提交，请等待平台审核`, 'success');
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '提交失败，请重试', 'error');
     } finally {
@@ -472,6 +699,8 @@ export const SellerProductsPage: React.FC = () => {
    */
   const openEdit = async (item: SellerProductView) => {
     setEditing(item);
+    // 打开编辑 = 看过这条商品：上报已读（只有「已通过」会因此消角标）
+    void dismissAuditBadge(item);
     setDraft(null);
     setEditDetail(null);
     setDraftLoading(true);
@@ -609,7 +838,7 @@ export const SellerProductsPage: React.FC = () => {
       await sellerApi.updateProduct(editing.id, { ...body, version: editDetail.version });
       push('商品已更新。内容变更已重新提交审核，审核通过后自动恢复展示', 'success');
       closeEdit();
-      reload();
+      reloadAll();
     } catch (err) {
       // 409 = 期间被审核 / 被其他会话改过。绝不能自动刷新版本重试：
       // 那等于拿旧内容覆盖刚发生的变更，正是 A-07 要堵的整行覆盖。
@@ -671,7 +900,7 @@ export const SellerProductsPage: React.FC = () => {
       setSkuBase(nextBase);
       setDraft((d) => (d ? { ...d, skuPrices: nextForm } : d));
       push('价格与库存已更新（不会触发重新审核）', 'success');
-      reload();
+      reloadAll();
     } catch (err) {
       push(err instanceof Error ? err.message : '保存失败，请重试', 'error');
     } finally {
@@ -839,7 +1068,7 @@ export const SellerProductsPage: React.FC = () => {
         'success',
       );
       closeSpecs();
-      reload();
+      reloadAll();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         push('商品已被其他人修改，本次保存未生效。请关闭后重新打开规格确认最新内容', 'error');
@@ -862,7 +1091,14 @@ export const SellerProductsPage: React.FC = () => {
     );
   }
 
-  const items = data?.items ?? [];
+  /**
+   * 未读优先（2026-10-27）：后端已按「未读在前、组内按更新时间」排序；
+   * 这里再做一次**稳定排序**，让刚点开预览的那一条立刻落回已读组（不必等刷新）。
+   * 稳定排序保证同组内仍是服务端给的顺序。
+   */
+  const items = [...(data?.items ?? [])].sort(
+    (a, b) => Number(isRead(a)) - Number(isRead(b)),
+  );
   const total = data?.total ?? 0;
   const pageCount = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const allSelected = items.length > 0 && items.every((item) => selectedIds.includes(item.id));
@@ -880,6 +1116,20 @@ export const SellerProductsPage: React.FC = () => {
             <>
               <button className="btn btn-ghost btn-sm" onClick={openImport}>
                 导入 CSV
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={openPriceStock}>
+                导入价格库存
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  window.location.href = sellerApi.priceStockExportUrl({
+                    keyword: keywordQuery || undefined,
+                    auditStatus: auditStatus || undefined,
+                  });
+                }}
+              >
+                导出价格库存
               </button>
               <button className="btn btn-ghost btn-sm" disabled={csvBusy} onClick={exportCsv}>
                 {csvBusy ? '导出中…' : '导出 CSV'}
@@ -944,6 +1194,7 @@ export const SellerProductsPage: React.FC = () => {
               onClick={() => setQuery({ auditStatus: tab.key || undefined, page: undefined })}
             >
               {tab.label}
+              <Badge count={auditCounts[tab.key]} />
             </button>
           ))}
         </div>
@@ -1032,9 +1283,14 @@ export const SellerProductsPage: React.FC = () => {
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <tr key={item.id}>
+                  <tr
+                    key={item.id}
+                    className={isRead(item) ? undefined : 'unread-card'}
+                    onClick={() => openPreview(item)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     {!inRecycle ? (
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           aria-label={`选择「${item.title}」`}
@@ -1057,6 +1313,7 @@ export const SellerProductsPage: React.FC = () => {
                         ) : (
                           <span style={{ fontSize: 22 }}>🐾</span>
                         )}
+                        {!isRead(item) ? <UnreadDot /> : null}
                         <span style={{ maxWidth: 320, wordBreak: 'break-all' }}>{item.title}</span>
                       </div>
                     </td>
@@ -1080,7 +1337,7 @@ export const SellerProductsPage: React.FC = () => {
                             {item.auditLabel}
                           </span>
                         </td>
-                        <td>
+                        <td onClick={(e) => e.stopPropagation()}>
                           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                             <button
                               className="btn btn-primary btn-sm"
@@ -1117,7 +1374,7 @@ export const SellerProductsPage: React.FC = () => {
                             </div>
                           ) : null}
                         </td>
-                        <td>
+                        <td onClick={(e) => e.stopPropagation()}>
                           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                             <button
                               className="btn btn-ghost btn-sm"
@@ -1204,6 +1461,219 @@ export const SellerProductsPage: React.FC = () => {
           }
         />
       )}
+
+      {/* 预览卡片（2026-10-27）：点列表行先看轻量预览 —— 打开即已读，橙点消失、
+          「已通过」角标 -1；编辑/规格/上下架等动作仍在预览里进入，不改变原有入口 */}
+      <Modal
+        open={preview !== null}
+        title="商品预览"
+        onClose={closePreview}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={closePreview}>
+              关闭
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                const target = preview;
+                if (!target) return;
+                closePreview();
+                void openEdit(target);
+              }}
+            >
+              编辑这件商品
+            </button>
+          </>
+        }
+      >
+        {preview ? (
+          <div className="stack" style={{ gap: 14 }}>
+            {/* 头部摘要：列表里已有的轻量字段，先渲染，不等详情返回 */}
+            <div className="row" style={{ gap: 14, alignItems: 'flex-start' }}>
+              {preview.mainImage ? (
+                <img
+                  src={preview.mainImage}
+                  alt={preview.title}
+                  style={{ width: 120, height: 120, borderRadius: 10, objectFit: 'cover', flex: '0 0 auto' }}
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  style={{
+                    width: 120, height: 120, borderRadius: 10, background: 'var(--surface-2)',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 32,
+                  }}
+                >
+                  🐾
+                </span>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 16, wordBreak: 'break-all' }}>{preview.title}</div>
+                {previewDetail?.subtitle ? (
+                  <div className="small muted" style={{ marginTop: 4 }}>{previewDetail.subtitle}</div>
+                ) : null}
+                <div className="row row-wrap" style={{ gap: 6, marginTop: 8 }}>
+                  <span className="tag">{preview.statusLabel}</span>
+                  <span className="tag">{preview.auditLabel}</span>
+                  <span className="tag">
+                    {previewDetail?.supplyType === 'self' ? '平台自营' : '第三方商家'}
+                  </span>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700, color: 'var(--danger)' }}>
+                  {formatPrice(preview.minPrice)}
+                  {preview.maxPrice > preview.minPrice ? ` ~ ${formatPrice(preview.maxPrice)}` : ''}
+                </div>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  SKU {preview.skuCount} 个 · 库存 {preview.totalStock} 件 · 销量 {preview.salesCount}
+                  {preview.rating ? ` · 评分 ${preview.rating.toFixed(1)}（${preview.ratingCount} 条）` : ''}
+                </div>
+              </div>
+            </div>
+
+            {previewLoading ? (
+              <LoadingBlock text="正在加载商品详情…" />
+            ) : previewDetail ? (
+              <>
+                {/* 基本信息：类目/品牌/审核/版本，补足列表摘要里没有的字段 */}
+                <div className="card card-pad" style={{ padding: 12 }}>
+                  <div className="small" style={{ fontWeight: 600, marginBottom: 8 }}>基本信息</div>
+                  <div
+                    className="small muted"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                      gap: 6,
+                    }}
+                  >
+                    <span>
+                      类目：{previewDetail.categoryName
+                        ?? (previewDetail.categoryId ? `#${previewDetail.categoryId}` : '—')}
+                    </span>
+                    <span>品牌：{previewDetail.brandName ?? '无品牌'}</span>
+                    <span>商品 ID：{previewDetail.id}</span>
+                    <span>版本：v{previewDetail.version}</span>
+                    <span>审核时间：{previewDetail.auditAt ? fmtTime(previewDetail.auditAt) : '—'}</span>
+                    <span>供货：{previewDetail.supplyType === 'self' ? '平台自营' : '第三方商家'}</span>
+                  </div>
+                </div>
+
+                {/* SKU 明细：卖家最需要核对的规格 / 价格 / 库存 */}
+                {previewDetail.skus.length > 0 ? (
+                  <div>
+                    <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+                      规格与库存（{previewDetail.skus.length}）
+                    </div>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>规格</th>
+                          <th style={{ textAlign: 'right' }}>价格</th>
+                          <th style={{ textAlign: 'right' }}>库存</th>
+                          <th>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewDetail.skus.map((sku) => (
+                          <tr key={sku.id}>
+                            <td>{sku.specName ?? '默认规格'}</td>
+                            <td style={{ textAlign: 'right' }}>{formatPrice(sku.price)}</td>
+                            <td style={{ textAlign: 'right' }}>{sku.stock}</td>
+                            <td>{sku.status === 'ON_SALE' || sku.status === 'ACTIVE' ? '在售' : '停用'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                {/* 全部图片（主图 + 详情图） */}
+                {previewDetail.images.length > 0 ? (
+                  <div>
+                    <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+                      商品图片（{previewDetail.images.length}）
+                    </div>
+                    <div className="row row-wrap" style={{ gap: 6 }}>
+                      {previewDetail.images.map((img, idx) => (
+                        <a key={`${img}-${idx}`} href={img} target="_blank" rel="noreferrer">
+                          <img
+                            src={img}
+                            alt={`商品图 ${idx + 1}`}
+                            style={{
+                              width: 64, height: 64, borderRadius: 6, objectFit: 'cover',
+                              border: '1px solid var(--border, #e5e7eb)',
+                            }}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* 介绍 / 规格参数 / 包装清单 */}
+                {previewDetail.intro ? (
+                  <div>
+                    <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>商品介绍</div>
+                    <div className="small muted">{previewDetail.intro}</div>
+                  </div>
+                ) : null}
+                {previewDetail.specParams?.length || previewDetail.packaging?.length ? (
+                  <div className="small muted" style={{ display: 'grid', gap: 4 }}>
+                    {previewDetail.specParams?.length ? (
+                      <span>
+                        规格参数：{previewDetail.specParams.map((kv) => `${kv.name}=${kv.value}`).join('；')}
+                      </span>
+                    ) : null}
+                    {previewDetail.packaging?.length ? (
+                      <span>
+                        包装清单：{previewDetail.packaging.map((kv) => `${kv.name}×${kv.value}`).join('；')}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* 富文本详情：默认折叠，避免预览被长文撑爆 */}
+                {previewDetail.detailHtml ? (
+                  <details>
+                    <summary className="small" style={{ cursor: 'pointer' }}>
+                      富文本详情（点击展开）
+                    </summary>
+                    <div style={{ maxHeight: 260, overflow: 'auto', marginTop: 6 }}>
+                      <RichTextView html={previewDetail.detailHtml} />
+                    </div>
+                  </details>
+                ) : previewDetail.detail ? (
+                  <details>
+                    <summary className="small" style={{ cursor: 'pointer' }}>
+                      详情正文（点击展开）
+                    </summary>
+                    <div className="small muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
+                      {previewDetail.detail}
+                    </div>
+                  </details>
+                ) : null}
+              </>
+            ) : (
+              <div className="small muted">
+                详情加载失败，以上为列表摘要；可点「编辑这件商品」查看完整内容。
+              </div>
+            )}
+
+            {preview.auditStatus === 'REJECTED' && preview.auditReason ? (
+              <div className="small" style={{ color: '#c0392b' }}>
+                驳回原因：{preview.auditReason}
+              </div>
+            ) : null}
+
+            <div className="small muted">
+              打开预览即视为已读：橙点消失，若这件商品是「已通过」，角标同步 -1。
+              待审核 / 已驳回是还没落定的事，读过也继续保留角标提醒。
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={editing !== null}
@@ -1572,10 +2042,10 @@ export const SellerProductsPage: React.FC = () => {
         ) : null}
       </Modal>
 
-      {/* A-17 · CSV 批量导入：一个分组键 = 一个商品，多行规格填同一个分组键 */}
+      {/* A-17 · 批量导入：一个分组键 = 一个商品，多行规格填同一个分组键；CSV 与 xlsx 同口径 */}
       <Modal
         open={importOpen}
-        title="批量导入商品（CSV）"
+        title="批量导入商品（CSV / xlsx）"
         onClose={() => setImportOpen(false)}
         footer={
           <>
@@ -1600,17 +2070,22 @@ export const SellerProductsPage: React.FC = () => {
         <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
           <input
             type="file"
-            accept=".csv,text/csv"
-            aria-label="选择商品 CSV 文件"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            aria-label="选择商品 CSV 或 xlsx 文件"
             onChange={(e) => {
               void pickImportFile(e.target.files?.[0] ?? null);
               e.target.value = '';
             }}
           />
           <button className="btn btn-ghost btn-sm" onClick={downloadTemplate}>
-            下载导入模板
+            下载 CSV 模板
           </button>
-          <span className="small muted">{importFileName ? `已选择：${importFileName}` : '支持 UTF-8 CSV，最大 2MB'}</span>
+          <a className="btn btn-ghost btn-sm" href={sellerApi.importProductTemplateXlsxUrl()}>
+            xlsx 模板
+          </a>
+          <span className="small muted">
+            {importFileName ? `已选择：${importFileName}` : '支持 UTF-8 CSV / xlsx，最大 2MB'}
+          </span>
         </div>
 
         {importResult ? (
@@ -1647,12 +2122,93 @@ export const SellerProductsPage: React.FC = () => {
         ) : null}
       </Modal>
 
+      {/* 第三批 · 价格/库存导入：一行 = 一个规格的一次改动，逐行返回结果 */}
+      <Modal
+        open={psOpen}
+        title="批量改价 / 改库存（CSV / xlsx）"
+        onClose={() => setPsOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setPsOpen(false)}>
+              关闭
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={psBusy || !psContent}
+              onClick={submitPriceStock}
+            >
+              {psBusy ? '导入中…' : '开始导入'}
+            </button>
+          </>
+        }
+      >
+        <Alert kind="info">
+          列顺序：商品ID、规格ID、价格(元)、库存。一行对应一个规格；只填其中一列时，另一列保持不变。
+          价格填元、最多两位小数。改价改库存<b>不会触发重新审核</b>，也不会改变商品审核状态。
+        </Alert>
+        <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+          <input
+            type="file"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            aria-label="选择价格库存 CSV 或 xlsx 文件"
+            onChange={(e) => {
+              void pickPriceStockFile(e.target.files?.[0] ?? null);
+              e.target.value = '';
+            }}
+          />
+          <button className="btn btn-ghost btn-sm" onClick={downloadPriceStockTemplate}>
+            下载 CSV 模板
+          </button>
+          <a className="btn btn-ghost btn-sm" href={sellerApi.priceStockTemplateXlsxUrl()}>
+            xlsx 模板
+          </a>
+          <span className="small muted">
+            {psFileName ? `已选择：${psFileName}` : '支持 UTF-8 CSV / xlsx，最大 2MB'}
+          </span>
+        </div>
+
+        {psResult ? (
+          <div style={{ marginTop: 14 }}>
+            <Alert kind={psResult.failedCount === 0 ? 'success' : psResult.successCount === 0 ? 'error' : 'warn'}>
+              共 {psResult.total} 行：成功 {psResult.successCount} 行，失败 {psResult.failedCount} 行。
+              成功行已立即生效，失败行未修改任何数据。
+            </Alert>
+            <table className="table" style={{ marginTop: 10 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 70 }}>行号</th>
+                  <th style={{ width: 120 }}>结果</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {psResult.items.map((entry) => (
+                  <tr key={`ps-${entry.id}`}>
+                    <td>{entry.id}</td>
+                    <td>
+                      {entry.success ? (
+                        <span className="tag">已更新</span>
+                      ) : (
+                        <span className="tag" style={{ color: '#c0392b' }}>{entry.errorCode ?? '失败'}</span>
+                      )}
+                    </td>
+                    <td style={{ wordBreak: 'break-all' }}>
+                      {entry.success ? '—' : entry.message ?? '导入失败'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Modal>
+
       <ProductPublishModal
         open={publishing}
         onClose={() => setPublishing(false)}
         onSuccess={() => {
           setQuery({ auditStatus: 'PENDING', page: undefined });
-          reload();
+          reloadAll();
         }}
       />
     </div>

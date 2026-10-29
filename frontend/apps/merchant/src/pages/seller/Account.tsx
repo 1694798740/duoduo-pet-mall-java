@@ -19,6 +19,7 @@ import { formatBjDateTime } from '@duoduo/shared/lib/time';
 import { userApi } from '@duoduo/api-sdk/endpoints';
 import { useAsync } from '@duoduo/shared/components/hooks';
 import { TwoFactorSetupPanel } from '@duoduo/shared/components/TwoFactorSetup';
+import { IpWhitelistPanel } from './IpWhitelistPanel';
 import type { MerchantApplicationView } from '@duoduo/api-sdk/types';
 
 const ROLE_TEXT: Record<string, string> = {
@@ -203,6 +204,10 @@ export const SellerAccountPage: React.FC = () => {
         </p>
         <TwoFactorSetupPanel audience="merchant" />
       </div>
+
+      {/* E-06 · IP 白名单：店主专属。开启后网关会拦住名单外的 /api/seller/** 访问，
+          面板本身必须把「当前 IP」摆出来并支持一键加入，否则一次配置就能把人锁死。 */}
+      <IpWhitelistPanel />
     </div>
   );
 };

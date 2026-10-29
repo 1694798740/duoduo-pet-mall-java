@@ -1,8 +1,10 @@
 package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
+import com.duoduo.trade.dto.OrderDtos.PaymentRefundView;
 import com.duoduo.trade.dto.OrderDtos.PayResult;
 import com.duoduo.trade.service.OrderService;
+import com.duoduo.trade.service.PaymentRefundService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -11,8 +13,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,9 +40,11 @@ import java.util.Map;
 public class PaymentController {
 
     private final OrderService orderService;
+    private final PaymentRefundService paymentRefundService;
 
-    public PaymentController(OrderService orderService) {
+    public PaymentController(OrderService orderService, PaymentRefundService paymentRefundService) {
         this.orderService = orderService;
+        this.paymentRefundService = paymentRefundService;
     }
 
     /**
@@ -80,6 +86,21 @@ public class PaymentController {
     @GetMapping("/api/payments/{payNo}")
     public ApiResponse<PayResult> get(@PathVariable("payNo") String payNo) {
         return ApiResponse.ok(orderService.getPaymentView(payNo));
+    }
+
+    /**
+     * 我的自动退款台账（B-04）：本账号被多收的钱退到哪一步了。
+     *
+     * <p>归属校验在服务层：只按当前登录用户的 userId 查，别人的台账根本不在结果集里。
+     * 分页参数有服务端上限，防止一次拉穿全表。
+     */
+    @GetMapping("/api/payments/refunds/mine")
+    public ApiResponse<List<PaymentRefundView>> myRefunds(
+            @RequestParam(required = false) String payNo,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        Long userId = com.duoduo.common.context.UserContext.requireUserId();
+        return ApiResponse.ok(paymentRefundService.listMine(userId, payNo, page, pageSize));
     }
 
     private static final MediaType TEXT_HTML_UTF8 =

@@ -362,16 +362,7 @@ public class MerchantOnboardingService {
         Map<Long, String> phones = loadOwnerPhones(p.getRecords());
         LocalDateTime current = now();
         List<ApplicationSummary> items = p.getRecords().stream()
-                .map(m -> new ApplicationSummary(
-                        String.valueOf(m.getId()), m.getName(), m.getStatus(),
-                        String.valueOf(m.getOwnerUserId()),
-                        phones.get(m.getOwnerUserId()),
-                        m.getAppliedAt(), m.getReviewedAt(),
-                        // E15：审核台要能一眼看出「这家店资质快到期了 / 已经过期被停业」，
-                        // 否则运营只能靠逐个点开详情才发现 —— 而停业店铺恰恰是最需要解释原因的
-                        m.getLicenseExpireAt(),
-                        LicenseExpiry.stageOf(m.getLicenseExpireAt(), current).name(),
-                        m.getSuspendedReason()))
+                .map(m -> toSummary(m, phones, current))
                 .toList();
         return PageResult.of(items, p.getTotal(), page, pageSize);
     }
@@ -379,6 +370,44 @@ public class MerchantOnboardingService {
     /** 兼容旧调用（无关键字） */
     public PageResult<ApplicationSummary> adminPage(int page, int pageSize, String statusFilter) {
         return adminPage(page, pageSize, statusFilter, null);
+    }
+
+    /**
+     * 入驻审核台导出（2026-10-28 · 导入导出第一批）：与 {@link #adminPage} 同筛选、同字段。
+     *
+     * <p>同步导出最多 5 万行；证件材料**不进导出文件**（图片与链接无法在 CSV 里安全处理，
+     * 且导出文件一旦流出，等于把一批营业执照打包带走）。
+     */
+    public List<ApplicationSummary> exportSummaries(String statusFilter, String keyword) {
+        LambdaQueryWrapper<MerchantEntity> wrapper = new LambdaQueryWrapper<MerchantEntity>()
+                .eq(statusFilter != null && !statusFilter.isBlank(),
+                        MerchantEntity::getStatus, statusFilter);
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            wrapper.apply("(name LIKE {0} OR owner_user_id IN "
+                    + "(SELECT id FROM t_user WHERE phone LIKE {1} OR real_name LIKE {1}))", like, like);
+        }
+        wrapper.orderByDesc(MerchantEntity::getAppliedAt)
+                .orderByDesc(MerchantEntity::getCreatedAt)
+                .last("LIMIT 50000");
+        List<MerchantEntity> rows = merchantMapper.selectList(wrapper);
+        Map<Long, String> phones = loadOwnerPhones(rows);
+        LocalDateTime current = now();
+        return rows.stream().map(m -> toSummary(m, phones, current)).toList();
+    }
+
+    /** 分页与导出的共用装配：保证导出文件与页面上的每一列都同源 */
+    private ApplicationSummary toSummary(MerchantEntity m, Map<Long, String> phones, LocalDateTime current) {
+        return new ApplicationSummary(
+                String.valueOf(m.getId()), m.getName(), m.getStatus(),
+                String.valueOf(m.getOwnerUserId()),
+                phones.get(m.getOwnerUserId()),
+                m.getAppliedAt(), m.getReviewedAt(),
+                // E15：审核台要能一眼看出「这家店资质快到期了 / 已经过期被停业」，
+                // 否则运营只能靠逐个点开详情才发现 —— 而停业店铺恰恰是最需要解释原因的
+                m.getLicenseExpireAt(),
+                LicenseExpiry.stageOf(m.getLicenseExpireAt(), current).name(),
+                m.getSuspendedReason());
     }
 
     public ApplicationView adminDetail(Long merchantId) {

@@ -55,8 +55,31 @@
       placeholder="手机号"
       value="{{phone}}"
       bindinput="onPhone"
+      disabled="{{totpStep}}"
     />
+
+    <!-- 第二步：两步验证。密码已在第一步通过，这里只收验证码 / 恢复码 -->
+    <block wx:if="{{totpStep}}">
+      <view class="login-bind-tip">
+        该账号已开启两步验证：请输入认证器上的{{useRecovery ? '恢复码' : ' 6 位动态码'}}完成登录
+      </view>
+      <input
+        class="login-input"
+        maxlength="{{useRecovery ? 32 : 6}}"
+        type="{{useRecovery ? 'text' : 'number'}}"
+        placeholder="{{useRecovery ? '恢复码（一次性）' : '6 位动态码'}}"
+        value="{{totpCode}}"
+        bindinput="onTotpCode"
+      />
+      <view class="login-tip">
+        <text class="login-tip-strong" bindtap="toggleRecovery">
+          {{useRecovery ? '改用认证器动态码' : '手机不在身边？改用恢复码'}}
+        </text>
+      </view>
+    </block>
+
     <input
+      wx:if="{{!totpStep}}"
       class="login-input"
       password
       maxlength="64"
@@ -65,7 +88,7 @@
       bindinput="onPassword"
     />
     <input
-      wx:if="{{mode === 'register'}}"
+      wx:if="{{mode === 'register' && !totpStep}}"
       class="login-input"
       maxlength="20"
       placeholder="昵称（选填）"
@@ -79,11 +102,13 @@
       disabled="{{submitting}}"
       loading="{{submitting}}"
     >
-      {{mode === 'register' ? '注册并登录' : '登录'}}
+      {{totpStep ? '验证并登录' : (mode === 'register' ? '注册并登录' : '登录')}}
     </button>
 
     <view class="login-tip">
-      {{mode === 'register' ? '注册即创建多多账号，手机号将作为登录账号' : '忘记密码？当前版本请通过 Web 端「我的」重置'}}
+      {{totpStep
+        ? '验证码每 30 秒刷新一次；恢复码只能用一次，用过即作废'
+        : (mode === 'register' ? '注册即创建多多账号，手机号将作为登录账号' : '忘记密码？当前版本请通过 Web 端「我的」重置')}}
     </view>
   </view>
 </view>

@@ -6,8 +6,10 @@ import com.duoduo.common.audit.AuditAction;
 import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.common.context.UserContext;
+import com.duoduo.common.web.CsvExport;
 import com.duoduo.user.dto.MerchantDtos.StaffAdminView;
 import com.duoduo.user.service.MerchantStaffService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,6 +41,35 @@ public class AdminMerchantStaffController {
             @RequestParam(required = false) String keyword) {
         OperatorGuard.requireOperator();
         return ApiResponse.ok(staffService.adminPage(page, pageSize, keyword));
+    }
+
+    /** 平台成员导出（矩阵第二批）：与列表同一关键字筛选，单次上限 5 万行 */
+    @GetMapping("/export")
+    public void export(@RequestParam(required = false) String keyword,
+                       HttpServletResponse response) throws java.io.IOException {
+        OperatorGuard.requireOperator();
+        java.util.List<StaffAdminView> views = staffService.exportAdmin(keyword);
+        CsvExport.write(response, "平台成员-" + CsvExport.stamp(), HEADERS,
+                views.stream().map(AdminMerchantStaffController::row).toList());
+    }
+
+    private static final java.util.List<String> HEADERS = java.util.List.of(
+            "成员ID", "店铺ID", "店铺", "用户ID", "手机号", "角色", "状态", "加入时间");
+
+    private static java.util.List<String> row(StaffAdminView view) {
+        return java.util.List.of(
+                text(view.memberId()),
+                text(view.merchantId()),
+                text(view.storeName()),
+                text(view.userId()),
+                text(view.phoneMasked()),
+                text(view.role()),
+                text(view.status()),
+                CsvExport.beijingTime(view.createdAt()));
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     @PostMapping("/{memberId}/disable")

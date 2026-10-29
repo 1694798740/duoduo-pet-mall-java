@@ -12,6 +12,26 @@ spring:
     name: duoduo-ai
   lifecycle:
     timeout-per-shutdown-phase: 20s
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/duoduo_ai?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:duoduo}
+    password: ${DB_PASSWORD:duoduo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 20
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+  elasticsearch:
+    uris: ${DUODUO_ES_URL:http://127.0.0.1:9200}
+    connection-timeout: 500ms
+    socket-timeout: 3s
   cloud:
     nacos:
       discovery:
@@ -20,17 +40,29 @@ spring:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
 duoduo:
   ai:
     # DashScope（阿里云百炼）OpenAI 兼容模式。**Key 只走环境变量**，与微信 secret 同纪律。
     api-key: ${DASHSCOPE_API_KEY:}
     base-url: ${DUODUO_AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    # 2026-10-29：支持逗号分隔的优先级列表，主对话与流式回复都会按顺序回退
     model: ${DUODUO_AI_MODEL:qwen-plus}
-    # mock 开关（本地 / CI 默认 true）：不调 LLM，用确定性规则组织**真实候选**成回复。
-    # 生产必须关闭 —— mock 的回复不是模型生成的，只是召回结果的结构化拼装。
-    mock-enabled: ${DUODUO_AI_MOCK_ENABLED:true}
-    # LLM 调用超时（秒）：导购对话用户可感知等待，超过就降级提示，不挂死请求线程
-    timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:15}
+    # 2026-10-28 重构：彻底移除 mock 模式。未配置 Key 时如实返回 DEGRADED。
+    # LLM 调用超时（秒）：工具决策链路允许更长，首字由 SSE 流式保证
+    timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:60}
+    stream-timeout-seconds: ${DUODUO_AI_STREAM_TIMEOUT_SECONDS:120}
+    embedding-model: ${DUODUO_AI_EMBEDDING_MODEL:text-embedding-v3}
+    rerank-model: ${DUODUO_AI_RERANK_MODEL:gte-rerank-v2}
+    # RAG 检索开关：ES 不可用时自动降级到商品域结构化搜索
+    rag-enabled: ${DUODUO_AI_RAG_ENABLED:true}
     # 每 IP 每分钟对话次数：保护 LLM 配额的第一道闸。超限 429 RATE_LIMITED。
     # 限流键**不是**客户端可伪造的请求头（第五十七轮加固，见 AiController.clientKey）。
     rate-limit-per-minute: ${DUODUO_AI_RATE_LIMIT:20}

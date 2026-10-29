@@ -250,3 +250,29 @@ CREATE TABLE t_seckill_order (
 );
 CREATE UNIQUE INDEX uk_seckill_order_no ON t_seckill_order (order_no);
 CREATE INDEX idx_seckill_order_user ON t_seckill_order (user_id, activity_id);
+
+-- ---------- 异步导出任务（71 · 矩阵第 9 项） ----------
+CREATE TABLE t_export_job (
+    id                 BIGINT       NOT NULL,
+    scope              VARCHAR(16)  NOT NULL,
+    module             VARCHAR(24)  NOT NULL,
+    params             VARCHAR(500),
+    status             VARCHAR(12)  NOT NULL,
+    total_rows         INT          NOT NULL DEFAULT 0,
+    row_count          INT          NOT NULL DEFAULT 0,
+    file_name          VARCHAR(120),
+    file_path          VARCHAR(300),
+    file_size          BIGINT       NOT NULL DEFAULT 0,
+    error_message      VARCHAR(500),
+    created_by         BIGINT       NOT NULL,
+    created_at         TIMESTAMP    NOT NULL,
+    started_at         TIMESTAMP,
+    finished_at        TIMESTAMP,
+    expires_at         TIMESTAMP,
+    download_count     INT          NOT NULL DEFAULT 0,
+    last_downloaded_at TIMESTAMP,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_export_job_owner ON t_export_job (created_by, created_at);
+CREATE INDEX idx_export_job_expiry ON t_export_job (expires_at);
+CREATE INDEX idx_export_job_status ON t_export_job (status, created_at);

@@ -21,6 +21,7 @@ import {
   sellerApi,
   sellerSupportApi,
 } from '@duoduo/api-sdk/endpoints';
+import { onBadgeChanged } from '@duoduo/shared/lib/badge-events';
 import { MerchantLoginPage } from './MerchantLogin';
 import { SellerDashboardPage } from '../seller/Dashboard';
 import { SellerOrderDetailPage } from '../seller/OrderDetail';
@@ -74,18 +75,18 @@ const MALL_URL = (import.meta.env.VITE_MALL_URL as string | undefined) ?? 'http:
 const ADMIN_URL = (import.meta.env.VITE_ADMIN_URL as string | undefined) ?? 'http://admin.localhost:8090';
 
 /**
- * 导航角标（2026-10-22 · Q8）。
+ * 导航角标（2026-10-22 · Q8；2026-10-27 改为子级聚合）。
  *
  * 数据源与口径：
- *  · /seller/orders  ← sellerApi.summary().pendingShipCount（待发货 = 已付款，卖家该动了）；
+ *  · /seller/orders  ← orderStatusCounts() 全部分桶之和（未读订单总数）；
  *  · /seller/support ← sellerSupportApi.unreadCount()（买家咨询未读总数）；
- *  · /seller/after-sales ← afterSaleApi.seller(PENDING).total + seller(RETURNING).total
- *    （待卖家处理 + 待签收退货 —— 这两类都需要商家动手）;
+ *  · /seller/after-sales ← afterSaleApi.statusCounts('seller') 全部分桶之和；
+ *  · /seller/products ← productAuditCounts() 全部分桶之和（待审核/已通过/已驳回）；
  *  · /seller/reviews ← reviewApi.sellerList({ replied:false }).total（待回复的评价）。
  *
- * 触发：挂载即取 + 30s 轮询 + 路由切换时重取（点进去处理完，回来数字就更新）。
- * 清除逻辑：进入对应页面后由页面自身的已读动作（打开会话 / 处理工单）收敛数字，
- * 下一次轮询同步角标 —— 不在前端「点进即清零」，因为清零的事实必须来自服务端。
+ * 触发：挂载即取 + 30s 轮询 + 路由切换时重取 + {@code BADGE_CHANGED_EVENT} 即时重取。
+ * 清除逻辑：清零的事实一律来自服务端（已读上报 / 处理动作），
+ * 前端只负责在服务端确认后广播一次「该重取了」。
  * 任何一个请求失败按 0 处理（角标是提醒，不能因为它报错挡住导航）。
  */
 const useNavBadges = (enabled: boolean): Record<string, number> => {
@@ -95,28 +96,47 @@ const useNavBadges = (enabled: boolean): Record<string, number> => {
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
+    /**
+     * 父级角标 = **子级分桶的聚合**（2026-10-27）。
+     *
+     * <p>不再自己维护一份独立计数，也不再用 summary 的存量数：父级取的是
+     * 该模块全部子级 Tab 的未读数之和（订单 = 待付款/待发货/已发货/已完成/已退款/已关闭；
+     * 商品 = 待审核/已通过/已驳回；售后 = 全部状态）。
+     * 于是「点开一条 → 子级 Tab 减 1 → 父级同步减 1」是同一个数字的两种展示，
+     * 不会出现「菜单上 3、点进去各页签加起来 1」。
+     *
+     * <p>即时性：子页面已读上报成功后广播 {@code BADGE_CHANGED_EVENT}，
+     * 这里监听并静默重取 —— 父级不等 30 秒轮询，点完详情返回就能看到它一起减。
+     */
     const load = async () => {
-      const [support, summary, pending, returning, reviews] = await Promise.allSettled([
+      const [support, orderCounts, afterSaleCounts, reviews, auditCounts] = await Promise.allSettled([
         sellerSupportApi.unreadCount(),
-        sellerApi.summary(),
-        afterSaleApi.seller({ status: 'PENDING', page: 1, pageSize: 1 }),
-        afterSaleApi.seller({ status: 'RETURNING', page: 1, pageSize: 1 }),
+        sellerApi.orderStatusCounts(),
+        afterSaleApi.statusCounts('seller'),
         reviewApi.sellerList({ replied: false, page: 1, pageSize: 1 }),
+        sellerApi.productAuditCounts(),
       ]);
+      /** 子级分桶求和：服务端只返回非 0 分桶，缺省即 0 */
+      const sum = (settled: PromiseSettledResult<{ status: string; count: number }[]>): number =>
+        settled.status === 'fulfilled'
+          ? (settled.value ?? []).reduce((acc, row) => acc + (Number(row?.count) || 0), 0)
+          : 0;
       const next: Record<string, number> = {
         '/seller/support': support.status === 'fulfilled' ? Number(support.value) || 0 : 0,
-        '/seller/orders': summary.status === 'fulfilled' ? Number(summary.value?.pendingShipCount) || 0 : 0,
-        '/seller/after-sales':
-          (pending.status === 'fulfilled' ? Number(pending.value?.total) || 0 : 0)
-          + (returning.status === 'fulfilled' ? Number(returning.value?.total) || 0 : 0),
+        '/seller/orders': sum(orderCounts),
+        '/seller/products': sum(auditCounts),
+        '/seller/after-sales': sum(afterSaleCounts),
         '/seller/reviews': reviews.status === 'fulfilled' ? Number(reviews.value?.total) || 0 : 0,
       };
       if (alive) setBadges(next);
     };
     void load();
     const timer = window.setInterval(() => void load(), 30_000);
+    // 页面内已读上报成功后立即重取，父级与子级同一刻收敛
+    const off = onBadgeChanged(() => void load());
     return () => {
       alive = false;
+      off();
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

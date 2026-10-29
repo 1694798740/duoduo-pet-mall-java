@@ -25,6 +25,7 @@ import { Layout } from './components/Layout';
 import { LoadingBlock } from '@duoduo/shared/components/ui';
 import { useAuth } from '@duoduo/shared/store/auth';
 import { AiGuruPage } from './pages/AiGuru';
+import { AiMemoryPage } from './pages/AiMemory';
 import { CartPage } from './pages/Cart';
 import { CheckoutPage } from './pages/Checkout';
 import { CouponsPage } from './pages/Coupons';
@@ -47,6 +48,7 @@ import { ShareMinePage } from './pages/ShareMine';
 import { ListingFormPage } from './pages/ListingForm';
 import { LoginPage } from './pages/Login';
 import { MePage } from './pages/Me';
+import { MyCoinsPage } from './pages/MyCoins';
 import { NotFoundPage } from './pages/NotFound';
 import { OrderDetailPage } from './pages/OrderDetail';
 import { OrdersPage } from './pages/Orders';
@@ -277,6 +279,17 @@ export const App: React.FC = () => (
         }
       />
 
+      {/* ---------- 多多币（R-P1，用户域 duoduo-user） ----------
+          资金类页面：余额/流水/到期批次都按登录态隔离，必须套 RequireAuth。 */}
+      <Route
+        path="/coins"
+        element={
+          <RequireAuth>
+            <MyCoinsPage />
+          </RequireAuth>
+        }
+      />
+
       {/* ---------- 评价与晒单（M11/P2-1，履约域 duoduo-fulfilment） ---------- */}
       <Route
         path="/reviews/new"
@@ -338,6 +351,17 @@ export const App: React.FC = () => (
           未登录也能问答（验收②）；「加购 / 下单」这类需要身份的动作由回复文案引导登录，
           页面再补一条登录入口 —— 把「能不能问」和「能不能买」分开。 */}
       <Route path="/ai" element={<AiGuruPage />} />
+
+      {/* AI 记忆库（2026-10-29 · 第二阶段）：记忆属于登录用户，必须 RequireAuth。
+          路径刻意放在 /ai 之后：两者是精确匹配，不会互相吞掉。 */}
+      <Route
+        path="/ai/memory"
+        element={
+          <RequireAuth>
+            <AiMemoryPage />
+          </RequireAuth>
+        }
+      />
 
 
       <Route path="*" element={<NotFoundPage />} />

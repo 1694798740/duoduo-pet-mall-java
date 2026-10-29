@@ -38,6 +38,31 @@ public enum AuditAction {
     USER_ROLE_CHANGE(AuditCategory.SECURITY, "USER"),
 
     /**
+     * R-P1 · 运营人工调整某用户的多多币余额（加 / 减都要写原因）。
+     *
+     * <p>归 SECURITY：币是钱，人工调整等于直接改账本 —— 事后必须能回答
+     * 「谁在什么时候、给谁的账户、调了多少、为什么」。
+     */
+    COIN_ADMIN_ADJUST(AuditCategory.SECURITY, "COIN"),
+
+    /**
+     * R-P1 第三轮 · 运营修改多多币任务定义（启停 / 奖励币数 / 每日上限）。
+     *
+     * <p>归 FUNDS：奖励币数是**平台负债的单价** —— 把它从 5 改成 50，
+     * 每个用户每天都会多发 45 币；这已经不是「配置内容」，而是直接改了发钱规则。
+     * 事后必须能回答「谁在什么时候把哪个任务的奖励改成了多少」。
+     */
+    COIN_TASK_UPDATE(AuditCategory.FUNDS, "COIN_TASK"),
+
+    /**
+     * R-P1 第三轮 · 运营新建 / 编辑 / 启停多多币节日活动。
+     *
+     * <p>归 FUNDS：倍率、总预算、每人上限三者共同决定「活动期间平台最多欠用户多少钱」。
+     * 与任务定义同理 —— 改的是发钱规则，不是展示内容。
+     */
+    COIN_CAMPAIGN_UPDATE(AuditCategory.FUNDS, "COIN_CAMPAIGN"),
+
+    /**
      * E21 · 启用两步验证（TOTP）。
      *
      * <p>归 SECURITY：它改变的是"这个账号需要几把钥匙才能进"，与权限变更同性质 ——
@@ -84,6 +109,24 @@ public enum AuditAction {
      * 这与「权限变更」是同一类不可逆的追责材料。
      */
     MERCHANT_MATERIAL_READ(AuditCategory.SECURITY, "MATERIAL"),
+
+    /**
+     * E-06 · 店主修改本店「商家端 IP 白名单」。
+     *
+     * <p>归入 SECURITY：它决定「这张网能不能进商家经营面」，与店员权限同性质 ——
+     * 一旦被改，事后必须能回答「谁在什么时候把这台机器的网络放进来/踢出去」。
+     * 尤其是**关掉白名单**这个动作：它把一条安全边界整条摘掉，却和「加一个 IP」长得一样。
+     */
+    UPDATE_MERCHANT_IP_WHITELIST(AuditCategory.SECURITY, "MERCHANT"),
+
+    /**
+     * E-06 · 平台清除某店铺的 IP 白名单（**救援通道**）。
+     *
+     * <p>存在的唯一原因：店主把白名单配错会把自己整间店锁在门外，而那时他连页面都进不去。
+     * 这个动作必须留痕 —— 它是「平台替商家改了一条安全边界」，
+     * 与 2FA 重置（{@link #USER_TOTP_RESET}）属于同一类需要被追问的操作。
+     */
+    ADMIN_RESET_MERCHANT_IP_WHITELIST(AuditCategory.SECURITY, "MERCHANT"),
 
     // ---------------- 商家成员（身份变更 → SECURITY） ----------------
 

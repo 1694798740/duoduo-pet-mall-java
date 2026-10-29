@@ -93,8 +93,22 @@ function wechatRebind(code) {
   return req.post('/api/auth/wechat/rebind', { code });
 }
 
-function phoneLogin(phone, password) {
-  return req.post('/api/auth/login/token', { phone, password }).then((data) => acceptSession(data));
+/**
+ * 手机号登录（小程序走 /login/token：令牌随响应体下发，不依赖 Cookie）。
+ *
+ * @param {{code?: string, recoveryCode?: string}} [totp]
+ *   两步验证第二步。**未传时，若账号已启用 2FA，服务端返回 401 + code=TOTP_REQUIRED**
+ *   （登录页据此切到验证码输入，再带上它重试）。
+ *   两个字段二选一：正常路径优先动态码，手机丢了才用恢复码。
+ */
+function phoneLogin(phone, password, totp) {
+  const body = { phone, password };
+  if (totp && totp.recoveryCode) {
+    body.recoveryCode = totp.recoveryCode;
+  } else if (totp && totp.code) {
+    body.totpCode = totp.code;
+  }
+  return req.post('/api/auth/login/token', body).then((data) => acceptSession(data));
 }
 
 /**
@@ -473,11 +487,18 @@ const ai = {
    * 服务端没有会话状态，只能由前端把这个事实带上去 —— 它的唯一用途是保证
    * 「一次对话最多反问一次」，避免 AI 一直追问把导购变成填问卷。
    * 响应里的 `clarify` 非空时，说明这一轮是反问而不是回答，前端要把 options 渲染成可点选项。
+   *
+   * pageUrl（2026-10-29 · 阶段四）：用户当前所在页面（如 `pages/orders/orders`）。
+   * 服务端按白名单校验并丢掉查询串，非法值按「未提供」处理 —— 原样传即可。
+   *
+   * sessionId（2026-10-29 · 阶段四）：服务端会话 ID。小程序没有 SSE 的 meta 事件，
+   * 只能从非流式响应的 sessionId 字段取，并在下一轮带回 —— 不带的话每轮都是新会话，
+   * 槽位/摘要/长期记忆全部接不上。
    */
-  chat(message, history, clarified) {
+  chat(message, history, clarified, pageUrl, sessionId) {
     return req.post(
       '/api/duoduo/chat',
-      { message, history, clarified: !!clarified },
+      { message, history, clarified: !!clarified, pageUrl, sessionId },
       { timeout: 20000 }
     );
   },
@@ -737,18 +758,35 @@ const social = {
   },
   /** 通知中心（第五十轮）：定向通知 + 全站公告合并视图，前端无感两种存储 */
   notice: {
-    /** 通知列表；category 可选（SYSTEM / ANNOUNCEMENT / FRIEND / MERCHANT / ORDER，第五十五轮加） */
-    list(page, pageSize, category) {
-      return req.get(
-        '/api/socials/notices?page=' +
-          (page || 1) +
-          '&pageSize=' +
-          (pageSize || 20) +
-          (category ? '&category=' + category : '')
-      );
+    /**
+     * 通知列表。
+     *
+     * @param {number} page
+     * @param {number} pageSize
+     * @param {string} category SYSTEM / ANNOUNCEMENT / FRIEND / MERCHANT / ORDER
+     * @param {string} read     UNREAD / READ（2026-10-27）；空 = 全部
+     * @param {string} keyword  标题或正文包含匹配（2026-10-27）
+     *
+     * 筛选全部交给服务端：端上只筛「已加载的那几页」会漏掉后面的记录，
+     * 且「没有更多」的判断会失真。
+     */
+    list(page, pageSize, category, read, keyword) {
+      let url = '/api/socials/notices?page=' + (page || 1) + '&pageSize=' + (pageSize || 20);
+      if (category) url += '&category=' + category;
+      if (read) url += '&read=' + read;
+      if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
+      return req.get(url);
     },
     unreadCount() {
       return req.get('/api/socials/notices/unread-count');
+    },
+    /**
+     * 分类未读（2026-10-27）：{ORDER, FRIEND, MERCHANT, SYSTEM, ANNOUNCEMENT}。
+     * 与 unreadCount 同口径分桶（排除私信/客服通知；公告按已读集合扣除）——
+     * 分类 chip 上的角标只能读它，端上按「已加载列表里 !read 的条数」数会漏掉未加载的页。
+     */
+    unreadByCategory() {
+      return req.get('/api/socials/notices/unread-by-category');
     },
     /**
      * 合并未读（第五十五轮）：{ notice, message, total } —— tabBar 角标的唯一数据源。

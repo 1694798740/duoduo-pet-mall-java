@@ -21,11 +21,21 @@
 #   02-duoduo-product.sql           商品域建表 + 种子数据
 # 生产环境请勿直接使用此文件：账号口令、资源规格、持久化与高可用策略都需要按容量重新设计。
 
+# 日志轮转（2026-10-28）：默认 json-file 驱动无上限，一个跑满的容器能在几天内写满数据盘。
+# 每个服务 20MB × 5 份 ≈ 100MB 上限，17 个容器合计约 1.7GB，崩溃前还能留出排查窗口。
+# 用 YAML 锚点统一下发，避免某个新服务漏配。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '5'
+
 services:
   mysql:
     image: mysql:8.0.36
     container_name: duoduo-mysql
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '3306:3306'
     environment:
@@ -60,6 +70,7 @@ services:
     image: redis:7.2-alpine
     container_name: duoduo-redis
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '6379:6379'
     command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '2gb', '--maxmemory-policy', 'allkeys-lru']
@@ -75,6 +86,7 @@ services:
     image: nacos/nacos-server:v2.3.2
     container_name: duoduo-nacos
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '8848:8848'
       - '9848:9848'
@@ -123,6 +135,7 @@ services:
         JAR_FILE: duoduo-user/target/duoduo-user-1.0.0.jar
         APP_PORT: '8081'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_USER_PORT: '8081'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_user?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -133,6 +146,10 @@ services:
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
       DUODUO_JWT_SECRET: ${DUODUO_JWT_SECRET:-duoduo-local-dev-secret-please-change-in-production-32b}
+      # Cookie 生产加固（2026-10-28）：HTTPS 生产必须 COOKIE_SECURE=true；
+      # 本地 http 保持 false，否则浏览器不保存带 Secure 的 Cookie，登录后立刻掉线。
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
       # 内部接口凭据（/api/users/internal/**：批量取昵称头像，供履约域评价列表补全展示）
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
       # A13 · 微信登录：appid/secret 上线后经环境变量注入（WECHAT_APPID / WECHAT_SECRET）；
@@ -183,6 +200,7 @@ services:
         JAR_FILE: duoduo-product/target/duoduo-product-1.0.0.jar
         APP_PORT: '8082'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_PRODUCT_PORT: '8082'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_product?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -222,6 +240,7 @@ services:
         JAR_FILE: duoduo-trade/target/duoduo-trade-1.0.0.jar
         APP_PORT: '8083'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_TRADE_PORT: '8083'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_trade?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -273,6 +292,12 @@ services:
       ALIPAY_NOTIFY_URL: ${ALIPAY_NOTIFY_URL:-}
       ALIPAY_RETURN_URL: ${ALIPAY_RETURN_URL:-}
       ALIPAY_EXPIRE_MINUTES: ${ALIPAY_EXPIRE_MINUTES:-15}
+      # 异步导出任务（矩阵第 9 项）：落盘目录指向卷挂载点，容器重建后已生成的文件仍在
+      EXPORT_DIR: /data/exports
+      EXPORT_RETENTION_DAYS: ${EXPORT_RETENTION_DAYS:-7}
+    volumes:
+      # 异步导出文件卷：只由下载端点读取（鉴权 + 创建人归属），不挂任何公开 nginx 路径
+      - trade-exports:/data/exports
     ports:
       - '8083:8083'
     depends_on:
@@ -292,6 +317,7 @@ services:
         JAR_FILE: duoduo-fulfilment/target/duoduo-fulfilment-1.0.0.jar
         APP_PORT: '8084'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_FULFILMENT_PORT: '8084'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_fulfilment?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -345,6 +371,7 @@ services:
         JAR_FILE: duoduo-marketing/target/duoduo-marketing-1.0.0.jar
         APP_PORT: '8085'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_MARKETING_PORT: '8085'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_marketing?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -381,34 +408,37 @@ services:
         JAR_FILE: duoduo-ai/target/duoduo-ai-1.0.0.jar
         APP_PORT: '8086'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_AI_PORT: '8086'
+      DB_URL: 'jdbc:mysql://mysql:3306/duoduo_ai?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
+      DB_USERNAME: duoduo
+      DB_PASSWORD: duoduo
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      DUODUO_ES_URL: 'http://duoduo-es:9200'
       NACOS_ENABLED: 'true'
       NACOS_ADDR: 'nacos:8848'
       NACOS_USERNAME: nacos
       NACOS_PASSWORD: nacos
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-duoduo-local-dev-internal-token}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      # OPS-SWITCH 模型名：换模型只改这一行（改完重建 ai 容器）
       DUODUO_AI_MODEL: ${DUODUO_AI_MODEL:-qwen-plus}
-      # OPS-SWITCH 默认 true —— mock 只用于本地/CI；生产必须注入 DASHSCOPE_API_KEY 并置 false
-      DUODUO_AI_MOCK_ENABLED: ${DUODUO_AI_MOCK_ENABLED:-true}
-      # 对话超时（秒）。超时按 DEGRADED(503) 处理，不挂死请求线程
-      # OPS-SWITCH 阈值：单次对话超时秒数（调小=更快失败，调大=更易拿到长回复）
-      DUODUO_AI_TIMEOUT_SECONDS: ${DUODUO_AI_TIMEOUT_SECONDS:-15}
-      # 限流阈值是**运维要按流量调的**量，与相邻变量保持一致走环境变量覆盖，
-      # 不写死 —— 否则改阈值必须动 compose 文件，容器编排与调参耦合在一起。
-      # OPS-SWITCH 阈值：单用户每分钟 AI 调用上限
+      DUODUO_AI_TIMEOUT_SECONDS: ${DUODUO_AI_TIMEOUT_SECONDS:-60}
+      DUODUO_AI_STREAM_TIMEOUT_SECONDS: ${DUODUO_AI_STREAM_TIMEOUT_SECONDS:-120}
+      DUODUO_AI_EMBEDDING_MODEL: ${DUODUO_AI_EMBEDDING_MODEL:-text-embedding-v3}
+      DUODUO_AI_RERANK_MODEL: ${DUODUO_AI_RERANK_MODEL:-gte-rerank-v2}
+      DUODUO_AI_RAG_ENABLED: ${DUODUO_AI_RAG_ENABLED:-true}
       DUODUO_AI_RATE_LIMIT: ${DUODUO_AI_RATE_LIMIT:-20}
-      # 全站总配额（第五十七轮）：单键限流防不住换 IP 刷，这一层保证总有上界。
-      # OPS-SWITCH 阈值：全站每分钟 AI 调用上限
       DUODUO_AI_GLOBAL_RATE_LIMIT: ${DUODUO_AI_GLOBAL_RATE_LIMIT:-300}
-      # 商品召回跨域调用的读超时（第五十七轮）：与 LLM 超时分开，避免商品域慢拖垮 AI。
-      # OPS-SWITCH 阈值：商品召回读超时（毫秒）——调小即更早降级，调大即更易拿到结果
       DUODUO_AI_RECALL_READ_TIMEOUT_MS: ${DUODUO_AI_RECALL_READ_TIMEOUT_MS:-1500}
     ports:
       - '8086:8086'
     depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       nacos:
         condition: service_healthy
 
@@ -425,6 +455,7 @@ services:
         JAR_FILE: duoduo-social/target/duoduo-social-1.0.0.jar
         APP_PORT: '8087'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_SOCIAL_PORT: '8087'
       DB_URL: 'jdbc:mysql://mysql:3306/duoduo_social?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true'
@@ -460,6 +491,7 @@ services:
     image: docker.io/library/elasticsearch:8.11.4
     profiles: ["search"]
     restart: unless-stopped
+    logging: *default-logging
     environment:
       discovery.type: single-node
       xpack.security.enabled: 'false'
@@ -488,6 +520,7 @@ services:
     image: apache/rocketmq:5.3.2
     profiles: ["mq"]
     restart: unless-stopped
+    logging: *default-logging
     command: sh mqnamesrv
     environment:
       # 官方脚本默认 -Xms4g，开发机扛不住；用 JAVA_OPT_EXT 覆盖为小内存
@@ -506,6 +539,7 @@ services:
     image: apache/rocketmq:5.3.2
     profiles: ["mq"]
     restart: unless-stopped
+    logging: *default-logging
     command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
     environment:
       JAVA_OPT_EXT: '-Xms512m -Xmx512m -Xmn256m'
@@ -534,6 +568,7 @@ services:
         JAR_FILE: duoduo-gateway/target/duoduo-gateway-1.0.0.jar
         APP_PORT: '8080'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DUODUO_GATEWAY_PORT: '8080'
       NACOS_ENABLED: 'true'
@@ -604,6 +639,7 @@ services:
         APP: mall
         NGINX_CONF: nginx.conf
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '8088:80'
     # 网关没有定义 healthcheck，所以这里用 service_started（用 service_healthy 会直接报错）
@@ -627,6 +663,7 @@ services:
         APP: admin
         NGINX_CONF: nginx-admin.conf
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '8090:80'
     depends_on:
@@ -645,6 +682,7 @@ services:
         APP: merchant
         NGINX_CONF: nginx-merchant.conf
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - '8091:80'
     depends_on:
@@ -659,3 +697,5 @@ volumes:
   # E12 · 入驻资质材料的私有存储：不挂任何公开 nginx 路径，
   # 读取一律走鉴权端点（店主本人 / 运营），与公开的 /uploads/** 彻底分开
   merchant-materials:
+  # 异步导出文件卷（矩阵第 9 项）：文件含全量收货信息，不挂公开路径，7 天由调度删除
+  trade-exports:

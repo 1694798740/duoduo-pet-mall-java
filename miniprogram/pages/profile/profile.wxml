@@ -29,6 +29,11 @@
     <text>领券中心 / 我的券包</text>
     <text class="arrow">›</text>
   </view>
+  <view wx:if="{{logged}}" class="menu-item" bindtap="go" data-url="/pages/coins/coins">
+    <text class="mi-icon">🪙</text>
+    <text>我的多多币</text>
+    <text class="arrow">›</text>
+  </view>
   <view class="menu-item" bindtap="go" data-url="/pages/ai/ai">
     <text class="mi-icon">🤖</text>
     <text>AI 导购「多多」</text>

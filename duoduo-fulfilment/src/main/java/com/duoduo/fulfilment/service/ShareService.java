@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.exception.BizException;
 import com.duoduo.common.id.SnowflakeIdGenerator;
+import com.duoduo.fulfilment.client.CoinTaskClient;
 import com.duoduo.fulfilment.client.ProductClient;
 import com.duoduo.fulfilment.client.SocialClient;
 import com.duoduo.fulfilment.client.dto.ProductCardBrief;
@@ -71,6 +72,7 @@ public class ShareService {
     private final ShareTopicService topicService;
     private final UserBriefLoader briefLoader;
     private final SnowflakeIdGenerator idGenerator;
+    private final CoinTaskClient coinTaskClient;
     private final int maxContentLength;
 
     public ShareService(ShareMapper shareMapper,
@@ -80,6 +82,7 @@ public class ShareService {
                         ShareTopicService topicService,
                         UserBriefLoader briefLoader,
                         SnowflakeIdGenerator idGenerator,
+                        CoinTaskClient coinTaskClient,
                         @Value("${duoduo.share.max-content-length:500}") int maxContentLength) {
         this.shareMapper = shareMapper;
         this.engagementMapper = engagementMapper;
@@ -88,6 +91,7 @@ public class ShareService {
         this.topicService = topicService;
         this.briefLoader = briefLoader;
         this.idGenerator = idGenerator;
+        this.coinTaskClient = coinTaskClient;
         this.maxContentLength = maxContentLength;
     }
 
@@ -131,11 +135,32 @@ public class ShareService {
         shareMapper.insert(entity);
         topicService.attach(entity.getId(), topics);
 
+        // 发布成功 → 多多币任务事件（best-effort；事件幂等，重复上报只返回当前进度）
+        reportSharePublished(userId, entity.getId());
+
         log.info("用户 {} 发布了商品 {} 的分享（{}，话题 {}）",
                 userId, request.spuId(), entity.getId(), topics);
         // 走统一装配而不是手拼视图：话题 / 互动标记都要读真库，
         // 手拼过一次「忘了带上话题」——返回体与随后拉到的详情不一致，前端会以为发布失败
         return assemble(userId, List.of(entity)).get(0);
+    }
+
+    /**
+     * 晒单 / 分享发布成功 → 用户域任务事件（SHARE_PUBLISH，bizId = 分享 id）。
+     *
+     * <p>best-effort：奖励是附加激励，用户域抖动或任务被停用都不该让「内容已经落库」
+     * 的发布变成失败；事件在用户域按 {@code (user_id, task_code, biz_date, biz_id)}
+     * 幂等，重复上报不会重复发奖。
+     */
+    private void reportSharePublished(Long userId, Long shareId) {
+        try {
+            coinTaskClient.taskEvent(Map.of(
+                    "userId", userId,
+                    "event", "SHARE_PUBLISH",
+                    "bizId", String.valueOf(shareId)));
+        } catch (RuntimeException e) {
+            log.warn("上报多多币晒单任务失败 userId={} shareId={}：{}", userId, shareId, e.getMessage());
+        }
     }
 
     // ---------------- 写：转发（第四十六轮，需登录） ----------------

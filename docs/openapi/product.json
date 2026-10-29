@@ -725,6 +725,37 @@
                                                                                          }
                                                                        }
                                                           },
+                  "/api/seller/products/{spuId}/read":  {
+                                                            "post":  {
+                                                                         "tags":  [
+                                                                                      "seller-product-controller"
+                                                                                  ],
+                                                                         "operationId":  "markRead",
+                                                                         "parameters":  [
+                                                                                            {
+                                                                                                "name":  "spuId",
+                                                                                                "in":  "path",
+                                                                                                "required":  true,
+                                                                                                "schema":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                            }
+                                                                                        ],
+                                                                         "responses":  {
+                                                                                           "200":  {
+                                                                                                       "description":  "OK",
+                                                                                                       "content":  {
+                                                                                                                       "*/*":  {
+                                                                                                                                   "schema":  {
+                                                                                                                                                  "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                              }
+                                                                                                                               }
+                                                                                                                   }
+                                                                                                   }
+                                                                                       }
+                                                                     }
+                                                        },
                   "/api/seller/products/{spuId}/copy":  {
                                                             "post":  {
                                                                          "tags":  [
@@ -1533,6 +1564,36 @@
                                                                                        }
                                                                      }
                                                         },
+                  "/api/admin/products/batch-audit":  {
+                                                          "post":  {
+                                                                       "tags":  [
+                                                                                    "admin-product-audit-controller"
+                                                                                ],
+                                                                       "operationId":  "batchAudit",
+                                                                       "requestBody":  {
+                                                                                           "content":  {
+                                                                                                           "application/json":  {
+                                                                                                                                    "schema":  {
+                                                                                                                                                   "$ref":  "#/components/schemas/AdminProductBatchAuditRequest"
+                                                                                                                                               }
+                                                                                                                                }
+                                                                                                       },
+                                                                                           "required":  true
+                                                                                       },
+                                                                       "responses":  {
+                                                                                         "200":  {
+                                                                                                     "description":  "OK",
+                                                                                                     "content":  {
+                                                                                                                     "*/*":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                                 }
+                                                                                                 }
+                                                                                     }
+                                                                   }
+                                                      },
                   "/api/admin/listings/{id}/audit":  {
                                                          "post":  {
                                                                       "tags":  [
@@ -1574,6 +1635,36 @@
                                                                                     }
                                                                   }
                                                      },
+                  "/api/admin/listings/batch-audit":  {
+                                                          "post":  {
+                                                                       "tags":  [
+                                                                                    "admin-listing-controller"
+                                                                                ],
+                                                                       "operationId":  "batchAudit_1",
+                                                                       "requestBody":  {
+                                                                                           "content":  {
+                                                                                                           "application/json":  {
+                                                                                                                                    "schema":  {
+                                                                                                                                                   "$ref":  "#/components/schemas/ListingBatchAuditRequest"
+                                                                                                                                               }
+                                                                                                                                }
+                                                                                                       },
+                                                                                           "required":  true
+                                                                                       },
+                                                                       "responses":  {
+                                                                                         "200":  {
+                                                                                                     "description":  "OK",
+                                                                                                     "content":  {
+                                                                                                                     "*/*":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/ApiResponseResult"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                                 }
+                                                                                                 }
+                                                                                     }
+                                                                   }
+                                                      },
                   "/api/admin/categories":  {
                                                 "get":  {
                                                             "tags":  [
@@ -1904,6 +1995,26 @@
                                                                                      }
                                                                    }
                                                        },
+                  "/api/seller/products/audit-counts":  {
+                                                            "get":  {
+                                                                        "tags":  [
+                                                                                     "seller-product-controller"
+                                                                                 ],
+                                                                        "operationId":  "auditCounts",
+                                                                        "responses":  {
+                                                                                          "200":  {
+                                                                                                      "description":  "OK",
+                                                                                                      "content":  {
+                                                                                                                      "*/*":  {
+                                                                                                                                  "schema":  {
+                                                                                                                                                 "$ref":  "#/components/schemas/ApiResponseListStatusCount"
+                                                                                                                                             }
+                                                                                                                              }
+                                                                                                                  }
+                                                                                                  }
+                                                                                      }
+                                                                    }
+                                                        },
                   "/api/products":  {
                                         "get":  {
                                                     "tags":  [
@@ -3556,7 +3667,10 @@
                                                                                                   },
                                                                                     "purgeAt":  {
                                                                                                     "type":  "string"
-                                                                                                }
+                                                                                                },
+                                                                                    "read":  {
+                                                                                                 "type":  "boolean"
+                                                                                             }
                                                                                 }
                                                              },
                                        "SellerSkuStructureInput":  {
@@ -3639,6 +3753,12 @@
                                                                                                           "type":  "integer",
                                                                                                           "format":  "int64"
                                                                                                       },
+                                                                                          "categoryName":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                          "brandName":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
                                                                                           "mainImage":  {
                                                                                                             "type":  "string"
                                                                                                         },
@@ -4129,6 +4249,42 @@
                                                                                            }
                                                                             }
                                                          },
+                                       "ApiResponseListStatusCount":  {
+                                                                          "type":  "object",
+                                                                          "properties":  {
+                                                                                             "code":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                             "message":  {
+                                                                                                             "type":  "string"
+                                                                                                         },
+                                                                                             "data":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "$ref":  "#/components/schemas/StatusCount"
+                                                                                                                    }
+                                                                                                      },
+                                                                                             "requestId":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                             "timestamp":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           }
+                                                                                         }
+                                                                      },
+                                       "StatusCount":  {
+                                                           "type":  "object",
+                                                           "properties":  {
+                                                                              "status":  {
+                                                                                             "type":  "string"
+                                                                                         },
+                                                                              "count":  {
+                                                                                            "type":  "integer",
+                                                                                            "format":  "int64"
+                                                                                        }
+                                                                          }
+                                                       },
                                        "ProxyRequestCreate":  {
                                                                   "type":  "object",
                                                                   "properties":  {
@@ -4375,7 +4531,13 @@
                                                                                                              "items":  {
                                                                                                                            "$ref":  "#/components/schemas/SellerProductBatchItemView"
                                                                                                                        }
-                                                                                                         }
+                                                                                                         },
+                                                                                               "auditCounts":  {
+                                                                                                                   "type":  "array",
+                                                                                                                   "items":  {
+                                                                                                                                 "$ref":  "#/components/schemas/StatusCount"
+                                                                                                                             }
+                                                                                                               }
                                                                                            }
                                                                         },
                                        "StockChangeItem":  {
@@ -4927,6 +5089,103 @@
                                                                                                 }
                                                                                  }
                                                               },
+                                       "AdminProductAuditItem":  {
+                                                                     "type":  "object",
+                                                                     "properties":  {
+                                                                                        "spuId":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                        "version":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int32"
+                                                                                                    }
+                                                                                    }
+                                                                 },
+                                       "AdminProductBatchAuditRequest":  {
+                                                                             "type":  "object",
+                                                                             "properties":  {
+                                                                                                "action":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                                "reason":  {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                                "items":  {
+                                                                                                              "type":  "array",
+                                                                                                              "items":  {
+                                                                                                                            "$ref":  "#/components/schemas/AdminProductAuditItem"
+                                                                                                                        }
+                                                                                                          }
+                                                                                            }
+                                                                         },
+                                       "ApiResponseResult":  {
+                                                                 "type":  "object",
+                                                                 "properties":  {
+                                                                                    "code":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                    "message":  {
+                                                                                                    "type":  "string"
+                                                                                                },
+                                                                                    "data":  {
+                                                                                                 "$ref":  "#/components/schemas/Result"
+                                                                                             },
+                                                                                    "requestId":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                                    "timestamp":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  }
+                                                                                }
+                                                             },
+                                       "Item":  {
+                                                    "type":  "object",
+                                                    "properties":  {
+                                                                       "id":  {
+                                                                                  "type":  "string"
+                                                                              },
+                                                                       "success":  {
+                                                                                       "type":  "boolean"
+                                                                                   },
+                                                                       "errorCode":  {
+                                                                                         "type":  "string"
+                                                                                     },
+                                                                       "message":  {
+                                                                                       "type":  "string"
+                                                                                   }
+                                                                   }
+                                                },
+                                       "Result":  {
+                                                      "type":  "object",
+                                                      "properties":  {
+                                                                         "total":  {
+                                                                                       "type":  "integer",
+                                                                                       "format":  "int32"
+                                                                                   },
+                                                                         "successCount":  {
+                                                                                              "type":  "integer",
+                                                                                              "format":  "int32"
+                                                                                          },
+                                                                         "failedCount":  {
+                                                                                             "type":  "integer",
+                                                                                             "format":  "int32"
+                                                                                         },
+                                                                         "items":  {
+                                                                                       "type":  "array",
+                                                                                       "items":  {
+                                                                                                     "$ref":  "#/components/schemas/Item"
+                                                                                                 }
+                                                                                   },
+                                                                         "counts":  {
+                                                                                        "type":  "array",
+                                                                                        "items":  {
+                                                                                                      "$ref":  "#/components/schemas/StatusCount"
+                                                                                                  }
+                                                                                    }
+                                                                     }
+                                                  },
                                        "ListingAuditRequest":  {
                                                                    "type":  "object",
                                                                    "properties":  {
@@ -4997,6 +5256,24 @@
                                                                                                  }
                                                                                }
                                                             },
+                                       "ListingBatchAuditRequest":  {
+                                                                        "type":  "object",
+                                                                        "properties":  {
+                                                                                           "ids":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                   },
+                                                                                           "action":  {
+                                                                                                          "type":  "string"
+                                                                                                      },
+                                                                                           "reason":  {
+                                                                                                          "type":  "string"
+                                                                                                      }
+                                                                                       }
+                                                                    },
                                        "ApiResponseSampleReport":  {
                                                                        "type":  "object",
                                                                        "properties":  {

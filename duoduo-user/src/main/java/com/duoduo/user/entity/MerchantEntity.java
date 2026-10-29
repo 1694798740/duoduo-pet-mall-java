@@ -60,6 +60,22 @@ public class MerchantEntity {
      * 复核通过（PASSED）不能减 —— 那是「这次抽查没问题」，不是「以前的违规撤销了」。
      */
     private Integer violationCount;
+
+    /**
+     * 是否启用商家端 IP 白名单（E-06）。0 = 不限制（默认）。
+     *
+     * <p>用 Integer 而不是 Boolean：库里是 TINYINT，MyBatis 对 TINYINT↔Boolean 的映射
+     * 依赖 JDBC 驱动与配置（历史踩过一次），显式用 0/1 最不容易在新环境里变味。
+     */
+    private Integer ipWhitelistEnabled;
+
+    /**
+     * 允许访问商家端的来源地址，逗号分隔（E-06）。
+     *
+     * <p>语法与平台后台白名单一致：{@code 1.2.3.4} / {@code 10.0.0.0/8} / {@code 192.168.1.*}。
+     * 解析与匹配统一走 {@code com.duoduo.common.security.ip.IpRules}。
+     */
+    private String ipWhitelist;
     private LocalDateTime appliedAt;
     private LocalDateTime reviewedAt;
     /** 最近一次审核人（运营 user id） */
@@ -161,6 +177,22 @@ public class MerchantEntity {
 
     public void setViolationCount(Integer violationCount) {
         this.violationCount = violationCount;
+    }
+
+    public Integer getIpWhitelistEnabled() {
+        return ipWhitelistEnabled;
+    }
+
+    public void setIpWhitelistEnabled(Integer ipWhitelistEnabled) {
+        this.ipWhitelistEnabled = ipWhitelistEnabled;
+    }
+
+    public String getIpWhitelist() {
+        return ipWhitelist;
+    }
+
+    public void setIpWhitelist(String ipWhitelist) {
+        this.ipWhitelist = ipWhitelist;
     }
 
     public LocalDateTime getReviewedAt() {

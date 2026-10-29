@@ -122,6 +122,12 @@ duoduo:
     # Sentinel 限流：下单入口 QPS 上限（同步与队列端点共用同一资源「order-place」）。
     # 触发后返回全站既有 RATE_LIMITED(429)。压测/冒烟可用环境变量调低验证 429 路径。
     place-qps-limit: ${DUODUO_TRADE_PLACE_QPS:100}
+  # 异步导出任务（矩阵第 9 项）：目录必须与容器卷挂载点一致，否则重建容器后已生成的文件消失。
+  export:
+    dir: ${EXPORT_DIR:${java.io.tmpdir}/duoduo-exports}
+    retention-days: ${EXPORT_RETENTION_DAYS:7}
+    sweep-interval-ms: ${EXPORT_SWEEP_INTERVAL_MS:600000}
+    sweep-initial-delay-ms: ${EXPORT_SWEEP_INITIAL_DELAY_MS:60000}
   pay:
     sandbox:
       # 沙箱收银台地址（预下单返回的二维码内容指向这里）。

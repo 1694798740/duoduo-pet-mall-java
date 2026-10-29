@@ -145,7 +145,14 @@ public class LongToStringJacksonModule extends SimpleModule {
             "staleCustodyCount", "staleCustodyAmount",
             "missingSettlementCount", "settlementAbnormalCount",
             "apiTotal", "apiServerError", "apiClientError",
-            "tenantCount", "riskyTenants", "watchTenants"
+            "tenantCount", "riskyTenants", "watchTenants",
+            // R-P1 第三轮（多多币活动）：总预算 / 已用预算 / 每人上限都是**会被运算的量** ——
+            // 运营端要算预算进度百分比、前端要显示「已用 / 总额」，漏列会让它们以字符串下发，
+            // `used / total` 退化成 NaN 或字符串拼接，进度条永远 0%（静默、不报错）。
+            "budgetTotal", "budgetUsed", "perUserCap",
+            // 多多币账户概览：累计获得 / 累计消耗 / 即将过期都是要展示与运算的币数，
+            // 漏列会让它们以字符串下发（"11"），前端求和退化成拼接。
+            "totalEarned", "totalSpent", "expiringSoonCoins"
     ));
 
     public LongToStringJacksonModule() {

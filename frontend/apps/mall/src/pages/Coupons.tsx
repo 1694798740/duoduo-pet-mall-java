@@ -16,7 +16,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { couponApi } from '@duoduo/api-sdk/endpoints';
 import type { CouponStatus, CouponTemplateView, CouponView } from '@duoduo/api-sdk/types';
@@ -52,12 +52,32 @@ const statusTone = (status: string): string => {
   }
 };
 
+/**
+ * 券面额文案（大号显示）。
+ *
+ * 折扣券的 `discountAmount` 恒为 0（后端只在算「本单可抵」时才乘比例），
+ * 直接显示金额会变成「¥0」；这里按类型分流，折扣券显示「8.5 折」。
+ */
+const faceValue = (type: string | null | undefined, discountAmount: number, discountPercent: number): string => {
+  if (type === 'DISCOUNT') {
+    return `${(discountPercent / 10).toFixed(1)} 折`;
+  }
+  return formatPrice(discountAmount);
+};
+
+/** 折扣券的封顶说明：不写出来，用户会以为「8 折」没有上限 */
+const capHint = (type: string | null | undefined, maxDiscountAmount: number): string =>
+  type === 'DISCOUNT' && maxDiscountAmount > 0 ? ` · 最高减 ${formatPrice(maxDiscountAmount)}` : '';
+
 export const CouponsPage: React.FC = () => {
   const { user } = useAuth();
   const { push } = useToast();
   const navigate = useNavigate();
+  /** AI 卡片可以带 `?tab=mine` 直达券包：初始页签从 URL 读，非法值回落到领券中心 */
+  const [searchParams] = useSearchParams();
 
-  const [tab, setTab] = useState<Tab>('center');
+  const [tab, setTab] = useState<Tab>(() =>
+    searchParams.get('tab') === 'mine' ? 'mine' : 'center');
   const [mineStatus, setMineStatus] = useState<'' | CouponStatus>('UNUSED');
   const [claiming, setClaiming] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -150,6 +170,7 @@ export const CouponsPage: React.FC = () => {
                           : '无门槛'}
                         {' · '}
                         {tpl.typeLabel}
+                        {capHint(tpl.type, tpl.maxDiscountAmount)}
                         {tpl.description ? ` · ${tpl.description}` : ''}
                       </div>
                       <div className="small muted" style={{ marginTop: 4 }}>
@@ -158,7 +179,7 @@ export const CouponsPage: React.FC = () => {
                     </div>
                     <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
                       <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
-                        {formatPrice(tpl.discountAmount)}
+                        {faceValue(tpl.type, tpl.discountAmount, tpl.discountPercent)}
                       </div>
                       <button
                         className="btn btn-primary btn-sm"
@@ -232,6 +253,7 @@ export const CouponsPage: React.FC = () => {
                             {c.thresholdAmount > 0
                               ? `满 ${formatPrice(c.thresholdAmount)} 可用`
                               : '无门槛'}
+                            {capHint(c.type, c.maxDiscountAmount)}
                             {' · 有效期至 '}
                             {formatDate(c.expireAt)}
                           </div>
@@ -243,7 +265,7 @@ export const CouponsPage: React.FC = () => {
                         </div>
                         <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
                           <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
-                            {formatPrice(c.discountAmount)}
+                            {faceValue(c.type, c.discountAmount, c.discountPercent)}
                           </div>
                           {c.status === 'UNUSED' ? (
                             <Link className="btn btn-ghost btn-sm" to="/cart" style={{ marginTop: 6 }}>
