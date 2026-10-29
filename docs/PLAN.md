@@ -16,9 +16,15 @@
 >   宠物百科知识库 6 条种子。
 > - **实测**：本地与线上 `/api/duoduo/chat` 真实模型 200（幼猫粮只推「皇家 K36」，
 >   测试商品已被护栏过滤）；SSE 经 nginx 逐 token 下发；前端 `tsc` + `vite build` 通过。
->   生产已注入 `DASHSCOPE_API_KEY` 并切 `qwen3.8-flash`；Embedding 当前 Key 返回 403，
+>   生产已注入 `DASHSCOPE_API_KEY`（2026-10-29 晚已换新账号 Key 与模型列表，见下）；Embedding 当前 Key 返回 403，
 >   向量检索自动降级 BM25，不影响推荐正确性。旧 `ChatService` / `MockReply` 及其测试已删除，
 >   AI 单测 **67/0**。
+>
+> - **云端已更新（2026-10-29 18:45 左右）**：`a939ffd` 已推送；云端 `/opt/duoduo` 上传
+>   `duoduo-ai-1.0.0.jar` 与商城 `dist` 后重建 AI / Web；`.env` 换新 Key，模型改为
+>   `qwen3.8-max-0902,qwen3.8-27b,kimi-k3`；`73`/`74` DDL 各跑两遍。实测 14 容器 healthy、
+>   游客 chat 200、登录后 `/api/duoduo/memory` 200、SSE 出券卡、审计落库、
+>   `ai_llm_fallback_count=0`。
 >
 > ---
 >
