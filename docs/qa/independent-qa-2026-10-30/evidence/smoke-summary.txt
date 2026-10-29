@@ -1,0 +1,13 @@
+﻿SMOKE BATCH START 2026-10-30T00:07:23
+smoke.ps1 EXIT=0 TIME=13.9s
+order-smoke.ps1 EXIT=0 TIME=21.8s
+payment-smoke.ps1 EXIT=0 TIME=26.6s
+coupon-smoke.ps1 EXIT=0 TIME=40.8s
+coins-smoke.ps1 EXIT=0 TIME=17.7s
+privilege-matrix-smoke.ps1 EXIT=0 TIME=43s
+tenant-isolation-smoke.ps1 EXIT=0 TIME=21.1s
+import-export-batch-smoke.ps1 EXIT=0 TIME=7.2s
+ai-smoke.ps1 EXIT=1 TIME=162.1s
+aftersale-smoke.ps1 EXIT=0 TIME=17.4s
+settlement-smoke.ps1 EXIT=0 TIME=33.9s
+SMOKE BATCH END 2026-10-30T00:14:08

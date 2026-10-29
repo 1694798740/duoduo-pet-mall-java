@@ -1,0 +1,48 @@
+# 证据：商品详情主图裂图（已复现）
+
+时间：2026-10-30 00:38（Asia/Shanghai）
+环境：本机 Docker，商城 `http://localhost:8088`
+
+## 1. HTTP 响应
+
+```
+$ curl -I http://localhost:8088/img/products/1001.svg
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Content-Type: text/html
+Content-Length: 745
+Cache-Control: no-store
+
+$ curl -s http://localhost:8088/img/products/1001.svg | head -1
+<!doctype html>
+```
+
+预期是 `image/svg+xml`（或经图片解析层映射到 `/img/products/p01.jpg`），实际返回的是 SPA 的 `index.html`。
+
+## 2. 浏览器实测
+
+- `/product/1001` 页面 `naturalWidth=0` 的图片：
+  `["/img/products/1001.svg","/img/products/1001.svg"]`
+- 首页独立取证：`homeBroken=[]`（本次未复现首页裂图；首页 UI 检查的同类失败按“假红/时序问题”处理，不下结论）
+- 截图：`shot-product-detail.png`、`shot-home.png`
+
+## 3. 根因
+
+`frontend/apps/mall/src/pages/ProductDetail.tsx:174-179`
+
+```ts
+const rawImages = data.images.some((u) => /^https?:|^\/uploads\//i.test(u))
+  ? data.images
+  : gallery(card.id, card.mainImage);
+const images = card.mainImage && rawImages[0] !== card.mainImage
+  ? [card.mainImage, ...rawImages.filter((u) => u !== card.mainImage)]
+  : rawImages;
+```
+
+`gallery()` 会把 `/img/…` 映射到本地图池，但第 178 行又把**未解析的 `card.mainImage`** 插到第一位，导致主图仍指向不存在的 SVG；nginx 的 SPA fallback 对该路径返回 `index.html`（200 + text/html），浏览器按图片解码失败。
+
+## 4. 修复建议（本轮不修改代码）
+
+- 主图也用统一解析：`productImage(card.id, card.mainImage)`，不要直接拼 `card.mainImage`。
+- nginx 对 `/img/**`、`/assets/**` 等静态资源缺失时返回 404，而不是回退 `index.html`，避免把“资源缺失”伪装成 200。
+- 回归用例：首页/详情/订单/收藏/分享等所有出现商品图的页面，断言 `naturalWidth > 0`。

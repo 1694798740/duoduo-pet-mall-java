@@ -1,0 +1,128 @@
+{
+  "total": 17,
+  "pass": 14,
+  "fail": 3,
+  "base": "http://127.0.0.1:8080",
+  "at": "2026-10-30T00:20:47",
+  "results": [
+    {
+      "id": "T01",
+      "name": "未登录访问 /api/orders 必须 401",
+      "expected": "401",
+      "actual": "status=401 code=UNAUTHORIZED",
+      "pass": true
+    },
+    {
+      "id": "T02",
+      "name": "买家访问 /api/admin/orders 必须 403",
+      "expected": "403",
+      "actual": "status=403 code=FORBIDDEN",
+      "pass": true
+    },
+    {
+      "id": "T03",
+      "name": "买家访问 /api/seller/orders 必须 403",
+      "expected": "403",
+      "actual": "status=403 code=FORBIDDEN",
+      "pass": true
+    },
+    {
+      "id": "T04",
+      "name": "第三方店主读自己商品 9001 必须 200",
+      "expected": "200",
+      "actual": "status=200",
+      "pass": true
+    },
+    {
+      "id": "T05",
+      "name": "第三方店主读自营商品 1001 必须 403/404",
+      "expected": "403/404",
+      "actual": "status=404 code=NOT_FOUND",
+      "pass": true
+    },
+    {
+      "id": "T06",
+      "name": "买家 A 读买家 B 订单必须 403/404",
+      "expected": "403/404",
+      "actual": "status=404 code=NOT_FOUND",
+      "pass": true
+    },
+    {
+      "id": "T07",
+      "name": "买家 A 读自己订单必须 200",
+      "expected": "200",
+      "actual": "list=200 detail=200 order=572195",
+      "pass": true
+    },
+    {
+      "id": "T08",
+      "name": "加购数量 0 必须 400",
+      "expected": "400",
+      "actual": "status=400 code=VALIDATION_ERROR",
+      "pass": true
+    },
+    {
+      "id": "T09",
+      "name": "加购数量 201 必须 400",
+      "expected": "400",
+      "actual": "status=400 code=VALIDATION_ERROR",
+      "pass": true
+    },
+    {
+      "id": "T10",
+      "name": "搜索 SQL 注入不命中数据",
+      "expected": "200 & total=0",
+      "actual": "status=200 total=0",
+      "pass": true
+    },
+    {
+      "id": "T11",
+      "name": "超大 pageSize 必须拒绝或封顶",
+      "expected": "400 或 <=100",
+      "actual": "status=200 returned=60",
+      "pass": true
+    },
+    {
+      "id": "T12",
+      "name": "同一券重复领取第二次必须失败",
+      "expected": "1st 200, 2nd 4xx",
+      "actual": "first=200 second=200 code=SUCCESS",
+      "pass": false
+    },
+    {
+      "id": "T13",
+      "name": "重复签到第二次必须失败",
+      "expected": "1st 200, 2nd 4xx",
+      "actual": "account=A first=200 second=422 code=BUSINESS_RULE",
+      "pass": true
+    },
+    {
+      "id": "T14",
+      "name": "伪造 AI 加购确认令牌必须拒绝",
+      "expected": "4xx",
+      "actual": "status=200 code=SUCCESS",
+      "pass": false
+    },
+    {
+      "id": "T15",
+      "name": "异步导出创建人可下载、他人 404",
+      "expected": "creator 200 / other 404",
+      "actual": "job=374231095450939392 status=SUCCESS creatorDownload=200 otherDownload=403 otherDetail=403 bytes=430717",
+      "pass": false
+    },
+    {
+      "id": "T16",
+      "name": "记忆接口未登录 401、登录 200",
+      "expected": "401 / 200",
+      "actual": "noToken=401 withToken=200 keys=allergens,brands,budgetMaxCents,budgetMinCents,categories,consentVersion",
+      "pass": true
+    },
+    {
+      "id": "T17",
+      "name": "买家订单导出 200 + text/csv",
+      "expected": "200",
+      "actual": "status=200 type=text/csv;charset=UTF-8 bytes=477",
+      "pass": true
+    }
+  ]
+}

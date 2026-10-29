@@ -1,0 +1,24 @@
+# 证据：AI 对话耗时实测（2026-10-30）
+
+环境：本机 Docker，网关 `http://127.0.0.1:8080`，模型列表 `qwen3.8-max-0902,qwen3.8-27b,kimi-k3`，真实 DashScope。
+说明：耗时为客户端从发请求到收到完整 JSON 的时间；不含前端渲染。每次请求均为独立会话（除配额连发）。
+
+| 提示词 | 耗时 | 结果 |
+| --- | --- | --- |
+| 帮我看看我的订单（游客新 Cookie） | 11.7s | 200，loginUrl=`/login?next=%2Fai`，未编造订单 |
+| 推荐一款适合幼犬吃的狗粮（游客新 Cookie） | 26.3s | 200，recommendations=0，回复“商品库返回空” |
+| 推荐一款猫粮（游客新 Cookie） | **97.0s** | 200，recommendations=3（1001/1102/1101） |
+| 幼猫粮有什么推荐（同一会话） | **51.8s** | 200，recommendations=1（1002） |
+| 你好1 / 你好2 / 你好3（同一游客） | 29.6s / 8.8s / 9.3s | 200 |
+| 第 4 轮（claried=true） | 0.0s | 被 3 轮配额拦截，loginUrl 正确 |
+
+## 代码侧观察
+
+- `AgentChatService.java:221-225`：Function Calling 最多 4 步，每一步都调用一次 `llm.chatWithTools`，**没有整轮总预算/截止时间**。
+- `DashScopeToolClient.java:82-85`：`attemptTimeout` 单次最多 30s，`totalBudget` 每次调用最多 55s；它约束的是“一次模型调用”，不是“一整轮 Agent”。
+- `frontend/nginx.conf:80`：通用 `/api` `proxy_read_timeout 60s`；SSE 精确路径 `proxy_read_timeout 180s`。
+- 因此理论最坏 4×55s=220s，超过 SSE 的 180s；非流式 `/chat` 经 nginx 60s 就会被切断。实测 97s 已经接近/超过非流式入口的网关超时。
+
+## 结论
+
+“能回答”但核心推荐场景最长 97s，属于已复现的用户体验缺陷（P2）；“无整轮预算、最坏可超过 nginx 超时”属于代码风险（见 code-risks.md CR-01）。
