@@ -166,7 +166,10 @@
 | 根因 | `ToolContext` 不携带 `SlotState`；`SearchProductsTool` 完全信任模型传入的 `budgetMax`。模型可以“带预算查一次 -> 不带预算再查一次”，服务端没有强制以本轮槽位为准 |
 | 影响 | 用户明确设置的预算可能被绕过，属于导购可信度问题 |
 | 修复建议 | 把本轮 `SlotState` 传入工具上下文，`search_products` 用服务端槽位覆盖/补齐预算；或在输出护栏按预算过滤 recommendations |
-| 状态 | **未修复**（需要跨工具上下文改造，超出本次最小修复范围） |
+| 修复 | `6f88ad3`：新增 `ToolConstraintContext`（ThreadLocal）承载本轮槽位；`SearchProductsTool` 用 `SlotState.budgetMin/MaxCents` 覆盖模型参数（模型只能收紧、不能放宽）；`AgentChatService` 在槽位合并后 `set`、`finally` 中 `clear`，避免线程池串味 |
+| 验证 | 新增 `SearchProductsToolTest` 两条用例（模型不传预算 / 传更宽预算），修复后 **2/0**（`evidence/fix-def013-test.log`）；重建 AI 容器后真机复测「预算 1 元以内的猫粮」→ **22.9s，recommendations=0**，不再返回 129 元猫粮 |
+| 状态 | **已修复**（提交 `6f88ad3`） |
+| 剩余风险 | 仅有预算下限时不会拦截低于下限的商品（区间语义与 SQL 过滤一致，属既有设计）；品类约束仍由检索层负责 |
 
 ## DEF-014 · 「推荐一下」没有返回结构化澄清选项
 
@@ -178,7 +181,10 @@
 | 证据 | `evidence/fix-def003-final2.log`；`scripts/ai-smoke.ps1` 断言 `clarify.options >= 2` 失败 |
 | 影响 | 前端无法渲染可点选项，用户只能手动输入；与澄清交互设计不一致 |
 | 修复建议 | 在 IntentRouter/AgentChatService 中为短句/无约束查询强制生成结构化 `clarify`，不依赖模型自由文本 |
-| 状态 | **未修复**（本次只修测试隔离，不改产品澄清逻辑） |
+| 修复 | `b3a8ac4`：`AgentResult` 增加 `clarify`、`AgentEvent` 增加 `clarify` 事件、非流式响应透传；`AgentChatService.clarifyFor` 在「PRODUCT_SEARCH + 无宠物/预算/品类 + 未澄清过」时直接反问，选项取真实一级类目（≥2 个才反问，否则退回模型）；放在模型调用之前，不依赖模型自由文本 |
+| 验证 | 新增 `AgentChatServiceClarifyTest` **5/0**；`ai-smoke` 3f 四项全绿：触发澄清、选项 ≥2、不夹带推荐、`clarified=true` 不再反问（`evidence/fix-def014-smoke.log`，41 PASS / 2 FAIL 的两项是模型冷却导致的 503，与本缺陷无关） |
+| 状态 | **已修复**（提交 `b3a8ac4`） |
+| 剩余风险 | 类目服务不可用（选项 <2）时退回模型自由回答；前端 `clarified` 标记按标签页会话保存，刷新后可能再次反问一次 |
 
 ## DEF-015 · 「预算没听懂」文案与既有验收口径不一致
 
@@ -190,20 +196,26 @@
 | 证据 | `evidence/fix-def003-final2.log` |
 | 影响 | 用户仍得到追问，但既有自动化断言红；文案口径不统一 |
 | 修复建议 | 明确预算未解析的统一话术，或把断言改为语义断言（包含“预算/金额”追问即可） |
-| 状态 | **未修复** |
+| 修复 | `b3a8ac4`：`ConstraintParser` 已有的「提了预算但没解析出数字」状态此前在 Agent 链路被丢弃；`AgentChatService` 注入解析器，在输出护栏之后用 `withBudgetNote` 追加「（我没听清你的预算数字，这次没按预算筛）」，同义句已存在时不重复追加 |
+| 验证 | 新增 `AgentChatServiceBudgetNoteTest` **3/0**；真机「有没有便宜划算的猫粮」→ 200，reply 含「没听清你的预算」（`evidence/fix-def015-live.log`） |
+| 状态 | **已修复**（提交 `b3a8ac4`） |
+| 剩余风险 | 该轮实测 67.2s（27B 多步工具调用），属 DEF-002 残余时延，不是文案问题 |
 
 ## 本批修复记录（2026-10-30）
 
 | 缺陷 | 状态 | 修复提交 | 修改文件 | 验证 | 剩余风险 |
 | --- | --- | --- | --- | --- | --- |
 | DEF-001 商品详情主图 | **已修复** | `480fc43` | `ProductDetail.tsx`、`product-detail-ui-check.mjs` | 修复前 18/2 红；修复后 **20/0**，截图 `shot-product-detail.png` | 首页/订单/收藏等使用统一解析，未发现同根因 |
-| DEF-002 AI 整轮时延 | **部分修复** | `72dc1aa` | `AgentChatService`、`DashScopeToolClient`、`LlmToolClient`、`application.yml`、`docker-compose.yml`、`DashScopeToolClientTest` | 新增预算失败测试：修复前 7 tests 1 fail（3.014s），修复后 **7/0**；27B 主模型+60s 预算实测推荐 **48.3s / 42.0s**（原 97s） | `qwen3.8-max` 主模型仍可能 60s+；DEF-013 预算绕过未修 |
-| DEF-003 AI 冒烟假红 | **部分修复** | `a2bb053` | `ai-smoke.ps1`、`catalog-fixture.ps1` | 游客会话隔离、多轮改用 `sessionId`、移除不可即时索引的犬粮夹具；多轮/配额断言实际通过 | 1元预算（DEF-013）、结构化澄清（DEF-014）、文案（DEF-015）、max 模型超时仍未全绿 |
+| DEF-002 AI 整轮时延 | **部分修复** | `72dc1aa` | `AgentChatService`、`DashScopeToolClient`、`LlmToolClient`、`application.yml`、`docker-compose.yml`、`DashScopeToolClientTest` | 单测 **7/0**；27B+60s 预算实测推荐 **48.3s / 42.0s / 67.2s**（原 97s）；预算耗尽返回收口话术而非 503 | 27B 多步工具调用仍可到 60s+（非流式经 nginx 60s 会 504；页面走 SSE 180s 不受影响）；一次模型超时会让三个模型全部进入 60s 冷却，见 CR-09 |
+| DEF-003 AI 冒烟假红 | **基本修复** | `a2bb053` | `ai-smoke.ps1`、`catalog-fixture.ps1` | 游客会话隔离、多轮改用 `sessionId`、移除不可即时索引的犬粮夹具；最新全量 **41 PASS / 2 FAIL**，两项均为模型冷却导致的 503（`evidence/fix-def014-smoke.log`）；1 元预算与文案已由 DEF-013/015 单独真机验证通过 | 模型冷却窗口内的整段冒烟仍会假红，需等冷却或调整冷却策略（CR-09） |
 | DEF-011 导出审计 | **已修复** | `cb14828` | `AuditAction`、`AdminExportJobController`、`AuditActionTest` | `audit-log-smoke` **58/0**；回库确认 `EXPORT_JOB_CREATE`/`EXPORT_JOB_DOWNLOAD` 两条记录 | 无 |
 | DEF-012 审计冒烟 dry-run 假红 | **已修复** | `cb14828` | `audit-log-smoke.ps1` | 同上 58/0 | 无 |
+| DEF-013 预算约束被绕过 | **已修复** | `6f88ad3` | `ToolConstraintContext`、`SearchProductsTool`、`AgentChatService`、`SearchProductsToolTest` | 单测 **2/0**（`evidence/fix-def013-test.log`）；真机「预算 1 元以内的猫粮」→ 28.1s、rec=0（`evidence/fix-def015-live.log`） | 仅有下限时不过滤低于下限商品（区间语义，既有设计） |
+| DEF-014 结构化澄清缺失 | **已修复** | `b3a8ac4` | `AgentResult`、`AgentEvent`、`AgentCommand`、`AiController`、`AgentChatService`、`AiGuru.tsx`、SDK 类型、`AgentChatServiceClarifyTest` | 单测 **5/0**；ai-smoke 3f 四项全绿（触发/选项≥2/无推荐/不再反问） | 类目不可用（选项<2）时退回模型；刷新页面后可能再反问一次 |
+| DEF-015 预算未解析文案 | **已修复** | `b3a8ac4` | `AgentChatService`、`AgentChatServiceBudgetNoteTest` | 单测 **3/0**；真机 reply 含「没听清你的预算」（`evidence/fix-def015-live.log`） | 该轮 67.2s，属 DEF-002 残余 |
 
-**未修复**：DEF-004~010（UI 假红、文档口径）、DEF-013、DEF-014、DEF-015。
-**回归**：全量 Maven **1159 tests / 0 fail / 5 skip / BUILD SUCCESS**；商品详情 UI **20/0**；审计冒烟 **58/0**；AI 冒烟仍非全绿（剩余项见上）。
+**未修复**：DEF-004~010（UI 假红、文档口径，P3）。
+**回归**：`duoduo-ai` 模块 **118 tests / 0 fail**；前端 `typecheck` 0 错误、`build:mall` 通过；商品详情 UI **20/0**；审计冒烟 **58/0**；AI 冒烟 **41/2**（2 项为模型冷却 503，已单列 CR-09）。
 
 > 说明：DEF-003~006、DEF-012 是“测试资产缺陷”，不是产品功能缺陷；单独列出是为了避免把假红当产品问题，也避免把测试资产问题洗成产品通过。
 
