@@ -1,10 +1,12 @@
 package com.duoduo.ai.agent.tool.impl;
 
 import com.duoduo.ai.agent.tool.AgentTool;
+import com.duoduo.ai.agent.tool.ToolConstraintContext;
 import com.duoduo.ai.agent.tool.ToolContext;
 import com.duoduo.ai.agent.tool.ToolResult;
 import com.duoduo.ai.agent.tool.ToolSchemas;
 import com.duoduo.ai.client.dto.AiProductCard;
+import com.duoduo.ai.memory.SlotState;
 import com.duoduo.ai.rag.ProductRagRetriever;
 import com.duoduo.ai.rag.QueryPlan;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -50,13 +52,26 @@ public class SearchProductsTool implements AgentTool {
             List<String> allergens = args.path("excludeAllergens").isArray()
                     ? Arrays.stream(mapper.convertValue(args.path("excludeAllergens"), String[].class)).toList()
                     : List.of();
+            // 预算以服务端槽位为最终口径：模型只能收紧、不能放宽，也不能通过
+            // “先带预算查一次、再不带预算查一次”绕过用户明确设置的上限（DEF-013）。
+            SlotState slots = ToolConstraintContext.get();
+            Long budgetMin = args.hasNonNull("budgetMin") ? args.path("budgetMin").asLong() : null;
+            Long budgetMax = args.hasNonNull("budgetMax") ? args.path("budgetMax").asLong() : null;
+            if (slots != null) {
+                if (slots.budgetMinCents() != null) {
+                    budgetMin = slots.budgetMinCents();
+                }
+                if (slots.budgetMaxCents() != null) {
+                    budgetMax = slots.budgetMaxCents();
+                }
+            }
             QueryPlan plan = new QueryPlan(
                     args.path("query").asText(""),
                     nullable(args, "species"),
                     nullable(args, "lifeStage"),
                     longOrNull(args.path("categoryId")),
-                    args.hasNonNull("budgetMin") ? args.path("budgetMin").asLong() : null,
-                    args.hasNonNull("budgetMax") ? args.path("budgetMax").asLong() : null,
+                    budgetMin,
+                    budgetMax,
                     allergens,
                     !args.has("inStockOnly") || args.path("inStockOnly").asBoolean(true),
                     args.path("limit").asInt(8));

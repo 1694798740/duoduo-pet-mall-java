@@ -3,6 +3,7 @@ package com.duoduo.ai.agent;
 import com.duoduo.ai.agent.card.CardAssembler;
 import com.duoduo.ai.agent.slot.SlotExtractor;
 import com.duoduo.ai.agent.tool.ToolCall;
+import com.duoduo.ai.agent.tool.ToolConstraintContext;
 import com.duoduo.ai.agent.tool.ToolContext;
 import com.duoduo.ai.agent.tool.ToolRegistry;
 import com.duoduo.ai.agent.tool.ToolResult;
@@ -210,6 +211,8 @@ public class AgentChatService {
             SlotState memorySlots = memoryService.loadSlots(command.userId());
             SlotState turnSlots = slotExtractor.extract(command.message(), session.slots());
             SlotState merged = slotMerger.merge(turnSlots, session.slots(), memorySlots);
+            // 工具层以服务端槽位为预算最终口径（DEF-013）；必须在 finally 清理。
+            ToolConstraintContext.set(merged);
             session = session.withUserMessage(command.message()).withSlots(merged);
 
             Intent intent = intentRouter.route(command.message(), merged, session);
@@ -365,6 +368,7 @@ public class AgentChatService {
             events.accept(AgentEvent.error("AI 暂时不可用，请稍后再试"));
             return AgentResult.fail(ErrorCode.DEGRADED.name(), "AI 暂时不可用，请稍后再试");
         } finally {
+            ToolConstraintContext.clear();
             sessionStore.unlock(sessionId);
         }
     }
