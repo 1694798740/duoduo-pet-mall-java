@@ -111,7 +111,7 @@ public class DashScopeToolClient implements LlmToolClient {
             if (remainingMs(start, budgetMs) <= 0) {
                 break;
             }
-            if (cooling(i)) {
+            if (cooling(i) && i != probeIndex()) {
                 log.info("模型 {} 处于冷却期，跳过", models.get(i));
                 continue;
             }
@@ -153,7 +153,7 @@ public class DashScopeToolClient implements LlmToolClient {
             if (remainingMs(start, budgetMs) <= 0) {
                 break;
             }
-            if (cooling(i)) {
+            if (cooling(i) && i != probeIndex()) {
                 continue;
             }
             String model = models.get(i);
@@ -320,6 +320,25 @@ public class DashScopeToolClient implements LlmToolClient {
 
     private boolean cooling(int index) {
         return System.currentTimeMillis() < cooldownUntil.get(index);
+    }
+
+    /**
+     * 全部模型都在冷却时，允许把列表首个模型当作「探针」放行一次（CR-09）。
+     *
+     * <p>原行为是三个模型都冷却后，所有请求直接抛 DEGRADED ——
+     * 一次慢请求（把整轮预算耗光、每个模型各记一次超时）会让整个 AI 能力在
+     * 60 秒冷却窗口内对**所有用户**返回 503。探针把「整站不可用」降级成
+     * 「一次真实的上游尝试」：模型恢复了立刻自愈，真坏了也只多一次失败调用。
+     *
+     * @return 可以无视冷却的模型下标；-1 表示不处于「全冷却」状态
+     */
+    private int probeIndex() {
+        for (int i = 0; i < models.size(); i++) {
+            if (!cooling(i)) {
+                return -1;
+            }
+        }
+        return models.isEmpty() ? -1 : 0;
     }
 
     private void markFailure(int index) {

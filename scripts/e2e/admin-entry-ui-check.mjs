@@ -205,9 +205,16 @@ const navAdminLink = (page) =>
 const menuAdminLink = (page) =>
   page.locator('.app-header .user-menu').getByRole('link', { name: '进入管理后台', exact: true });
 
+/**
+ * 打开头像菜单。
+ *
+ * 必须点 `.avatar-btn`：顶栏里 `.icon-btn` 不止一个（购物车、消息铃铛都在前面），
+ * 取 `.first()` 会点到购物车图标 —— 菜单永远不展开，后面「下拉入口」三条断言全红，
+ * 而产品本身是好的（DEF-004 的根因）。
+ */
 async function openUserMenu(page) {
-  await page.locator('.app-header button.icon-btn').first().click();
-  await page.waitForTimeout(200);
+  await page.locator('.app-header button.icon-btn.avatar-btn').first().click();
+  await page.locator('.app-header .user-menu').waitFor({ state: 'visible', timeout: 3000 });
 }
 
 /**

@@ -234,7 +234,13 @@ await loginUi(pb, buyer.phone);
 await pb.goto(`${UI}/orders`, { waitUntil: 'networkidle' });
 await pb.waitForTimeout(900);
 let t = await bodyText(pb);
-check('订单列表能看到这笔订单', t.includes(orderNo), orderNo);
+/**
+ * 订单列表**按设计不显示订单号**（Orders.tsx 卡片头只放店铺名，订单号只在详情页），
+ * 所以这里用「商品标题」识别这笔订单 —— 拿 orderNo 去列表页找文本，永远找不到（DEF-005 假红根因）。
+ */
+const orderItemTitle = orderBefore.items?.[0]?.title ?? '';
+check('订单列表能看到这笔订单（按商品标题识别）',
+  orderItemTitle !== '' && t.includes(orderItemTitle), orderItemTitle);
 check('订单卡片出现「申请售后」入口', t.includes('申请售后'), t.slice(0, 120));
 
 await pb.getByRole('link', { name: '申请售后' }).first().click();

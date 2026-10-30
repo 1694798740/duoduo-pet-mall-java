@@ -2,6 +2,7 @@
 
 > Java 21 · Spring Boot 3.2.5 · Spring Cloud 2023.0.1 · Spring Cloud Alibaba 2023.0.1.0 · MyBatis-Plus 3.5.5
 > 依据《多多宠物商店 · 产品需求原型 PRD v0.1》重做，替代此前的 Node/Express 原型实现。
+> **PRD 原文件不在本仓库**（DEF-009）：验收基线以本 README 的接口清单 + `docs/PLAN.md` 的验收标准 + 运行中的 OpenAPI/页面行为为准；PRD 交付物需另行归档，不能假设仓库里存在。
 > 架构设计见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)；开发看板见 [`docs/PLAN.md`](./docs/PLAN.md)。
 > 对象存储（腾讯云 COS）配置见 [`docs/COS-配置说明.md`](./docs/COS-配置说明.md)。
 
@@ -14,7 +15,9 @@
 - Agent 工具：搜索 / 详情 / 库存 / 推荐选择 / 加购 / 转人工；最多 4 步，写操作需一次性确认令牌。
 - Redis 会话状态 + 槽位合并 + 8 轮摘要；RAG 走 ES BM25 + kNN + RRF + Rerank，ES 不可用自动回退。
 - 本地与线上实测：真实模型推荐 200（测试商品被护栏过滤）、SSE 逐 token 下发；
-  63 条商品属性已回填；三端 `tsc` + `vite build` 通过。生产已切 `qwen3.8-flash`。
+  63 条商品属性已回填；三端 `tsc` + `vite build` 通过。
+  模型口径（2026-10-30，DEF-007）：`DUODUO_AI_MODEL=qwen3.8-27b,qwen3.8-max-0902,kimi-k3`，
+  单次调用 30s、整轮预算 60s；**以云端 `.env` 为准**，README 不再写死“已切某模型”。
 
 **2026-10-28 · 试用机「方案 A」部署完成（IP + 端口直访）**
 

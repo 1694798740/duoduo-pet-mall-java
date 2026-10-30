@@ -12,7 +12,8 @@
 ```bash
 cd <repo>/duoduo-pet-mall-java
 
-# 1) 容器基线：必须 10 个 healthy（mysql/redis/nacos + gateway/user/product/trade/fulfilment/marketing/ai）
+# 1) 容器基线：`docker compose ps` 必须全部 healthy（当前 18 个；数量以 compose 文件为准，
+#    任何“文档写 10 个”的旧说法都已过期 —— DEF-010）
 #    需要 ES 检索能力（A10）时再 `docker compose --profile search up -d` 额外起 duoduo-es；不起则检索自动降级 MySQL
 docker compose ps
 
@@ -24,7 +25,8 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
   "-Dmaven.legacyLocalRepo=true" \
   org.codehaus.plexus.classworlds.launcher.Launcher -ntp -DskipTests package
 
-# 3) 冒烟基线：19 套 1424 项接口断言 + 6 套 244 项浏览器断言全绿，至少跑受你改动影响的那几套
+# 3) 冒烟基线：以 `scripts\run-all-smoke.ps1` / `scripts\e2e\run-ui-checks.ps1` 的**动态统计**为准；
+#    至少跑受你改动影响的那几套。不要引用固定数字（脚本会增减，DEF-010）
 #    （一键全量：scripts\run-all-smoke.ps1；CI 子集同一入口：scripts\ci-run.ps1 -Scripts …）
 #    推送后 GitHub Actions 会自动跑编译 + 冒烟子集（.github/workflows/ci.yml，A6）
 ```
@@ -50,7 +52,7 @@ java -classpath "D:/devsoft/apache-maven-3.9.4/boot/plexus-classworlds-2.7.0.jar
 
 ## 2. 十条硬规矩（违反其一即为不合格交付）
 
-1. **不动基线**：`docker compose ps` 非 10 healthy、或编译不通过时，先修基线。
+1. **不动基线**：`docker compose ps` 非全部 healthy、或编译不通过时，先修基线。
 2. **改完必跑冒烟**：跨服务改动至少跑上下游两套；前端改动跑 `tsc --noEmit` + `vite build`。
 3. **幂等靠唯一索引**，不靠应用层「先查再插」，不引入分布式锁。
 4. **不跨库查询**：跨域数据一律走对端服务的内部接口（带 `X-Internal-Token`），且**裁剪字段**。
@@ -75,7 +77,7 @@ duoduo-pet-mall-java/
 │   ├── sql/                   00~07 容器初始化 SQL（五库 DDL + 商品种子 + 交易域增量列 + A8 地址簿建表）
 │   ├── handover/              人读交接包 9 篇（含 manifest.json 云端 id）
 │   └── agent/                 ★ 本 AI 接管包（00~08）
-├── scripts/                   19 套接口冒烟 .ps1（另有 run-all-smoke.ps1 一键全量）+ e2e/ 6 套真实浏览器自测（另 1 套夹具脚本）
+├── scripts/                   接口冒烟 .ps1（数量以目录为准，另有 run-all-smoke.ps1 一键全量）+ e2e/ 真实浏览器自测（run-ui-checks.ps1 托管）
 ├── duoduo-common/             响应/错误码/异常/雪花ID/UserContext/JWT/OperatorGuard
 ├── duoduo-common-web/         全局异常处理/请求ID/身份透传/LongToStringJacksonModule（全站 ID 序列化）
 ├── duoduo-gateway/            路由 + JWT 校验 + 白名单 + 身份头注入（WebFlux）

@@ -165,6 +165,26 @@ class DashScopeToolClientTest {
     }
 
     @Test
+    @DisplayName("CR-09：全部模型冷却后仍放行一次探针，而不是直接 503")
+    void probesFirstModelWhenAllModelsCooling() {
+        DashScopeToolClient client = new DashScopeToolClient(
+                mapper, "test-key", baseUrl, "bad-model,bad2-model", 5, metrics);
+
+        // 第一次：两个模型都失败 → 双双进入冷却
+        assertThatThrownBy(() -> client.chatWithTools(
+                List.of(Map.of("role", "user", "content", "hi")), List.<ToolSpec>of()))
+                .isInstanceOf(BizException.class);
+        assertThat(seenModels).containsExactly("bad-model", "bad2-model");
+
+        // 第二次紧接在上一次之后：此时两个模型都在冷却期。
+        // 必须仍对首个模型发一次真实请求（探针）—— 否则冷却窗口内所有用户直接 503。
+        assertThatThrownBy(() -> client.chatWithTools(
+                List.of(Map.of("role", "user", "content", "hi")), List.<ToolSpec>of()))
+                .isInstanceOf(BizException.class);
+        assertThat(seenModels).containsExactly("bad-model", "bad2-model", "bad-model");
+    }
+
+    @Test
     @DisplayName("流式：尚未输出内容时回退")
     void streamFallsBackBeforeFirstDelta() {
         DashScopeToolClient client = new DashScopeToolClient(

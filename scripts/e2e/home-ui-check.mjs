@@ -69,6 +69,27 @@ try {
   const cards = await page.evaluate(() => document.querySelectorAll('a, [class*="card"], [class*="product"]').length);
   check('首页存在可点击的商品区域', cards > 0, cards);
 
+  /**
+   * ★ 商品图片不得裂（2026-10-05 报障 + DEF-006 假红）。
+   *
+   * 两个口径修正：
+   *  1. 必须在**首页**断言「首页商品图零裂图」—— 原脚本把这段放在点击详情之后，
+   *     实际查的是详情页的 img，名不副实；
+   *  2. `loading="lazy"` 的图片在慢网络下 2.5s 时可能还没 complete，
+   *     先等所有 img 进入 complete 再判（超时不判失败，交给下面的断言如实报）。
+   */
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('img')].every((im) => im.complete),
+    { timeout: 10000 },
+  ).catch(() => {});
+  {
+    const broken = await page.evaluate(() =>
+      [...document.querySelectorAll('img')].filter((im) => im.complete && im.naturalWidth === 0).map((im) => im.getAttribute('src')));
+    check('首页商品图零裂图（/img/… 占位路径必须被解析层接住）', broken.length === 0, broken.slice(0, 4));
+    const rendered = await page.evaluate(() => document.querySelectorAll('img').length);
+    check('首页确实渲染出了商品图（不是整块不渲染）', rendered > 0, rendered);
+  }
+
   step('真实点击进入详情');
   const before = page.url();
   const clicked = await page.evaluate(() => {
@@ -78,6 +99,7 @@ try {
   });
   if (clicked) {
     await page.waitForTimeout(2500);
+    await page.waitForLoadState('networkidle').catch(() => {});
     check('点击后 URL 发生了变化', page.url() !== before, { before, after: page.url() });
     const detailText = await page.evaluate(() => document.body.innerText || '');
     check('详情页有内容', detailText.trim().length > 30, detailText.slice(0, 80));
@@ -99,15 +121,7 @@ try {
     (t) => !/favicon|404 \(Not Found\)/i.test(t) && !(/\(Unauthorized\)/.test(t) && unexpectedHttp.length === 0)
   );
 
-// ★ 商品图片不得裂（2026-10-05 报障：Web 端商品图全裂 —— 后端 /img/… 语义路径在本仓库里没有实体文件，
-//   小程序端早有映射层而 Web 没有；现由 src/api/images.ts 统一解析，这里钉死「首页不许有裂图」）
-{
-  const broken = await page.evaluate(() =>
-    [...document.querySelectorAll('img')].filter((im) => im.complete && im.naturalWidth === 0).map((im) => im.getAttribute('src')));
-  check('首页商品图零裂图（/img/… 占位路径必须被解析层接住）', broken.length === 0, broken.slice(0, 4));
-  const rendered = await page.evaluate(() => document.querySelectorAll('img').length);
-  check('首页确实渲染出了商品图（不是整块不渲染）', rendered > 0, rendered);
-}
+// ★ 图片裂图断言已上移到**首页**阶段（见「首页商品图零裂图」），此处不再查详情页的 img。
   check('页面自身无 console 报错', realErrors.length === 0, realErrors.slice(0, 3));
   check('首页没有非预期的接口错误（401 匿名除外）', unexpectedHttp.length === 0, unexpectedHttp.slice(0, 3));
 } finally {
