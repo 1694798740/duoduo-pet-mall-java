@@ -27,8 +27,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,6 +91,10 @@ public class AgentChatService {
     private static final String GUEST_LIMIT_REPLY =
             "游客体验最多 3 轮。登录后可以继续聊，还能查订单、通知、优惠券，并记住你家宠物的档案。";
 
+    /** 整轮预算耗尽时的收口话术：明确告诉用户「整理到这里」，不假装查到了更多。 */
+    private static final String BUDGET_REPLY =
+            "我先帮你整理到这里。这个问题需要更多时间，你可以补充更具体的要求，或稍后再试。";
+
     private final RedisSessionStore sessionStore;
     private final LongTermMemoryService memoryService;
     private final SlotExtractor slotExtractor;
@@ -106,6 +112,8 @@ public class AgentChatService {
     private final AiAuditService audit;
     private final AiMetrics metrics;
     private final ObjectMapper mapper;
+    /** 一整轮 Agent 的总预算：所有模型步与最终收口轮共享，防止 4×55s 拖死请求。 */
+    private final Duration turnBudget;
 
     public AgentChatService(RedisSessionStore sessionStore,
                             LongTermMemoryService memoryService,
@@ -123,7 +131,8 @@ public class AgentChatService {
                             NavigationService navigation,
                             AiAuditService audit,
                             AiMetrics metrics,
-                            ObjectMapper mapper) {
+                            ObjectMapper mapper,
+                            @Value("${duoduo.ai.turn-budget-seconds:55}") int turnBudgetSeconds) {
         this.sessionStore = sessionStore;
         this.memoryService = memoryService;
         this.slotExtractor = slotExtractor;
@@ -141,6 +150,7 @@ public class AgentChatService {
         this.audit = audit;
         this.metrics = metrics;
         this.mapper = mapper;
+        this.turnBudget = Duration.ofSeconds(Math.max(5, Math.min(turnBudgetSeconds, 120)));
     }
 
     /**
@@ -162,6 +172,8 @@ public class AgentChatService {
 
         boolean guest = command.userId() == null;
         try {
+            // 整轮预算：从进入调度开始计时，后续所有模型步与收口轮共享。
+            long deadlineNanos = System.nanoTime() + turnBudget.toNanos();
             events.accept(AgentEvent.meta(sessionId, requestId));
 
             // 页面上下文先解析：医疗 / 配额拒绝也要能审计「用户从哪来」
@@ -217,15 +229,28 @@ public class AgentChatService {
             String finalRaw = null;
             boolean confirmPending = false;
 
-            // ④ Function Calling 循环：最多 4 步
+            // ④ Function Calling 循环：最多 4 步，且所有步共享整轮预算
             for (int step = 1; step <= MAX_TOOL_STEPS; step++) {
+                long remainingMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+                if (remainingMs <= 0) {
+                    log.warn("AI 整轮预算用尽 session={} step={}，停止继续规划", sessionId, step);
+                    break;
+                }
                 long llmStart = System.nanoTime();
                 LlmTurn turn;
                 try {
-                    turn = llm.chatWithTools(messages, toolRegistry.specs());
+                    turn = llm.chatWithTools(messages, toolRegistry.specs(),
+                            Duration.ofMillis(remainingMs));
                 } catch (RuntimeException e) {
                     // 异常也要计量：超时与业务失败分开记，否则看板上的「AI 慢」没有方向
                     metrics.llmCall(System.nanoTime() - llmStart, AiMetrics.looksLikeTimeout(e));
+                    // 整轮预算已经用尽时，不再把一次模型超时升级成 503：
+                    // 用户已经等了一段时间，给一句如实的收口话术比直接错误更有用。
+                    if (e instanceof BizException && System.nanoTime() >= deadlineNanos) {
+                        log.warn("AI 整轮预算用尽且模型调用失败 session={}，返回收口话术", sessionId);
+                        finalRaw = BUDGET_REPLY;
+                        break;
+                    }
                     throw e;
                 }
                 metrics.llmCall(System.nanoTime() - llmStart, false);
@@ -268,7 +293,15 @@ public class AgentChatService {
             }
 
             if (finalRaw == null) {
-                finalRaw = confirmPending ? CONFIRM_REPLY : finalTurn(messages);
+                long remainingMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+                if (confirmPending) {
+                    finalRaw = CONFIRM_REPLY;
+                } else if (remainingMs <= 0) {
+                    log.warn("AI 整轮预算用尽 session={}，使用预算收口话术", sessionId);
+                    finalRaw = BUDGET_REPLY;
+                } else {
+                    finalRaw = finalTurn(messages, Duration.ofMillis(remainingMs));
+                }
             }
 
             ReplyEnvelope envelope = parseReply(finalRaw);
@@ -344,7 +377,7 @@ public class AgentChatService {
      * <p>用 {@code streamChat} 而不是 {@code chatWithTools}：后者会带一个空的 tools 数组，
      * 部分网关会直接 400；而且这一步本来就不该再规划新工具。
      */
-    private String finalTurn(List<Map<String, Object>> messages) {
+    private String finalTurn(List<Map<String, Object>> messages, Duration budget) {
         messages.add(Map.of("role", "user", "content",
                 "请只基于以上工具结果给出最终回复。严格输出一个 JSON 对象："
                         + "{\"reply\":\"...\",\"card_refs\":[\"...\"]}，不要输出任何其它内容；"
@@ -352,7 +385,7 @@ public class AgentChatService {
         StringBuilder answer = new StringBuilder();
         long start = System.nanoTime();
         try {
-            llm.streamChat(messages, answer::append);
+            llm.streamChat(messages, answer::append, budget);
         } catch (RuntimeException e) {
             metrics.llmCall(System.nanoTime() - start, AiMetrics.looksLikeTimeout(e));
             throw e;

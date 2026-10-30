@@ -96,13 +96,19 @@ public class DashScopeToolClient implements LlmToolClient {
 
     @Override
     public LlmTurn chatWithTools(List<Map<String, Object>> messages, List<ToolSpec> tools) {
+        return chatWithTools(messages, tools, totalBudget);
+    }
+
+    @Override
+    public LlmTurn chatWithTools(List<Map<String, Object>> messages, List<ToolSpec> tools, Duration budget) {
         requireConfigured();
         long start = System.nanoTime();
+        long budgetMs = Math.max(1L, budget.toMillis());
         BizException lastError = null;
         boolean fallbackAttempt = false;
 
         for (int i = 0; i < models.size(); i++) {
-            if (remainingMs(start) <= 0) {
+            if (remainingMs(start, budgetMs) <= 0) {
                 break;
             }
             if (cooling(i)) {
@@ -116,7 +122,7 @@ public class DashScopeToolClient implements LlmToolClient {
             }
             fallbackAttempt = false;
             try {
-                return doChatWithTools(model, messages, tools, remainingTimeout(start));
+                return doChatWithTools(model, messages, tools, remainingTimeout(start, budgetMs));
             } catch (RetryableModelException e) {
                 markFailure(i);
                 log.warn("模型 {} tools 调用失败，尝试下一个: {}", model, e.getMessage());
@@ -132,13 +138,19 @@ public class DashScopeToolClient implements LlmToolClient {
 
     @Override
     public void streamChat(List<Map<String, Object>> messages, Consumer<String> onDelta) {
+        streamChat(messages, onDelta, totalBudget);
+    }
+
+    @Override
+    public void streamChat(List<Map<String, Object>> messages, Consumer<String> onDelta, Duration budget) {
         requireConfigured();
         long start = System.nanoTime();
+        long budgetMs = Math.max(1L, budget.toMillis());
         BizException lastError = null;
         boolean fallbackAttempt = false;
 
         for (int i = 0; i < models.size(); i++) {
-            if (remainingMs(start) <= 0) {
+            if (remainingMs(start, budgetMs) <= 0) {
                 break;
             }
             if (cooling(i)) {
@@ -155,7 +167,7 @@ public class DashScopeToolClient implements LlmToolClient {
                 doStreamChat(model, messages, text -> {
                     emitted[0] = true;
                     onDelta.accept(text);
-                }, remainingTimeout(start));
+                }, remainingTimeout(start, budgetMs));
                 return;
             } catch (RetryableModelException e) {
                 markFailure(i);
@@ -294,12 +306,12 @@ public class DashScopeToolClient implements LlmToolClient {
         return new BizException(ErrorCode.DEGRADED, "AI 服务暂时不可用，请稍后再试");
     }
 
-    private long remainingMs(long startNanos) {
-        return totalBudget.toMillis() - (System.nanoTime() - startNanos) / 1_000_000L;
+    private long remainingMs(long startNanos, long budgetMs) {
+        return budgetMs - (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
-    private Duration remainingTimeout(long startNanos) {
-        long remaining = remainingMs(startNanos);
+    private Duration remainingTimeout(long startNanos, long budgetMs) {
+        long remaining = remainingMs(startNanos, budgetMs);
         if (remaining <= 0) {
             return Duration.ofMillis(1);
         }

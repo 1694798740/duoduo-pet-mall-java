@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -55,6 +56,12 @@ class DashScopeToolClientTest {
             boolean stream = mapper.readTree(body).path("stream").asBoolean(false);
             seenModels.add(model);
             try {
+                if (model.startsWith("slow")) {
+                    // 模拟一个慢模型：客户端必须按调用方给的整轮预算快速放弃
+                    Thread.sleep(3000);
+                    respond(exchange, 200, "{\"choices\":[{\"message\":{\"content\":\"SLOW-OK\"}}]}");
+                    return;
+                }
                 int status = decideStatus(model);
                 if (status != 200) {
                     // 404 模拟 DashScope 的「模型不存在」：必须带回 model_not_found
@@ -87,6 +94,22 @@ class DashScopeToolClientTest {
         if (server != null) {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("整轮预算：调用方传入的预算用尽时快速失败")
+    void respectsCallerBudget() {
+        DashScopeToolClient client = new DashScopeToolClient(
+                mapper, "test-key", baseUrl, "slow-model", 30, metrics);
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> client.chatWithTools(
+                List.of(Map.of("role", "user", "content", "hi")), List.<ToolSpec>of(),
+                Duration.ofMillis(900)))
+                .isInstanceOf(BizException.class);
+
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+        assertThat(elapsedMs).isLessThan(2500L);
     }
 
     @Test

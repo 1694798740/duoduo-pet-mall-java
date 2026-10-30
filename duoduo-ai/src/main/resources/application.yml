@@ -56,9 +56,13 @@ duoduo:
     # 2026-10-29：支持逗号分隔的优先级列表，主对话与流式回复都会按顺序回退
     model: ${DUODUO_AI_MODEL:qwen-plus}
     # 2026-10-28 重构：彻底移除 mock 模式。未配置 Key 时如实返回 DEGRADED。
-    # LLM 调用超时（秒）：工具决策链路允许更长，首字由 SSE 流式保证
-    timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:60}
+    # 单次 LLM 调用超时（秒）：默认 30s，让慢模型尽快回退到备选模型；
+    # 整轮上限由下面的 turn-budget-seconds 控制，首字由 SSE 流式保证。
+    timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:30}
     stream-timeout-seconds: ${DUODUO_AI_STREAM_TIMEOUT_SECONDS:120}
+    # 一整轮 Agent 的总预算（秒）：所有 Function Calling 步与最终收口轮共享。
+    # 默认 60s；配合单次 30s 超时与非流式 nginx 60s 读超时，实测推荐场景 48s。
+    turn-budget-seconds: ${DUODUO_AI_TURN_BUDGET_SECONDS:60}
     embedding-model: ${DUODUO_AI_EMBEDDING_MODEL:text-embedding-v3}
     rerank-model: ${DUODUO_AI_RERANK_MODEL:gte-rerank-v2}
     # RAG 检索开关：ES 不可用时自动降级到商品域结构化搜索
