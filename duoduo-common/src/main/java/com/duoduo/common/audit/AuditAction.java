@@ -311,6 +311,19 @@ public enum AuditAction {
      */
     RECON_RUN_MANUAL(AuditCategory.OTHER, "RECON"),
 
+    // ---------------- 数据导出 ----------------
+
+    /**
+     * 运营创建异步导出任务。
+     *
+     * <p>导出文件含全量收货信息；创建任务本身就是一次敏感数据操作，
+     * 必须能回答“谁在什么时候按什么筛选条件导出了数据”。
+     */
+    EXPORT_JOB_CREATE(AuditCategory.SECURITY, "EXPORT_JOB"),
+
+    /** 运营下载异步导出文件（同一任务只能创建人下载）。 */
+    EXPORT_JOB_DOWNLOAD(AuditCategory.SECURITY, "EXPORT_JOB"),
+
     // ---------------- 运维 ----------------
 
     /** 消息队列死信重放。 */

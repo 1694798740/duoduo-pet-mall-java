@@ -2,6 +2,8 @@ package com.duoduo.trade.controller;
 
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
+import com.duoduo.common.audit.AuditAction;
+import com.duoduo.common.audit.Audited;
 import com.duoduo.common.context.LoginUser;
 import com.duoduo.common.context.OperatorGuard;
 import com.duoduo.trade.dto.ExportJobDtos.CreateRequest;
@@ -47,6 +49,7 @@ public class AdminExportJobController {
     }
 
     /** 创建任务：返回任务本身（含 jobId），前端据此轮询状态 */
+    @Audited(action = AuditAction.EXPORT_JOB_CREATE)
     @PostMapping
     public ApiResponse<JobView> create(@Valid @RequestBody CreateRequest request) {
         LoginUser user = OperatorGuard.requireOperator();
@@ -75,6 +78,7 @@ public class AdminExportJobController {
      * <p>文件名走 RFC 5987 编码（{@code filename*=UTF-8''…}）：中文文件名在部分浏览器上
      * 只用 {@code filename="..."} 会变成乱码或直接丢失扩展名。
      */
+    @Audited(action = AuditAction.EXPORT_JOB_DOWNLOAD)
     @GetMapping("/{id}/download")
     public ResponseEntity<Resource> download(@PathVariable Long id) {
         LoginUser user = OperatorGuard.requireOperator();

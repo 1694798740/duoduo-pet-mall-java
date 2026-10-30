@@ -175,7 +175,8 @@ class AuditActionTest {
         //       ADMIN_RESET_MERCHANT_IP_WHITELIST），53 → 55。
         // R-P1：新增 1 个多多币人工调整动作（COIN_ADMIN_ADJUST），55 → 56。
         // R-P1 第三轮：新增 2 个多多币运营动作（COIN_TASK_UPDATE / COIN_CAMPAIGN_UPDATE），56 → 58。
-        assertThat(AuditAction.values()).hasSize(58);
+        // DEF-011：新增 2 个异步导出动作（EXPORT_JOB_CREATE / EXPORT_JOB_DOWNLOAD），58 → 60。
+        assertThat(AuditAction.values()).hasSize(60);
         assertThat(AuditAction.values()).contains(AuditAction.UNKNOWN);
     }
 }

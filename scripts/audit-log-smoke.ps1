@@ -224,15 +224,19 @@ foreach ($c in $controllers) {
     # 匹配整个注解（含可选的路径参数），否则 `@PostMapping`（无路径，如邀请店员）
     # 会被漏计，出现「注解数 > 写端点数」的假失败。
     $writeMappings = @([regex]::Matches($t, '@(Post|Put|Patch|Delete)Mapping(?:\([^)]*\))?'))
-    $w = @($writeMappings | Where-Object { $_.Value -notmatch '"[^"]*/read"' }).Count
+    # 除 /read 外，import/dry-run 只做预演、不落库，也不是业务事实变更；
+    # 按“真正写库的端点”口径排除，避免把只读预演误计为审计缺口。
+    $w = @($writeMappings | Where-Object { $_.Value -notmatch '"[^"]*(/read|/import/dry-run)"' }).Count
     $a = ([regex]::Matches($t, '@Audited\(')).Count
     $writeTotal += $w
     $annotated += $a
-    if ($w -ne $a) { $gaps += "$($c.Name)(写=$w 注解=$a)" }
+    # 只要求“每个写端点都有审计”；敏感 GET（如导出文件下载）也可以额外加 @Audited，
+    # 因此允许注解数 >= 写端点数，不再要求逐文件严格相等。
+    if ($w -gt 0 -and $a -lt $w) { $gaps += "$($c.Name)(写=$w 注解=$a)" }
 }
-Check "S4 后台写端点 @Audited 覆盖 $annotated/$writeTotal（逐文件相等）" `
-    ($writeTotal -gt 0 -and $annotated -eq $writeTotal) `
-    "不匹配：$($gaps -join ' | ')"
+Check "S4 后台写端点 @Audited 覆盖 $annotated/$writeTotal（逐文件不少于）" `
+    ($writeTotal -gt 0 -and $gaps.Count -eq 0) `
+    "缺口：$($gaps -join ' | ')"
 
 # S5 · 只有唯一入口能碰审计 mapper。
 # 绕过入口自己 insert 的表现是「同一张表里的记录信息量不一致」：有的有 target、有的没有，
