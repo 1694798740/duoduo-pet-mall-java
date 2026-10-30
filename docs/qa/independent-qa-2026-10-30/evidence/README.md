@@ -19,6 +19,11 @@
 | `api-followup.md` | 3 个原始 FAIL 的复核结论（全部非产品缺陷；跨人 404 已补实验） |
 | `ai-latency.txt` | AI 真实模型耗时实测（97s/51.8s 等）与代码侧预算观察 |
 | `product-image-broken.txt` | 商品详情主图裂图的 HTTP/浏览器/代码根因证据 |
+| `fix-def001-before.log` / `fix-def001-after.log` | DEF-001 修复前 18/2 红、修复后 20/0 |
+| `fix-def002-before.log` / `fix-def002-after.log` | DEF-002 预算测试：修复前 1 fail、修复后 0 fail |
+| `fix-def003-final2.log` | AI 冒烟会话隔离与多轮修复后的实际输出（仍暴露 DEF-013/014） |
+| `fix-def011-after2.log` / `fix-def011-final.log` | 审计冒烟 58/0（含导出创建/下载审计） |
+| `fix-regression-maven.log` | 修复后全量 Maven：1159 tests / 0 fail / 5 skip |
 | `browser-capture.mjs` / `browser-capture.log` | 浏览器取证脚本与输出（破图清单、记忆页字段） |
 | `shot-home.png` | 商城首页截图（本次未复现首页裂图） |
 | `shot-product-detail.png` | 商品详情截图（主图裂图） |
