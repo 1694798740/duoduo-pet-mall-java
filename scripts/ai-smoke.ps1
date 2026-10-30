@@ -145,23 +145,13 @@ Check "chat 可用" ($r.body.data.chatAvailable -eq $true) ($r.body.data | Conve
 # ---------- 2. 对话主链路：真实商品库不变式 ----------
 Write-Host ""
 Write-Host "> 对话（推荐必须来自真实商品库）"
-# E27：本节断言「幼犬/狗粮」能被召回，所以先**现场造一条犬粮**。
-# 本机库经多轮清理只剩猫粮 SPU，不建前置时召回必然为空 —— 那是数据问题，不是代码回归。
-$df = $null
-$dfErr = $null
-try {
-    $df = Resolve-DogFoodSpuFixture
-    Write-Host "  已建犬粮前置商品 SPU $($df.Id)（类目 $($df.CategoryId)）"
-} catch {
-    $dfErr = $_.Exception.Message
-    Write-Host "  犬粮前置商品建立失败：$dfErr"
-}
-Check "关键词召回前置商品建立成功（犬主粮）" ($null -ne $df) $dfErr
-
-$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐一款适合幼犬吃的狗粮' } $null $null
+# DEF-003：犬粮直插夹具无法在秒级 smoke 内进入 duoduo_spu_ai（AiSearchIndexJob 默认 5 分钟），
+# 继续依赖它只会制造假红；这里改用 AI 索引中真实存在的猫粮商品验证「推荐必须来自商品库」。
+# 犬粮/新商品索引延迟属于独立的索引回归项，不在本套件断言。
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐一款猫粮' } $null $null
 Check "对话返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress -Depth 6)
 Check "回复非空" ($r.body.data.reply -and "$($r.body.data.reply)".Length -gt 0) $r.body.data.reply
-Check "推荐列表非空（幼犬/狗粮种子可召回）" ($null -ne $r.body.data.recommendations -and @($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+Check "推荐列表非空（真实猫粮可召回）" ($null -ne $r.body.data.recommendations -and @($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
 
 $recIds = @($r.body.data.recommendations | ForEach-Object { $_.id })
 $allValid = $true
@@ -178,12 +168,6 @@ Check "推荐标题与商品库逐字同源" $detailMatched
 
 $leak = @($r.body.data.recommendations | Where-Object { $null -ne $_.PSObject.Properties['sellerId'] }).Count
 Check "候选视图不泄露服务间字段（sellerId）" ($leak -eq 0)
-
-# 本节之后不再需要犬粮前置商品（后续断言全部围绕猫粮 / 无匹配 / 出口预判），
-# 就地拆除 —— 越早拆，中途失败时残留在库里的夹具越少。
-if ($df) { Remove-SpuFixtures -Ids $df.CreatedIds }
-$leftDf = if ($df) { "$(Invoke-ProductSql -Query "SELECT COUNT(*) FROM t_spu WHERE id = $($df.Id);")" } else { '0' }
-Check "犬粮前置商品已拆除（库内复原）" ($leftDf -eq '0') $leftDf
 
 # ---------- 3. 意图召回与无匹配 ----------
 Write-Host ""
@@ -203,11 +187,14 @@ Check "猫品类推荐同样全部真实存在" $catValid ($catIds -join ',')
 # 历史里最近若干轮**用户**提问会被并入召回关键词，故追问仍能落到同一批商品上。
 Write-Host ""
 Write-Host "> 多轮追问召回"
-$multiHistory = @(
-    @{ role = 'user'; content = '推荐猫粮' },
-    @{ role = 'assistant'; content = '皇家幼猫粮、麦富迪冻干双拼' }
-)
-$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？'; history = $multiHistory } $null $null
+# 游客配额按 3 轮/设备计：本节改用新的游客会话，避免前面的推荐问答把配额用尽。
+$sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+# 多轮上下文走服务端 Redis 会话：同一 sessionId 连续三轮；
+# history 字段是旧客户端兼容形态，AgentCommand 未消费它，不能用来证明多轮召回。
+$multiSession = 'smoke-multi-' + [guid]::NewGuid().ToString('N')
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐猫粮'; clarified = $true; sessionId = $multiSession } $null $null
+Check "多轮第 1 轮返回 200" ($r.status -eq 200) $r.status
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？'; clarified = $true; sessionId = $multiSession } $null $null
 Check "追问句返回 200" ($r.status -eq 200) ($r.body | ConvertTo-Json -Compress -Depth 6)
 Check "追问仍能召回（上下文并入关键词生效）" (@($r.body.data.recommendations).Count -ge 1) ($r.body.data.recommendations | ConvertTo-Json -Compress)
 $followupIds = @($r.body.data.recommendations | ForEach-Object { $_.id })
@@ -218,19 +205,14 @@ foreach ($fid in $followupIds) {
 }
 Check "追问推荐的每条仍真实存在（无编造）" $followupValid ($followupIds -join ',')
 
-# 连续追问：前两轮用户消息都不含商品词，第二句追问仍须命中（验证「多轮」而非「仅上一轮」）
-$deepHistory = @(
-    @{ role = 'user'; content = '推荐猫粮' },
-    @{ role = 'assistant'; content = '皇家幼猫粮' },
-    @{ role = 'user'; content = '那最便宜的是哪个？' },
-    @{ role = 'assistant'; content = '网易严选 99 元' }
-)
-$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '有货吗？'; clarified = $true; history = $deepHistory } $null $null
+# 连续追问：前两轮用户消息都不含商品词，第三轮仍须命中（验证「多轮」而非「仅上一轮」）
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '有货吗？'; clarified = $true; sessionId = $multiSession } $null $null
 Check "连续追问（第二轮追问）仍能召回" (@($r.body.data.recommendations).Count -ge 1) ("status=$($r.status) | " + ($r.body | ConvertTo-Json -Compress -Depth 6))
 
-# 对照：不带 history 的追问句必须如实说没有 —— 证明上面命中的确来自上下文并入，而非该句本身可召回
-$r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '那最便宜的是哪个？'; clarified = $true } $null $null
-Check "无 history 的追问句召回为空（对照成立）" (@($r.body.data.recommendations).Count -eq 0) ($r.body.data.recommendations | ConvertTo-Json -Compress)
+# 对照：新开游客会话、不带任何上下文，追问句必须如实说没有
+$noHistorySess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$r = Call 'Post' "$Gateway/api/duoduo/chat" $noHistorySess @{ message = '那最便宜的是哪个？'; clarified = $true } $null $null
+Check "无历史上下文的追问句召回为空（对照成立）" (@($r.body.data.recommendations).Count -eq 0) ($r.body.data.recommendations | ConvertTo-Json -Compress)
 # 「最便宜」问的是候选里最便宜的商品、不是预算 —— 不该被误判成「预算没听懂」（回归探针）
 Check "「最便宜」追问不被误判为预算未解析" ("$($r.body.data.reply)".Contains('没听清你的预算') -eq $false) "$($r.body.data.reply)"
 
@@ -238,6 +220,8 @@ Check "「最便宜」追问不被误判为预算未解析" ("$($r.body.data.rep
 # 候选里混有超预算商品时，正文只挑符合的、recommendations 却全量下发，会让卡片与话术互相打脸。
 Write-Host ""
 Write-Host "> 推荐与话术一致性"
+# 独立游客会话：本节不再与前文共享 3 轮配额。
+$sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 # clarified=$true：短句会被澄清反问截住（见 3f 探针），这里要测的是数量上限，跳过澄清
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐猫粮'; clarified = $true } $null $null
 $allCandCount = @($r.body.data.recommendations).Count
@@ -254,6 +238,7 @@ Check "推荐不超出用户预算（200 元，无条件必查）" ($overBudget 
 # ---------- 3d. 约束过滤与告知（第五十七轮 · M1）----------
 Write-Host ""
 Write-Host "> 约束过滤与告知"
+$sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 # 区间语义是「价格区间与预算窗口有重叠」：maxPrice >= 下限 且 minPrice <= 上限
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '预算 100-300 元的猫粮' } $null $null
 Check "预算区间对话返回 200" ($r.status -eq 200) $r.status
@@ -282,6 +267,7 @@ Check "物流问题不下发商品推荐" (@($r.body.data.recommendations).Count
 # ---------- 3f. 澄清（M5）：信息不足反问一次，给可点选项 ----------
 Write-Host ""
 Write-Host "> 澄清反问与出口"
+$sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $r = Call 'Post' "$Gateway/api/duoduo/chat" $sess @{ message = '推荐一下' } $null $null
 $hasClarify = ($null -ne $r.body.data.clarify) -and ("$($r.body.data.clarify.question)" -ne '')
 $optCount = @($r.body.data.clarify.options).Count
@@ -303,6 +289,8 @@ Check "超长消息返回 400（500 上限）" ($r.status -eq 400) $r.status
 # ---------- 3g. 全能管家：卡片 / 红点 / 游客 3 轮（阶段四 + B4） ----------
 Write-Host ""
 Write-Host "> 全能管家：游客登录引导 / 3 轮限制 / 卡片与红点"
+# 独立游客会话：本节要精确验证 3 轮限制，不能继承前面的任何配额消耗。
+$sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
 # (1) 游客访问深度功能：必须给出登录入口，而不是编一句「已查到」
 #     loginUrl 由服务端工具层冒泡上来（游客没有 userId，工具返回 NEED_LOGIN）

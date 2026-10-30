@@ -247,6 +247,20 @@ function Resolve-DogFoodSpuFixture {
         throw "犬粮召回夹具的 SKU 建立失败：id=$skuId 期望 $id/50/ACTIVE 实得 '$skuBack'"
     }
 
+    # AI 结构化检索依赖 t_spu_ai_profile（正常商品由 AiProfileBootstrapJob 回填）；
+    # 直插 SPU 不会触发回填，缺这一行时 search_products 的 species/lifeStage 过滤会把它漏掉。
+    Invoke-ProductSql -Query @"
+INSERT INTO t_spu_ai_profile
+  (spu_id, species, life_stages, breed_sizes, allergens, function_tags,
+   package_size, package_weight_g, content_summary, search_text, source_version)
+VALUES
+  ($id, 'dog', 'BABY', '', '[]', '[]', '2kg', 2000,
+   'E27 幼犬狗粮 2kg 冒烟夹具', '幼犬狗粮 2kg E27 冒烟夹具', 1)
+ON DUPLICATE KEY UPDATE
+  species='dog', life_stages='BABY', content_summary='E27 幼犬狗粮 2kg 冒烟夹具',
+  search_text='幼犬狗粮 2kg E27 冒烟夹具', source_version=source_version+1;
+"@ | Out-Null
+
     return @{
         Id         = "$id"
         CategoryId = $catId
@@ -261,5 +275,6 @@ function Remove-SpuFixtures {
     $list = (@($Ids) | Where-Object { $_ }) -join ','
     if (-not $list) { return }
     Invoke-ProductSql -Query "DELETE FROM t_sku WHERE spu_id IN ($list);" | Out-Null
+    Invoke-ProductSql -Query "DELETE FROM t_spu_ai_profile WHERE spu_id IN ($list);" | Out-Null
     Invoke-ProductSql -Query "DELETE FROM t_spu WHERE id IN ($list);" | Out-Null
 }
