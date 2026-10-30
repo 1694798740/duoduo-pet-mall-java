@@ -174,6 +174,10 @@ try {
   }
 
   step('⑦ 页面健康');
+  // DEF-001 回归：主图必须经过统一图片解析（/img/… 语义占位路径不能再直出到 <img>）
+  const mainSrc = await page.locator('.pd-gallery-main img').first().getAttribute('src');
+  const semanticPlaceholder = /\/img\/products\/\d+\.svg$/i.test(mainSrc || '');
+  check('主图不使用未解析的 /img/*.svg 占位路径', !!mainSrc && !semanticPlaceholder, mainSrc);
   const broken = await page.evaluate(() =>
     [...document.querySelectorAll('img')].filter((im) => im.complete && im.naturalWidth === 0).map((im) => im.getAttribute('src')));
   check('详情页商品图零裂图', broken.length === 0, broken.slice(0, 4));

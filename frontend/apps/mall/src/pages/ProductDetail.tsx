@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RichTextView } from '@duoduo/shared/components/RichText';
-import { detailImages, gallery } from '@duoduo/api-sdk/images';
+import { detailImages, gallery, productImage } from '@duoduo/api-sdk/images';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { newIdempotentKey, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { addressApi, cartApi, coinsApi, productApi, reviewApi, seckillApi } from '@duoduo/api-sdk/endpoints';
@@ -174,8 +174,11 @@ export const ProductDetailPage: React.FC = () => {
   const rawImages = data.images.some((u) => /^https?:|^\/uploads\//i.test(u))
     ? data.images
     : gallery(card.id, card.mainImage);
-  const images = card.mainImage && rawImages[0] !== card.mainImage
-    ? [card.mainImage, ...rawImages.filter((u) => u !== card.mainImage)]
+  // 主图同样走统一解析：/img/… 是后端的语义占位路径，文件并不存在，
+  // 直接塞进 <img> 会裂图（DEF-001）。绝对 URL / /uploads/ 仍原样放行。
+  const cover = productImage(card.id, card.mainImage);
+  const images = card.mainImage && rawImages[0] !== cover
+    ? [cover, ...rawImages.filter((u) => u !== cover)]
     : rawImages;
   const canBuy = selectedSku?.sellable === true;
   const price = selectedSku?.price ?? card.minPrice;
