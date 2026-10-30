@@ -182,9 +182,9 @@
 | 影响 | 前端无法渲染可点选项，用户只能手动输入；与澄清交互设计不一致 |
 | 修复建议 | 在 IntentRouter/AgentChatService 中为短句/无约束查询强制生成结构化 `clarify`，不依赖模型自由文本 |
 | 修复 | `b3a8ac4`：`AgentResult` 增加 `clarify`、`AgentEvent` 增加 `clarify` 事件、非流式响应透传；`AgentChatService.clarifyFor` 在「PRODUCT_SEARCH + 无宠物/预算/品类 + 未澄清过」时直接反问，选项取真实一级类目（≥2 个才反问，否则退回模型）；放在模型调用之前，不依赖模型自由文本 |
-| 验证 | 新增 `AgentChatServiceClarifyTest` **5/0**；`ai-smoke` 3f 四项全绿：触发澄清、选项 ≥2、不夹带推荐、`clarified=true` 不再反问（`evidence/fix-def014-smoke.log`，41 PASS / 2 FAIL 的两项是模型冷却导致的 503，与本缺陷无关） |
+| 验证 | 新增 `AgentChatServiceClarifyTest` **5/0**；`ai-smoke` 3f 四项全绿：触发澄清、选项 ≥2、不夹带推荐、`clarified=true` 不再反问（`evidence/fix-def014-smoke.log`，41 PASS / 2 FAIL 的两项是模型冷却导致的 503，与本缺陷无关）；重建 web 容器后浏览器实测 `http://localhost:8088/ai`：发送「推荐一下」→ 反问文本 + 4 个可点按钮（宠物主粮/宠物零食/宠物用品/健康医疗）、无商品卡；点「宠物主粮」正常发送并得到回复；API 复测「宠物主粮」rec=1 |
 | 状态 | **已修复**（提交 `b3a8ac4`） |
-| 剩余风险 | 类目服务不可用（选项 <2）时退回模型自由回答；前端 `clarified` 标记按标签页会话保存，刷新后可能再次反问一次 |
+| 剩余风险 | 类目服务不可用（选项 <2）时退回模型自由回答；前端 `clarified` 标记按标签页会话保存，刷新后可能再次反问一次；浏览器实测出现一次 `chat/stream` `ERR_ABORTED`（页面仍正常完成，未复现为功能问题） |
 
 ## DEF-015 · 「预算没听懂」文案与既有验收口径不一致
 
