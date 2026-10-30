@@ -215,7 +215,7 @@
 | DEF-015 预算未解析文案 | **已修复** | `b3a8ac4` | `AgentChatService`、`AgentChatServiceBudgetNoteTest` | 单测 **3/0**；真机 reply 含「没听清你的预算」（`evidence/fix-def015-live.log`） | 该轮 67.2s，属 DEF-002 残余 |
 
 **未修复**：DEF-004~010（UI 假红、文档口径，P3）。
-**回归**：`duoduo-ai` 模块 **118 tests / 0 fail**；前端 `typecheck` 0 错误、`build:mall` 通过；商品详情 UI **20/0**；审计冒烟 **58/0**；AI 冒烟 **41/2**（2 项为模型冷却 503，已单列 CR-09）。
+**回归**：全量 Maven **1132 tests / 0 fail / 0 error / 5 skip / BUILD SUCCESS**（`evidence/fix-def014-full-regression.log`）；前端 `typecheck` 0 错误、`build:mall` 通过（`evidence/fix-def014-*.log`）；商品详情 UI **20/0**；审计冒烟 **58/0**；AI 冒烟 **41/2**（2 项为模型冷却 503，已单列 CR-09）。
 
 > 说明：DEF-003~006、DEF-012 是“测试资产缺陷”，不是产品功能缺陷；单独列出是为了避免把假红当产品问题，也避免把测试资产问题洗成产品通过。
 
