@@ -61,8 +61,10 @@ duoduo:
     timeout-seconds: ${DUODUO_AI_TIMEOUT_SECONDS:30}
     stream-timeout-seconds: ${DUODUO_AI_STREAM_TIMEOUT_SECONDS:120}
     # 一整轮 Agent 的总预算（秒）：所有 Function Calling 步与最终收口轮共享。
-    # 默认 60s；配合单次 30s 超时与非流式 nginx 60s 读超时，实测推荐场景 48s。
-    turn-budget-seconds: ${DUODUO_AI_TURN_BUDGET_SECONDS:60}
+    # 2026-10-30 调整 60→75：nginx 非流式/SSE 都已对齐 180s，60s 会在多步追问轮
+    # 提前收口（实测「那最便宜的是哪个？」返回“整理到这里”且 rec=0）。
+    # 典型推荐仍 42~50s，只有多步硬问题才用满；不再截断成空结果。
+    turn-budget-seconds: ${DUODUO_AI_TURN_BUDGET_SECONDS:75}
     embedding-model: ${DUODUO_AI_EMBEDDING_MODEL:text-embedding-v3}
     rerank-model: ${DUODUO_AI_RERANK_MODEL:gte-rerank-v2}
     # RAG 检索开关：ES 不可用时自动降级到商品域结构化搜索

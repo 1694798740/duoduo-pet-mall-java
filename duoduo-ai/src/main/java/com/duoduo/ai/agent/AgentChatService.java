@@ -142,7 +142,7 @@ public class AgentChatService {
                             AiAuditService audit,
                             AiMetrics metrics,
                             ObjectMapper mapper,
-                            @Value("${duoduo.ai.turn-budget-seconds:55}") int turnBudgetSeconds) {
+                            @Value("${duoduo.ai.turn-budget-seconds:75}") int turnBudgetSeconds) {
         this.sessionStore = sessionStore;
         this.memoryService = memoryService;
         this.slotExtractor = slotExtractor;

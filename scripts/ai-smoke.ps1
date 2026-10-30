@@ -56,7 +56,9 @@ function ChatTimeoutOf([string]$uri) {
     # 客户端若也给 30s，就会恰好卡在这条线上：**服务端已经正确降级并答完**，
     # 客户端却判成"没拿到响应"（status=0）—— 这是纯假红，而且是最坏的一种：
     # 它会训练出"这条本来就是红的"的习惯，真坏掉时反而没人看。
-    if ($uri -like '*/api/duoduo/chat*') { return 75 }
+    # `llm` 形态下 /chat 要等外部大模型；整轮预算已调至 75s（2026-10-30），
+    # 客户端超时必须大于它，否则服务端答完而客户端已判超时（status=0 假红）。
+    if ($uri -like '*/api/duoduo/chat*') { return 120 }
     return 30
 }
 
