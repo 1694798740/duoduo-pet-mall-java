@@ -98,7 +98,7 @@ public class AiController {
             throw new BizException(ErrorCode.DEGRADED, result.errorMessage());
         }
         return ApiResponse.ok(new ChatResponse(result.reply(), result.recommendations(),
-                "llm", null, List.of(), result.cards(), result.badgePatch(), result.loginUrl(),
+                "llm", result.clarify(), List.of(), result.cards(), result.badgePatch(), result.loginUrl(),
                 result.sessionId()));
     }
 
@@ -175,7 +175,8 @@ public class AiController {
                 user == null ? null : user.phone(),
                 request.message(),
                 guest == null ? null : guest.deviceId(),
-                request.pageUrl());
+                request.pageUrl(),
+                request.clarifiedOnce());
     }
 
     private void checkRate(HttpServletRequest request) {

@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, formatPrice, toFriendlyMessage } from '@duoduo/api-sdk/client';
 import { duoduoApi } from '@duoduo/api-sdk/endpoints';
-import type { AiCard, DuoduoCapability, DuoduoRecommendation } from '@duoduo/api-sdk/types';
+import type { AiCard, DuoduoCapability, DuoduoClarifyView, DuoduoRecommendation } from '@duoduo/api-sdk/types';
 import { Alert, LoadingBlock, useToast } from '@duoduo/shared/components/ui';
 import { SeckillPrice, SeckillTag } from '@duoduo/shared/components/seckill';
 import { useSpuSeckill } from '@duoduo/shared/store/seckill';
@@ -58,6 +58,8 @@ interface Bubble {
   handoff?: { summary: string };
   /** 游客轮次用尽 / 功能需登录时，服务端下发的登录地址（已带站内 next） */
   loginUrl?: string;
+  /** 结构化反问（DEF-014）：渲染成可点选项，点一下即发送 */
+  clarify?: DuoduoClarifyView;
 }
 
 const DEFAULT_QUICK = [
@@ -157,6 +159,11 @@ export const AiGuruPage: React.FC = () => {
   const listRef = useRef<HTMLDivElement | null>(null);
   /** 消息 id 从恢复的最大值继续，否则 React key 会撞 */
   const seq = useRef(0);
+  /**
+   * 本轮会话是否已经澄清过：服务端无状态，只认前端带上来的这个事实；
+   * 不清空 —— 一次对话最多只反问一次（DEF-014）。
+   */
+  const clarifiedRef = useRef(false);
   /** 是否已经完成「鉴权就绪后的首次恢复」；未完成前绝不写缓存，避免空状态覆盖旧会话 */
   const [restoredReady, setRestoredReady] = useState(false);
   const lastOwner = useRef(owner);
@@ -254,6 +261,14 @@ export const AiGuruPage: React.FC = () => {
         if (Array.isArray(payload)) patchAssistant(assistantId, { recommendations: payload });
         return;
       }
+      /** 结构化反问：选项来自真实类目，点一下即发送；同时记住「已澄清」 */
+      if (event === 'clarify') {
+        clarifiedRef.current = true;
+        if (payload?.question) {
+          patchAssistant(assistantId, { clarify: payload as DuoduoClarifyView });
+        }
+        return;
+      }
       /**
        * 结构化卡片（阶段三新增）：正文与卡片是两个独立通道 ——
        * 正文已经由服务端护栏清洗过，卡片内容是工具结果，模型没参与。
@@ -330,6 +345,7 @@ export const AiGuruPage: React.FC = () => {
           body: JSON.stringify({
             message: text,
             sessionId,
+            clarified: clarifiedRef.current,
             // 当前页面（含查询串）交给服务端做上下文；服务端会按白名单校验路径并丢掉查询串
             pageUrl: `${window.location.pathname}${window.location.search}`,
           }),
@@ -477,6 +493,23 @@ export const AiGuruPage: React.FC = () => {
                   <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                     {m.recommendations.map((rec) => (
                       <AiRecommendCard key={rec.id} rec={rec} />
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* 结构化反问（DEF-014）：选项来自真实类目，点一下即发送，不必打字 */}
+                {m.clarify && m.clarify.options?.length ? (
+                  <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {m.clarify.options.map((opt) => (
+                      <button
+                        key={opt.send}
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={!available || sending}
+                        onClick={() => void send(opt.send)}
+                      >
+                        {opt.label}
+                      </button>
                     ))}
                   </div>
                 ) : null}

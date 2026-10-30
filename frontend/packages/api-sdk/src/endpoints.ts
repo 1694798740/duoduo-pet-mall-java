@@ -1686,6 +1686,11 @@ export const duoduoApi = {
      * 非法值按「未提供」处理 —— 前端传原样路径即可，不必自己裁剪。
      */
     pageUrl?: string;
+    /**
+     * 本次之前是否已经澄清过一轮。服务端没有会话状态，靠这个事实保证
+     * 「一次对话最多只反问一次」（DEF-014）。
+     */
+    clarified?: boolean;
   }) => api.post<DuoduoChatResponse>('/api/duoduo/chat', body),
 
   /** 加购二次确认：用户点击确认后调用，服务端消费一次性令牌 */

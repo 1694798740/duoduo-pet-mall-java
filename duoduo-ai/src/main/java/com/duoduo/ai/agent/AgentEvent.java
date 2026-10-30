@@ -1,5 +1,6 @@
 package com.duoduo.ai.agent;
 
+import com.duoduo.ai.dto.AiDtos.ClarifyView;
 import com.duoduo.ai.dto.ai.AiCard;
 import com.duoduo.ai.dto.ai.BadgePatch;
 
@@ -34,6 +35,14 @@ public record AgentEvent(String type, Object data) {
 
     public static AgentEvent recommendations(Object data) {
         return new AgentEvent("recommendations", data);
+    }
+
+    /**
+     * 结构化反问（DEF-014）：{@code data} 是 {@link ClarifyView}，
+     * 前端据此渲染可点选项 —— 与 {@code done} 里的正文同时到达，但语义独立。
+     */
+    public static AgentEvent clarify(ClarifyView view) {
+        return new AgentEvent("clarify", view);
     }
 
     /**

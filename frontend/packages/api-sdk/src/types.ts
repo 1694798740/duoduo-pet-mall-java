@@ -1775,8 +1775,25 @@ export interface DuoduoChatResponse {
   badgePatch?: AiBadgePatch | null;
   /** 游客轮次用尽 / 功能需登录时的登录地址（已带站内 next） */
   loginUrl?: string | null;
+  /**
+   * 结构化反问（DEF-014）：非空表示本轮是反问而非回答，
+   * 前端应把 `options` 渲染成可点按钮（点一下即发送 `send`），不要让用户重新打字。
+   */
+  clarify?: DuoduoClarifyView | null;
   /** 服务端会话 ID：下一轮务必带回（小程序没有 SSE meta 事件，只能从这里取） */
   sessionId?: string | null;
+}
+
+/** 澄清反问：一句话 + 来自真实类目的可点选项 */
+export interface DuoduoClarifyView {
+  question: string;
+  options: DuoduoClarifyOption[];
+}
+
+/** 澄清选项：展示文案与发送内容分离（发送的是干净的查询词） */
+export interface DuoduoClarifyOption {
+  label: string;
+  send: string;
 }
 
 /**

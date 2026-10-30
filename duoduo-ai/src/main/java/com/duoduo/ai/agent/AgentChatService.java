@@ -9,6 +9,9 @@ import com.duoduo.ai.agent.tool.ToolRegistry;
 import com.duoduo.ai.agent.tool.ToolResult;
 import com.duoduo.ai.audit.AiAuditService;
 import com.duoduo.ai.butler.service.NavigationService;
+import com.duoduo.ai.client.dto.CategoryBrief;
+import com.duoduo.ai.dto.AiDtos.ClarifyOption;
+import com.duoduo.ai.dto.AiDtos.ClarifyView;
 import com.duoduo.ai.dto.ai.BadgePatch;
 import com.duoduo.ai.guardrail.DataFence;
 import com.duoduo.ai.guardrail.GuardrailService;
@@ -22,6 +25,8 @@ import com.duoduo.ai.memory.SlotMerger;
 import com.duoduo.ai.memory.SlotState;
 import com.duoduo.ai.memory.SummaryService;
 import com.duoduo.ai.support.AiMetrics;
+import com.duoduo.ai.support.CategoryCatalog;
+import com.duoduo.ai.support.ConstraintParser;
 import com.duoduo.common.enums.ErrorCode;
 import com.duoduo.common.exception.BizException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -110,6 +115,8 @@ public class AgentChatService {
     private final CardAssembler cardAssembler;
     private final GuestIdentityService guestIdentity;
     private final NavigationService navigation;
+    private final CategoryCatalog categoryCatalog;
+    private final ConstraintParser constraintParser;
     private final AiAuditService audit;
     private final AiMetrics metrics;
     private final ObjectMapper mapper;
@@ -130,6 +137,8 @@ public class AgentChatService {
                             CardAssembler cardAssembler,
                             GuestIdentityService guestIdentity,
                             NavigationService navigation,
+                            CategoryCatalog categoryCatalog,
+                            ConstraintParser constraintParser,
                             AiAuditService audit,
                             AiMetrics metrics,
                             ObjectMapper mapper,
@@ -148,6 +157,8 @@ public class AgentChatService {
         this.cardAssembler = cardAssembler;
         this.guestIdentity = guestIdentity;
         this.navigation = navigation;
+        this.categoryCatalog = categoryCatalog;
+        this.constraintParser = constraintParser;
         this.audit = audit;
         this.metrics = metrics;
         this.mapper = mapper;
@@ -217,6 +228,31 @@ public class AgentChatService {
 
             Intent intent = intentRouter.route(command.message(), merged, session);
             session = session.withIntent(intent.name());
+
+            // ③.5 结构化澄清（DEF-014）：无任何约束的导购请求先反问一次，附可点类目。
+            //    放在模型调用之前 —— 一次反问如果要等 30s 才出现，用户早就走了；
+            //    而且不依赖模型自由文本，前端才能稳定渲染可点选项。
+            ClarifyView clarify = clarifyFor(merged, intent, command.clarified(),
+                    categoryCatalog.clarifyOptions(4));
+            if (clarify != null) {
+                String reply = clarify.question();
+                events.accept(AgentEvent.recommendations(List.of()));
+                emitChunked(reply, events);
+                events.accept(AgentEvent.clarify(clarify));
+                events.accept(AgentEvent.cards(List.of(), null));
+                events.accept(AgentEvent.done(reply, sessionId));
+
+                SessionState next = session.withAssistantMessage(reply).incrementTurn();
+                next = summaryService.compressIfNeeded(next);
+                sessionStore.save(next);
+                memoryService.remember(command.userId(), merged);
+                audit.recordTurn(new AiAuditService.TurnRecord(
+                        sessionId, command.userId(), pageUrl, command.message(),
+                        reply, List.of(), intent.name(), next.turnCount(), next.summary()));
+                consumeGuestTurn(guest, command.deviceId());
+                return AgentResult.ok(sessionId, reply, List.of(), List.of(), List.of(),
+                        null, null, clarify);
+            }
 
             ToolContext toolContext = new ToolContext(
                     command.userId(), command.role(), command.phone(),
@@ -312,6 +348,9 @@ public class AgentChatService {
 
             // ⑥ 输出护栏：事实 → 引用 → 链接
             GuardrailService.GuardedAnswer guarded = guardrail.check(replyText, session, toolResults);
+            // DEF-015：用户提了预算但没解析出数字时，必须如实告知（绝不静默当「没提预算」）
+            String finalReply = withBudgetNote(
+                    guarded.reply(), constraintParser.parse(command.message()).budgetUnparsed());
 
             // ⑦ 卡片装配：模型只给引用，内容全部来自工具结果
             CardAssembler.CardBundle bundle = cardAssembler.assemble(
@@ -334,14 +373,14 @@ public class AgentChatService {
             }
 
             events.accept(AgentEvent.recommendations(guarded.recommendations()));
-            emitChunked(guarded.reply(), events);
+            emitChunked(finalReply, events);
             events.accept(AgentEvent.cards(bundle.cards(), bundle.badgePatch()));
             if (loginUrl != null) {
-                events.accept(AgentEvent.loginRequired(guarded.reply(), loginUrl));
+                events.accept(AgentEvent.loginRequired(finalReply, loginUrl));
             }
-            events.accept(AgentEvent.done(guarded.reply(), sessionId));
+            events.accept(AgentEvent.done(finalReply, sessionId));
 
-            SessionState next = session.withAssistantMessage(guarded.reply())
+            SessionState next = session.withAssistantMessage(finalReply)
                     .withRecommendedIds(guarded.recommendedIds())
                     .incrementTurn();
             next = summaryService.compressIfNeeded(next);
@@ -351,13 +390,13 @@ public class AgentChatService {
             // B2：本轮完整留痕（用户原话 + 最终回复 + 卡片引用 + 页面）
             audit.recordTurn(new AiAuditService.TurnRecord(
                     sessionId, command.userId(), pageUrl, command.message(),
-                    guarded.reply(), envelope.cardRefs(), intent.name(), next.turnCount(),
+                    finalReply, envelope.cardRefs(), intent.name(), next.turnCount(),
                     next.summary()));
 
             // ⑧ 只有真的给出了回复，才扣一轮游客配额
             consumeGuestTurn(guest, command.deviceId());
 
-            return AgentResult.ok(sessionId, guarded.reply(), guarded.recommendations(),
+            return AgentResult.ok(sessionId, finalReply, guarded.recommendations(),
                     guarded.recommendedIds(), bundle.cards(), bundle.badgePatch(), loginUrl);
         } catch (BizException e) {
             log.warn("Agent 业务失败 session={} code={} msg={}", sessionId, e.getErrorCode(), e.getMessage());
@@ -441,6 +480,58 @@ public class AgentChatService {
         if (guest) {
             guestIdentity.consume(deviceId);
         }
+    }
+
+    /**
+     * 是否需要结构化反问（DEF-014）。
+     *
+     * <p>只在「纯导购意图 + 没有任何已知约束 + 本轮之前没澄清过」时触发：
+     * 用户已经说了宠物种类、预算或品类，就有足够信息去查，不该再拦一道。
+     * 选项必须至少 2 个 —— 只有 1 个选项的反问等于没得选，不如直接让模型回答。
+     *
+     * <p>做成静态纯函数是为了能单独测「什么时候反问、反问给什么选项」，
+     * 不必把整个调度链路的 mock 都搭起来。
+     */
+    static ClarifyView clarifyFor(SlotState slots, Intent intent, boolean clarified,
+                                  List<CategoryBrief> categoryOptions) {
+        if (clarified || intent != Intent.PRODUCT_SEARCH || slots == null
+                || slots.hasSpecies() || slots.hasBudget() || slots.hasCategory()) {
+            return null;
+        }
+        List<ClarifyOption> options = new ArrayList<>();
+        for (CategoryBrief c : categoryOptions == null ? List.<CategoryBrief>of() : categoryOptions) {
+            if (c == null || c.name() == null || c.name().isBlank()) {
+                continue;
+            }
+            // send 用类目名本身：下一轮按「类目名直接命中」即可约束搜索
+            options.add(new ClarifyOption(c.name(), c.name()));
+            if (options.size() >= 4) {
+                break;
+            }
+        }
+        if (options.size() < 2) {
+            return null;
+        }
+        return new ClarifyView(
+                "你想给谁挑、想买哪一类？点下面的品类，或者直接告诉我宠物种类、年龄和预算。",
+                options);
+    }
+
+    /**
+     * 预算「提了但没听懂」时的固定告知（DEF-015）。
+     *
+     * <p>只在解析器明确给出 {@code budgetUnparsed=true} 时追加，且幂等：
+     * 模型自己已经说了同样意思的话，就不再补第二遍。
+     * 断言口径是「没听清你的预算」，换同义句会让既有验收与用户预期一起漂移。
+     */
+    static String withBudgetNote(String reply, boolean budgetUnparsed) {
+        if (!budgetUnparsed || reply == null || reply.isBlank()) {
+            return reply;
+        }
+        if (reply.contains("没听清你的预算")) {
+            return reply;
+        }
+        return reply + "（我没听清你的预算数字，这次没按预算筛）";
     }
 
     // ---------------- 消息拼装 ----------------
