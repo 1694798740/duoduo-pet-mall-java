@@ -41,6 +41,10 @@
 | 疑似根因 | `AgentChatService.java:221-225` 最多 4 步，每步各自调用 `chatWithTools`；`DashScopeToolClient` 的 55s 预算是“单次调用”而非“整轮”，缺少整轮 deadline；主模型 `qwen3.8-max-0902` 推理耗时高 |
 | 修复建议 | 增加整轮 deadline（如 45~60s）并在每步开始前检查剩余预算；推荐类场景减少 tool 步数；评估把 `qwen3.8-27b` 作为主模型或降低 max 模型使用 |
 | 必补回归 | 固定 5 条推荐/多轮提示词的 p50/p95 时延断言；超时后必须返回可解释的降级回复，不能挂死 |
+| 修复 | `72dc1aa` 整轮预算 + 单次 30s；`eb1a1d0`：nginx 为非流式 `/api/duoduo/chat` 单独设 `proxy_read_timeout 180s`（与 SSE 对齐），不再被通用 `/api/` 的 60s 提前切断；`03cf487`：整轮预算 60→75s（60s 会在多步追问轮提前收口成 rec=0），容器内 `DUODUO_AI_TURN_BUDGET_SECONDS=75` 已确认 |
+| 验证 | 单测 **7/0**；27B 主模型实测推荐 **48.3s / 42.0s / 50.9s / 67.2s**（原 97s）；经 nginx 8088 非流式请求 50.9s 返回 200（`evidence/fix-def002-nginx-live.log`）；`ai-smoke` 多轮追问段全绿（`evidence/fix-def003-budget75-smoke.log`） |
+| 状态 | **已修复**（提交 `72dc1aa` + `eb1a1d0` + `03cf487`） |
+| 剩余风险 | 27B 多步工具调用仍可能 50~75s（用户可感知的慢，但不再 504、不再被 60s 截断）；一次超时触发全模型冷却的问题已由 CR-09 修复 |
 
 ## DEF-003 · AI 冒烟 7 项假红（测试资产）
 
@@ -58,6 +62,10 @@
 | 影响 | 发布门禁假红，长期会训练团队忽略 AI 冒烟；不能证明 AI 推荐链路真实通过 |
 | 修复建议 | 按测试段落使用独立游客会话或登录令牌；犬粮夹具改为走真实发布/索引同步，或直接断言 SQL 召回路径；把“游客 3 轮”断言的会话隔离到独立 device |
 | 必补回归 | 同一脚本连续运行 3 次结果一致；每次断言总数守卫 |
+| 修复 | `a2bb053` 会话隔离/夹具；`eb1a1d0` 模型冷却探针（CR-09）；`03cf487` 整轮预算 60→75s + 冒烟客户端超时 120s（60s 会让多步追问提前收口成 rec=0） |
+| 验证 | 全量 **43 PASS / 0 FAIL**（`evidence/fix-def003-budget75-smoke.log`），覆盖推荐真实性、多轮追问、预算过滤、澄清、游客 3 轮与限流 |
+| 状态 | **已修复** |
+| 剩余风险 | 断言依赖真实 DashScope：上游整体不可用时仍会红（属真实故障，不是假红） |
 
 ## DEF-004 · 后台入口 UI 检查 3 项假红（测试资产）
 
@@ -69,6 +77,9 @@
 | 人工复核 | 浏览器代理用平台运营账号真实点击：顶栏“管理后台”、头像下拉“🛠️ 进入管理后台”、点击跳转 `admin.localhost:8090/login` **均通过** |
 | 证据 | `evidence/ui-admin-entry-ui-check.mjs.log`、`evidence/shot-admin-menu.png` |
 | 建议 | 修复 helper 的返回值/选择器；该 3 项不应作为产品失败 |
+| 修复 | `eb1a1d0`：`openUserMenu` 改为点 `.app-header button.icon-btn.avatar-btn`（原 `.icon-btn` first 命中的是购物车图标），并等待 `.user-menu` 可见 |
+| 验证 | 修复前 **71/3**（`evidence/fix-def004-admin-entry.log`）；修复后 **74/0**（`evidence/fix-def004-admin-entry-after.log`） |
+| 状态 | **已修复** |
 
 ## DEF-005 · 售后 UI 检查 1 项假红（测试资产）
 
@@ -79,6 +90,9 @@
 | 实际 | 43 PASS / 1 FAIL：`订单列表能看到这笔订单` 失败，但紧接着“订单卡片出现申请售后入口”PASS，退款/托管/订单状态断言全部 PASS |
 | 证据 | `evidence/ui2-aftersale-ui-check.mjs.log` |
 | 建议 | 定位订单号文本选择器/渲染时序；产品侧该链路未发现异常 |
+| 修复 | `eb1a1d0`：订单列表按设计**不显示订单号**（订单号只在详情页），断言改为「商品标题」识别这笔订单 |
+| 验证 | 修复前 **43/1**；修复后 **44/0**（`evidence/fix-def005-aftersale.log`） |
+| 状态 | **已修复** |
 
 ## DEF-006 · 首页 UI 检查 1 项偶发假红（测试资产）
 
@@ -89,6 +103,9 @@
 | 实际 | 8 PASS / 1 FAIL（首页商品图裂图）；独立浏览器取证 `homeBroken=[]`，同一时刻首页无破图 |
 | 证据 | `evidence/ui-home-ui-check.mjs.log`、`evidence/browser-capture.log` |
 | 结论 | 不据此判定首页产品缺陷；详情页裂图另立 DEF-001 |
+| 修复 | `eb1a1d0`：裂图断言从「点击详情之后」移回**首页**阶段（原来实际查的是详情页 img，名不副实）；判前先等所有 `img.complete`（lazy 图慢网络下 2.5s 未完成会偶发假红）；详情页改等 `networkidle` |
+| 验证 | 修复后 **9/0**（`evidence/fix-def006-home.log`），连续两次一致 |
+| 状态 | **已修复** |
 
 ## DEF-007 · README 生产模型口径过时
 
@@ -99,6 +116,8 @@
 | 实际 | 2026-10-29 已换新账号 Key 与 `qwen3.8-max-0902,qwen3.8-27b,kimi-k3`；旧 Key 已 403 |
 | 影响 | 运维按 README 判断模型/排障会出错 |
 | 建议 | README 顶部改为当前模型列表并注明“以云端 `.env` 为准” |
+| 修复 | `eb1a1d0`：README 改为 `DUODUO_AI_MODEL=qwen3.8-27b,qwen3.8-max-0902,kimi-k3`、单次 30s / 整轮 60s，并注明以云端 `.env` 为准，不再写死“已切某模型” |
+| 状态 | **已修复** |
 
 ## DEF-008 · 测试账号文档与实际角色不一致
 
@@ -109,6 +128,8 @@
 | 实际 | 数据库该账号 `role=USER`；用它做“跨运营下载”测试得到 403（门禁正常） |
 | 影响 | 测试前置错误，导致误判产品越权逻辑 |
 | 建议 | 更新文档或改用真实 OPERATOR 账号；测试前先查库校验角色 |
+| 修复 | `eb1a1d0`：`docs/test-accounts.md` 把 `13632356850` 标注为 **USER**（回库复核 `13632356850=USER`、`13684295254=OPERATOR`），并写明需要第二运营时的提权/降回步骤 |
+| 状态 | **已修复** |
 
 ## DEF-009 · PRD 原文件缺失
 
@@ -118,6 +139,8 @@
 | 位置 | README 引用《多多宠物商店 · 产品需求原型 PRD v0.1》，仓库内不存在 |
 | 影响 | 验收只能以 README/PLAN/OpenAPI/页面推断，存在需求歧义 |
 | 建议 | 把 PRD 纳入仓库或明确“以接口契约+页面为验收基线” |
+| 修复 | `eb1a1d0`：README 顶部明确 **PRD 原文件不在本仓库**（DEF-009），验收基线 = README 接口清单 + PLAN 验收标准 + 运行中的 OpenAPI/页面行为；PRD 需另行归档 |
+| 状态 | **已修复**（按“明确基线”方案，未伪造 PRD 文件） |
 
 ## DEF-010 · AGENTS/README 自动化数字过时
 
@@ -128,6 +151,8 @@
 | 实际 | 18 容器、41 个 smoke 脚本、约 60 个 UI 脚本；本轮 11 套冒烟 1053 断言、9 套 UI 289 断言 |
 | 影响 | 用旧数字当验收基线，容易得出“全绿”的错误结论 |
 | 建议 | 以 `scripts/run-all-smoke.ps1` 与 `scripts/e2e/run-ui-checks.ps1` 的动态统计为准，文档只写入口不写固定数字 |
+| 修复 | `eb1a1d0`：AGENTS.md 容器数与冒烟/UI 套数改为“以 compose 文件与脚本动态统计为准”（实测 18 容器、59 个脚本文件、58 个 UI 脚本），删除 10 healthy / 1424 断言 / 244 断言等过时数字 |
+| 状态 | **已修复** |
 
 ## DEF-011 · 异步导出任务创建/下载没有审计留痕
 
@@ -206,16 +231,23 @@
 | 缺陷 | 状态 | 修复提交 | 修改文件 | 验证 | 剩余风险 |
 | --- | --- | --- | --- | --- | --- |
 | DEF-001 商品详情主图 | **已修复** | `480fc43` | `ProductDetail.tsx`、`product-detail-ui-check.mjs` | 修复前 18/2 红；修复后 **20/0**，截图 `shot-product-detail.png` | 首页/订单/收藏等使用统一解析，未发现同根因 |
-| DEF-002 AI 整轮时延 | **部分修复** | `72dc1aa` | `AgentChatService`、`DashScopeToolClient`、`LlmToolClient`、`application.yml`、`docker-compose.yml`、`DashScopeToolClientTest` | 单测 **7/0**；27B+60s 预算实测推荐 **48.3s / 42.0s / 67.2s**（原 97s）；预算耗尽返回收口话术而非 503 | 27B 多步工具调用仍可到 60s+（非流式经 nginx 60s 会 504；页面走 SSE 180s 不受影响）；一次模型超时会让三个模型全部进入 60s 冷却，见 CR-09 |
-| DEF-003 AI 冒烟假红 | **基本修复** | `a2bb053` | `ai-smoke.ps1`、`catalog-fixture.ps1` | 游客会话隔离、多轮改用 `sessionId`、移除不可即时索引的犬粮夹具；最新全量 **41 PASS / 2 FAIL**，两项均为模型冷却导致的 503（`evidence/fix-def014-smoke.log`）；1 元预算与文案已由 DEF-013/015 单独真机验证通过 | 模型冷却窗口内的整段冒烟仍会假红，需等冷却或调整冷却策略（CR-09） |
+| DEF-002 AI 整轮时延 | **已修复** | `72dc1aa`、`eb1a1d0`、`03cf487` | `AgentChatService`、`DashScopeToolClient`、`LlmToolClient`、`application.yml`、`docker-compose.yml`、`nginx.conf`、`DashScopeToolClientTest` | 单测 **7/0**；27B 实测推荐 **48.3s / 42.0s / 50.9s / 67.2s**（原 97s）；nginx 非流式 180s、50.9s 返回 200；整轮预算 75s 后多轮追问段全绿 | 27B 多步仍可能 50~75s（慢但不再 504/截断） |
+| DEF-003 AI 冒烟假红 | **已修复** | `a2bb053`、`eb1a1d0`、`03cf487` | `ai-smoke.ps1`、`catalog-fixture.ps1`、`DashScopeToolClient` | 全量 **43 PASS / 0 FAIL**（`evidence/fix-def003-budget75-smoke.log`） | 上游 DashScope 整体不可用时仍会红（真实故障） |
+| DEF-004 后台入口 UI 假红 | **已修复** | `eb1a1d0` | `admin-entry-ui-check.mjs` | 71/3 → **74/0**（`evidence/fix-def004-admin-entry-after.log`） | 无（测试资产） |
+| DEF-005 售后 UI 假红 | **已修复** | `eb1a1d0` | `aftersale-ui-check.mjs` | 43/1 → **44/0**（`evidence/fix-def005-aftersale.log`） | 无（测试资产） |
+| DEF-006 首页 UI 偶发假红 | **已修复** | `eb1a1d0` | `home-ui-check.mjs` | 8/1 → **9/0 连续两次**（`evidence/fix-def006-home.log`、`fix-def006-home2.log`） | 依赖真实图片加载时序 |
 | DEF-011 导出审计 | **已修复** | `cb14828` | `AuditAction`、`AdminExportJobController`、`AuditActionTest` | `audit-log-smoke` **58/0**；回库确认 `EXPORT_JOB_CREATE`/`EXPORT_JOB_DOWNLOAD` 两条记录 | 无 |
 | DEF-012 审计冒烟 dry-run 假红 | **已修复** | `cb14828` | `audit-log-smoke.ps1` | 同上 58/0 | 无 |
 | DEF-013 预算约束被绕过 | **已修复** | `6f88ad3` | `ToolConstraintContext`、`SearchProductsTool`、`AgentChatService`、`SearchProductsToolTest` | 单测 **2/0**（`evidence/fix-def013-test.log`）；真机「预算 1 元以内的猫粮」→ 28.1s、rec=0（`evidence/fix-def015-live.log`） | 仅有下限时不过滤低于下限商品（区间语义，既有设计） |
 | DEF-014 结构化澄清缺失 | **已修复** | `b3a8ac4` | `AgentResult`、`AgentEvent`、`AgentCommand`、`AiController`、`AgentChatService`、`AiGuru.tsx`、SDK 类型、`AgentChatServiceClarifyTest` | 单测 **5/0**；ai-smoke 3f 四项全绿（触发/选项≥2/无推荐/不再反问） | 类目不可用（选项<2）时退回模型；刷新页面后可能再反问一次 |
 | DEF-015 预算未解析文案 | **已修复** | `b3a8ac4` | `AgentChatService`、`AgentChatServiceBudgetNoteTest` | 单测 **3/0**；真机 reply 含「没听清你的预算」（`evidence/fix-def015-live.log`） | 该轮 67.2s，属 DEF-002 残余 |
+| DEF-007 README 模型口径 | **已修复** | `eb1a1d0` | `README.md` | 模型列表/超时与 `.env` 对齐，注明以云端为准 | 云端 `.env` 仍是唯一权威 |
+| DEF-008 测试账号角色 | **已修复** | `eb1a1d0` | `docs/test-accounts.md` | 回库复核 `13632356850=USER`、`13684295254=OPERATOR` | 需要第二运营时先提权并重登 |
+| DEF-009 PRD 缺失 | **已修复** | `eb1a1d0` | `README.md` | 明确“PRD 不在仓库，验收基线=契约+PLAN+OpenAPI/页面” | PRD 交付物仍需另行归档 |
+| DEF-010 自动化数字过时 | **已修复** | `eb1a1d0` | `AGENTS.md` | 改为以 compose/脚本动态统计为准，删除旧数字 | 无 |
 
-**未修复**：DEF-004~010（UI 假红、文档口径，P3）。
-**回归**：全量 Maven **1132 tests / 0 fail / 0 error / 5 skip / BUILD SUCCESS**（`evidence/fix-def014-full-regression.log`）；前端 `typecheck` 0 错误、`build:mall` 通过（`evidence/fix-def014-*.log`）；商品详情 UI **20/0**；审计冒烟 **58/0**；AI 冒烟 **41/2**（2 项为模型冷却 503，已单列 CR-09）。
+**未修复**：无（DEF-001~015 已全部收口；未确认风险 CR-02/05/06/08 仍在 `code-risks.md`）。
+**回归**：全量 Maven **1133 tests / 0 fail / 0 error / 5 skip / BUILD SUCCESS**（`evidence/fix-all-full-regression.log`）；前端 `typecheck` 0 错误、`build:mall` 通过；UI：后台入口 **74/0**、售后 **44/0**、首页 **9/0 连续两次**、商品详情 **20/0**；审计冒烟 **58/0**；AI 冒烟 **43/0**。
 
 > 说明：DEF-003~006、DEF-012 是“测试资产缺陷”，不是产品功能缺陷；单独列出是为了避免把假红当产品问题，也避免把测试资产问题洗成产品通过。
 
