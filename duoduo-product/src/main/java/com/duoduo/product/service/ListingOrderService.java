@@ -77,11 +77,27 @@ public class ListingOrderService {
             throw BizException.businessRule("这是你自己发布的闲置，无需购买");
         }
         if (!STATUS_ON_SALE.equals(listing.getStatus()) || !AUDIT_APPROVED.equals(listing.getAuditStatus())) {
+            // 已售（SOLD）可能是买家自己的上一单（网络超时后的重试）：先问交易域幂等键，
+            // 有单重放、没单才真是不可买 —— 否则重试请求在事实校验就被拒，永远付不了款
+            //（B-11 冒烟实测抓到：CAS 反查前就被这行挡住）。
+            ListingOrderCreated replayed = findReplayFromTrade(buyerId, request.idempotentKey());
+            if (replayed != null) {
+                return replayed;
+            }
             throw BizException.businessRule("该闲置当前不可购买（已下架或未通过审核）");
         }
 
         int locked = lockAsSold(listing.getId());
         if (locked == 0) {
+            // CAS 落空有两种截然不同的含义，不能一律判「被买走」（B-11 冒烟实测抓到）：
+            //   ① 同一买家带同一幂等键的重试 —— 首单已成立、锁也是自己下的，
+            //      此时必须重放首单；报「手慢了」会让买家下出第二张单（或永远付不了款）。
+            //   ② 真被别人买走了 —— 422。
+            // 区分方式：拿 (buyerId, idempotentKey) 去交易域问一声，有单就是 ①。
+            ListingOrderCreated replayed = findReplayFromTrade(buyerId, request.idempotentKey());
+            if (replayed != null) {
+                return replayed;
+            }
             // CAS 落空 = 窗口期内被并发买走/下架/删除 —— 先查后改在这里一定会翻车
             throw BizException.businessRule("手慢了，该闲置刚被买走或已下架");
         }
@@ -100,6 +116,11 @@ public class ListingOrderService {
             return resp.data();
         } catch (BizException already) {
             throw already; // 上面已带补偿，别再包一层
+        } catch (feign.FeignException e) {
+            // 跨域 4xx 是交易域的业务拒绝：Feign 把它们抛成异常而不是返回体
+            //（B-11 冒烟实测抓到：403 曾在这里被吞成 500）。解析 body 里的 code/message 原样转译。
+            releaseQuietly(listing.getId(), "交易域拒绝建单");
+            throw translateFeign(e, "下单失败");
         } catch (Exception e) {
             releaseQuietly(listing.getId(), "交易域不可达");
             throw new BizException(ErrorCode.INTERNAL, "下单失败，请稍后重试");
@@ -120,6 +141,8 @@ public class ListingOrderService {
             return resp.data();
         } catch (BizException already) {
             throw already;
+        } catch (feign.FeignException e) {
+            throw translateFeign(e, "卖出订单暂时查不到");
         } catch (Exception e) {
             log.error("卖家 {} 拉取卖出订单失败", sellerId, e);
             throw new BizException(ErrorCode.INTERNAL, "卖出订单暂时查不到，请稍后重试");
@@ -144,6 +167,9 @@ public class ListingOrderService {
             }
         } catch (BizException already) {
             throw already;
+        } catch (feign.FeignException e) {
+            // 交易域的 403（非本人发货）/422（状态机不满足）必须原样到达前端（B-11 冒烟实测）
+            throw translateFeign(e, "发货失败");
         } catch (Exception e) {
             log.error("闲置订单 {} 发货转发失败", orderNo, e);
             throw new BizException(ErrorCode.INTERNAL, "发货暂时失败，请稍后重试");
@@ -223,5 +249,62 @@ public class ListingOrderService {
             errorCode = ErrorCode.BUSINESS_RULE;
         }
         return new BizException(errorCode, message);
+    }
+
+    /**
+     * Feign 4xx 的错误体 → 本域 BizException（与 trade CoinGateway 的 extractMessage 同款纪律）。
+     *
+     * <p>Feign 对非 2xx 抛 {@link feign.FeignException} 而不是把 body 当返回值 ——
+     * 交易域的 {@code GlobalExceptionHandler} 已把 BizException 转成
+     * {@code ApiResponse.fail(code, message)} + 对应 HTTP 状态，这里解析回来原样转译：
+     * 403 该是 403、422 该是 422，绝不吞成 500（B-11 冒烟实测踩坑）。
+     * 5xx 与解析失败降级 DEGRADED —— 「交易服务暂时不可用」比谎报业务拒绝诚实。
+     */
+    private static BizException translateFeign(feign.FeignException e, String fallbackMessage) {
+        if (e.status() >= 400 && e.status() < 500) {
+            String code = null;
+            String message = null;
+            try {
+                com.fasterxml.jackson.databind.JsonNode node =
+                        new com.fasterxml.jackson.databind.ObjectMapper().readTree(e.contentUTF8());
+                if (node != null) {
+                    if (node.hasNonNull("code")) {
+                        code = node.get("code").asText();
+                    }
+                    if (node.hasNonNull("message")) {
+                        message = node.get("message").asText();
+                    }
+                }
+            } catch (Exception ignored) {
+                // 解析失败走兜底
+            }
+            String text = message == null ? fallbackMessage : message;
+            if (code != null) {
+                try {
+                    return new BizException(ErrorCode.valueOf(code), text);
+                } catch (IllegalArgumentException unknownCode) {
+                    // 认不出的码也带上原消息，只是语义归 BUSINESS_RULE
+                }
+            }
+            return new BizException(ErrorCode.BUSINESS_RULE, text);
+        }
+        return new BizException(ErrorCode.DEGRADED, "交易服务暂时不可用，请稍后重试", e);
+    }
+
+    /**
+     * CAS 落空后的幂等反查（best-effort）：反查也失败时只能按「被买走」处理 ——
+     * 这虽然可能误伤极窄窗口里的重试（交易域建单成功但两边都没拿到响应），
+     * 但把别人的真实成交让给后来者更糟。
+     */
+    private ListingOrderCreated findReplayFromTrade(Long buyerId, String idempotentKey) {
+        try {
+            ApiResponse<ListingOrderCreated> resp =
+                    tradeClient.findCreatedByIdempotentKey(buyerId, idempotentKey);
+            return resp != null && "SUCCESS".equals(resp.code()) ? resp.data() : null;
+        } catch (Exception e) {
+            log.warn("CAS 落空后反查交易域幂等单失败，按「被买走」处理（buyer={}，key={}）",
+                    buyerId, idempotentKey, e);
+            return null;
+        }
     }
 }

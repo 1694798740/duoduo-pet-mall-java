@@ -1,5 +1,7 @@
 package com.duoduo.product.service;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.duoduo.common.api.ApiResponse;
 import com.duoduo.common.api.PageResult;
 import com.duoduo.common.enums.ErrorCode;
@@ -11,6 +13,8 @@ import com.duoduo.product.client.dto.ListingSoldOrderView;
 import com.duoduo.product.dto.ProductDtos.ListingOrderRequest;
 import com.duoduo.product.entity.ListingEntity;
 import com.duoduo.product.mapper.ListingMapper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -59,6 +63,17 @@ class ListingOrderServiceTest {
     private final ListingMapper listingMapper = mock(ListingMapper.class);
     private final TradeClient tradeClient = mock(TradeClient.class);
     private final ListingOrderService service = new ListingOrderService(listingMapper, tradeClient);
+
+    /**
+     * 纯单测环境没有 MyBatis-Plus 启动扫描：LambdaUpdateWrapper 解析
+     * {@code ListingEntity::getStatus} 需要 TableInfo 缓存，先手动注册
+     * （与 duoduo-fulfilment 的 ReviewReplyTest 同款做法）。
+     */
+    @BeforeAll
+    static void initMybatisLambdaCache() {
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), ListingEntity.class);
+    }
 
     // ------------------------------------------------------------------
     // 夹具
@@ -111,9 +126,11 @@ class ListingOrderServiceTest {
     }
 
     @Test
-    void 下单_CAS零行_说明刚被买走或下架_422且不进交易域() {
+    void 下单_CAS零行_交易域也无该幂等键的单_422且不进交易域() {
         when(listingMapper.selectById(LISTING_ID)).thenReturn(listing("ON_SALE", "APPROVED"));
         when(listingMapper.update(any(), any())).thenReturn(0);
+        when(tradeClient.findCreatedByIdempotentKey(BUYER, "idem-key-1"))
+                .thenReturn(ApiResponse.ok(null));
 
         assertThatThrownBy(() -> service.placeOrder(BUYER, request()))
                 .isInstanceOf(BizException.class)
@@ -121,6 +138,36 @@ class ListingOrderServiceTest {
                 .isEqualTo(ErrorCode.BUSINESS_RULE);
 
         verify(tradeClient, never()).placeListingOrder(any());
+    }
+
+    @Test
+    void 下单_CAS零行_同幂等键首单已在交易域_重放首单不误判成被买走() {
+        // 网络超时后的用户重试：首单已成立、锁是自己下的 —— 必须重放，报「手慢了」是灾难性误判
+        when(listingMapper.selectById(LISTING_ID)).thenReturn(listing("ON_SALE", "APPROVED"));
+        when(listingMapper.update(any(), any())).thenReturn(0);
+        when(tradeClient.findCreatedByIdempotentKey(BUYER, "idem-key-1"))
+                .thenReturn(ApiResponse.ok(new ListingOrderCreated(ORDER_NO, 8800L)));
+
+        ListingOrderCreated created = service.placeOrder(BUYER, request());
+
+        assertThat(created.orderNo()).isEqualTo(ORDER_NO);
+        // 重放路径绝不建第二张单
+        verify(tradeClient, never()).placeListingOrder(any());
+    }
+
+    @Test
+    void 下单_闲置已售_同幂等键首单在交易域_事实校验前先重放() {
+        // 上一轮冒烟抓到的坑：重试时闲置已 SOLD，事实校验把重试挡在 CAS 反查之前 ——
+        // 买家永远付不了款。事实校验的「不可买」分支也必须先问幂等键。
+        when(listingMapper.selectById(LISTING_ID)).thenReturn(listing("SOLD", "APPROVED"));
+        when(tradeClient.findCreatedByIdempotentKey(BUYER, "idem-key-1"))
+                .thenReturn(ApiResponse.ok(new ListingOrderCreated(ORDER_NO, 8800L)));
+
+        ListingOrderCreated created = service.placeOrder(BUYER, request());
+
+        assertThat(created.orderNo()).isEqualTo(ORDER_NO);
+        verify(tradeClient, never()).placeListingOrder(any());
+        verify(listingMapper, never()).update(any(), any());
     }
 
     @Test

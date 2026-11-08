@@ -32,6 +32,14 @@ public interface TradeClient {
     @PostMapping("/internal/listing-orders")
     ApiResponse<ListingOrderCreated> placeListingOrder(@RequestBody ListingOrderPlacement placement);
 
+    /**
+     * 幂等键反查（内部 · B-11）：CAS 落空时区分「同键重试」与「被别人买走」。
+     * data 为 null 表示该键下没有 C2C 单。
+     */
+    @GetMapping("/internal/listing-orders/idem")
+    ApiResponse<ListingOrderCreated> findCreatedByIdempotentKey(@RequestParam("buyerId") Long buyerId,
+                                                                @RequestParam("key") String key);
+
     /** 卖家视角的卖出订单列表（内部）：t_order 在交易域，列表事实由它出 */
     @GetMapping("/internal/listing-orders/sold")
     ApiResponse<PageResult<ListingSoldOrderView>> soldOrders(

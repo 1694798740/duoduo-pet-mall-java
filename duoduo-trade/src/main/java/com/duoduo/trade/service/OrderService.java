@@ -1467,6 +1467,17 @@ public class OrderService {
                 .orderByAsc(OrderEntity::getId));
     }
 
+    /**
+     * 幂等键反查（内部端点 · B-11）：商品域 CAS 落空时来问一声 ——
+     * 有单说明是「同一买家带同一幂等键的重试」（首单已成立、锁也是自己下的），
+     * 应当重放首单；没单才是真的被别人买走。没有这一问，
+     * 商品域只能把重试一律误判成「手慢了」。
+     */
+    public ListingOrderCreated findC2CCreatedByIdempotentKey(Long buyerId, String key) {
+        List<OrderEntity> winners = findC2CByIdempotentKey(buyerId, key);
+        return winners.isEmpty() ? null : listingCreatedOf(winners.get(0));
+    }
+
     // ---------------- 取消（含释放冻结） ----------------
 
     @Transactional
@@ -2767,12 +2778,16 @@ public class OrderService {
         }
 
         // 扣减库存：库存与冻结量同时减少；失败则整批回滚（含上面的 CAS），本次支付不成立。
-        // 秒杀单（2026-10-18 修复）不走商品库存冻结台账 —— 它的"货"是活动配额，
-        // 在下单时已从 t_seckill_sku.available_stock 原子扣掉，关单/超时由 onOrderClosed 回补。
-        // 修复前这里对秒杀单也找冻结记录，必然为空 ⇒ 秒杀订单永远无法支付（"没有可扣减的库存冻结记录"）。
-        boolean seckillOrder = "SECKILL".equals(order.getOrderType());
+        // 无 SKU 订单不走这一段（B-11 · C2C 冒烟实测抓到的坑，与秒杀 2026-10-18 修复同款）：
+        //   · 秒杀单（SECKILL）—— 它的"货"是活动配额，下单时已从 t_seckill_sku.available_stock 原子扣掉，
+        //     关单/超时由 onOrderClosed 回补；
+        //   · 闲置单（C2C）—— 它的"货"是商品域下单时的单件 CAS 锁（listing ON_SALE→SOLD），
+        //     没有 SKU、没有冻结台账，在这里找冻结记录必然为空 ⇒ 订单永远无法支付
+        //     （"没有可扣减的库存冻结记录"）。释放/回补走关单退款钩子回调商品域。
+        boolean skuLessOrder = "SECKILL".equals(order.getOrderType())
+                || ORDER_TYPE_C2C.equals(order.getOrderType());
         List<StockFreezeEntity> freezes = List.of();
-        if (!seckillOrder) {
+        if (!skuLessOrder) {
             freezes = stockFreezeMapper.selectList(
                     new LambdaQueryWrapper<StockFreezeEntity>()
                             .eq(StockFreezeEntity::getOrderId, order.getId())
@@ -2781,7 +2796,7 @@ public class OrderService {
                 throw new BizException(ErrorCode.BUSINESS_RULE, "订单没有可扣减的库存冻结记录，请联系客服处理");
             }
         }
-        if (!seckillOrder) {
+        if (!skuLessOrder) {
             List<StockChangeItem> items = freezes.stream()
                     .map(f -> new StockChangeItem(f.getSkuId(), f.getQuantity()))
                     .toList();

@@ -45,6 +45,17 @@ public class InternalListingOrderController {
         return ApiResponse.ok(orderService.placeListingOrder(placement));
     }
 
+    /**
+     * 幂等键反查：商品域 CAS 落空时先来这问 —— 有单是重试（重放首单），没单才是真被买走。
+     * 返回 null 表示该键下没有 C2C 单。
+     */
+    @GetMapping("/internal/listing-orders/idem")
+    public ApiResponse<ListingOrderCreated> findCreatedByIdempotentKey(
+            @RequestParam("buyerId") Long buyerId,
+            @RequestParam("key") String key) {
+        return ApiResponse.ok(orderService.findC2CCreatedByIdempotentKey(buyerId, key));
+    }
+
     /** 卖家视角卖出订单列表：sellerId 由商品域从登录态带入，本方法自己加归属条件 */
     @GetMapping("/internal/listing-orders/sold")
     public ApiResponse<PageResult<ListingSoldOrderView>> soldOrders(
