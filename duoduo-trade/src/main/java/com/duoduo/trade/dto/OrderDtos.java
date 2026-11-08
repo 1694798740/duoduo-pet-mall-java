@@ -346,6 +346,51 @@ public final class OrderDtos {
     ) {
     }
 
+    // ---------------- C2C 闲置担保交易（B-11） ----------------
+    // 与 duoduo-product 的 client/dto 同名 record 隔着一条 HTTP 边界对齐：
+    // 两端各自定义、靠 JSON 契约一致（与 social 的 ProductClient/ListingClient 同款纪律）。
+
+    /**
+     * 闲置下单载荷（商品域 → 交易域内部端点）：全部是商品域服务端取的事实
+     * （买家登录态、闲置归属、标题与价格快照、收货信息、幂等键），
+     * 交易域不回查商品库、也不接受任何前端直传字段。
+     */
+    public record ListingOrderPlacement(
+            Long buyerId,
+            Long listingId,
+            Long sellerId,
+            String title,
+            Long priceFen,
+            String receiverName,
+            String receiverPhone,
+            String receiverAddress,
+            String idempotentKey
+    ) {
+    }
+
+    /** 闲置下单结果：订单号与应付金额（分），买家走既有支付端点完成付款 */
+    public record ListingOrderCreated(
+            String orderNo,
+            Long payAmount
+    ) {
+    }
+
+    /**
+     * 卖出订单视图（交易域内部端点 → 商品域 → 卖家的「我的闲置 · 卖出订单」页）。
+     * 订单与资金事实（t_order / t_settlement）都在交易域，列表由它出。
+     */
+    public record ListingSoldOrderView(
+            String orderNo,
+            String status,
+            Long listingId,
+            String listingTitle,
+            Long payAmount,
+            String logisticsCompany,
+            String logisticsNo,
+            java.time.LocalDateTime createdAt
+    ) {
+    }
+
     /**
      * 支付请求（本阶段为模拟渠道，支付即时成功）。
      *

@@ -4,6 +4,7 @@ import com.duoduo.common.api.ApiResponse;
 import com.duoduo.product.dto.PersonalDataCleanupResult;
 import com.duoduo.product.dto.ProductDtos.InternalListingView;
 import com.duoduo.product.dto.ProductDtos.WantResult;
+import com.duoduo.product.service.ListingOrderService;
 import com.duoduo.product.service.ListingService;
 import com.duoduo.product.service.PersonalDataCleanupService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,11 +33,14 @@ public class InternalListingController {
 
     private final ListingService listingService;
     private final PersonalDataCleanupService personalDataCleanupService;
+    private final ListingOrderService listingOrderService;
 
     public InternalListingController(ListingService listingService,
-                                     PersonalDataCleanupService personalDataCleanupService) {
+                                     PersonalDataCleanupService personalDataCleanupService,
+                                     ListingOrderService listingOrderService) {
         this.listingService = listingService;
         this.personalDataCleanupService = personalDataCleanupService;
+        this.listingOrderService = listingOrderService;
     }
 
     /** 批量取闲置卡事实（问一问定收件人 + 卡片展示）；幽灵 id 静默跳过 */
@@ -59,6 +63,23 @@ public class InternalListingController {
     public ApiResponse<WantResult> markWant(@PathVariable Long id,
                                             @RequestParam("buyerId") Long buyerId) {
         return ApiResponse.ok(new WantResult(listingService.markWant(id, buyerId)));
+    }
+
+    /**
+     * 释放闲置（B-11 · C2C 担保交易）：交易域在「用户取消 / 运营强关 / 超时关单 / 退款」
+     * 四类钩子后回调，把下单时 CAS 锁成的 SOLD 回滚成 ON_SALE。
+     *
+     * <p><b>幂等</b>：同一单的多个钩子可能重复到达（或与下一单成交几乎同时），
+     * 已不是 SOLD 时返回 {@code released=false}、不报错 —— 调用方（交易域事件监听）
+     * 是 best-effort，绝不能让「重复释放」变成一次报错的噪音。
+     *
+     * <p><b>内部接口</b>：在 {@code /api/listings/internal/} 前缀下，凭据由
+     * {@code InternalTokenFilter} 校验 —— 外部绝不可达，否则「帮任意闲置解锁」
+     * 就是把防超卖闸门交给了调用方。
+     */
+    @PostMapping("/internal/{id}/release")
+    public ApiResponse<Boolean> releaseToOnSale(@PathVariable Long id) {
+        return ApiResponse.ok(listingOrderService.releaseToOnSale(id));
     }
 
     /**

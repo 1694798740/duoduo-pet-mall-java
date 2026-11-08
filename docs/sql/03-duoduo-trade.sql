@@ -103,8 +103,11 @@ CREATE INDEX idx_order_auto_receipt ON t_order (status, shipped_at);
 CREATE TABLE t_order_item (
     id             BIGINT        NOT NULL,
     order_id       BIGINT        NOT NULL,
-    spu_id         BIGINT        NOT NULL,
-    sku_id         BIGINT        NOT NULL,
+    -- C2C 闲置单（B-11）：listing_id 必填、spu_id/sku_id 为 NULL（闲置不在 SKU 体系）；
+    -- 商城订单相反：spu_id/sku_id 必填、listing_id 为 NULL。互斥由写入端保证。
+    listing_id     BIGINT        NULL                COMMENT '闲置 id（C2C 闲置单专有，B-11）',
+    spu_id         BIGINT        NULL                COMMENT 'SPU id（C2C 闲置单为 NULL）',
+    sku_id         BIGINT        NULL                COMMENT 'SKU id（C2C 闲置单为 NULL）',
     title          VARCHAR(200)  NOT NULL,
     spec_text      VARCHAR(200),
     main_image     VARCHAR(300),
@@ -117,6 +120,7 @@ CREATE TABLE t_order_item (
 );
 CREATE INDEX idx_item_order ON t_order_item (order_id);
 CREATE INDEX idx_item_sku ON t_order_item (sku_id);
+CREATE INDEX idx_item_listing ON t_order_item (listing_id);
 
 -- ---------- 订单状态流转日志（可追溯，支撑对账与客诉） ----------
 CREATE TABLE t_order_status_log (

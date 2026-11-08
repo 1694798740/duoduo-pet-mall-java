@@ -20,6 +20,12 @@ public class OrderItemEntity {
     @TableId
     private Long id;
     private Long orderId;
+    /**
+     * 闲置 id（B-11 · C2C 闲置担保交易）：闲置订单专有，此时 spuId / skuId 为 NULL
+     * —— 闲置是「一物一价」的个人转卖，不在 SKU 体系里，金额与标题直接落本行快照。
+     * 商城订单该列为 NULL，与 spuId/skuId 互斥。
+     */
+    private Long listingId;
     private Long spuId;
     private Long skuId;
     private String title;
@@ -36,6 +42,8 @@ public class OrderItemEntity {
     public void setId(Long id) { this.id = id; }
     public Long getOrderId() { return orderId; }
     public void setOrderId(Long orderId) { this.orderId = orderId; }
+    public Long getListingId() { return listingId; }
+    public void setListingId(Long listingId) { this.listingId = listingId; }
     public Long getSpuId() { return spuId; }
     public void setSpuId(Long spuId) { this.spuId = spuId; }
     public Long getSkuId() { return skuId; }

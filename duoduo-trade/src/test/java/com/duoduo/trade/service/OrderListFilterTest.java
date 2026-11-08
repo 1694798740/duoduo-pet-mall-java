@@ -55,7 +55,7 @@ class OrderListFilterTest {
         service = new OrderService(orderMapper,
                 null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null,
-                null);
+                null, null);
         UserContext.set(new LoginUser(9001L, "13800000000", "USER", true));
     }
 

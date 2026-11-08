@@ -19,6 +19,9 @@ import com.duoduo.trade.client.dto.SkuSnapshot;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeItem;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeOutcome;
 import com.duoduo.trade.client.dto.StockChangeDtos.StockChangeResult;
+import com.duoduo.trade.dto.OrderDtos.ListingOrderCreated;
+import com.duoduo.trade.dto.OrderDtos.ListingOrderPlacement;
+import com.duoduo.trade.dto.OrderDtos.ListingSoldOrderView;
 import com.duoduo.trade.dto.OrderDtos.OrderFactView;
 import com.duoduo.trade.dto.OrderDtos.OrderItemView;
 import com.duoduo.trade.dto.OrderDtos.OrderView;
@@ -125,6 +128,8 @@ public class OrderService {
     public static final long PLATFORM_SELLER_ID = com.duoduo.common.seller.SellerOwnership.SELF_SELLER_ID;
 
     private static final String ORDER_TYPE_NORMAL = "NORMAL";
+    /** C2C 闲置担保交易（B-11）：个人转卖，一物一价、无 SKU、单件成交 */
+    private static final String ORDER_TYPE_C2C = "C2C";
     /**
      * 订单类型白名单 —— 与 {@code t_order.order_type} 的取值一一对应。
      *
@@ -162,6 +167,8 @@ public class OrderService {
     private final ApplicationEventPublisher eventPublisher;
     private final LogisticsNotifier logisticsNotifier;
     private final OrderNotifier orderNotifier;
+    /** 闲置释放回调（B-11）：C2C 关单/退款时把商品域的 SOLD 回滚成 ON_SALE */
+    private final com.duoduo.trade.client.ListingOrderClient listingOrderClient;
 
     @Value("${duoduo.trade.order-expire-minutes:30}")
     private int orderExpireMinutes;
@@ -234,7 +241,8 @@ public class OrderService {
                         SchedLeaderLock leaderLock,
                         com.duoduo.trade.client.StoreNameClient storeNameClient,
                         PaymentRefundService paymentRefundService,
-                        com.duoduo.trade.client.CoinGateway coinGateway) {
+                        com.duoduo.trade.client.CoinGateway coinGateway,
+                        com.duoduo.trade.client.ListingOrderClient listingOrderClient) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusLogMapper = statusLogMapper;
@@ -256,6 +264,7 @@ public class OrderService {
         this.storeNameClient = storeNameClient;
         this.paymentRefundService = paymentRefundService;
         this.coinGateway = coinGateway;
+        this.listingOrderClient = listingOrderClient;
     }
 
     // ---------------- 结算预览（只读） ----------------
@@ -1250,6 +1259,214 @@ public class OrderService {
                 .toList();
     }
 
+    // ---------------- C2C 闲置担保交易（B-11） ----------------
+    //
+    // 与商城下单（placeOrder）刻意分道：那条链路的骨架是「购物车/直购行 → SKU 快照 →
+    // 冻结库存 → 券与币」。闲置是「一物一价」的个人转卖，不在 SKU 体系里，
+    // 硬塞进去意味着到处判空；而且它的「防超卖」已经由商品域的下单 CAS 保证了
+    // —— 交易域这里不再冻结任何库存（无 SKU 可冻）。
+    //
+    // 单件锁的钥匙在商品域：本域建单失败由商品域补偿回滚（见 product 的
+    // ListingOrderService#placeOrder），本域关单/退款则通过事件回调商品域释放 ——
+    // 锁是它下的，解开也必须是它来解。
+
+    /**
+     * 闲置下单入口（内部端点）：事务边界仿 {@link #placeOrder} ——
+     * 撞幂等唯一键时本次事务整体回滚，回到事务外按首次结果重放。
+     *
+     * <p>已知窄窗（演示环境接受、记入计划文档）：若交易域建单成功但响应在网络中丢失，
+     * 商品域会按「不可达」补偿解锁闲置，此时订单已挂起（PENDING_PAYMENT）而闲置回到在售 ——
+     * 买家不支付即自然收敛（超时关单），真发生双买以先支付者为准、后到者退款（运营干预）。
+     * 收紧需要「补偿前反查交易域」的一次额外往返，对演示环境的收益不划算。
+     */
+    public ListingOrderCreated placeListingOrder(ListingOrderPlacement placement) {
+        try {
+            return self.placeListingOrderTx(placement);
+        } catch (DuplicateOrderKeyException e) {
+            List<OrderEntity> winners = findC2CByIdempotentKey(placement.buyerId(), placement.idempotentKey());
+            if (winners.isEmpty()) {
+                throw e.original();
+            }
+            return listingCreatedOf(winners.get(0));
+        }
+    }
+
+    /**
+     * 闲置建单写入核心（必须在事务内，只允许经 {@link #placeListingOrder} 进入）：
+     * orderType=C2C、单件无 SKU 明细（listingId + 标题/价格快照）、不冻结库存、不用券与币。
+     */
+    @Transactional
+    public ListingOrderCreated placeListingOrderTx(ListingOrderPlacement placement) {
+        if (placement == null || placement.buyerId() == null || placement.listingId() == null
+                || placement.sellerId() == null || placement.priceFen() == null
+                || placement.priceFen() <= 0 || !org.springframework.util.StringUtils.hasText(placement.idempotentKey())) {
+            throw BizException.validation("下单载荷缺少必要事实（买家/闲置/卖家/价格/幂等键）");
+        }
+        // 幂等快路径：同一买家同一幂等键 → 直接重放首单（C2C 不拆单，至多一张）
+        List<OrderEntity> existing = findC2CByIdempotentKey(placement.buyerId(), placement.idempotentKey());
+        if (!existing.isEmpty()) {
+            return listingCreatedOf(existing.get(0));
+        }
+        LocalDateTime now = nowUtc();
+        OrderEntity order = new OrderEntity();
+        order.setId(idGenerator.nextId());
+        order.setOrderNo(orderNoGenerator.next());
+        order.setUserId(placement.buyerId());
+        order.setSellerId(placement.sellerId());
+        order.setOrderType(ORDER_TYPE_C2C);
+        order.setStatus(OrderStatus.PENDING_PAYMENT.name());
+        // 一口价：商品总额 = 应付 = 闲置价格快照（分）；无运费、无券、无币
+        order.setTotalAmount(placement.priceFen());
+        order.setFreightAmount(0L);
+        order.setDiscountAmount(0L);
+        order.setCoinUsed(0L);
+        order.setCoinDeductAmount(0L);
+        order.setPayAmount(placement.priceFen());
+        order.setReceiverName(placement.receiverName());
+        order.setReceiverPhone(placement.receiverPhone());
+        order.setReceiverAddress(placement.receiverAddress());
+        order.setIdempotentKey(placement.idempotentKey());
+        order.setExpireAt(now.plusMinutes(orderExpireMinutes));
+        order.setCreatedAt(now);
+        order.setUpdatedAt(now);
+        orderMapper.insert(order);
+
+        // 明细快照：单件一行，无 SPU/SKU —— 闲置是「一物一价」的转卖物
+        OrderItemEntity item = new OrderItemEntity();
+        item.setId(idGenerator.nextId());
+        item.setOrderId(order.getId());
+        item.setListingId(placement.listingId());
+        item.setTitle(placement.title());
+        item.setPrice(placement.priceFen());
+        item.setQuantity(1);
+        item.setAmount(placement.priceFen());
+        item.setRefundStatus("NONE");
+        item.setCreatedAt(now);
+        orderItemMapper.insert(item);
+
+        writeStatusLog(order.getId(), null, order.getStatus(), OPERATOR_USER, placement.buyerId(), OP_CREATE, now);
+        return new ListingOrderCreated(order.getOrderNo(), order.getPayAmount());
+    }
+
+    /**
+     * 卖家视角的卖出订单列表（内部端点）：数据事实全在本域（t_order / t_order_item）。
+     * 列表页给个人卖家用 —— 他没有 SELLER 角色、进不了 /api/seller/**，
+     * 商品域带他的登录态来查，归属条件由本方法自己加（sellerId = 登录人），不收前端参数。
+     */
+    public PageResult<ListingSoldOrderView> listListingSold(Long sellerId, String status, int page, int pageSize) {
+        int pageNo = Math.max(1, page);
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>()
+                .eq(OrderEntity::getSellerId, sellerId)
+                .eq(OrderEntity::getOrderType, ORDER_TYPE_C2C)
+                .eq(org.springframework.util.StringUtils.hasText(status), OrderEntity::getStatus, status)
+                .orderByDesc(OrderEntity::getId);
+        Page<OrderEntity> result = orderMapper.selectPage(new Page<>(pageNo, size), wrapper);
+        // 一单一件：批量取明细再按 orderId 分组，避免逐单回查（N+1）
+        List<OrderItemEntity> items = result.getRecords().isEmpty() ? List.of()
+                : orderItemMapper.selectList(new LambdaQueryWrapper<OrderItemEntity>()
+                        .in(OrderItemEntity::getOrderId,
+                                result.getRecords().stream().map(OrderEntity::getId).toList()));
+        Map<Long, OrderItemEntity> itemByOrder = items.stream()
+                .collect(Collectors.toMap(OrderItemEntity::getOrderId, java.util.function.Function.identity(), (a, b) -> a));
+        List<ListingSoldOrderView> views = result.getRecords().stream().map(o -> {
+            OrderItemEntity item = itemByOrder.get(o.getId());
+            return new ListingSoldOrderView(
+                    o.getOrderNo(), o.getStatus(),
+                    item == null ? null : item.getListingId(),
+                    item == null ? null : item.getTitle(),
+                    o.getPayAmount(),
+                    o.getLogisticsCompany(), o.getLogisticsNo(),
+                    o.getCreatedAt());
+        }).toList();
+        return PageResult.of(views, result.getTotal(), pageNo, size);
+    }
+
+    /**
+     * 闲置订单发货（内部端点）：C2C 单 + 归属校验（sellerId == 操作者）后
+     * 复用 {@link #shipInternal} 的既有发货状态机 —— 两条入口只差准入方式，
+     * 状态流转、日志留痕必须完全一致，否则会出现「从某入口发货跳过状态校验」的分叉。
+     */
+    @Transactional
+    public OrderView shipListingOrder(String orderNo, Long operatorId,
+                                      String logisticsCompany, String logisticsNo) {
+        OrderEntity order = findAnyByOrderNo(orderNo);
+        if (order == null) {
+            throw BizException.notFound("订单");
+        }
+        if (!ORDER_TYPE_C2C.equals(order.getOrderType())) {
+            throw new BizException(ErrorCode.ORDER_STATUS_ILLEGAL, "该订单不是闲置担保交易订单");
+        }
+        if (order.getSellerId() == null || !order.getSellerId().equals(operatorId)) {
+            throw BizException.forbidden("只有该闲置的卖家本人才能发货");
+        }
+        return shipInternal(order, "闲置卖家发货", logisticsCompany, logisticsNo);
+    }
+
+    /** C2C 释放事件：关单（用户取消/运营强关/超时）与退款后，把商品域的 SOLD 回滚 ON_SALE */
+    public record ListingReleaseEvent(Long orderId, String scene) {
+    }
+
+    /** 只对 C2C 单发布：商城单（NORMAL/SECKILL）没有「闲置锁」要解 */
+    private void publishListingRelease(OrderEntity order, String scene) {
+        if (order != null && ORDER_TYPE_C2C.equals(order.getOrderType())) {
+            eventPublisher.publishEvent(new ListingReleaseEvent(order.getId(), scene));
+        }
+    }
+
+    /**
+     * 释放闲置（SOLD → ON_SALE，经商品域内部端点）。
+     *
+     * <p>{@code AFTER_COMMIT}：订单已关闭/已退款是既成事实时才去解商品域的锁 ——
+     * 在事务里先解锁、事务随后回滚，会出现「订单还活着、闲置却回到在售」的双卖窗口
+     * （与发货通知同一动机，见 {@link OrderShippedEvent} 的注释）。
+     *
+     * <p>失败只记 ERROR（醒目、待人工核对），绝不影响已完成的关单/退款 ——
+     * 卖家侧还有人工兜底：在「我的闲置」对该条目下架再上架即可恢复在售。
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onListingRelease(ListingReleaseEvent event) {
+        try {
+            OrderEntity order = orderMapper.selectById(event.orderId());
+            if (order == null || !ORDER_TYPE_C2C.equals(order.getOrderType())) {
+                return;
+            }
+            OrderItemEntity item = firstItemOf(order.getId());
+            if (item == null || item.getListingId() == null) {
+                return;
+            }
+            var resp = listingOrderClient.releaseToOnSale(item.getListingId());
+            boolean released = resp != null && Boolean.TRUE.equals(resp.data());
+            log.info("C2C 订单 {} 已{}，闲置 {} 释放回调（released={}）",
+                    order.getOrderNo(), event.scene(), item.getListingId(), released);
+        } catch (Exception e) {
+            log.error("C2C 订单 {} 释放闲置失败（{}）：请到商品域人工核对 listing 状态",
+                    event.orderId(), event.scene(), e);
+        }
+    }
+
+    /** C2C 单至多一件：取首行明细（无行返回 null，见 onListingRelease 的判空） */
+    private OrderItemEntity firstItemOf(Long orderId) {
+        return orderItemMapper.selectList(new LambdaQueryWrapper<OrderItemEntity>()
+                        .eq(OrderItemEntity::getOrderId, orderId)
+                        .orderByAsc(OrderItemEntity::getId)
+                        .last("LIMIT 1"))
+                .stream().findFirst().orElse(null);
+    }
+
+    private static ListingOrderCreated listingCreatedOf(OrderEntity order) {
+        return new ListingOrderCreated(order.getOrderNo(), order.getPayAmount());
+    }
+
+    /** 幂等键反查只看 C2C：同键已存在一张商城订单时，绝不能把它重放成闲置单 */
+    private List<OrderEntity> findC2CByIdempotentKey(Long userId, String key) {
+        return orderMapper.selectList(new LambdaQueryWrapper<OrderEntity>()
+                .eq(OrderEntity::getUserId, userId)
+                .eq(OrderEntity::getIdempotentKey, key)
+                .eq(OrderEntity::getOrderType, ORDER_TYPE_C2C)
+                .orderByAsc(OrderEntity::getId));
+    }
+
     // ---------------- 取消（含释放冻结） ----------------
 
     @Transactional
@@ -1295,6 +1512,8 @@ public class OrderService {
         }
         // A14：秒杀订单取消同样回补活动配额
         seckillService.onOrderClosed(order);
+        // B-11：C2C 单取消后释放闲置（事务提交后回调商品域，SOLD→ON_SALE）
+        publishListingRelease(order, "用户取消");
         return toViews(List.of(order)).get(0);
     }
 
@@ -1336,6 +1555,8 @@ public class OrderService {
         }
         // A14：运营强关秒杀订单时回补活动配额
         seckillService.onOrderClosed(order);
+        // B-11：C2C 单强关后释放闲置（事务提交后回调商品域，SOLD→ON_SALE）
+        publishListingRelease(order, "运营强制关单");
         int[] release = releaseOrderFreeze(order.getId(), now);
         if (release[1] > 0) {
             log.error("订单 {} 运营强关后有 {} 条冻结未释放，已留台账待补偿调度重试", order.getOrderNo(), release[1]);
@@ -2006,6 +2227,8 @@ public class OrderService {
         // 4) 立刻响应里如实说明「货还没回库」（入库在事务提交后做，见 onOrderRefunded）
         boolean pending = !deducted.isEmpty();
         eventPublisher.publishEvent(new OrderRefundedEvent(order.getId()));
+        // B-11：C2C 单退款后释放闲置（事务提交后回调商品域，SOLD→ON_SALE）
+        publishListingRelease(order, "退款");
         // 退款通知（第五十五轮）：与上面的「回补库存」事件分开 —— 一个对内（台账），一个对外（买家）
         eventPublisher.publishEvent(new OrderRefundedNoticeEvent(
                 order.getUserId(), order.getOrderNo(), refundAmount));
@@ -2286,6 +2509,8 @@ public class OrderService {
             }
             // A14：秒杀订单关单时回补活动配额（非秒杀单在此方法内直接短路返回）
             seckillService.onOrderClosed(order);
+            // B-11：C2C 单超时关单后释放闲置（本轮事务提交后回调商品域，SOLD→ON_SALE）
+            publishListingRelease(order, "超时未支付自动关单");
             closed++;
         }
 

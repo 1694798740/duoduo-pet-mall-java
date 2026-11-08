@@ -159,6 +159,13 @@ public final class ProductDtos {
     ) {
     }
 
+    /** 闲置订单发货请求（卖家提交 · B-11）：物流公司与单号（发货状态机在交易域） */
+    public record ListingShipRequest(
+            String logisticsCompany,
+            String logisticsNo
+    ) {
+    }
+
     /**
      * 卖家视角的「我的闲置」条目。
      *
