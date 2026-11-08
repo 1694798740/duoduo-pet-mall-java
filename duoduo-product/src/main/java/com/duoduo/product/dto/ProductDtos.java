@@ -141,6 +141,25 @@ public final class ProductDtos {
     }
 
     /**
+     * 闲置下单请求（买家侧 · B-11 担保交易）。
+     *
+     * <p>与 {@link ListingPublishRequest} 同一条纪律：不出现「谁是卖家」字段 ——
+     * 归属由服务端按闲置事实决定；也不收价格，应付金额 = 下单时点的闲置价格快照（分），
+     * 之后卖家改价不影响已成立的订单。
+     *
+     * <p>幂等键防网络重试导致「一物两单」：它是 CAS 之外的第二道闸
+     * （同一幂等键的重复下单由交易域按既有幂等机制去重）。
+     */
+    public record ListingOrderRequest(
+            Long listingId,
+            String receiverName,
+            String receiverPhone,
+            String receiverAddress,
+            String idempotentKey
+    ) {
+    }
+
+    /**
      * 卖家视角的「我的闲置」条目。
      *
      * <p>与 {@link ListingCard} 的关键差别：这里<b>必须带出 {@code status} / {@code auditStatus}
