@@ -1586,6 +1586,21 @@
 
 ## 6. 本轮变更记录
 
+### 2026-11-08（七十一）· 闲置担保交易全链（B-11）+ 云端全旅程验证与 §14 修复
+
+| 项 | 内容 |
+| --- | --- |
+| 云端全旅程 | `scripts/cloud-demo-verify.ps1` 扩至 18 段（购物/券/购物车/下单支付/订单/币/AI/客服/**售后退款**/**确认收货放款评价**/**闲置发布审核管理**/**私信问一问**/客服双向/分享圈关注通知/宠物档案 AI 记忆/收藏足迹秒杀），第五轮 **77/0 全绿**；8 张浏览器实访截图归档 `evidence/browser-20261108/` |
+| §14 私信 400 根因 | **PS 5.1 插值坑**：变量名允许含「?」，裸写 `"$sellerUserId?listingId=..."` 被整体解析成一个不存在的变量（空值）→ URL 变成 `/conversations/?listingId=…` → Spring `MethodArgumentTypeMismatch` 400「peerId 需要 Long 类型」。修复：`${sellerUserId}?listingId=${listingId}` 花括号定界 + §14 复用 §13 闲置（绕开发布频控 60s 最小间隔）+ 防假绿断言（listingId/consulting 回显） |
+| 担保交易设计 | 职责边界：**单件锁在商品域**（下单 CAS：ON_SALE+APPROVED+未软删→SOLD，0 行即被买走；建单失败补偿回滚）、**订单/资金事实在交易域**（orderType=C2C、单件无 SKU 明细、不冻库存、一口价=快照价）。释放（SOLD→ON_SALE）走 `ListingReleaseEvent` + `AFTER_COMMIT` 回调商品域内部端点 —— 用户取消/运营强关/超时关单/退款四钩子幂等 |
+| 对外端点 | `POST /api/listings/{id}/orders`（路径为准防「看 A 买 B」）、`GET /api/listings/orders/sold`、`POST /api/listings/orders/{orderNo}/ship`（登录即本人，不进 /api/seller/** 角色门禁）；内部端点 `/api/orders/internal/listing-orders(/idem|/sold|/{no}/listing-ship)`、`/api/listings/internal/{id}/release`（凭据墙内） |
+| DDL | `incremental/75-b11-listing-order.sql` + 03 基线同步：t_order_item 的 spu_id/sku_id 放开 NOT NULL、新增 listing_id + 索引（本地与云端均已落库） |
+| 冒烟抓出的三个跨域缺陷 | ① 支付 422：completePayment 只豁免秒杀单的冻结/扣减，C2C 无 SKU 无冻结台账必炸（与秒杀 2026-10-18 同款坑）→ `skuLessOrder`；② 幂等重试被误拒：重试时闲置已 SOLD，事实校验挡在 CAS 反查之前 → 两处都先反查交易域幂等键（新增 /idem 端点），有单重放、没单才是真被买走；③ 跨域 4xx 被吞成 500：Feign 对非 2xx 抛异常而非返回体 → `translateFeign`（contentUTF8 解析 code/message 原码透传，5xx 降 DEGRADED，与 CoinGateway 同款纪律） |
+| 已知窄窗 | 交易域建单成功但响应丢失时，商品域按不可达补偿解锁、订单挂起待支付 —— 买家不支付自然收敛（超时关单），真双买以先支付者为准（运营干预）；收紧需补偿前反查，对演示环境不划算（代码注释已记） |
+| 前端 | `ListingDetail` 真担保下单（地址簿预填+固定幂等键+成功跳支付页）、`MyListings` 新增「卖出订单」视图（状态徽章+发货 Modal）、api-sdk 三端点四类型；订单列表「闲置单」标签复用既有 TYPE_LABEL |
+| 验证 | 单测：`ListingOrderServiceTest` **18/0** + `ListingOrderTradeServiceTest` **11/0**；全量 Maven **BUILD SUCCESS**；前端三端 tsc 0 错误 + mall build 过；`listing-settlement-smoke.ps1` 本地 **25/0**、云端 **25/0**（双闲置双链路：完整成交放款链 + 未发货退款释放链）；云端部署后全旅程 **77/0**（存量零破坏） |
+| 提交 | dd0004a（B1 失败测试 16 红先红后绿）→ 5049a8e（B2 后端全链 31 绿）→ 78905b6（B3 前端）→ 26848e0（B4 冒烟+三缺陷修复 25/0） |
+
 ### 2026-10-23（七十）· 修复：非文字消息发送后不恢复「结束咨询」
 
 | 项 | 内容 |

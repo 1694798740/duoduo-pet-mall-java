@@ -1978,6 +1978,10 @@ duoduo-pet-mall-java/
 | POST | `/api/listings/{id}/delete` | **删除闲置（软删）**（写 `deleted_at` + 落 `OFF_SHELF`，行留库供订单 / 会话 / 举报追溯；七处读路径与 ES 索引全部排除软删；已售出 422；非本人 403） | 需登录 |
 | GET | `/api/listings/internal/cards` | **闲置卡批量视图**（供社交域取 `sellerId` 等事实；`X-Internal-Token` 保护） | 内部凭据 |
 | POST | `/api/listings/internal/{id}/want?buyerId=` | **「想要」上报**（供社交域在买家**首次**发咨询消息时调用；`INSERT IGNORE` 去重表，**重复上报返回 `counted=false` 且不重复计数**；闲置不存在 404。**刻意用 POST**：这是写操作，GET 会被预取/重试刷歪计数） | 内部凭据 |
+| POST | `/api/listings/{id}/orders` | **担保下单**（B-11：路径 id 为准、请求体不带 listingId 防「看 A 买 B」；价格取闲置快照；**单件 CAS 防超卖**（ON_SALE+APPROVED+未软删→SOLD，0 行 422「手慢了」）；同幂等键重试重放首单（事实校验与 CAS 落空两处都先反查交易域）；交易域建单失败补偿回滚 SOLD→ON_SALE。需实名） | 需登录 |
+| GET | `/api/listings/orders/sold` | **我的卖出订单**（B-11：数据事实在交易域 t_order（orderType=C2C），商品域透传；登录即本人、不收卖家 id 参数；个人卖家无 SELLER 角色也能查） | 需登录 |
+| POST | `/api/listings/orders/{orderNo}/ship` | **闲置订单发货**（B-11：归属（订单 sellerId==登录人）与状态机（PAID→SHIPPED）在交易域校验，403/422 原码透传；复用 shipInternal 与商家端同一状态机） | 需登录 |
+| POST | `/api/listings/internal/{id}/release` | **释放闲置**（B-11：交易域在用户取消/运营强关/超时关单/退款四类钩子后回调，SOLD→ON_SALE；**幂等**：已不是 SOLD 返回 `released=false` 不报错；`X-Internal-Token` 保护） | 内部凭据 |
 | GET | `/api/meta/brands` · `/dictionaries` | 品牌列表 / 筛选字典 | 免 |
 
 **第三方商品上架审核（E14）** —— 商品有**两个正交维度**：交易维度 `status`（在售 / 下架，卖家可控）与
@@ -2037,6 +2041,10 @@ duoduo-pet-mall-java/
 | POST | `/api/orders/{orderNo}/ship` | 发货（已付款 → 已发货） | **内部凭据** |
 | POST | `/api/orders/internal/{orderNo}/refund` | **运营侧退款**（售后审核通过后执行，已付款 / 已发货均可） | **内部凭据** |
 | POST | `/api/orders/internal/sweep` | 手动触发一轮补偿调度（超时关单 / 释放冻结 / 自动确认收货 / 入库补偿 / 支付单过期） | **内部凭据** |
+| POST | `/api/orders/internal/listing-orders` | **C2C 建单**（B-11：商品域完成 listing CAS 后委托；orderType=C2C、单件无 SKU 明细、不冻库存、一口价=快照价；幂等撞键事务外重放且只认 C2C） | **内部凭据** |
+| GET | `/api/orders/internal/listing-orders/idem` | **幂等键反查**（B-11：商品域 CAS 落空/已售时区分「同键重试」与「被买走」；无单返回 data=null） | **内部凭据** |
+| GET | `/api/orders/internal/listing-orders/sold` | **卖家卖出订单列表**（B-11：sellerId 由商品域从登录态带入，本方法自己加归属条件） | **内部凭据** |
+| POST | `/api/orders/internal/{orderNo}/listing-ship` | **闲置订单发货**（B-11：C2C 单 sellerId==操作者、PAID 才可发；复用 shipInternal 同一状态机；关单/退款经 AFTER_COMMIT 事件回调商品域释放闲置） | **内部凭据** |
 
 ### 支付渠道（`duoduo-trade` /payment）
 
