@@ -20,12 +20,22 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { listingImage } from '@duoduo/api-sdk/images';
 import { Link } from 'react-router-dom';
 import { listingApi } from '@duoduo/api-sdk/endpoints';
-import type { ListingMineView } from '@duoduo/api-sdk/types';
+import type { ListingMineView, ListingSoldOrderView } from '@duoduo/api-sdk/types';
 import { toFriendlyMessage } from '@duoduo/api-sdk/client';
-import { Alert, Empty, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast } from '@duoduo/shared/components/ui';
+import { Alert, Empty, Field, LoadingBlock, Modal, Pagination, SearchBar, formatPrice, useToast } from '@duoduo/shared/components/ui';
 import { useAsync, useDebounced } from '@duoduo/shared/components/hooks';
 
 const PAGE_SIZE = 10;
+
+/** 卖出订单状态徽章（订单状态机由交易域定义，这里只做展示映射） */
+const SOLD_STATUS: Record<string, { text: string; cls: string }> = {
+  PENDING_PAYMENT: { text: '待付款', cls: 'tag tag-second' },
+  PAID: { text: '买家已付款 · 待你发货', cls: 'tag tag-success' },
+  SHIPPED: { text: '已发货', cls: 'tag' },
+  COMPLETED: { text: '已完成 · 货款已结算', cls: 'tag tag-success' },
+  CANCELLED: { text: '已关闭', cls: 'tag' },
+  REFUNDED: { text: '已退款', cls: 'tag tag-danger' },
+};
 
 /** 筛选口径（见文件头注释）；`params` 直接拼进查询串 */
 const FILTERS: { key: string; label: string; params: Record<string, string> }[] = [
@@ -48,6 +58,8 @@ const badgeOf = (it: ListingMineView): { text: string; cls: string } => {
 
 export const MyListingsPage: React.FC = () => {
   const { push } = useToast();
+  /** 视图切换（B-11）：「我的发布」是闲置条目管理，「卖出订单」是 C2C 订单（数据在交易域） */
+  const [mode, setMode] = useState<'mine' | 'sold'>('mine');
   const [filter, setFilter] = useState('ALL');
   const [page, setPage] = useState(1);
   const [tick, setTick] = useState(0);
@@ -55,6 +67,57 @@ export const MyListingsPage: React.FC = () => {
   const [confirming, setConfirming] = useState<ListingMineView | null>(null);
   const [keywordInput, setKeywordInput] = useState('');
   const keyword = useDebounced(keywordInput.trim(), 350);
+
+  // ---- 卖出订单（B-11）----
+  const [soldPage, setSoldPage] = useState(1);
+  const [soldTick, setSoldTick] = useState(0);
+  const [shipTarget, setShipTarget] = useState<ListingSoldOrderView | null>(null);
+  const [shipCompany, setShipCompany] = useState('');
+  const [shipNo, setShipNo] = useState('');
+  const [shipBusy, setShipBusy] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
+
+  const soldFetcher = useCallback(
+    () => listingApi.soldOrders({ page: soldPage, pageSize: PAGE_SIZE }),
+    [soldPage, soldTick],
+  );
+  const {
+    data: soldData,
+    loading: soldLoading,
+    error: soldError,
+  } = useAsync(soldFetcher, mode === 'sold', [soldPage, soldTick, mode]);
+  const soldItems = soldData?.items ?? [];
+  const soldTotal = soldData?.total ?? 0;
+  const soldPages = Math.max(1, Math.ceil(soldTotal / PAGE_SIZE));
+
+  const submitShip = async () => {
+    setShipError(null);
+    if (!shipTarget) return;
+    if (!shipCompany.trim()) {
+      setShipError('请填写物流公司');
+      return;
+    }
+    if (!shipNo.trim()) {
+      setShipError('请填写物流单号');
+      return;
+    }
+    setShipBusy(true);
+    try {
+      await listingApi.ship(shipTarget.orderNo, {
+        logisticsCompany: shipCompany.trim(),
+        logisticsNo: shipNo.trim(),
+      });
+      push('发货成功，买家确认收货后货款结算给你', 'success');
+      setShipTarget(null);
+      setShipCompany('');
+      setShipNo('');
+      setSoldTick((v) => v + 1);
+    } catch (err) {
+      setShipError(toFriendlyMessage(err));
+    } finally {
+      setShipBusy(false);
+    }
+  };
 
   const params = useMemo(() => FILTERS.find((f) => f.key === filter)?.params ?? {}, [filter]);
 
@@ -83,6 +146,154 @@ export const MyListingsPage: React.FC = () => {
     }
   };
 
+  /** 视图切换条（两个模式共用） */
+  const modeSwitch = (
+    <div className="row row-wrap" style={{ gap: 8, marginTop: 10, marginBottom: 14 }}>
+      <button
+        className={`btn btn-sm ${mode === 'mine' ? 'btn-primary' : 'btn-ghost'}`}
+        onClick={() => setMode('mine')}
+      >
+        我的发布（{total}）
+      </button>
+      <button
+        className={`btn btn-sm ${mode === 'sold' ? 'btn-primary' : 'btn-ghost'}`}
+        onClick={() => {
+          setMode('sold');
+          setSoldPage(1);
+        }}
+      >
+        卖出订单（{mode === 'sold' ? soldTotal : '…'}）
+      </button>
+      {mode === 'mine' ? (
+        <Link className="btn btn-primary btn-sm" to="/listings/new" style={{ marginLeft: 'auto' }}>
+          + 发布闲置
+        </Link>
+      ) : null}
+    </div>
+  );
+
+  // ---- 卖出订单视图（B-11）：订单事实在交易域，发货是唯一写操作 ----
+  if (mode === 'sold') {
+    return (
+      <div>
+        <div className="section-head" style={{ marginTop: 8 }}>
+          <h2 className="section-title">卖出订单</h2>
+          <span className="section-sub">买家下单 → 你发货 → 确认收货后货款结算（平台托管）</span>
+        </div>
+        {modeSwitch}
+
+        {soldError ? <Alert kind="error">{soldError}</Alert> : null}
+        {soldLoading && !soldData ? <LoadingBlock text="正在加载卖出订单…" /> : null}
+
+        {!soldLoading && soldItems.length === 0 ? (
+          <Empty
+            icon="📦"
+            title="还没有闲置卖出记录"
+            desc="发布的闲置被人担保下单后会出现在这里，买家付款后即可发货"
+            action={
+              <button className="btn btn-primary" onClick={() => setMode('mine')}>
+                去管理我的闲置
+              </button>
+            }
+          />
+        ) : null}
+
+        <div className="col" style={{ gap: 12 }}>
+          {soldItems.map((o) => {
+            const badge = SOLD_STATUS[o.status] ?? { text: o.status, cls: 'tag' };
+            return (
+              <div className="card card-pad" key={o.orderNo}>
+                <div className="row-between row-wrap">
+                  <div className="row row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+                    <span className={badge.cls}>{badge.text}</span>
+                    <strong style={{ fontSize: 13 }}>订单 {o.orderNo}</strong>
+                  </div>
+                  <span className="small muted">{o.createdAt.replace('T', ' ').slice(0, 16)}</span>
+                </div>
+                <div className="row-between row-wrap" style={{ marginTop: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    {o.listingId ? (
+                      <Link to={`/listing/${o.listingId}`} style={{ fontWeight: 500 }}>
+                        {o.listingTitle ?? '闲置商品'}
+                      </Link>
+                    ) : (
+                      <span>{o.listingTitle ?? '闲置商品'}</span>
+                    )}
+                    {o.logisticsCompany ? (
+                      <div className="small muted" style={{ marginTop: 4 }}>
+                        {o.logisticsCompany} · {o.logisticsNo}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="price">{formatPrice(o.payAmount)}</span>
+                </div>
+
+                {o.status === 'PAID' ? (
+                  <div className="row row-wrap" style={{ gap: 8, marginTop: 10 }}>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => {
+                        setShipTarget(o);
+                        setShipError(null);
+                      }}
+                    >
+                      去发货
+                    </button>
+                    <span className="small muted">货款在平台托管中，发货后买家确认收货才结算</span>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+
+        {soldData ? (
+          <Pagination page={soldPage} pageCount={soldPages} total={soldTotal} onChange={setSoldPage} />
+        ) : null}
+
+        <Modal
+          open={Boolean(shipTarget)}
+          title="给这笔闲置订单发货"
+          onClose={() => setShipTarget(null)}
+          footer={
+            <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShipTarget(null)}>
+                再想想
+              </button>
+              <button className="btn btn-primary btn-sm" disabled={shipBusy} onClick={submitShip}>
+                {shipBusy ? '提交中…' : '确认发货'}
+              </button>
+            </div>
+          }
+        >
+          <p className="small muted" style={{ marginTop: 0 }}>
+            「{shipTarget?.listingTitle}」· 应收 {shipTarget ? formatPrice(shipTarget.payAmount) : ''}
+            （买家已付款，货款由平台托管，确认收货后结算给你）
+          </p>
+          {shipError ? <Alert kind="error">{shipError}</Alert> : null}
+          <Field label="物流公司" required>
+            <input
+              className="input"
+              value={shipCompany}
+              onChange={(e) => setShipCompany(e.target.value)}
+              placeholder="例如：顺丰速运"
+              maxLength={50}
+            />
+          </Field>
+          <Field label="物流单号" required>
+            <input
+              className="input"
+              value={shipNo}
+              onChange={(e) => setShipNo(e.target.value.trim())}
+              placeholder="快递单号"
+              maxLength={64}
+            />
+          </Field>
+        </Modal>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="section-head" style={{ marginTop: 8 }}>
@@ -91,6 +302,7 @@ export const MyListingsPage: React.FC = () => {
           共 {total} 件 · 发布与管理二手闲置不需要卖家身份（个人对个人）
         </span>
       </div>
+      {modeSwitch}
 
       <div className="row row-wrap" style={{ gap: 8, marginBottom: 14 }}>
         {FILTERS.map((f) => (
@@ -105,9 +317,6 @@ export const MyListingsPage: React.FC = () => {
             {f.label}
           </button>
         ))}
-        <Link className="btn btn-primary btn-sm" to="/listings/new" style={{ marginLeft: 'auto' }}>
-          + 发布闲置
-        </Link>
       </div>
 
       <div className="list-toolbar">

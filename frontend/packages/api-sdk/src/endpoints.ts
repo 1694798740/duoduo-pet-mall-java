@@ -66,8 +66,12 @@ import type {
   ListingAuditView,
   ListingCard,
   ListingMineView,
+  ListingOrderCreated,
+  ListingOrderRequest,
   ListingOwnerView,
   ListingPublishRequest,
+  ListingShipRequest,
+  ListingSoldOrderView,
   ListingDetail,
   OrderView,
   PageResult,
@@ -1796,6 +1800,24 @@ export const listingApi = {
 
   /** 删除（**软删**：别人的订单页与聊天记录里不会变成「查无此物」） */
   remove: (id: string) => api.post<void>(`/api/listings/${id}/delete`),
+
+  // ---------- 担保交易（B-11）：买家下单 / 卖家卖出与发货 ----------
+  // 同族三段路径，与上面的管理端点同一登录纪律；买家下单要求实名（服务端 403 带原因文案）。
+
+  /**
+   * 担保下单：以路径 id 为准（请求体不带 listingId，防「看 A 买 B」错位）。
+   * 单件 CAS 防超卖 —— 被并发买走返回 422「手慢了」；成功后跳既有订单支付页。
+   */
+  placeOrder: (id: string, body: ListingOrderRequest) =>
+    api.post<ListingOrderCreated>(`/api/listings/${id}/orders`, body),
+
+  /** 我的卖出订单（数据事实在交易域，商品域透传；登录即本人，不传卖家 id） */
+  soldOrders: (query?: { status?: string; page?: number; pageSize?: number }) =>
+    api.get<PageResult<ListingSoldOrderView>>('/api/listings/orders/sold', { query }),
+
+  /** 给闲置订单发货（订单归属与 PAID 状态由交易域校验，前端只提交物流信息） */
+  ship: (orderNo: string, body: ListingShipRequest) =>
+    api.post<void>(`/api/listings/orders/${orderNo}/ship`, body),
 };
 
 // ---------- 图片上传（duoduo-fulfilment；写走 /api/uploads，读走公开的 /uploads/**） ----------

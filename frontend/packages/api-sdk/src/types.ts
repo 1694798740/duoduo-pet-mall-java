@@ -2198,6 +2198,47 @@ export interface ListingOwnerView {
 }
 
 /**
+ * 担保下单请求（B-11）：收货三要素 + 幂等键。
+ *
+ * listingId **不在这里** —— 下单端点是 `POST /api/listings/{id}/orders`，
+ * 以路径里的 id 为准（请求体里的闲置归属一律忽略，防止「看 A 买 B」错位）。
+ * 价格也不传：应付 = 下单时点的闲置价格快照，卖家改价不影响已成立订单。
+ */
+export interface ListingOrderRequest {
+  receiverName: string;
+  receiverPhone: string;
+  receiverAddress: string;
+  idempotentKey: string;
+}
+
+/** 担保下单结果：订单号与应付金额（分），买家走既有订单支付页付款 */
+export interface ListingOrderCreated {
+  orderNo: string;
+  payAmount: number;
+}
+
+/**
+ * 卖出订单条目（卖家视角，「我的闲置 · 卖出订单」用）。
+ * 订单与资金事实在交易域，商品域只透传。
+ */
+export interface ListingSoldOrderView {
+  orderNo: string;
+  status: string;
+  listingId: string | null;
+  listingTitle: string | null;
+  payAmount: number;
+  logisticsCompany: string | null;
+  logisticsNo: string | null;
+  createdAt: string;
+}
+
+/** 闲置订单发货请求（卖家在卖出订单页提交） */
+export interface ListingShipRequest {
+  logisticsCompany: string;
+  logisticsNo: string;
+}
+
+/**
  * 发布 / 编辑 / 重提共用的请求体。
  *
  * 价格单位是**分**（后端 `requirePrice` 直接按分校验上限 99999 元）；
