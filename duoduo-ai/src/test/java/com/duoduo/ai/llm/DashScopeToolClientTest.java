@@ -64,10 +64,20 @@ class DashScopeToolClientTest {
                 }
                 int status = decideStatus(model);
                 if (status != 200) {
-                    // 404 模拟 DashScope 的「模型不存在」：必须带回 model_not_found
-                    respond(exchange, status, status == 404
-                            ? "{\"error\":{\"code\":\"model_not_found\"}}"
-                            : "{\"error\":\"boom\"}");
+                    String errBody;
+                    if (status == 404) {
+                        // 404 模拟 DashScope 的「模型不存在」：必须带回 model_not_found
+                        errBody = "{\"error\":{\"code\":\"model_not_found\"}}";
+                    } else if (status == 403) {
+                        // 403 模拟百炼「该模型免费额度耗尽」：配额按模型独立，必须可回退
+                        errBody = "{\"error\":{\"message\":\"Free quota exhausted. To continue accessing "
+                                + "the model on a paid basis, please add funds or disable the "
+                                + "\\\"use free tier only\\\" mode in the management console.\","
+                                + "\"type\":\"AllocationQuota.FreeTierOnly\",\"code\":\"AllocationQuota.FreeTierOnly\"}}";
+                    } else {
+                        errBody = "{\"error\":\"boom\"}";
+                    }
+                    respond(exchange, status, errBody);
                     return;
                 }
                 if (!stream) {
@@ -137,6 +147,20 @@ class DashScopeToolClientTest {
 
         assertThat(turn.content()).isEqualTo("OK");
         assertThat(seenModels).containsExactly("missing-model", "good-model");
+        assertThat(fallbackCount()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("DEF-016：403 配额类错误（FreeTierOnly）必须回退——百炼配额按模型独立计费")
+    void fallsBackOnPerModelQuotaExhausted() {
+        DashScopeToolClient client = new DashScopeToolClient(
+                mapper, "test-key", baseUrl, "quota-model,good-model", 5, metrics);
+
+        LlmTurn turn = client.chatWithTools(
+                List.of(Map.of("role", "user", "content", "hi")), List.<ToolSpec>of());
+
+        assertThat(turn.content()).isEqualTo("OK");
+        assertThat(seenModels).containsExactly("quota-model", "good-model");
         assertThat(fallbackCount()).isEqualTo(1.0);
     }
 
@@ -238,6 +262,10 @@ class DashScopeToolClientTest {
         }
         if (model.startsWith("unauthorized")) {
             return 401;
+        }
+        if (model.startsWith("quota")) {
+            // DashScope 实测（2026-11-08）：免费额度耗尽返回 403 + AllocationQuota.FreeTierOnly
+            return 403;
         }
         if (model.startsWith("missing")) {
             return 404;

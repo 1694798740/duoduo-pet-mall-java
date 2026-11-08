@@ -269,9 +269,17 @@ public class DashScopeToolClient implements LlmToolClient {
      * <p>429 与 5xx 属于「这个模型/节点此刻不行」，可以换下一个；
      * 400/401/403 属于「请求或凭据本身有问题」，换模型只会把同一个错误再犯一遍。
      *
-     * <p>但有一个实测例外：DashScope 对「模型不存在/无权限」返回 **404 + model_not_found**
-     * （2026-10-29 用不存在的模型实测确认）。这属于「这个模型不可用」，
-     * 必须回退，否则配置里写错一个模型名会让整条对话直接 503。
+     * <p>但有两个实测例外：
+     * <ol>
+     *   <li>DashScope 对「模型不存在/无权限」返回 **404 + model_not_found**
+     *       （2026-10-29 用不存在的模型实测确认）。这属于「这个模型不可用」，
+     *       必须回退，否则配置里写错一个模型名会让整条对话直接 503。</li>
+     *   <li>**403 + AllocationQuota.FreeTierOnly**（2026-11-08 云端实测）：百炼的免费额度
+     *       **按模型独立计费**——qwen3.8-27b 耗尽时 max/kimi 仍可用。若不回退，
+     *       主模型配额一耗尽整条 AI 导购就 503，客户看到的是「AI 不可用」而不是慢一点的备选模型。
+     *       凭据级 403（账号被封禁）不在此列——那种情况下每个模型都会同样失败，
+     *       走到这里也只是多一次请求，可接受。</li>
+     * </ol>
      */
     private void ensureSuccess(int status, String body) {
         if (status / 100 == 2) {
@@ -284,7 +292,21 @@ public class DashScopeToolClient implements LlmToolClient {
         if ((status == 400 || status == 404) && isModelMissing(body)) {
             throw new RetryableModelException("HTTP " + status + " model_not_found");
         }
+        if (status == 403 && isPerModelQuotaExhausted(body)) {
+            throw new RetryableModelException("HTTP 403 quota_exhausted（该模型配额耗尽，换下一个）");
+        }
         throw degraded();
+    }
+
+    /**
+     * 是否属于「这个模型的配额耗尽」——百炼免费额度按模型独立发放，换模型可能恢复。
+     * 只认明确的 AllocationQuota 标识，避免把账号级封禁/合规下架也当成可回退。
+     */
+    private static boolean isPerModelQuotaExhausted(String body) {
+        if (body == null || body.isBlank()) {
+            return false;
+        }
+        return body.toLowerCase(java.util.Locale.ROOT).contains("allocationquota");
     }
 
     /** 是否属于「模型不存在 / 无权限」这一类可回退错误。 */

@@ -226,6 +226,21 @@
 | 状态 | **已修复**（提交 `b3a8ac4`） |
 | 剩余风险 | 该轮实测 67.2s（27B 多步工具调用），属 DEF-002 残余时延，不是文案问题 |
 
+## DEF-016 · 主模型免费配额耗尽（403 FreeTierOnly）直接 503，不回退到有配额的备选模型（2026-11-08 云端实测）
+
+| 项 | 内容 |
+| --- | --- |
+| 级别 | P1 |
+| 类型 | 已复现产品缺陷（模型回退分类） |
+| 模块 | AI 导购 / 模型回退 |
+| 复现 | 云端实测（2026-11-08）：`qwen3.8-27b` 免费额度耗尽返回 403 `AllocationQuota.FreeTierOnly`；同 Key 下 `qwen3.8-max-0902`、`kimi-k3` 仍可用，但 `DashScopeToolClient#ensureSuccess` 把 403 归为「换模型也没用」直接抛 DEGRADED → AI 推荐全量 503（澄清功能不依赖模型，仍正常） |
+| 根因 | 百炼免费额度**按模型独立计费**，而错误分类把所有 403 当成凭据级错误；与 404 `model_not_found` 的既有例外同类，漏了配额类 403 |
+| 证据 | `evidence/cloud-demo-verify-20261108-final.log`（29/1）；云端日志 `LLM 调用失败 status=403 ... FreeTierOnly` 后直接 `DEGRADED`；模型探测 `27b=403 / max=200 / kimi=200` |
+| 修复 | `ensureSuccess` 新增：403 且响应含 `AllocationQuota` 标识 → 归为 `RetryableModelException`（按模型配额耗尽，换下一个）；账号级封禁仍不回退。云端临时缓解：`.env` 模型顺序改为 `kimi-k3,qwen3.8-max-0902,qwen3.8-27b`（kimi 有配额，备份 `.env.bak-quota-20261108`） |
+| 验证 | 失败测试先行：`fallsBackOnPerModelQuotaExhausted` 修复前红（`fix-def016-before.log`），修复后 **9/0**（`fix-def016-after.log`）；`duoduo-ai` 模块 **120/0**；部署后云端复测见下 |
+| 状态 | **已修复** |
+| 剩余风险 | 免费额度总有一天全部耗尽（当前仅 kimi/max 存活）；长期建议百炼账号充值或关闭仅免费模式 |
+
 ## 本批修复记录（2026-10-30）
 
 | 缺陷 | 状态 | 修复提交 | 修改文件 | 验证 | 剩余风险 |
