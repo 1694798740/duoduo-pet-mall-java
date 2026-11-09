@@ -6440,3 +6440,14 @@ ES 索引 `duoduo-search` 里有 **124 条 LISTING 文档、0 条 SPU**，
 - **联调修复合集**：① 表单公共参数（含 charset）必须在 action 查询串、body 只放 biz_content；② `t_payment.code_url` 加宽为 MEDIUMTEXT（增量 41）；③ 回调应答纯文本 success/failure；④ `alipay.trade.query` 查询兜底进补偿调度。
 - **验证**：单测 12/12；端到端：登录→下单→`pay(ALIPAY_PC)`→表单提交沙箱网关→返回真实收银台页（61KB，含扫码/付款元素）。
 - 生产切换：仅换 `ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do` + 正式密钥（需执照签约「电脑网站支付」）。
+
+---
+
+## 部署文档
+
+本地环境准备、依赖安装、配置说明、启动验证及常见问题排查，请参阅 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
+## 演示体验文档
+
+给首次体验客户的快速上手指南（5 分钟上手 / 30 分钟玩遍，含常见疑问），请参阅 [docs/demo-quick-start.md](./docs/demo-quick-start.md)；
+更完整的 20~30 分钟体验路线，请参阅 [docs/demo-experience-guide.md](./docs/demo-experience-guide.md)。
