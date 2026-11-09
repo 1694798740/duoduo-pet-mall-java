@@ -1,19 +1,19 @@
 # 协作开发规范（CONTRIBUTING）
 
 > 面向所有参与本仓库开发的成员：分支怎么建、代码怎么提、PR 怎么审、版本怎么发。
-> 目标：**任何人的开发都不直接影响 `main`**，所有改动可追溯、可回滚、可验证。
+> **当前阶段（2026-11）**：仓库已公开，维护者可直接在 `main` 提交，分支保护暂未启用；外部贡献者请 Fork 后走 PR。多人协作或需要强制门禁时，再按下文的分支模型启用保护。
 
 ---
 
 ## 0. 开始之前：先解决访问权
 
-**新建分支不会让别人获得仓库权限。** 本仓库是私有仓库，对方必须先被授权：
+**新建分支不会让别人获得仓库权限。** 仓库当前已公开：任何人可 clone / 下载 ZIP / Fork，但 **push 需要 Collaborator（Write）权限**。
 
 | 方式 | 适用场景 | 操作 |
 |---|---|---|
-| 加协作者（推荐） | 长期一起开发 | 仓库 → **Settings → Collaborators → Add people**，角色选 **Write**（可推送分支、开 PR，不能改仓库设置） |
+| 公开仓库 + Fork（当前可用） | 外部贡献者 | 无需授权：Fork 本仓库 → 在自己仓库开分支 → 向本仓库提 PR；改动不会直接落到本仓库 |
+| 加协作者 | 长期一起开发 | 仓库 → **Settings → Collaborators → Add people**，角色选 **Write**（可推送分支、开 PR，不能改仓库设置） |
 | 组织团队 | 多人团队 | Settings → Collaborators and teams → 邀请 Team，按 Read / Write / Maintain 分配 |
-| 公开仓库 + Fork | 外部贡献者 | 仓库改为 Public 后，对方 Fork → 在自己仓库开分支 → 向本仓库提 PR（Fork 的改动不会直接落到本仓库） |
 
 权限角色建议：
 
@@ -52,6 +52,8 @@ hotfix/* 从 main 出 ──▶ 合回 main + develop，补丁版本 +1
 
 **预置的模板分支**：`feature/template`、`bugfix/template`、`hotfix/template`、`release/template` 只用于示例命名，与 `develop` 指向同一提交。创建真实分支后请删除对应模板（`git push origin --delete feature/template`）。
 
+> **当前阶段执行方式**：维护者直接在 `main` 开发，不强制走 PR；`develop` 与模板分支保留给多人协作，等启用分支保护后再按上表运转。外部贡献者的 PR 合入 `develop`，由维护者定期同步到 `main`。
+
 ### 分支命名
 
 - 全小写，单词用 `-` 连接；**不要用中文、空格、下划线**。
@@ -61,6 +63,25 @@ hotfix/* 从 main 出 ──▶ 合回 main + develop，补丁版本 +1
 ---
 
 ## 2. 日常开发流程
+
+### 2.1 当前阶段：维护者直接开发（默认）
+
+```bash
+git checkout main
+git pull --rebase origin main
+
+# 开发 + 小步提交
+git add <具体文件>
+git commit -m "feat(coins): 新增签到月历接口"
+
+# push 前至少编译；涉及接口 / 前端时再跑受影响冒烟
+git push origin main
+```
+
+> push 后看一眼 CI：`main` 会跑编译 + 冒烟子集 + 全量冒烟。失败立即用 `git revert` 回退，不要 force push。
+> 直推 `main` 的前提是**本地已验证**；没有跑过编译和冒烟就不要推。
+
+### 2.2 多人协作 / 外部贡献：功能分支 + PR
 
 ```bash
 # 1) 同步集成分支（每次开工前都做）
@@ -136,7 +157,7 @@ Refs: #142
 
 ## 4. PR 与评审
 
-**PR 目标分支**：功能 / 缺陷 / 文档 → `develop`；发布 / 热修 → `main`。
+**PR 目标分支**：功能 / 缺陷 / 文档 → `develop`；发布 / 热修 → `main`。维护者内部改动当前可直接进 `main`，外部贡献一律提 PR。
 
 PR 描述使用 [.github/pull_request_template.md](./.github/pull_request_template.md)，至少写清：
 
@@ -218,7 +239,9 @@ git push origin develop
 
 ---
 
-## 6. 分支保护（仓库所有者一次性设置）
+## 6. 分支保护（可选，当前未启用）
+
+当前阶段不启用分支保护，维护者直推 `main`。将来需要强制门禁时，按下面设置：
 
 GitHub → **Settings → Branches → Add branch protection rule**，分别对 `main` 和 `develop` 勾选：
 
@@ -239,12 +262,12 @@ GitHub → **Settings → Branches → Add branch protection rule**，分别对 
 
 | 问题 | 原因 / 处理 |
 |---|---|
-| 对方 `git clone` 报 `Repository not found` | 私有仓库且未授权。加 Collaborator，或把仓库改为 Public |
+| 对方 `git clone` 报 `Repository not found` | 仓库为私有且未授权（当前已公开，正常不会出现）；若仍报错，先核对地址拼写与网络代理 |
 | `git push` 报 403 | 只有 Read 权限；让所有者升为 Write |
-| 推送 `main` 被拒绝 | 分支保护生效（预期行为）；改为推自己的分支并提 PR |
+| 推送 `main` 被拒绝 | 启用了分支保护才会如此；当前维护者可直接推送，外部贡献者需 Fork + PR |
 | CI 在 develop 的 PR 上没跑 | 检查 `.github/workflows/ci.yml` 的 `pull_request.branches` 是否包含 `develop` |
 | 误在 main 上提交了 | 未推送：`git switch -c feature/xxx` 带走改动，再 `git switch main && git reset --hard origin/main`；已推送：`git revert <commit>`，禁止强推改写历史 |
 | 分支落后 develop 很多 | `git fetch && git rebase origin/develop`，冲突解决后 `git push --force-with-lease` |
 | 合并后想撤销 | 未发布：`git revert -m 1 <merge-commit>`；已发布：走 hotfix，不要改写已发布历史 |
 
-**绝对禁止**：直接 push `main` / `develop`；force push 共享分支；跳过 CI 或 Git hooks；把密钥写进仓库；删除他人未合并的分支。
+**绝对禁止**：force push 共享分支（`main` / `develop` / `release/*`）；跳过 CI 或 Git hooks；把密钥写进仓库；删除他人未合并的分支；未跑编译和冒烟就直推 `main`。

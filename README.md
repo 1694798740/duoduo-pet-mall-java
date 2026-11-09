@@ -77,7 +77,7 @@ bash scripts/web-up.sh
 
 打开 http://localhost:8088 即可。**全新数据库没有预置账号**：先注册一个手机号账号，再把需要后台权限的账号提权为运营（SQL 一行），步骤见 [部署文档 §9.1](./DEPLOYMENT.md)。
 
-> **多人协作**：不要直接改 `main`。从 `develop` 建 `feature/<编号>-<简述>` 分支，提交后向 `develop` 提 PR；分支保护、提交规范、发布 / 热修复流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+> **多人协作**：外部贡献者请 Fork 后向 `develop` 提 PR；仓库维护者当前可直接在 `main` 提交（分支保护暂未启用）。分支模型、提交规范与发布 / 热修复流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ```bash
 # 可选：检索加速层（默认不起，检索自动降级走 MySQL）
