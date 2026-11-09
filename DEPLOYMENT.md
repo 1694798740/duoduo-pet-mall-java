@@ -792,7 +792,7 @@ JDK / Maven / Node.js / Git 都可以在「已安装的应用」里单独卸载�
 | JDK | **21** | 根 `pom.xml` 中 `java.version=21`、`maven.compiler.release=21` |
 | Maven | 3.9.x | 仓库文档以 Maven 3.9.4 为基线（见 `docs/agent/08`）；如本机 Maven 启动异常，按该文档给出的 classworlds 方式显式调用 |
 | Docker | Docker Desktop（含 Docker Compose v2） | 本地以 `docker compose` 编排中间件与业务服务 |
-| Node.js + npm | 版本要求未在仓库中固定声明，**待补充** | 前端为 npm workspaces（见 `frontend/package.json`） |
+| Node.js + npm | **22.x（CI 基线）** | `frontend/package.json` 未声明 `engines`；GitHub Actions 使用 Node 22（见 `.github/workflows/ci.yml`），本地建议同为 22 LTS。前端为 npm workspaces |
 | 操作系统 | Windows / macOS / Linux 均可 | 冒烟脚本为 PowerShell（`.ps1`），Windows 可直接运行 |
 
 ---
@@ -980,11 +980,44 @@ npm run build -w @duoduo/mall
 
 ---
 
-## 9. 待补充
+## 9. 其他运行入口
 
-以下内容无法仅从仓库确认，后续补充：
+### 9.1 三端访问地址与账号初始化
 
-- Node.js / npm 的**具体版本下限**（`frontend/package.json` 未声明 `engines`）。
-- 小程序端（miniprogram）的本地构建与运行步骤。
-- 生产/云端部署的完整流程（证书、域名、备案、支付资质等）。
-- 管理后台（admin-web）与商家端（merchant-web）的本地访问地址与账号初始化说明。
+| 端 | 本地地址 | 说明 |
+|---|---|---|
+| 买家商城 | <http://localhost:8088/> | 注册 / 浏览 / 下单 / 支付 / 闲置 / AI 导购 |
+| 商家工作台 | <http://merchant.localhost:8091/workspace>（或 <http://localhost:8091/>） | 商品、订单、发货、售后、结算 |
+| 平台运营后台 | <http://admin.localhost:8090/console>（或 <http://localhost:8090/>） | 审核、仲裁、订单干预、报表 |
+
+**全新数据库没有任何预置账号**（初始化 SQL 只建表与商品种子）。首次使用按下面三步：
+
+1. 打开商城 `8088`，用任意手机号 + 密码注册一个账号；
+2. 把该账号提权为运营（角色是**令牌快照**，改完需重新登录一次）：
+
+   ```powershell
+   # root 密码从容器环境变量读取（默认 duoduo_root）
+   $pw = (docker exec duoduo-mysql env | Select-String 'MYSQL_ROOT_PASSWORD=').ToString().Split('=')[1]
+   docker exec duoduo-mysql mysql -uroot "-p$pw" -e "UPDATE duoduo_user.t_user SET role='OPERATOR' WHERE phone='13800001234';"
+   ```
+
+3. 重新登录后即可进入 `8090` 运营后台；商家端不需要改库，走「我的 → 申请成为卖家」完成实名后申请。
+
+> `docs/test-accounts.md` 里的测试账号只对**已有开发库的快照**有效，不会由初始化 SQL 创建。
+
+### 9.2 小程序（`miniprogram/`）
+
+1. 微信开发者工具 → 导入项目 → 目录选 `miniprogram/`；
+2. 确保本机全栈在跑（网关 `http://localhost:8080`）；详情 → 本地设置 → 勾选「**不校验合法域名**」；
+3. 编译预览：首页 → 详情 → 加购 → 结算（取默认地址）→ 订单页走沙箱支付轮询。
+
+`project.config.json` 已填真实 AppID（`wx8d12dd3403959180`）；无该小程序的开发权限时，改用「测试号」即可。
+完整说明与目录结构见 [miniprogram/README.md](./miniprogram/README.md)。
+
+### 9.3 生产 / 云端部署
+
+- 上线检查清单（Ubuntu 22.04 为例，含只读健康检查）：[docs/manuals/production-launch-checklist.md](./docs/manuals/production-launch-checklist.md)
+- 阿里云部署方案（2026-10-13 搁置版，架构与踩坑可参考）：[docs/阿里云部署方案-2026-10-13.md](./docs/阿里云部署方案-2026-10-13.md)
+- 当前试用机部署实录：[docs/qa/independent-qa-2026-10-30/cloud-deploy-2026-10-30.md](./docs/qa/independent-qa-2026-10-30/cloud-deploy-2026-10-30.md)
+
+> 生产必须：HTTPS（`COOKIE_SECURE=true` + `COOKIE_SAME_SITE=None`）、真实 `INTERNAL_TOKEN`、关闭微信 mock、ES 常开。真实微信 / 支付宝收款需商户资质，见 [docs/payment-qualification-alipay-vs-wechat.md](./docs/payment-qualification-alipay-vs-wechat.md)。

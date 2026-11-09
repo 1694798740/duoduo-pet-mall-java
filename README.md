@@ -33,7 +33,7 @@
 | 商家工作台 | http://merchant.localhost:8091 | http://8.163.71.44:8091 | 商品、订单、发货、售后、结算、店员 |
 | 平台运营后台 | http://admin.localhost:8090 | http://8.163.71.44:8090（限 IP） | 审核、仲裁、订单干预、类目品牌、报表对账 |
 
-> 三个站点**登录态互相独立**（Cookie 按主机名隔离）。演示账号：运营 `13684295254` / `duoduo12345`，买家 `13800009999` / `duoduo12345`；完整账号清单见 [docs/test-accounts.md](./docs/test-accounts.md)。
+> 三个站点**登录态互相独立**（Cookie 按主机名隔离）。**试用机**演示账号：运营 `13684295254` / `duoduo12345`，买家 `13800009999` / `duoduo12345`（本地全新环境需自行注册并提权，见 [部署文档 §9.1](./DEPLOYMENT.md)）；完整账号清单见 [docs/test-accounts.md](./docs/test-accounts.md)。
 > 试用机为演示环境：支付走沙箱，不产生真实扣款；数据可能定期重置。
 
 ### 功能地图
@@ -55,22 +55,26 @@
 
 ## 🚀 快速开始
 
-**前置**：Docker Desktop（含 Compose v2）、JDK 21、Maven 3.9+、Node.js 18+、Git。Windows 从零安装的逐步图文流程见 [部署文档 §0](./DEPLOYMENT.md)。
+**前置**：Docker Desktop（含 Compose v2）、JDK 21、Maven 3.9+、Node.js 22 LTS、Git。Windows 从零安装的逐步图文流程见 [部署文档 §0](./DEPLOYMENT.md)。
 
 ```bash
-# 1. 获取代码
-git clone git@github.com:1694798740/duoduo-pet-mall-java.git
+# 1. 获取代码（公开仓库用 HTTPS；已配 SSH 的协作者可改成 git@github.com:...）
+git clone https://github.com/1694798740/duoduo-pet-mall-java.git
 cd duoduo-pet-mall-java
 
-# 2. 一条命令起全套（3 个中间件 + 8 个业务/网关 + 3 个站点容器）
-docker compose up -d
-docker ps            # 期望：14 个容器全部 healthy
+# 2. 先编译后端 + 构建前端（镜像不在容器内编译，全新 clone 必须先做这步）
+mvn -gs maven/settings.xml -B -DskipTests package
+cd frontend && npm install && npm run build && cd ..
 
-# 3. 构建并启动网页端正式版容器（对外 8088，长期可用）
+# 3. 起全套容器（3 个中间件 + 8 个业务/网关 + 3 个站点）
+docker compose up -d
+docker compose ps    # 期望全部 healthy（基础 14 个，数量以 compose 文件为准）
+
+# 4. 构建并启动网页端正式版容器（对外 8088，长期可用）
 bash scripts/web-up.sh
 ```
 
-打开 http://localhost:8088 即可（运营账号 `13684295254` / `duoduo12345`）。
+打开 http://localhost:8088 即可。**全新数据库没有预置账号**：先注册一个手机号账号，再把需要后台权限的账号提权为运营（SQL 一行），步骤见 [部署文档 §9.1](./DEPLOYMENT.md)。
 
 ```bash
 # 可选：检索加速层（默认不起，检索自动降级走 MySQL）
