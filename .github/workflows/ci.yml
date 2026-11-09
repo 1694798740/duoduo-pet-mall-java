@@ -20,9 +20,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   # 手动重跑（例如怀疑某套被环境问题跳过时）
   workflow_dispatch:
 
@@ -242,7 +242,7 @@ jobs:
   # ---------------------------------------------------------------------------
   smoke-full:
     name: 全量冒烟（全部 *-smoke.ps1，仅 main）
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 90

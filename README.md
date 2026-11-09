@@ -11,6 +11,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | 🚀 **[部署文档（DEPLOYMENT.md）](./DEPLOYMENT.md)** | 从零安装（Windows 逐步版）、环境要求、容器启动、配置说明、启动验证、常见问题排查 |
+| 👥 **[协作开发规范（CONTRIBUTING.md）](./CONTRIBUTING.md)** | 分支模型（main / develop / feature / release / hotfix）、开发流程、提交规范、PR 评审、发布与热修复、分支保护 |
 | 🧪 **[新手快速上手（demo-quick-start.md）](./docs/demo-quick-start.md)** | 5 分钟上手 / 30 分钟玩遍演示环境的客户版指南，含常见疑问 |
 | 🎬 [完整体验路线（demo-experience-guide.md）](./docs/demo-experience-guide.md) | 20~30 分钟走完全部功能的客户版体验指南 |
 | 🏛 [架构设计（ARCHITECTURE.md）](./docs/ARCHITECTURE.md) | 服务拆分、分库分表、容量模型、降级矩阵 |
@@ -75,6 +76,8 @@ bash scripts/web-up.sh
 ```
 
 打开 http://localhost:8088 即可。**全新数据库没有预置账号**：先注册一个手机号账号，再把需要后台权限的账号提权为运营（SQL 一行），步骤见 [部署文档 §9.1](./DEPLOYMENT.md)。
+
+> **多人协作**：不要直接改 `main`。从 `develop` 建 `feature/<编号>-<简述>` 分支，提交后向 `develop` 提 PR；分支保护、提交规范、发布 / 热修复流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ```bash
 # 可选：检索加速层（默认不起，检索自动降级走 MySQL）
